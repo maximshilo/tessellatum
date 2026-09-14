@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import threading
+import weakref
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Hashable, TypeVar
 
 import cv2
 import numpy as np
 from PIL import Image
 
+from tessellatum.core import kernels
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import render_legend
 from tessellatum.core.quantize import quantize
@@ -22,12 +26,14 @@ EXPORT_LONG_EDGE = 2400
 # Rough share of total generation time each stage takes, used to report real
 # (if coarse-grained) percentage progress rather than a fake animation.
 _STAGE_PROGRESS = {
-    "resize": 5,
-    "quantize": 50,
-    "regions": 75,
+    "resize": 2,
+    "quantize": 60,
+    "regions": 80,
     "contours": 90,
     "render": 100,
 }
+
+T = TypeVar("T")
 
 
 class PipelineCancelled(Exception):
@@ -41,6 +47,56 @@ class GeneratedPage:
     palette_rgb: list[tuple[int, int, int]]
     num_colors_used: int
     num_regions: int
+
+
+class _StageCache:
+    """Recent stage results for the most recently used source image.
+
+    Tuning difficulty re-runs the pipeline on one image over and over, and
+    the expensive early stages depend on only some parameters (smoothing and
+    k-means don't care about the minimum region size, resizing only about the
+    output size). Entries are tied to the image *object* through a weak
+    reference, so a different or garbage-collected image never gets stale
+    results. Image arrays must not be modified in place after being passed in.
+    """
+
+    def __init__(self, max_entries: int) -> None:
+        self._lock = threading.Lock()
+        self._image_ref: weakref.ref | None = None
+        self._entries: OrderedDict[Hashable, object] = OrderedDict()
+        self._max_entries = max_entries
+
+    def get_or_compute(self, image: np.ndarray, key: Hashable, compute: Callable[[], T]) -> T:
+        with self._lock:
+            if self._image_ref is None or self._image_ref() is not image:
+                self._image_ref = weakref.ref(image)
+                self._entries.clear()
+            if key in self._entries:
+                self._entries.move_to_end(key)
+                return self._entries[key]  # type: ignore[return-value]
+
+        value = compute()  # outside the lock: this is the slow part
+
+        with self._lock:
+            if self._image_ref() is image:
+                self._entries[key] = value
+                self._entries.move_to_end(key)
+                while len(self._entries) > self._max_entries:
+                    self._entries.popitem(last=False)
+        return value
+
+    def clear(self) -> None:
+        with self._lock:
+            self._image_ref = None
+            self._entries.clear()
+
+
+_cache = _StageCache(max_entries=6)
+
+
+def clear_cache() -> None:
+    """Forget cached intermediate results (see ``_StageCache``)."""
+    _cache.clear()
 
 
 def load_image_bgr(path: Path) -> np.ndarray:
@@ -60,6 +116,20 @@ def resize_to_long_edge(image_bgr: np.ndarray, long_edge: int) -> np.ndarray:
     return cv2.resize(image_bgr, new_size, interpolation=cv2.INTER_AREA)
 
 
+def warm_up() -> None:
+    """Pay one-time start-up costs before the first real generation.
+
+    Loads the compiled region kernels (compiling them if this is the first run
+    since install, which takes a few seconds) and runs the whole pipeline once
+    on a tiny synthetic image. Meant for a background thread at app start.
+    """
+    kernels.warm_up()
+    tiny = np.zeros((48, 64, 3), dtype=np.uint8)
+    tiny[:, 32:] = (40, 160, 220)
+    tiny[12:36, 8:24] = (200, 60, 60)
+    generate(tiny, DifficultyParams(num_colors=4, min_region_fraction=0.01, blur_sigma=1.0), long_edge=64)
+
+
 def generate(
     image_bgr: np.ndarray,
     params: DifficultyParams,
@@ -73,6 +143,10 @@ def generate(
     a 0-100 percentage reflecting real work completed (not a fake animation).
     ``should_cancel``, if given, is polled between stages; when it returns
     True, ``PipelineCancelled`` is raised and no more work is done.
+
+    Resizing and quantization results are cached per image object, so
+    regenerating the same image with a different minimum region size, or
+    going back to earlier settings, skips straight to the region stages.
     """
 
     def report(stage: str) -> None:
@@ -84,12 +158,18 @@ def generate(
             raise PipelineCancelled()
 
     check_cancelled()
-    resized = resize_to_long_edge(image_bgr, long_edge)
+    resized = _cache.get_or_compute(
+        image_bgr, ("resize", long_edge), lambda: resize_to_long_edge(image_bgr, long_edge)
+    )
     h, w = resized.shape[:2]
     report("resize")
 
     check_cancelled()
-    labels, palette_bgr = quantize(resized, params.num_colors, params.blur_sigma)
+    labels, palette_bgr = _cache.get_or_compute(
+        image_bgr,
+        ("quantize", long_edge, params.num_colors, params.blur_sigma),
+        lambda: quantize(resized, params.num_colors, params.blur_sigma),
+    )
     report("quantize")
 
     check_cancelled()
