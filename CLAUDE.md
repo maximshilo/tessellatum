@@ -25,7 +25,8 @@ otherwise safe to publish, not pulled from anything private. Photos can
 carry metadata (EXIF/XMP: GPS position, author, camera serial numbers):
 strip it before committing an image. `tests/sample_images/` may also hold
 local-only images that must not be committed; only commit images whose
-license has been confirmed. If you
+license has been confirmed, and list each one's source and license in
+`tests/sample_images/SOURCES.md` (it also has the rules for adding images). If you
 generate scratch/debug files while working, keep them out of the repo
 (the scratchpad directory, not a tracked path) rather than relying on
 .gitignore to catch it after the fact.
