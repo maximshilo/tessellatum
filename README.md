@@ -47,6 +47,35 @@ Difficulty controls three things: how many colors are used, how small a
 region is allowed to get before being merged away, and how much smoothing
 is applied before quantizing — see `src/tessellatum/core/difficulty.py`.
 
+### Performance
+
+Previews are meant to be quick enough to tweak difficulty interactively:
+
+- Smoothing samples the bilateral filter's window on a sparse lattice (a few
+  hundred taps per pixel instead of thousands) and filters rows in parallel.
+- Region labeling and small-region merging run as compiled
+  [Numba](https://numba.pydata.org/) kernels whose cost grows roughly
+  linearly with image size, and contour extraction and outline drawing work
+  on each region's bounding box rather than the whole image. Their output is
+  pixel-identical to the original straightforward implementation.
+- Resizing and quantization results are cached per image, so changing only
+  the region size skips straight to the region stages.
+- The compiled kernels are built on the very first launch (a few seconds, in
+  the background while you pick an image) and cached on disk after that.
+
+## Benchmarks
+
+`benchmarks/` holds a speed + quality benchmark harness that runs any git
+ref or the working tree over the sample images and compares versions on
+timings and output-quality metrics:
+
+```
+.venv\Scripts\python benchmarks\bench.py run main WORKTREE
+.venv\Scripts\python benchmarks\bench.py compare main-<commit> worktree-<commit>-dirty
+```
+
+See [`benchmarks/README.md`](benchmarks/README.md) for details.
+
 ## Tests
 
 ```

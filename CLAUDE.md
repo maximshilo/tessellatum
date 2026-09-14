@@ -34,6 +34,22 @@ py -3 -m venv .venv
 .venv\Scripts\python -m pytest tests/
 ```
 
+## Benchmarks
+
+Benchmark any change to the generation pipeline (`src/tessellatum/core/`)
+for speed *and* output quality against `main` before opening the PR:
+
+```
+.venv\Scripts\python benchmarks\bench.py run main WORKTREE
+.venv\Scripts\python benchmarks\bench.py compare main-<commit> worktree-<commit>-dirty
+```
+
+See `benchmarks/README.md` for what is measured and how the quality verdict
+works. The region and rendering stages are checked for pixel-identical
+output against the original implementation kept in `tests/reference_impl.py`
+(`tests/test_regions_equivalence.py`); if a change is meant to alter their
+output, update the reference deliberately and say so in the PR.
+
 ## Building a standalone app
 
 See `packaging/build_windows.ps1` / `build_linux.sh` / `build_macos.sh`.

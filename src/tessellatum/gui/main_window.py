@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -47,6 +48,11 @@ class MainWindow(QMainWindow):
         self.controls.abort_requested.connect(self.abort_generation)
 
         self.resize(1280, 840)
+
+        # Get one-time costs (loading/compiling the compiled kernels, first
+        # OpenCV/Pillow calls) out of the way while the user picks an image,
+        # so the first preview is as fast as later ones.
+        threading.Thread(target=_warm_up_pipeline, name="pipeline-warm-up", daemon=True).start()
 
     # -- Open -----------------------------------------------------------
     def open_image(self) -> None:
@@ -163,6 +169,13 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage(f"Exported to {path}")
         QMessageBox.information(self, "Export complete", f"Saved to:\n{path}")
+
+
+def _warm_up_pipeline() -> None:
+    try:
+        pipeline.warm_up()
+    except Exception:  # noqa: BLE001 - best effort; a real failure resurfaces on Generate
+        pass
 
 
 def _bgr_to_pixmap(image_bgr: np.ndarray) -> QPixmap:

@@ -1,6 +1,7 @@
+import numpy as np
 import pytest
 
-from tessellatum.core import difficulty
+from tessellatum.core import difficulty, pipeline
 from tessellatum.core.pipeline import PipelineCancelled, generate
 
 
@@ -45,3 +46,31 @@ def test_generate_can_be_cancelled_mid_pipeline(sample_image_bgr):
 
     with pytest.raises(PipelineCancelled):
         generate(sample_image_bgr, params, long_edge=200, should_cancel=should_cancel)
+
+
+def test_generate_reuses_quantization_across_region_size_changes(sample_image_bgr, monkeypatch):
+    quantize_calls = []
+    real_quantize = pipeline.quantize
+
+    def counting_quantize(*args, **kwargs):
+        quantize_calls.append(args)
+        return real_quantize(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "quantize", counting_quantize)
+    pipeline.clear_cache()
+    medium = difficulty.params_for_preset("Medium")
+    finer = difficulty.DifficultyParams(medium.num_colors, medium.min_region_fraction / 4, medium.blur_sigma)
+
+    first = generate(sample_image_bgr, medium, long_edge=200)
+    generate(sample_image_bgr, finer, long_edge=200)
+    again = generate(sample_image_bgr, medium, long_edge=200)
+    assert len(quantize_calls) == 1
+    assert np.array_equal(np.asarray(again.page), np.asarray(first.page))
+
+    # A different image object is never served from the cache, even if equal.
+    generate(sample_image_bgr.copy(), medium, long_edge=200)
+    assert len(quantize_calls) == 2
+
+
+def test_warm_up_runs_the_pipeline_without_error():
+    pipeline.warm_up()
