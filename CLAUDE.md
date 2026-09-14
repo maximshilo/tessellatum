@@ -1,5 +1,15 @@
 # Working in this repo
 
+## Public repo — no sensitive info
+
+This repo is public. Never commit secrets/API keys/tokens, real personal
+data, or local machine details (absolute filesystem paths, usernames,
+internal hostnames, etc.). Sample/test assets must be synthetic or
+otherwise safe to publish, not pulled from anything private. If you
+generate scratch/debug files while working, keep them out of the repo
+(the scratchpad directory, not a tracked path) rather than relying on
+.gitignore to catch it after the fact.
+
 ## Branching & versioning
 
 - Do all work on a feature branch off `main`, never commit directly to `main`.
