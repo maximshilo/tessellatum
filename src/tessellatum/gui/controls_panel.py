@@ -28,6 +28,7 @@ class ControlsPanel(QWidget):
     open_image_requested = Signal()
     generate_requested = Signal()
     export_requested = Signal()
+    abort_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -69,8 +70,21 @@ class ControlsPanel(QWidget):
         self.export_button.setEnabled(False)
 
         self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 0)  # indeterminate
-        self.progress_bar.setVisible(False)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("%p%")
+        self.progress_bar.setTextVisible(True)
+
+        self.abort_button = QPushButton("✕")
+        self.abort_button.setToolTip("Cancel generation")
+        self.abort_button.setFixedWidth(28)
+
+        self.progress_row = QWidget()
+        progress_row_layout = QHBoxLayout(self.progress_row)
+        progress_row_layout.setContentsMargins(0, 0, 0, 0)
+        progress_row_layout.addWidget(self.progress_bar)
+        progress_row_layout.addWidget(self.abort_button)
+        self.progress_row.setVisible(False)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.open_button)
@@ -80,14 +94,21 @@ class ControlsPanel(QWidget):
         layout.addWidget(self.custom_group)
         layout.addWidget(format_group)
         layout.addWidget(self.generate_button)
-        layout.addWidget(self.progress_bar)
+        layout.addWidget(self.progress_row)
         layout.addWidget(self.export_button)
         layout.addStretch(1)
 
         self.open_button.clicked.connect(self.open_image_requested)
         self.generate_button.clicked.connect(self.generate_requested)
         self.export_button.clicked.connect(self.export_requested)
+        self.abort_button.clicked.connect(self._on_abort_clicked)
         self.preset_combo.currentTextChanged.connect(self._on_preset_changed)
+
+    def _on_abort_clicked(self) -> None:
+        # Cancellation takes effect at the pipeline's next stage boundary, so
+        # disable the button immediately to avoid double-clicks while we wait.
+        self.abort_button.setEnabled(False)
+        self.abort_requested.emit()
 
     def _on_preset_changed(self, name: str) -> None:
         self.custom_group.setVisible(name == "Custom")
@@ -115,10 +136,16 @@ class ControlsPanel(QWidget):
         return "PDF" if self.pdf_radio.isChecked() else "PNG"
 
     def set_busy(self, busy: bool) -> None:
-        self.progress_bar.setVisible(busy)
+        self.progress_row.setVisible(busy)
+        if busy:
+            self.progress_bar.setValue(0)
+            self.abort_button.setEnabled(True)
         self.generate_button.setEnabled(not busy)
         self.export_button.setEnabled(not busy and self.export_button.property("hasResult") is True)
         self.open_button.setEnabled(not busy)
+
+    def set_progress(self, percent: int) -> None:
+        self.progress_bar.setValue(max(0, min(100, percent)))
 
     def set_export_enabled(self, enabled: bool) -> None:
         self.export_button.setProperty("hasResult", enabled)

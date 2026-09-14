@@ -44,6 +44,7 @@ class MainWindow(QMainWindow):
         self.controls.open_image_requested.connect(self.open_image)
         self.controls.generate_requested.connect(self.generate_preview)
         self.controls.export_requested.connect(self.export_page)
+        self.controls.abort_requested.connect(self.abort_generation)
 
         self.resize(1280, 840)
 
@@ -79,7 +80,20 @@ class MainWindow(QMainWindow):
         self._worker = PipelineWorker(self.current_image_bgr, params, PREVIEW_LONG_EDGE)
         self._worker.succeeded.connect(self._on_preview_ready)
         self._worker.failed.connect(self._on_worker_failed)
+        self._worker.cancelled.connect(self._on_worker_cancelled)
+        self._worker.progress.connect(self.controls.set_progress)
         self._worker.start()
+
+    def abort_generation(self) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.requestInterruption()
+            self.statusBar().showMessage("Cancelling…")
+
+    def _on_worker_cancelled(self) -> None:
+        self.controls.set_busy(False)
+        self._pending_export_path = None
+        self._pending_export_format = None
+        self.statusBar().showMessage("Cancelled.")
 
     def _on_preview_ready(self, page: GeneratedPage) -> None:
         self.current_page = page
@@ -124,6 +138,8 @@ class MainWindow(QMainWindow):
         self._worker = PipelineWorker(self.current_image_bgr, params, EXPORT_LONG_EDGE)
         self._worker.succeeded.connect(self._on_export_ready)
         self._worker.failed.connect(self._on_worker_failed)
+        self._worker.cancelled.connect(self._on_worker_cancelled)
+        self._worker.progress.connect(self.controls.set_progress)
         self._worker.start()
 
     def _on_export_ready(self, page: GeneratedPage) -> None:
