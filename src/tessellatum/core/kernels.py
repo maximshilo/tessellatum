@@ -1,8 +1,9 @@
-"""Numba-compiled inner loops for the region stages.
+"""Numba-compiled inner loops for the pipeline's hot spots.
 
-Pixel-level work NumPy can't vectorize -- union-find labeling and the
-sequential small-region merge -- runs here as compiled code. Arrays are passed
-flattened (row-major) with explicit ``height``/``width``.
+Pixel-level work NumPy can't vectorize -- union-find labeling, the sequential
+small-region merge, and the bilateral filter's per-pixel weighting -- runs
+here as compiled code. Arrays are passed flattened (row-major) with explicit
+``height``/``width``.
 
 Kernels compile on first call and are cached on disk (``cache=True``), so only
 the first run after an install pays the compile cost; ``warm_up`` pays it

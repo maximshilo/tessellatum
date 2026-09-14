@@ -11,10 +11,11 @@ from tessellatum.core import kernels, parallel
 # _TAPS_PER_SIGMA pixels along each axis.
 _TAPS_PER_SIGMA = 6
 
-# One k-means++ run over every pixel. Measured on the sample images, extra
-# attempts didn't improve the finished painting (within ~1.5% color error)
-# but tripled the time, while fitting on a sample of pixels -- even half of
-# them -- occasionally lost a distinct color on flat-color artwork.
+# One k-means++ run over every pixel. On the sample images, three attempts
+# took 3x as long for a finished painting that was on average no closer to
+# the source (worst case: flat-color artwork at Easy, +3.7% color error, or
+# 0.18 CIEDE2000). Fitting on a sample of pixels instead -- even half of them
+# -- occasionally lost a distinct color entirely.
 _KMEANS_ATTEMPTS = 1
 _KMEANS_MAX_ITERATIONS = 30
 _KMEANS_EPSILON = 0.5
