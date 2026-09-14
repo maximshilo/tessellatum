@@ -37,3 +37,6 @@ scans, and vector drawings rendered to that size.
 - **Files:** strip all metadata before committing, and keep files to at
   most 2048 px on the long edge.
 - **Record:** add a row to the table above.
+- **Annotate:** add an entry to `manifest.json` in this folder, with the
+  image's categories and the annotations they need (schema in
+  `benchmarks/README.md`).

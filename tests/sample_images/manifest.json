@@ -1,0 +1,180 @@
+{
+  "schema": 1,
+  "images": {
+    "l-painting-face-girl-with-a-pearl-earring.jpg": {
+      "size": [1732, 2048],
+      "categories": ["face"],
+      "faces": [
+        {
+          "kind": "human",
+          "box": [540, 590, 470, 650],
+          "features": [
+            {"part": "eye", "box": [555, 735, 95, 65]},
+            {"part": "eye", "box": [735, 770, 115, 85]},
+            {"part": "nose", "box": [600, 860, 135, 145]},
+            {"part": "mouth", "box": [590, 1035, 180, 115]}
+          ]
+        }
+      ]
+    },
+    "l-photo-cats-face.jpg": {
+      "size": [2048, 1360],
+      "categories": ["photo", "face"],
+      "faces": [
+        {
+          "kind": "animal",
+          "box": [860, 300, 930, 800],
+          "features": [
+            {"part": "eye", "box": [990, 592, 150, 155]},
+            {"part": "eye", "box": [1340, 603, 175, 160]},
+            {"part": "nose", "box": [1118, 880, 177, 110]},
+            {"part": "mouth", "box": [1105, 975, 210, 85]}
+          ]
+        }
+      ]
+    },
+    "l-photo-lion.jpg": {
+      "size": [2047, 1365],
+      "categories": ["photo", "face", "texture"],
+      "faces": [
+        {
+          "kind": "animal",
+          "box": [620, 150, 960, 1150],
+          "features": [
+            {"part": "eye", "box": [772, 385, 165, 122]},
+            {"part": "eye", "box": [1256, 388, 157, 119]},
+            {"part": "nose", "box": [915, 825, 355, 175]},
+            {"part": "mouth", "box": [828, 985, 560, 100]}
+          ]
+        }
+      ],
+      "areas": [
+        {"kind": "texture", "box": [0, 0, 520, 900]},
+        {"kind": "texture", "box": [1620, 0, 427, 650]}
+      ]
+    },
+    "l-photo-palermo-castle.jpg": {
+      "size": [1536, 1028],
+      "categories": ["photo", "gradient"],
+      "areas": [
+        {"kind": "gradient", "box": [0, 0, 600, 260]},
+        {"kind": "gradient", "box": [0, 260, 160, 380]}
+      ]
+    },
+    "l-photo-sunset-silhouette-reflections.jpg": {
+      "size": [2048, 1357],
+      "categories": ["photo", "gradient"],
+      "areas": [
+        {"kind": "gradient", "box": [0, 0, 2048, 200]},
+        {"kind": "gradient", "box": [1400, 200, 648, 330]},
+        {"kind": "gradient", "box": [0, 1230, 2048, 127]}
+      ]
+    },
+    "l-photo-switzerland-castle.jpg": {
+      "size": [2048, 1536],
+      "categories": ["photo", "texture"],
+      "areas": [
+        {"kind": "texture", "box": [0, 1150, 2048, 386]}
+      ]
+    },
+    "l-photo-times-square.jpg": {
+      "size": [2048, 1367],
+      "categories": ["photo", "text"],
+      "text": [
+        {"box": [536, 274, 34, 180], "string": "NOVOTEL", "rotation": 90},
+        {"box": [244, 503, 55, 73], "string": "THE\nLION\nKING"},
+        {"box": [615, 713, 45, 25], "string": "INGLOT"},
+        {"box": [487, 830, 78, 39], "string": "WHAT ARE\nYOU DOING\nDOWN THERE?"},
+        {"box": [905, 703, 98, 43], "string": "Only 1 in 100 peanuts is\nlucky enough to become\na delicious M&M'S Peanut."},
+        {"box": [1248, 548, 182, 38], "string": "SPORTS"},
+        {"box": [1211, 869, 94, 46], "string": "appeal"},
+        {"box": [1873, 809, 172, 40], "string": "CITIZEN"}
+      ],
+      "notes": "Only signs that read clearly at full size are annotated. Left out: the slanted quote and the neon script 'love' at the top right, signs cut off by the frame or hidden behind others (LG, Starbucks, the news ticker's first line), and lettering too blurry to read."
+    },
+    "m-cartoon-bold-lines-girl.png": {
+      "size": [997, 1600],
+      "categories": ["cartoon", "face"],
+      "faces": [
+        {
+          "kind": "cartoon",
+          "box": [140, 270, 690, 560],
+          "features": [
+            {"part": "eye", "box": [160, 410, 250, 225]},
+            {"part": "eye", "box": [560, 410, 250, 225]},
+            {"part": "nose", "box": [460, 612, 45, 62]},
+            {"part": "mouth", "box": [400, 675, 220, 140]}
+          ]
+        }
+      ],
+      "flat_colors": [
+        "#ffffff", "#d8637d", "#8c4555", "#ffdfc9", "#c64c5b", "#6e6c9d", "#f26b68", "#903038",
+        "#4d4d4d", "#800000", "#24140a", "#323667", "#f7ad7d", "#ff6f90", "#f2b3be"
+      ],
+      "ink_colors": ["#000000", "#2b1100"]
+    },
+    "m-cartoon-bold-lines-reaper.png": {
+      "size": [1280, 1515],
+      "categories": ["cartoon"],
+      "flat_colors": [
+        "#ffffff", "#525252", "#dddddd", "#999999", "#171717", "#2d2d2d", "#fff6db", "#845130",
+        "#fffaeb", "#482c1a", "#bb9f8d", "#b6b09f", "#a7a08c", "#2a7fff"
+      ],
+      "ink_colors": ["#000000"]
+    },
+    "m-cartoon-complex.jpg": {
+      "size": [1218, 806],
+      "categories": ["cartoon", "text"],
+      "text": [
+        {"box": [341, 83, 215, 26], "string": "EN L'AN 2000"},
+        {"box": [27, 732, 239, 35], "string": "Aviation Police"}
+      ],
+      "flat_colors": [
+        "#d4dddd", "#4b4659", "#696c7d", "#e2c676", "#e7d5a1", "#ddd2bb", "#e2b186", "#846066",
+        "#c96c53", "#b4b2b3", "#aaa280", "#ffffff"
+      ],
+      "ink_colors": ["#3d3441"],
+      "notes": "A printed postcard: flat and ink colors are cluster centers of the printed colors, not exact values. Its faces are too small to annotate."
+    },
+    "m-comics-upside-downs-writing-pig.jpg": {
+      "size": [898, 1166],
+      "categories": ["cartoon", "text"],
+      "text": [
+        {"box": [56, 38, 785, 34], "string": "THE UPSIDE DOWNS OF LITTLE LADY LOVEKINS AND OLD MAN MUFFAROO."},
+        {"box": [219, 76, 466, 26], "string": "AT THE HOUSE OF THE WRITING PIG."},
+        {"box": [59, 330, 242, 20], "string": "One day, a mysterious little bird comes to them\nwith a card on which is written: \"Follow me.\""},
+        {"box": [324, 330, 249, 22], "string": "\"Come on,\" says old man Muffaroo, \"let us follow\nthis bird,\" and off they go, poor Lovekins far behind."},
+        {"box": [587, 329, 255, 23], "string": "At last she finds herself all alone, lost, almost ready\nto cry, when suddenly she sees before her a big house."},
+        {"box": [58, 573, 253, 32], "string": "In the window. a Pig sits writing, and soon holds out\na notice, which states that Mr. H. Hog lives here, and\nbids the \"boy\" go away. But Lovekins wants to talk."},
+        {"box": [326, 572, 240, 34], "string": "\"Would you like a big bun?\" she asks timidly.\n\"Why, big buns am mad, you!\" writes the Pig, in\na rage, for he is sensitive on the subject of eating."},
+        {"box": [584, 573, 256, 34], "string": "After this unkind answer, the little lady turns to go;\nbut just here she runs upon old man Muffaroo, who has\nbeen led by the bird, to the house of the writing Pig."},
+        {"box": [753, 553, 77, 16], "string": "(COPYRIGHT, 1904, BY THE\nNEW YORK HERALD CO.)"},
+        {"box": [61, 814, 172, 22], "string": "7. When the old man hears Lovekins' account\nof her adventure with the learned Mr. Hog, he\nresolves to pay a visit to the house himself."},
+        {"box": [325, 813, 220, 22], "string": "8. \"In pew we sung big hym,\" is the extraordinary message\nwith which he is greeted.\n\"Oh!\" says Muffaroo, \"you mean in church you sang hymns.\""},
+        {"box": [590, 814, 255, 22], "string": "9 Now, this was the worst thing he could have said,\nfor the sensitive pig does not like to be corrected in grammar.\n\"Boy, yew go away. We sip.\" writes he, \"home ob hog pig.\" Then-"},
+        {"box": [60, 1066, 160, 24], "string": "10-suddenly Muffaroo hears a loud cry\ncoming from Lady Lovekins, who has\nstrolled into the woods hard by."},
+        {"box": [325, 1066, 162, 23], "string": "11. He finds her staring in horror at the\nground, where, flat on his back, lies the poor\nlittle bird, the victim of some unknown hand"},
+        {"box": [591, 1066, 205, 22], "string": "12. And in his mouth the sign still says: \"Follow me,\" but\nthe bird has gone where good birds go, and Lovekins\nand Muffaroo do not care to follow."},
+        {"box": [760, 1118, 83, 10], "string": "March 20, 1904"},
+        {"box": [667, 363, 172, 22], "rotation": 180, "string": "7. When the old man hears Lovekins' account\nof her adventure with the learned Mr. Hog, he\nresolves to pay a visit to the house himself."},
+        {"box": [355, 364, 220, 22], "rotation": 180, "string": "8. \"In pew we sung big hym,\" is the extraordinary message\nwith which he is greeted.\n\"Oh!\" says Muffaroo, \"you mean in church you sang hymns.\""},
+        {"box": [55, 363, 255, 22], "rotation": 180, "string": "9 Now, this was the worst thing he could have said,\nfor the sensitive pig does not like to be corrected in grammar.\n\"Boy, yew go away. We sip.\" writes he, \"home ob hog pig.\" Then-"},
+        {"box": [680, 109, 160, 24], "rotation": 180, "string": "10-suddenly Muffaroo hears a loud cry\ncoming from Lady Lovekins, who has\nstrolled into the woods hard by."},
+        {"box": [413, 110, 162, 23], "rotation": 180, "string": "11. He finds her staring in horror at the\nground, where, flat on his back, lies the poor\nlittle bird, the victim of some unknown hand"},
+        {"box": [104, 111, 205, 22], "rotation": 180, "string": "12. And in his mouth the sign still says: \"Follow me,\" but\nthe bird has gone where good birds go, and Lovekins\nand Muffaroo do not care to follow."},
+        {"box": [70, 630, 77, 16], "rotation": 180, "string": "(COPYRIGHT, 1904, BY THE\nNEW YORK HERALD CO.)"}
+      ],
+      "flat_colors": [
+        "#f0ebdd", "#cbcfa9", "#babf84", "#999c74", "#747a69", "#bdbca9", "#e7ccb0", "#a88b72",
+        "#eadf92", "#9f5846", "#6b8093", "#d15232", "#4e89b5"
+      ],
+      "ink_colors": ["#2c2d33"],
+      "notes": "The scan shows the strip twice: the top half as printed (captions 1-6 under the panels, 7-12 upside down above them), the bottom half with the pictures turned around so captions 7-12 read upright. Hand-lettered signs inside the panels (tilted, partly ambigrams) are not annotated. Flat and ink colors are cluster centers of the printed colors, not exact values."
+    },
+    "scene.png": {
+      "size": [600, 450],
+      "categories": ["flat"],
+      "flat_colors": ["#87ceeb", "#5aaa5a", "#3c783c", "#ffdc3c", "#b43c3c", "#225a22", "#5a3c1e"]
+    }
+  }
+}

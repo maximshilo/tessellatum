@@ -27,6 +27,7 @@ import time
 from importlib import metadata
 from pathlib import Path
 
+import bench_manifest
 import bench_report
 
 BENCH_DIR = Path(__file__).resolve().parent
@@ -54,6 +55,12 @@ def main(argv: list[str] | None = None) -> int:
         f"optionally name the result set with =LABEL (default: {WORKTREE})",
     )
     run_p.add_argument("--images", nargs="+", type=Path, default=[DEFAULT_IMAGES_DIR], help="image files and/or directories")
+    run_p.add_argument(
+        "--category",
+        nargs="+",
+        choices=bench_manifest.CATEGORIES,
+        help="only images in any of these categories, per the manifest next to the images",
+    )
     run_p.add_argument(
         "--presets", nargs="+", default=["Easy", "Medium", "Hard"], help="difficulty presets (also: Max, the most granular Custom setting)"
     )
@@ -87,9 +94,13 @@ def main(argv: list[str] | None = None) -> int:
 
 # -- run --------------------------------------------------------------------
 def _cmd_run(args: argparse.Namespace) -> int:
-    images = _collect_images(args.images)
+    try:
+        images, manifest = select_images(_collect_images(args.images), args.category)
+    except bench_manifest.ManifestError as exc:
+        print(f"Invalid image manifest: {exc}", file=sys.stderr)
+        return 1
     if not images:
-        print("No images found.", file=sys.stderr)
+        print(f"No images in categories {', '.join(args.category)}." if args.category else "No images found.", file=sys.stderr)
         return 1
     cases = list(itertools.product(images, args.presets, args.long_edges))
 
@@ -126,7 +137,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 case_dir = out_dir / "cases" / case_id
                 if case_dir.exists():
                     shutil.rmtree(case_dir)
-                case = _run_case(args, src_dir, env, image, preset, long_edge, case_dir)
+                categories = list(manifest[image].categories) if image in manifest else []
+                case = _run_case(args, src_dir, env, image, preset, long_edge, case_dir, categories)
                 results_by_case[case_id] = case
                 print(_case_summary(case), flush=True)
 
@@ -146,9 +158,18 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_case(args, src_dir: Path, env: dict, image: Path, preset: str, long_edge: int, case_dir: Path) -> dict:
+def _run_case(
+    args, src_dir: Path, env: dict, image: Path, preset: str, long_edge: int, case_dir: Path, categories: list[str]
+) -> dict:
     settings = {"repeats": args.repeats, "warmup": args.warmup, "timeout_s": args.timeout}
-    base = {"case": case_dir.name, "image": image.name, "preset": preset, "long_edge": long_edge, "settings": settings}
+    base = {
+        "case": case_dir.name,
+        "image": image.name,
+        "categories": categories,
+        "preset": preset,
+        "long_edge": long_edge,
+        "settings": settings,
+    }
     cmd = [
         sys.executable,
         str(BENCH_DIR / "bench_case.py"),
@@ -168,7 +189,7 @@ def _run_case(args, src_dir: Path, env: dict, image: Path, preset: str, long_edg
         return {**base, "status": "timeout", "timeout_s": args.timeout}
     if proc.returncode != 0:
         return {**base, "status": "error", "error": "\n".join(proc.stderr.strip().splitlines()[-15:])}
-    return {**json.loads((case_dir / "case.json").read_text(encoding="utf-8")), "settings": settings}
+    return {**json.loads((case_dir / "case.json").read_text(encoding="utf-8")), "categories": categories, "settings": settings}
 
 
 def _case_summary(case: dict) -> str:
@@ -193,6 +214,21 @@ def _collect_images(paths: list[Path]) -> list[Path]:
         else:
             print(f"warning: {path} does not exist, skipping", file=sys.stderr)
     return [p.resolve() for p in images]
+
+
+def select_images(
+    images: list[Path], categories: list[str] | None
+) -> tuple[list[Path], dict[Path, bench_manifest.ImageInfo]]:
+    """Look up each image in the manifest next to it; keep those in any of ``categories`` (all, if none given)."""
+    by_dir = {directory: bench_manifest.load_directory(directory) for directory in {p.parent for p in images}}
+    manifest = {p: by_dir[p.parent][p.name] for p in images if p.name in by_dir[p.parent]}
+    unlisted = [p.name for p in images if p not in manifest]
+    if unlisted:
+        print(f"warning: no manifest entry, counted as {bench_manifest.UNCATEGORIZED}: {', '.join(unlisted)}", file=sys.stderr)
+    if categories:
+        wanted = set(categories)
+        images = [p for p in images if p in manifest and wanted & set(manifest[p].categories)]
+    return images, manifest
 
 
 @contextlib.contextmanager
