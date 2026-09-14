@@ -45,7 +45,89 @@ images x presets x output sizes:
 Defaults: every image in `tests/sample_images/`, presets Easy/Medium/Hard, at
 preview size (1100 px). `--presets Max` adds the most granular Custom setting
 (the worst case for region handling); `--long-edge 1100 2400` adds export size;
-`--threads N` caps worker threads to test scaling.
+`--threads N` caps worker threads to test scaling; `--category face text` runs
+only the images in those categories (see the image manifest below).
+
+## Image manifest
+
+`tests/sample_images/manifest.json` records what each benchmark image is and
+where its important parts are, so metrics that need that (faces, text, line
+art) know what to score. `run` stores each image's categories with its cases,
+and the report groups cases by category.
+
+Images that exist only in your checkout get their entries in a git-ignored
+`manifest.local.json` next to `manifest.json`, with the same schema. Its
+entries are added to the committed ones, and replace committed entries of the
+same name. `tests/test_bench_manifest.py` fails if an image in
+`tests/sample_images/` has no entry, a size that doesn't match its file, or
+lacks an annotation its categories need.
+
+To check annotations by eye, draw them onto copies of the images (written to
+`benchmarks/results/annotations/`):
+
+```
+.venv\Scripts\python benchmarks\draw_annotations.py
+```
+
+### Schema (version 1)
+
+Coordinates are pixels of the source file. A box is `[x, y, width, height]`,
+with `x, y` its top-left corner.
+
+```json
+{
+  "schema": 1,
+  "images": {
+    "m-cartoon-bold-lines-girl.png": {
+      "size": [997, 1600],
+      "categories": ["cartoon", "face"],
+      "faces": [
+        {"kind": "cartoon", "box": [140, 270, 690, 560],
+         "features": [{"part": "eye", "box": [160, 410, 250, 225]}]}
+      ],
+      "text": [{"box": [10, 10, 200, 40], "string": "FIRST LINE\nSECOND LINE", "rotation": 0}],
+      "flat_colors": ["#ffffff", "#ffdfc9"],
+      "ink_colors": ["#000000"],
+      "areas": [{"kind": "gradient", "box": [0, 0, 997, 200]}],
+      "notes": "free text"
+    }
+  }
+}
+```
+
+Only `size` and `categories` are required. The first category is the image's
+primary one: the report's per-case tables list the image under it.
+
+| category | the image | needs |
+|---|---|---|
+| `photo` | is a continuous-tone photograph | – |
+| `cartoon` | is line art: dark ink lines around flat fills | `flat_colors` (2 or more) and `ink_colors` |
+| `flat` | is flat fills without ink lines | `flat_colors` (2 or more) |
+| `face` | has faces people will look at | `faces`, each with `features` |
+| `text` | has readable text | `text` |
+| `gradient` | has smooth gradients, e.g. sky or calm water | `areas` of kind `gradient` |
+| `texture` | has fine texture, e.g. fur, foliage or ripples | `areas` of kind `texture` |
+
+- **`size`** must match the file, so annotations can't silently go stale when
+  an image is replaced.
+- **`faces`**: `kind` is `human`, `animal` or `cartoon`. Each feature's `part`
+  is `eye`, `nose` or `mouth`, and its box lies inside the face box.
+- **`text`**: one block per sign, title or caption, in reading order.
+  - `string` is the ground truth: lines separated by `\n`, plain ASCII
+    punctuation (straight quotes, `-` for dashes).
+  - `rotation` is how far the text is turned counterclockwise from upright, in
+    degrees: `90` reads bottom to top, `180` is upside down.
+  - Only text that reads clearly at full size is annotated. Lettering that's
+    cut off, hidden or strongly slanted is left out and mentioned in `notes`.
+- **`flat_colors`** are the artwork's fill colors and **`ink_colors`** its line
+  colors, as `#rrggbb`; a color can't be both. For scans they are cluster
+  centers of the printed colors, not exact values.
+- **`areas`** are boxes lying inside a gradient or a textured part of the
+  image.
+
+Code reads the manifest with `bench_manifest.load_directory(images_dir)` or
+`bench_manifest.find_image(path)`; `ImageInfo.scaled_to((width, height))`
+converts the annotations to an output size.
 
 ## Quality metrics
 

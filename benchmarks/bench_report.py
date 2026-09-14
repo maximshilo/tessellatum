@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+import bench_manifest
 import bench_metrics as bm
 
 STAGE_ORDER = (
@@ -32,6 +33,13 @@ QUALITY_COLUMNS = (
     ("labeled_area_fraction", "labeled area ↑", "{:.1%}"),
     ("undersized_regions", "undersized ↓", "{:d}"),
     ("ink_fraction", "ink", "{:.1%}"),
+)
+
+# Metrics averaged per image category.
+SUMMARY_COLUMNS = (
+    ("de00_mean", "ΔE00 mean ↓", "{:.2f}"),
+    ("ssim", "SSIM ↑", "{:.3f}"),
+    ("labeled_area_fraction", "labeled area ↑", "{:.1%}"),
 )
 
 
@@ -63,11 +71,14 @@ class ResultSet:
 def build_report(paths: list[Path], tol: Tolerances, detail: bool = False) -> str:
     sets = [ResultSet(p) for p in paths]
     case_ids = list(dict.fromkeys(cid for s in sets for cid in s.cases))
+    categories = _case_categories(sets, case_ids)
+    # Every table lists cases grouped by their image's primary category (stable sort keeps the run order within one).
+    case_ids.sort(key=lambda cid: _category_key(categories[cid][0]))
     lines = ["# Tessellatum benchmark comparison", ""]
     lines += _header(sets)
     lines += _speed_section(sets, case_ids)
     lines += _stage_section(sets, case_ids, detail)
-    lines += _quality_section(sets, case_ids, tol)
+    lines += _quality_section(sets, case_ids, categories, tol)
     if len(sets) > 1:
         lines += _agreement_section(sets, case_ids)
         lines += _verdict_section(sets, case_ids, tol)
@@ -166,7 +177,9 @@ def _stage_section(sets: list[ResultSet], case_ids: list[str], detail: bool) -> 
     return lines
 
 
-def _quality_section(sets: list[ResultSet], case_ids: list[str], tol: Tolerances) -> list[str]:
+def _quality_section(
+    sets: list[ResultSet], case_ids: list[str], categories: dict[str, tuple[str, ...]], tol: Tolerances
+) -> list[str]:
     lines = [
         "## Quality",
         "",
@@ -175,27 +188,82 @@ def _quality_section(sets: list[ResultSet], case_ids: list[str], tol: Tolerances
         "**labeled area**: share of the page inside regions big enough to carry a number. "
         "**undersized**: regions left below the merge threshold. **ink**: share of dark outline/number pixels.",
         "",
+        "Categories come from the image manifest. The first table averages each category (an image counts in every "
+        "category it has); the per-case tables list each image under its primary category.",
+        "",
     ]
     ref = sets[0]
     pairs = [(s, ref) for s in sets[1:]] or [(ref, None)]
     for cand, base in pairs:
         lines += [f"### {cand.label}" + (f" vs {base.label}" if base else ""), ""]
-        rows = []
-        for cid in case_ids:
-            c = cand.ok_case(cid)
-            if c is None:
-                continue
-            b = base.ok_case(cid) if base else None
-            row = [_case_title(cid)]
-            for key, _title, fmt in QUALITY_COLUMNS:
-                row.append(_pair_cell(b["quality"].get(key) if b else None, c["quality"].get(key), fmt))
-            if base:
-                notes = _quality_flags(b["quality"], c["quality"], tol) + _drift_notes(b["quality"], c["quality"], tol) if b else []
-                row.append(", ".join(notes) or ("ok" if b else "no reference"))
-            rows.append(row)
+        lines += _category_summary(cand, base, case_ids, categories, tol)
         header = ["case", *(title for _key, title, _fmt in QUALITY_COLUMNS)] + (["flags"] if base else [])
-        lines += _table(header, rows) + [""]
+        for category in _category_order(categories.values(), primary_only=True):
+            rows = []
+            for cid in case_ids:
+                c = cand.ok_case(cid)
+                if c is None or categories[cid][0] != category:
+                    continue
+                b = base.ok_case(cid) if base else None
+                row = [_case_title(cid)]
+                for key, _title, fmt in QUALITY_COLUMNS:
+                    row.append(_pair_cell(b["quality"].get(key) if b else None, c["quality"].get(key), fmt))
+                if base:
+                    notes = _quality_flags(b["quality"], c["quality"], tol) + _drift_notes(b["quality"], c["quality"], tol) if b else []
+                    row.append(", ".join(notes) or ("ok" if b else "no reference"))
+                rows.append(row)
+            if rows:
+                lines += [f"#### {category}", ""] + _table(header, rows) + [""]
     return lines
+
+
+def _category_summary(
+    cand: ResultSet, base: ResultSet | None, case_ids: list[str], categories: dict[str, tuple[str, ...]], tol: Tolerances
+) -> list[str]:
+    rows = []
+    for category in _category_order(categories.values()):
+        cids = [cid for cid in case_ids if category in categories[cid] and cand.ok_case(cid)]
+        if not cids:
+            continue
+        row = [category, str(len({cand.ok_case(cid)["image"] for cid in cids})), str(len(cids))]
+        # With a reference, average only the cases both sets completed, so before and after cover the same cases.
+        paired = [cid for cid in cids if base.ok_case(cid)] if base else cids
+        for key, _title, fmt in SUMMARY_COLUMNS:
+            after = _mean([cand.ok_case(cid)["quality"].get(key) for cid in paired])
+            before = _mean([base.ok_case(cid)["quality"].get(key) for cid in paired]) if base else None
+            row.append(_pair_cell(before, after, fmt))
+        if base:
+            flagged = [cid for cid in paired if _quality_flags(base.ok_case(cid)["quality"], cand.ok_case(cid)["quality"], tol)]
+            row.append(str(len(flagged)))
+        rows.append(row)
+    header = ["category", "images", "cases", *(title for _key, title, _fmt in SUMMARY_COLUMNS)]
+    header += ["flagged cases"] if base else []
+    return _table(header, rows) + [""]
+
+
+def _case_categories(sets: list[ResultSet], case_ids: list[str]) -> dict[str, tuple[str, ...]]:
+    """Each case's image categories as ``bench.py run`` recorded them; result sets from before the manifest have none."""
+    categories = {}
+    for cid in case_ids:
+        recorded = next((s.cases[cid]["categories"] for s in sets if s.cases.get(cid, {}).get("categories")), None)
+        categories[cid] = tuple(recorded) if recorded else (bench_manifest.UNCATEGORIZED,)
+    return categories
+
+
+def _category_order(category_lists, primary_only: bool = False) -> list[str]:
+    present = {cats[0] for cats in category_lists} if primary_only else {c for cats in category_lists for c in cats}
+    return sorted(present, key=_category_key)
+
+
+def _category_key(category: str) -> tuple[int, str]:
+    """Manifest order, then uncategorized, then anything unknown alphabetically."""
+    order = (*bench_manifest.CATEGORIES, bench_manifest.UNCATEGORIZED)
+    return (order.index(category) if category in order else len(order), category)
+
+
+def _mean(values) -> float | None:
+    values = [v for v in values if v is not None]
+    return sum(values) / len(values) if values else None
 
 
 def _agreement_section(sets: list[ResultSet], case_ids: list[str]) -> list[str]:

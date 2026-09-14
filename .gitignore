@@ -7,3 +7,6 @@ dist/
 .pytest_cache/
 benchmarks/results/
 plans/
+
+# Local-only benchmark image annotations (see benchmarks/README.md)
+manifest.local.json
