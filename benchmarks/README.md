@@ -3,6 +3,10 @@
 Speed **and** quality benchmarks for the page-generation pipeline, so a change
 can be judged on numbers: is it faster, and did the output get any worse?
 
+What counts as a good page for each kind of image (photos, bold-line
+cartoons, faces, text), and the metrics still needed to measure it, is
+described in [`QUALITY_BENCHMARKS.md`](QUALITY_BENCHMARKS.md).
+
 ## Quick start
 
 ```
