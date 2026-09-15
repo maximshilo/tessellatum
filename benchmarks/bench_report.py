@@ -50,6 +50,10 @@ QUALITY_COLUMNS = (
     ("face_ssim", "face SSIM ↑", "{:.3f}"),
     ("features_lost", "features lost ↓", "{:d}"),
     ("labels_on_features", "labels on features ↓", "{:d}"),
+    ("text_cer_source", "text CER source", "{:.2f}"),
+    ("text_cer_page", "text CER page ↓", "{:.2f}"),
+    ("text_cer_painting", "text CER painting ↓", "{:.2f}"),
+    ("labels_on_text", "labels on text ↓", "{:d}"),
     ("undersized_regions", "undersized ↓", "{:d}"),
     ("ink_fraction", "ink", "{:.1%}"),
 )
@@ -206,8 +210,8 @@ def _quality_section(
         "**ΔE00** and **SSIM** score the *finished painting* (every region filled with its legend color) against the "
         "source image: CIEDE2000 color error (mean and 95th percentile) and structural similarity of luma. The other "
         "metrics score the page's regions, lines, numbers and legend colors, on line art how they keep the "
-        "artwork's ink lines and flat colors, and on faces whether their features survive, as the image manifest "
-        "gives them. "
+        "artwork's ink lines and flat colors, on faces whether their features survive, and on text whether OCR still "
+        "reads it, as the image manifest gives them. "
         "**labeled area**: share of the page inside regions that carry a number. **unlabeled**: regions without a "
         f"number. **slivers**: share of the page a round brush {bm.print_size.MIN_PAINTABLE_WIDTH_MM:g} mm wide can't "
         "paint without crossing into another region. "
@@ -232,13 +236,17 @@ def _quality_section(
         f"{bm.FEATURE_MIN_EDGE_RECALL:.0%} of their edges nor a region of their own covering at least "
         f"{bm.FEATURE_MIN_REGION_SHARE:.0%} of their box. "
         "**labels on features**: numbers overlapping a feature box. "
+        "**text CER**: character error rate of OCR inside the image's text boxes against their annotated text, on the "
+        "source (how much OCR reads there at all), the page and the painting (0 = read exactly, 1 = nothing read). "
+        "**labels on text**: numbers overlapping a text box. "
         "**undersized**: regions left below the merge threshold. **ink**: share of dark outline/number pixels.",
         "",
         "Millimeters and points are at print size on A4 (see `benchmarks/README.md`). The paintability metrics "
         "(unlabeled, slivers, label size, compactness), the line metrics (lines per boundary, same-color boundary, "
         "jaggedness, edge F1), the palette metrics (palette min ΔE00, color pairs), the line-art metrics (ink "
-        "line F1, tubes, ink in shapes, flat colors ΔE00) and the face metrics (face ΔE00, face SSIM, features "
-        "lost, labels on features) have no tolerances yet and don't affect the verdict.",
+        "line F1, tubes, ink in shapes, flat colors ΔE00), the face metrics (face ΔE00, face SSIM, features lost, "
+        "labels on features) and the text metrics (text CER, labels on text) have no tolerances yet and don't affect "
+        "the verdict.",
         "",
         "Categories come from the image manifest. The first table averages each category (an image counts in every "
         "category it has); the per-case tables list each image under its primary category.",

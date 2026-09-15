@@ -1,5 +1,6 @@
 """The benchmark case runner scores the pipeline's analysis payload, or what its stage probe captures for older versions."""
 
+import importlib.util
 import json
 import subprocess
 import sys
@@ -74,8 +75,11 @@ def test_probe_fallback_rebuilds_font_sizes_without_the_render_module():
     assert large[2:] == (200, 200)
 
 
-def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
-    # Line art: a fill inside a black outline 2 px wide, narrower than the widest ink line at this size (3.6 px).
+def _drawing(tmp_path: Path) -> Path:
+    """Line art with a face and a text block in its manifest: a fill inside a black outline 2 px wide.
+
+    The outline is narrower than the widest ink line at this size (3.6 px).
+    """
     drawing = np.full((200, 200, 3), 255, dtype=np.uint8)
     drawing[40:160, 40:160] = 0
     drawing[42:158, 42:158] = (230, 150, 90)
@@ -83,29 +87,38 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
     Image.fromarray(drawing).save(image)
     manifest = {
         "size": [200, 200],
-        "categories": ["cartoon", "face"],
+        "categories": ["cartoon", "face", "text"],
         "faces": [{"kind": "cartoon", "box": [30, 30, 140, 140], "features": [{"part": "eye", "box": [35, 35, 30, 30]}]}],
+        "text": [{"box": [60, 90, 80, 20], "string": "INK"}],
         "flat_colors": ["#ffffff", "#e6965a"],
         "ink_colors": ["#000000"],
     }
     (tmp_path / "manifest.json").write_text(json.dumps({"schema": 1, "images": {"drawing.png": manifest}}), encoding="utf-8")
+    return image
+
+
+def _case_arguments(image: Path, out: Path, repeats: int) -> list[str]:
+    return [
+        "--src", str(REPO_ROOT / "src"),
+        "--image", str(image),
+        "--preset", "Hard",
+        "--long-edge", "200",
+        "--repeats", str(repeats),
+        "--warmup", "0",
+        "--out", str(out),
+    ]  # fmt: skip
+
+
+def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
+    image = _drawing(tmp_path)
     out = tmp_path / "case"
 
     proc = subprocess.run(
-        [
-            sys.executable, str(REPO_ROOT / "benchmarks" / "bench_case.py"),
-            "--src", str(REPO_ROOT / "src"),
-            "--image", str(image),
-            "--preset", "Hard",
-            "--long-edge", "200",
-            "--repeats", "2",
-            "--warmup", "0",
-            "--out", str(out),
-        ],
+        [sys.executable, str(REPO_ROOT / "benchmarks" / "bench_case.py"), *_case_arguments(image, out, repeats=2)],
         capture_output=True,
         text=True,
         timeout=300,
-    )  # fmt: skip
+    )
 
     assert proc.returncode == 0, proc.stderr
     case = json.loads((out / "case.json").read_text(encoding="utf-8"))
@@ -146,6 +159,10 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
         "features_lost",
         "feature_edge_recall",
         "labels_on_features",
+        "text_cer_source",
+        "text_cer_page",
+        "text_cer_painting",
+        "labels_on_text",
     } <= case["quality"].keys()
     # Scored against the drawing's manifest entry: the outline is ink, and the legend has the fill's color.
     assert case["quality"]["ink_line_f1"] is not None and case["quality"]["tube_ink_fraction"] is not None
@@ -154,4 +171,42 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
     assert case["quality"]["face_de00_mean"] is not None and case["quality"]["labels_on_features"] is not None
     assert case["quality"]["features_lost"] == 0
     assert [feature["part"] for feature in case["face_features"]] == ["eye"]
+    # The text box holds no text; with the OCR package installed, it is read on the source, the page and the painting.
+    assert isinstance(case["quality"]["labels_on_text"], int)
+    if importlib.util.find_spec("rapidocr"):
+        assert case["ocr"].startswith("rapidocr ")
+        assert [(block["string"], sorted(block["read"])) for block in case["text_blocks"]] == [("INK", ["page", "painting", "source"])]
+        assert case["quality"]["text_cer_source"] is not None
     assert (out / "painted.png").is_file() and (out / "regions.npz").is_file()
+
+
+# Runs bench_case.py as its own script would, with the OCR package made impossible to import.
+WITHOUT_OCR = (
+    "import runpy, sys; from pathlib import Path; script = sys.argv[1]; sys.argv = sys.argv[1:]; "
+    "sys.path.insert(0, str(Path(script).parent)); sys.modules['rapidocr'] = None; runpy.run_path(script, run_name='__main__')"
+)
+
+
+def test_case_runner_scores_only_labels_on_text_without_the_ocr_engine(tmp_path):
+    image = _drawing(tmp_path)
+    out = tmp_path / "case"
+
+    proc = subprocess.run(
+        [sys.executable, "-c", WITHOUT_OCR, str(REPO_ROOT / "benchmarks" / "bench_case.py"), *_case_arguments(image, out, repeats=1)],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    case = json.loads((out / "case.json").read_text(encoding="utf-8"))
+    assert case["ocr"] is None and case["text_blocks"] is None
+    assert [case["quality"][f"text_cer_{layer}"] for layer in ("source", "page", "painting")] == [None, None, None]
+    assert isinstance(case["quality"]["labels_on_text"], int)
+    assert case["quality"]["face_de00_mean"] is not None  # everything else is still scored
+
+
+def test_text_scores_without_text_blocks_are_blank():
+    quality, blocks = bench_case.text_scores((), {}, [(0, 0, 10, 10)], reader=None)
+
+    assert quality == dict.fromkeys(bench_case.TEXT_KEYS) and blocks is None

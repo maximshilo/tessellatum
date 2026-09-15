@@ -27,6 +27,7 @@ UNCATEGORIZED = "uncategorized"
 FACE_KINDS = ("human", "animal", "cartoon")
 FEATURE_PARTS = ("eye", "nose", "mouth")
 AREA_KINDS = ("gradient", "texture")
+TEXT_ROTATIONS = (0, 90, 180, 270)  # quarter turns: slanted lettering isn't annotated
 
 _TOP_KEYS = {"schema", "images"}
 _IMAGE_KEYS = {"size", "categories", "notes", "faces", "text", "flat_colors", "ink_colors", "areas"}
@@ -297,8 +298,8 @@ def _parse_image(name: str, entry: object, where: str) -> ImageInfo:
         string, rotation = raw["string"], raw.get("rotation", 0)
         if not isinstance(string, str) or not string.strip():
             raise ManifestError(f"{at}.string: expected non-empty text")
-        if not (_is_int(rotation) and 0 <= rotation < 360):
-            raise ManifestError(f"{at}.rotation: expected whole degrees in 0..359")
+        if not (_is_int(rotation) and rotation in TEXT_ROTATIONS):
+            raise ManifestError(f"{at}.rotation: expected one of {', '.join(map(str, TEXT_ROTATIONS))} degrees")
         text.append(TextBlock(_parse_box(raw["box"], size, f"{at}.box"), string, rotation))
 
     flat_colors = _parse_colors(entry.get("flat_colors", []), f"{where}: flat_colors")
