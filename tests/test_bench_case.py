@@ -38,6 +38,7 @@ def test_probe_fallback_reads_the_same_page_data_as_the_analysis(speckled_image_
     assert from_analysis.min_region_area_px == from_probe.min_region_area_px
     assert from_analysis.labeled_region_ids == from_probe.labeled_region_ids != set()
     assert from_analysis.label_font_sizes_px == from_probe.label_font_sizes_px
+    assert from_analysis.label_boxes == from_probe.label_boxes
     assert [r.region_id for r in from_analysis.regions] == [r.region_id for r in from_probe.regions]
     assert len(from_analysis.strokes) == len(from_probe.strokes) == len(from_analysis.regions)
     for from_payload, rebuilt in zip(from_analysis.strokes, from_probe.strokes):
@@ -51,7 +52,8 @@ def test_probe_fallback_reads_the_same_page_data_as_the_analysis(speckled_image_
 def test_probe_fallback_rebuilds_font_sizes_without_the_render_module():
     dot = np.array([[[2, 3]]], dtype=np.int32)
     regions = [
-        SimpleNamespace(region_id=i, interior_radius=radius, contour=dot) for i, radius in enumerate([5.0, 9.0, 30.0, 60.0])
+        SimpleNamespace(region_id=i, interior_radius=radius, contour=dot, color_index=0, interior_point=point)
+        for i, (radius, point) in enumerate([(5.0, (100, 100)), (9.0, (100, 100)), (30.0, (100, 100)), (60.0, (199, 199))])
     ]
     captured = {
         "quantize": ((), {}, (None, np.zeros((2, 3), dtype=np.uint8))),
@@ -60,11 +62,16 @@ def test_probe_fallback_rebuilds_font_sizes_without_the_render_module():
     }
     params = difficulty.DifficultyParams(num_colors=2, min_region_fraction=0.5, blur_sigma=0.0)
 
-    page_data = bench_case.page_data_from_probe(captured, params, (4, 4), render_module=None)
+    page_data = bench_case.page_data_from_probe(captured, params, (200, 200), render_module=None)
 
     # Clearance of at least 9 px gets a number, at 0.85 x the clearance, between 10 and 40 px.
     assert page_data.labeled_region_ids == {1, 2, 3}
     assert page_data.label_font_sizes_px == [10, 25, 40]
+    # Each number, "1", is centered on its label point, but kept on the page.
+    small, medium, large = page_data.label_boxes
+    assert [((x0 + x1) / 2, (y0 + y1) / 2) for x0, y0, x1, y1 in (small, medium)] == [(100, 100), (100, 100)]
+    assert small[3] - small[1] < medium[3] - medium[1]
+    assert large[2:] == (200, 200)
 
 
 def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
@@ -74,7 +81,13 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
     drawing[42:158, 42:158] = (230, 150, 90)
     image = tmp_path / "drawing.png"
     Image.fromarray(drawing).save(image)
-    manifest = {"size": [200, 200], "categories": ["cartoon"], "flat_colors": ["#ffffff", "#e6965a"], "ink_colors": ["#000000"]}
+    manifest = {
+        "size": [200, 200],
+        "categories": ["cartoon", "face"],
+        "faces": [{"kind": "cartoon", "box": [30, 30, 140, 140], "features": [{"part": "eye", "box": [35, 35, 30, 30]}]}],
+        "flat_colors": ["#ffffff", "#e6965a"],
+        "ink_colors": ["#000000"],
+    }
     (tmp_path / "manifest.json").write_text(json.dumps({"schema": 1, "images": {"drawing.png": manifest}}), encoding="utf-8")
     out = tmp_path / "case"
 
@@ -128,8 +141,17 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
         "tube_ink_fraction",
         "flat_color_de00_mean",
         "flat_color_de00_max",
+        "face_de00_mean",
+        "face_ssim",
+        "features_lost",
+        "feature_edge_recall",
+        "labels_on_features",
     } <= case["quality"].keys()
     # Scored against the drawing's manifest entry: the outline is ink, and the legend has the fill's color.
     assert case["quality"]["ink_line_f1"] is not None and case["quality"]["tube_ink_fraction"] is not None
     assert case["quality"]["flat_color_de00_mean"] < 1.0
+    # The "eye" is the outline's corner, drawn on the page.
+    assert case["quality"]["face_de00_mean"] is not None and case["quality"]["labels_on_features"] is not None
+    assert case["quality"]["features_lost"] == 0
+    assert [feature["part"] for feature in case["face_features"]] == ["eye"]
     assert (out / "painted.png").is_file() and (out / "regions.npz").is_file()

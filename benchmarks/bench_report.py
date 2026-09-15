@@ -46,6 +46,10 @@ QUALITY_COLUMNS = (
     ("tube_regions", "tubes ↓", "{:d}"),
     ("tube_ink_fraction", f"ink in shapes < {bm.INK_MAX_WIDTH_MM:g} mm ↓", "{:.1%}"),
     ("flat_color_de00_mean", "flat colors ΔE00 ↓", "{:.2f}"),
+    ("face_de00_mean", "face ΔE00 ↓", "{:.2f}"),
+    ("face_ssim", "face SSIM ↑", "{:.3f}"),
+    ("features_lost", "features lost ↓", "{:d}"),
+    ("labels_on_features", "labels on features ↓", "{:d}"),
     ("undersized_regions", "undersized ↓", "{:d}"),
     ("ink_fraction", "ink", "{:.1%}"),
 )
@@ -201,8 +205,9 @@ def _quality_section(
         "",
         "**ΔE00** and **SSIM** score the *finished painting* (every region filled with its legend color) against the "
         "source image: CIEDE2000 color error (mean and 95th percentile) and structural similarity of luma. The other "
-        "metrics score the page's regions, lines, numbers and legend colors, and on line art how they keep the "
-        "artwork's ink lines and flat colors, as the image manifest gives them. "
+        "metrics score the page's regions, lines, numbers and legend colors, on line art how they keep the "
+        "artwork's ink lines and flat colors, and on faces whether their features survive, as the image manifest "
+        "gives them. "
         "**labeled area**: share of the page inside regions that carry a number. **unlabeled**: regions without a "
         f"number. **slivers**: share of the page a round brush {bm.print_size.MIN_PAINTABLE_WIDTH_MM:g} mm wide can't "
         "paint without crossing into another region. "
@@ -222,12 +227,18 @@ def _quality_section(
         f"**ink in shapes < {bm.INK_MAX_WIDTH_MM:g} mm**: share of the ink lines lying in parts of regions that narrow, "
         "to be painted instead of printed. "
         "**flat colors ΔE00**: mean CIEDE2000 from each of the artwork's flat colors to the nearest legend color. "
+        "**face ΔE00** and **face SSIM**: ΔE00 mean and SSIM inside the image's face boxes. "
+        f"**features lost**: annotated eyes, noses and mouths with neither drawn lines along at least "
+        f"{bm.FEATURE_MIN_EDGE_RECALL:.0%} of their edges nor a region of their own covering at least "
+        f"{bm.FEATURE_MIN_REGION_SHARE:.0%} of their box. "
+        "**labels on features**: numbers overlapping a feature box. "
         "**undersized**: regions left below the merge threshold. **ink**: share of dark outline/number pixels.",
         "",
         "Millimeters and points are at print size on A4 (see `benchmarks/README.md`). The paintability metrics "
         "(unlabeled, slivers, label size, compactness), the line metrics (lines per boundary, same-color boundary, "
-        "jaggedness, edge F1), the palette metrics (palette min ΔE00, color pairs) and the line-art metrics (ink "
-        "line F1, tubes, ink in shapes, flat colors ΔE00) have no tolerances yet and don't affect the verdict.",
+        "jaggedness, edge F1), the palette metrics (palette min ΔE00, color pairs), the line-art metrics (ink "
+        "line F1, tubes, ink in shapes, flat colors ΔE00) and the face metrics (face ΔE00, face SSIM, features "
+        "lost, labels on features) have no tolerances yet and don't affect the verdict.",
         "",
         "Categories come from the image manifest. The first table averages each category (an image counts in every "
         "category it has); the per-case tables list each image under its primary category.",

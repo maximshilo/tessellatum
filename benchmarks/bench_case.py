@@ -42,6 +42,8 @@ EXTRA_PRESETS = {"Max": dict(num_colors=40, min_region_fraction=0.0002, blur_sig
 
 # Line-art fields, None unless the image's manifest entry has both flat and ink colors.
 LINE_ART_KEYS = ("ink_line_precision", "ink_line_recall", "ink_line_f1", "tube_regions", "tube_ink_fraction")
+# Face fields, None unless the image's manifest entry has faces.
+FACE_KEYS = ("face_de00_mean", "face_ssim", "features_lost", "feature_edge_recall", "labels_on_features")
 
 # How render_page numbered regions in the versions before the analysis payload,
 # for when their render module doesn't say (see ``page_data_from_probe``).
@@ -87,6 +89,7 @@ class PageData:
     regions: list  # regions drawn on the page
     labeled_region_ids: set[int]  # regions that carry a number
     label_font_sizes_px: list[int]  # em size of every number on the page
+    label_boxes: list[tuple[float, float, float, float]]  # every number's (x0, y0, x1, y1) text box on the page
     strokes: list[np.ndarray]  # every line drawn: (x, y) polylines, pixel centers at integers; a closed one returns to its start
 
 
@@ -106,6 +109,7 @@ def page_data_from_analysis(analysis) -> PageData:
         regions=analysis.regions,
         labeled_region_ids={label.region_id for label in analysis.labels},
         label_font_sizes_px=[label.font_size for label in analysis.labels],
+        label_boxes=[tuple(label.box) for label in analysis.labels],
         strokes=(
             analysis.strokes
             if hasattr(analysis, "strokes")
@@ -122,8 +126,9 @@ def page_data_from_probe(captured: dict, params, size: tuple[int, int], render_m
     region it was given by drawing its contour as a polygon, and numbered
     exactly the regions with at least ``MIN_LABEL_RADIUS_PX`` of clearance, at
     a font size of that clearance times ``FONT_SIZE_RADIUS_RATIO``, clamped to
-    ``MIN_FONT_SIZE``..``MAX_FONT_SIZE``. The legend listed the drawn regions'
-    colors, in quantizer order.
+    ``MIN_FONT_SIZE``..``MAX_FONT_SIZE``, centered on the region's label point
+    and kept on the page. The legend listed the drawn regions' colors, in
+    quantizer order.
     """
     if not all(stage in captured for stage in ("quantize", "build_regions", "render_page")):
         return None
@@ -137,6 +142,7 @@ def page_data_from_probe(captured: dict, params, size: tuple[int, int], render_m
 
     labeled = [r for r in regions if r.interior_radius >= constant("MIN_LABEL_RADIUS_PX")]
     smallest, largest, ratio = constant("MIN_FONT_SIZE"), constant("MAX_FONT_SIZE"), constant("FONT_SIZE_RADIUS_RATIO")
+    font_sizes = [int(max(smallest, min(largest, r.interior_radius * ratio))) for r in labeled]
     return PageData(
         source="probe",
         region_id_map=region_id_map,
@@ -147,7 +153,11 @@ def page_data_from_probe(captured: dict, params, size: tuple[int, int], render_m
         min_region_area_px=max(4, int(round(params.min_region_fraction * h * w))),
         regions=regions,
         labeled_region_ids={r.region_id for r in labeled},
-        label_font_sizes_px=[int(max(smallest, min(largest, r.interior_radius * ratio))) for r in labeled],
+        label_font_sizes_px=font_sizes,
+        # Regions' color_index is in legend order by the time render_page runs, so it gives each number's text.
+        label_boxes=[
+            label_box(str(r.color_index + 1), font_size, r.interior_point, (w, h)) for r, font_size in zip(labeled, font_sizes)
+        ],
         strokes=[outline_polyline(r.contour) for r in regions if len(r.contour)],
     )
 
@@ -158,6 +168,24 @@ def outline_polyline(contour) -> np.ndarray:
 
     points = np.asarray(contour, dtype=np.float64).reshape(-1, 2)
     return np.vstack([points, points[:1]]) if len(points) >= 2 else points
+
+
+def label_box(text: str, font_size: int, point, page_size: tuple[int, int]) -> tuple[float, float, float, float]:
+    """The (x0, y0, x1, y1) box where ``render_page`` put a number.
+
+    That is the number's text box in the default font, centered on ``point``
+    and kept on the page.
+    """
+    from PIL import Image, ImageDraw, ImageFont  # imported late in this module, after the measured version's package
+
+    left, top, right, bottom = ImageDraw.Draw(Image.new("RGB", (1, 1))).textbbox(
+        (0, 0), text, font=ImageFont.load_default(size=font_size)
+    )
+    tw, th = right - left, bottom - top
+    x, y = point
+    x0 = min(max(x - tw / 2, 0), page_size[0] - tw)
+    y0 = min(max(y - th / 2, 0), page_size[1] - th)
+    return (x0, y0, x0 + tw, y0 + th)
 
 
 def main() -> int:
@@ -255,6 +283,7 @@ def main() -> int:
 
     args.out.mkdir(parents=True, exist_ok=True)
     result.page.save(args.out / "page.png")
+    face_features = None
 
     if page_data is not None:
         painted = bm.paint(page_data.region_id_map, page_data.region_color, page_data.palette_bgr)
@@ -291,6 +320,24 @@ def main() -> int:
             ink = bm.source_ink(source, flat_colors, ink_colors, ink_width_px)
             quality.update(bm.ink_line_match(page_data.strokes, ink, print_scale.mm_to_px(bm.INK_LINE_TOLERANCE_MM)))
             quality.update(bm.tube_regions(page_data.region_id_map, ink, ink_width_px))
+        # Faces are scored inside the manifest's face boxes, and on whether their features survive on the page.
+        quality.update(dict.fromkeys(FACE_KEYS))
+        faces = image_info.scaled_to(source.shape[1::-1]).faces if image_info else ()
+        if faces:
+            quality.update(bm.face_fidelity(source, painted, [_xywh(face.box) for face in faces]))
+            features = [feature for face in faces for feature in face.features]
+            feature_boxes = [_xywh(feature.box) for feature in features]
+            scores = bm.feature_survival(
+                feature_boxes,
+                page_data.region_id_map,
+                {region.region_id for region in page_data.regions},
+                page_data.strokes,
+                edges,
+                print_scale.mm_to_px(bm.EDGE_TOLERANCE_MM),
+            )
+            quality.update(bm.lost_features(scores))
+            quality["labels_on_features"] = bm.labels_on_boxes(page_data.label_boxes, feature_boxes) if features else None
+            face_features = [{"part": feature.part, **score} for feature, score in zip(features, scores)]
         Image.fromarray(np.ascontiguousarray(painted[:, :, ::-1])).save(args.out / "painted.png")
         np.savez_compressed(args.out / "regions.npz", region_id_map=page_data.region_id_map)
 
@@ -325,9 +372,15 @@ def main() -> int:
         "peak_rss_mb": peak_rss_mb,
         "scored_from": page_data.source if page_data else None,
         "quality": quality,
+        "face_features": face_features,  # each annotated feature's part and feature_survival score
     }
     (args.out / "case.json").write_text(json.dumps(case, indent=2), encoding="utf-8")
     return 0
+
+
+def _xywh(box) -> tuple[int, int, int, int]:
+    """A manifest box as (x, y, width, height)."""
+    return (box.x, box.y, box.w, box.h)
 
 
 def _peak_rss_mb() -> float | None:

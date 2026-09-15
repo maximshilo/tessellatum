@@ -8,8 +8,10 @@ Two kinds:
   brush, unlabeled regions, label size, region shape, leftover undersized
   regions, outline clutter), how cleanly its lines are drawn (lines per
   boundary, boundaries between same-colored regions, jaggedness, lines on the
-  source's edges), how clearly its legend colors differ from each other, and,
-  on line art, whether it keeps the artwork's ink lines and flat colors.
+  source's edges), how clearly its legend colors differ from each other, on
+  line art whether it keeps the artwork's ink lines and flat colors, and on
+  faces how closely the painting matches inside them and whether their
+  features survive.
 * **Agreement** metrics score a result against a reference result (usually the
   previous version), to tell "identical output" apart from "different output".
 
@@ -45,6 +47,11 @@ PALETTE_MIN_DE00 = 10.0
 # line's centerline runs along it.
 INK_MAX_WIDTH_MM = 5.0
 INK_LINE_TOLERANCE_MM = 0.5
+# Faces. An annotated feature (an eye, a nose, a mouth) survives on the page if drawn lines run along at least
+# FEATURE_MIN_EDGE_RECALL of the source's edges inside its box, or if a drawn region lying mostly inside the box covers
+# at least FEATURE_MIN_REGION_SHARE of it.
+FEATURE_MIN_EDGE_RECALL = 0.3
+FEATURE_MIN_REGION_SHARE = 0.25
 
 
 def _load_print_size():
@@ -159,6 +166,11 @@ def mean_de00(a_bgr: np.ndarray, b_bgr: np.ndarray) -> float:
 
 def ssim_gray(a_bgr: np.ndarray, b_bgr: np.ndarray) -> float:
     """Mean SSIM (Wang et al. 2004; 11x11 Gaussian window, sigma 1.5) on luma."""
+    return float(ssim_map(a_bgr, b_bgr).mean())
+
+
+def ssim_map(a_bgr: np.ndarray, b_bgr: np.ndarray) -> np.ndarray:
+    """SSIM of luma at every pixel, from the window centered on it (see ``ssim_gray``)."""
     a = cv2.cvtColor(a_bgr, cv2.COLOR_BGR2GRAY).astype(np.float64)
     b = cv2.cvtColor(b_bgr, cv2.COLOR_BGR2GRAY).astype(np.float64)
 
@@ -170,8 +182,7 @@ def ssim_gray(a_bgr: np.ndarray, b_bgr: np.ndarray) -> float:
     var_b = blur(b * b) - mu_b**2
     cov = blur(a * b) - mu_a * mu_b
     c1, c2 = (0.01 * 255) ** 2, (0.03 * 255) ** 2
-    ssim_map = ((2 * mu_a * mu_b + c1) * (2 * cov + c2)) / ((mu_a**2 + mu_b**2 + c1) * (var_a + var_b + c2))
-    return float(ssim_map.mean())
+    return ((2 * mu_a * mu_b + c1) * (2 * cov + c2)) / ((mu_a**2 + mu_b**2 + c1) * (var_a + var_b + c2))
 
 
 def fidelity(source_bgr: np.ndarray, painted_bgr: np.ndarray) -> dict[str, float]:
@@ -554,6 +565,91 @@ def flat_color_match(flat_colors_bgr: np.ndarray, legend_bgr: np.ndarray) -> dic
     return {"flat_color_de00_mean": float(differences.mean()), "flat_color_de00_max": float(differences.max())}
 
 
+def face_fidelity(source_bgr: np.ndarray, painted_bgr: np.ndarray, face_boxes) -> dict[str, float | None]:
+    """How closely the finished painting matches the source inside the faces.
+
+    ``face_boxes`` are (x, y, width, height) boxes in pixels of both images.
+    Returns the mean CIEDE2000 error (``face_de00_mean``, as ``fidelity``
+    computes it) and the mean SSIM (``face_ssim``) over the pixels inside any
+    box, so where boxes overlap, pixels count once. A pixel's SSIM comes from
+    the window centered on it, which reaches 5 px past the box. Both None
+    without boxes.
+    """
+    inside = _box_mask(np.asarray(source_bgr).shape[:2], face_boxes)
+    if not inside.any():
+        return {"face_de00_mean": None, "face_ssim": None}
+    de = ciede2000(bgr_to_lab(source_bgr)[inside], bgr_to_lab(painted_bgr)[inside])
+    return {"face_de00_mean": float(de.mean()), "face_ssim": float(ssim_map(source_bgr, painted_bgr)[inside].mean())}
+
+
+def feature_survival(
+    feature_boxes,
+    region_id_map: np.ndarray,
+    drawn_region_ids,
+    strokes,
+    edges: np.ndarray,
+    tolerance_px: float,
+    min_edge_recall: float = FEATURE_MIN_EDGE_RECALL,
+    min_region_share: float = FEATURE_MIN_REGION_SHARE,
+) -> list[dict[str, float | bool | None]]:
+    """Whether each face feature, such as an eye, is still on the page: as lines along its edges, or as a shape of its own.
+
+    For each (x, y, width, height) box in ``feature_boxes``:
+
+    * ``edge_recall`` is the share of the source's ``edges`` (``source_edges``)
+      inside the box that lie within ``tolerance_px`` of a drawn line (the
+      centers of ``strokes``); None if the box holds no edges;
+    * ``region_share`` is the largest share of the box that one drawn region
+      (``drawn_region_ids``) lying at least half inside the box covers; 0 if
+      there is none;
+    * ``survived``: ``edge_recall`` is at least ``min_edge_recall``, or
+      ``region_share`` at least ``min_region_share``.
+    """
+    ids = np.asarray(region_id_map)
+    near_lines = _near(_drawn_lines(strokes, ids.shape), tolerance_px)
+    areas = np.bincount(ids[ids >= 0].ravel())
+    drawn = np.zeros(areas.size, dtype=bool)
+    drawn[[r for r in drawn_region_ids if 0 <= r < areas.size]] = True
+    scores = []
+    for x, y, w, h in feature_boxes:
+        box = (slice(y, y + h), slice(x, x + w))
+        box_ids = ids[box]
+        in_box = np.bincount(box_ids[box_ids >= 0].ravel(), minlength=areas.size)
+        mostly_inside = drawn & (in_box > 0) & (2 * in_box >= areas)
+        region_share = float(in_box[mostly_inside].max() / box_ids.size) if mostly_inside.any() else 0.0
+        box_edges = edges[box]
+        edge_recall = float(near_lines[box][box_edges].mean()) if box_edges.any() else None
+        survived = (edge_recall is not None and edge_recall >= min_edge_recall) or region_share >= min_region_share
+        scores.append({"edge_recall": edge_recall, "region_share": region_share, "survived": bool(survived)})
+    return scores
+
+
+def lost_features(scores) -> dict[str, float | int | None]:
+    """``features_lost``: how many of ``feature_survival``'s features didn't survive; ``feature_edge_recall``: their mean edge recall.
+
+    Both None without features; the recall also without edges in any feature box.
+    """
+    if not scores:
+        return {"features_lost": None, "feature_edge_recall": None}
+    recalls = [score["edge_recall"] for score in scores if score["edge_recall"] is not None]
+    return {
+        "features_lost": sum(not score["survived"] for score in scores),
+        "feature_edge_recall": float(np.mean(recalls)) if recalls else None,
+    }
+
+
+def labels_on_boxes(label_boxes, boxes) -> int:
+    """How many numbers overlap any of the (x, y, width, height) ``boxes``.
+
+    ``label_boxes`` are the numbers' (x0, y0, x1, y1) text boxes, in the same
+    pixel coordinates: a box covers [x, x + width) and a text box [x0, x1).
+    Boxes that only touch don't overlap.
+    """
+    return sum(
+        any(x0 < x + w and x < x1 and y0 < y + h and y < y1 for x, y, w, h in boxes) for x0, y0, x1, y1 in label_boxes
+    )
+
+
 _SUBPIXEL_BITS = 4  # cv2.polylines draws points given in 1/16 px
 _NEIGHBORHOOD_3X3 = np.ones((3, 3), dtype=np.uint8)
 _RESAMPLE_PX = 0.5  # jaggedness smooths lines resampled at most this far apart
@@ -728,6 +824,14 @@ def _thinning_tables() -> tuple[np.ndarray, np.ndarray]:
 
 
 _THINNING_TABLES = _thinning_tables()
+
+
+def _box_mask(shape: tuple[int, int], boxes) -> np.ndarray:
+    """The pixels inside any of the (x, y, width, height) ``boxes``."""
+    mask = np.zeros(shape, dtype=bool)
+    for x, y, w, h in boxes:
+        mask[y : y + h, x : x + w] = True
+    return mask
 
 
 def _near(mask: np.ndarray, tolerance_px: float) -> np.ndarray:

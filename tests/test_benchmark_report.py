@@ -12,6 +12,7 @@ PAINTABILITY_KEYS = ("unlabeled_regions", "sliver_area_fraction", "small_label_f
 LINE_KEYS = ("lines_per_boundary", "same_color_boundary_fraction", "jaggedness", "edge_f1")
 PALETTE_KEYS = ("palette_min_de00", "palette_close_pairs")
 LINE_ART_KEYS = ("ink_line_f1", "tube_regions", "tube_ink_fraction", "flat_color_de00_mean")
+FACE_KEYS = ("face_de00_mean", "face_ssim", "features_lost", "labels_on_features")
 
 
 def _case(image: str, categories: list[str], de00: float) -> dict:
@@ -49,6 +50,10 @@ def _case(image: str, categories: list[str], de00: float) -> dict:
             "tube_regions": 2,
             "tube_ink_fraction": 0.6,
             "flat_color_de00_mean": 3.5,
+            "face_de00_mean": 7.5,
+            "face_ssim": 0.6,
+            "features_lost": 1,
+            "labels_on_features": 2,
             "undersized_regions": 0,
             "ink_fraction": 0.1,
         },
@@ -120,7 +125,7 @@ def test_single_result_set_report_has_summary_without_flags(tmp_path):
 
 def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path):
     before = _case("lion.jpg", ["photo"], 5.0)
-    for key in PAINTABILITY_KEYS + LINE_KEYS + PALETTE_KEYS + LINE_ART_KEYS:
+    for key in PAINTABILITY_KEYS + LINE_KEYS + PALETTE_KEYS + LINE_ART_KEYS + FACE_KEYS:
         del before["quality"][key]
     old = _write_set(tmp_path / "old", [before])
     new = _write_set(tmp_path / "new", [_case("lion.jpg", ["photo"], 5.0)])
@@ -132,14 +137,14 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
         "| case | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | regions | labeled area ↑ | unlabeled ↓ | slivers ↓ | labels < 6 pt ↓ "
         "| compactness p10 ↑ | compactness median ↑ | lines per boundary | same-color boundary ↓ | jaggedness ↓ "
         "| edge F1 ↑ | palette min ΔE00 ↑ | color pairs < 10 ΔE00 ↓ | ink line F1 ↑ | tubes ↓ | ink in shapes < 5 mm ↓ "
-        "| flat colors ΔE00 ↓ | undersized ↓ | ink |"
+        "| flat colors ΔE00 ↓ | face ΔE00 ↓ | face SSIM ↑ | features lost ↓ | labels on features ↓ | undersized ↓ | ink |"
     )
     assert header in old_alone
     assert (
         "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
-        "| – | 0 | 10.0% |"
+        "| – | – | – | – | – | 0 | 10.0% |"
     ) in old_alone
     assert (
         "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | 3 | 10.0% | 0.0% | 0.10 | 0.40 | 2.00 | 1.0% | 1.100 "
-        "| 0.50 | 4.5 | 2 | 0.25 | 2 | 60.0% | 3.50 | 0 | 10.0% | ok |"
+        "| 0.50 | 4.5 | 2 | 0.25 | 2 | 60.0% | 3.50 | 7.50 | 0.600 | 1 | 2 | 0 | 10.0% | ok |"
     ) in old_vs_new

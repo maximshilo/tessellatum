@@ -186,9 +186,10 @@ Absolute metrics, per result. Fidelity is scored on the *finished painting*
 (every region filled with its legend color) against the source image at output
 size. Paintability is scored on the region map and the numbers, at print size
 (see "Print scale" above). Line quality is scored on the lines drawn, the region
-map and the source image, and the palette on the legend's colors. Line art is also
-scored against its manifest entry, on how the page keeps the artwork's ink lines and
-flat colors:
+map and the source image, and the palette on the legend's colors. Line art and faces
+are also scored against the image's manifest entry: on how the page keeps the
+artwork's ink lines and flat colors, and on how the painting matches inside the faces
+and whether their features survive:
 
 | metric | meaning | better |
 |---|---|---|
@@ -209,6 +210,9 @@ flat colors:
 | tubes | regions at least half made of the artwork's ink lines | lower (0) |
 | ink in shapes < 5 mm | share of the ink lines lying in parts of regions narrower than 5 mm: ink to paint instead of print | lower (0) |
 | flat colors ΔE00 | mean CIEDE2000 from each of the artwork's flat colors to the nearest legend color; `case.json` also records the largest, as `flat_color_de00_max` | lower |
+| face ΔE00, face SSIM | ΔE00 mean and SSIM inside the image's face boxes | lower, higher |
+| features lost | annotated eyes, noses and mouths the page no longer shows, as lines along their edges or as a region of their own; `case.json` also records the mean share of their edges drawn, as `feature_edge_recall`, and each feature's scores under `face_features` | lower (0) |
+| labels on features | numbers overlapping a feature box | lower (0) |
 | undersized | regions still below the difficulty's minimum size | lower (0) |
 | regions, ink | region count and share of dark outline/number pixels | informational |
 
@@ -335,8 +339,32 @@ How the line-art metrics are defined:
   can have fewer colors than the artwork, so some flat colors have no close
   match.
 
-The paintability, line, palette and line-art metrics have no tolerances yet, so
-they don't affect the verdict.
+How the face metrics are defined:
+
+- They read the image's manifest entry: its `faces`, each with a box and the boxes
+  of its `features`, scaled to output size. Images without faces get no value.
+- **Face ΔE00** and **face SSIM** average fidelity's ΔE00 and SSIM over the pixels
+  inside any face box. A pixel's SSIM comes from the window centered on it, which
+  reaches 5 px past the box.
+- **Features lost.** A feature survives if the page still shows it, as lines or as a
+  shape:
+  - lines: at least 30% of the source's edges inside its box (found as for edge F1)
+    lie within 0.5 mm of a drawn line. This share is the feature's edge recall;
+  - a shape: a drawn region lying at least half inside the box covers at least a
+    quarter of it. Edges in a textured box include the texture's: an eye outlined
+    as a region of its own can still leave most of the fur's edges around it
+    undrawn.
+  - On today's pages of the face images, the features that are gone score an edge
+    recall of at most 0.182, with no region of their own; those still there score
+    at least 0.411, or have a region covering at least 27.7% of their box.
+- **Labels on features** counts the numbers whose text box overlaps a feature box. A
+  number across two features counts once. Versions before 0.1.10 don't report where
+  their numbers are, so the harness rebuilds each box as the renderer placed it: the
+  number's text box in the default font, centered on the region's label point and
+  kept on the page.
+
+The paintability, line, palette, line-art and face metrics have no tolerances yet,
+so they don't affect the verdict.
 
 Agreement metrics, candidate vs. reference (computed by `compare` from the
 saved `page.png`, `painted.png` and `regions.npz` of each case):
