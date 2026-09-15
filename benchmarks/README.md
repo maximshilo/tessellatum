@@ -374,7 +374,7 @@ How the text metrics are defined:
 - **OCR** is RapidOCR on ONNX Runtime, with the PP-OCRv6 recognition model its
   wheel ships (Apache-2.0). Both install with the `dev` extra, and nothing is
   downloaded at run time. `rapidocr` is pinned, because its models are the
-  yardstick. Without it, the character error rates are blank and labels on text
+  yardstick. Without them, the character error rates are blank and labels on text
   are still counted.
 - **Reading a block.** OCR reads a block line by line, as many lines as its
   annotated text has, and recognizes each line without looking for text first:
