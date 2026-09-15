@@ -67,9 +67,15 @@ def test_probe_fallback_rebuilds_font_sizes_without_the_render_module():
     assert page_data.label_font_sizes_px == [10, 25, 40]
 
 
-def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path, sample_image_bgr):
-    image = tmp_path / "blocks.png"
-    Image.fromarray(np.ascontiguousarray(sample_image_bgr[:, :, ::-1])).save(image)
+def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
+    # Line art: a fill inside a black outline 2 px wide, narrower than the widest ink line at this size (3.6 px).
+    drawing = np.full((200, 200, 3), 255, dtype=np.uint8)
+    drawing[40:160, 40:160] = 0
+    drawing[42:158, 42:158] = (230, 150, 90)
+    image = tmp_path / "drawing.png"
+    Image.fromarray(drawing).save(image)
+    manifest = {"size": [200, 200], "categories": ["cartoon"], "flat_colors": ["#ffffff", "#e6965a"], "ink_colors": ["#000000"]}
+    (tmp_path / "manifest.json").write_text(json.dumps({"schema": 1, "images": {"drawing.png": manifest}}), encoding="utf-8")
     out = tmp_path / "case"
 
     proc = subprocess.run(
@@ -115,5 +121,15 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path, sam
         "edge_f1",
         "palette_min_de00",
         "palette_close_pairs",
+        "ink_line_precision",
+        "ink_line_recall",
+        "ink_line_f1",
+        "tube_regions",
+        "tube_ink_fraction",
+        "flat_color_de00_mean",
+        "flat_color_de00_max",
     } <= case["quality"].keys()
+    # Scored against the drawing's manifest entry: the outline is ink, and the legend has the fill's color.
+    assert case["quality"]["ink_line_f1"] is not None and case["quality"]["tube_ink_fraction"] is not None
+    assert case["quality"]["flat_color_de00_mean"] < 1.0
     assert (out / "painted.png").is_file() and (out / "regions.npz").is_file()

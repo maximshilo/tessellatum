@@ -8,7 +8,8 @@ Two kinds:
   brush, unlabeled regions, label size, region shape, leftover undersized
   regions, outline clutter), how cleanly its lines are drawn (lines per
   boundary, boundaries between same-colored regions, jaggedness, lines on the
-  source's edges), and how clearly its legend colors differ from each other.
+  source's edges), how clearly its legend colors differ from each other, and,
+  on line art, whether it keeps the artwork's ink lines and flat colors.
 * **Agreement** metrics score a result against a reference result (usually the
   previous version), to tell "identical output" apart from "different output".
 
@@ -39,6 +40,11 @@ EDGE_TOLERANCE_MM = 0.5
 EDGE_THRESHOLDS = (5.0, 10.0)
 # Palette. Colors should differ from each other by a clear margin: at least PALETTE_MIN_DE00 (CIEDE2000).
 PALETTE_MIN_DE00 = 10.0
+# Line art. The artwork's ink lines are its ink colors (from the image manifest) where they are narrower than
+# INK_MAX_WIDTH_MM; wider areas in an ink color are fills. A drawn line within INK_LINE_TOLERANCE_MM of an ink
+# line's centerline runs along it.
+INK_MAX_WIDTH_MM = 5.0
+INK_LINE_TOLERANCE_MM = 0.5
 
 
 def _load_print_size():
@@ -416,13 +422,7 @@ def edge_alignment(region_id_map: np.ndarray, edges: np.ndarray, tolerance_px: f
     boundary = boundary_map(region_id_map)
     precision = _share_near(boundary, edges, tolerance_px)
     recall = _share_near(edges, boundary, tolerance_px)
-    if precision is None and recall is None:
-        f1 = None
-    elif not precision or not recall:
-        f1 = 0.0
-    else:
-        f1 = 2 * precision * recall / (precision + recall)
-    return {"edge_precision": precision, "edge_recall": recall, "edge_f1": f1}
+    return {"edge_precision": precision, "edge_recall": recall, "edge_f1": _f1(precision, recall)}
 
 
 def palette_separation(palette_bgr: np.ndarray, min_de00: float = PALETTE_MIN_DE00) -> dict[str, float | int | None]:
@@ -443,12 +443,127 @@ def palette_separation(palette_bgr: np.ndarray, min_de00: float = PALETTE_MIN_DE
     return {"palette_min_de00": float(differences.min()), "palette_close_pairs": int((differences < min_de00).sum())}
 
 
+def source_ink(
+    image_bgr: np.ndarray, flat_colors_bgr: np.ndarray, ink_colors_bgr: np.ndarray, max_width_px: float
+) -> np.ndarray:
+    """The artwork's ink lines: pixels in an ink color, in parts of the ink narrower than ``max_width_px``.
+
+    Every pixel takes the nearest of the flat and ink colors given (Kx3 uint8
+    sRGB in BGR order), by CIEDE2000 on ``bgr_to_lab_exact``. Anti-aliasing
+    between two ink colors is ink too: mixes of every two ink colors, in sRGB
+    steps of 1/8, count as ink colors. Parts of the ink that a disk
+    ``max_width_px`` wide fits into (the opening of ``sliver_mask``) are fills
+    drawn in an ink color, not lines.
+    """
+    image = np.asarray(image_bgr, dtype=np.uint8)
+    flats = np.asarray(flat_colors_bgr, dtype=np.uint8).reshape(-1, 3)
+    inks = np.asarray(ink_colors_bgr, dtype=np.uint8).reshape(-1, 3)
+    if len(inks) == 0:
+        return np.zeros(image.shape[:2], dtype=bool)
+    ink = _nearest_colors(image, np.concatenate([flats, inks, _ink_mixes(inks)])) >= len(flats)
+    return ink & sliver_mask(ink.astype(np.int32), max_width_px)
+
+
+def centerlines(mask: np.ndarray) -> np.ndarray:
+    """The shapes in ``mask`` thinned to 8-connected centerlines one pixel wide (Zhang & Suen 1984).
+
+    As in the original algorithm, a shape of 2 x 2 pixels vanishes.
+    """
+    mask = np.asarray(mask, dtype=bool)
+    thinned = np.zeros(mask.shape, dtype=bool)
+    rows, cols = np.flatnonzero(mask.any(axis=1)), np.flatnonzero(mask.any(axis=0))
+    if rows.size == 0:
+        return thinned
+    box = (slice(rows[0], rows[-1] + 1), slice(cols[0], cols[-1] + 1))
+    image = np.pad(mask[box], 1).astype(np.uint8)
+    h, w = image.shape
+    inner = image[1:-1, 1:-1]  # a view, so deleting a pixel from it updates the neighborhoods read from image
+    changed = True
+    while changed:
+        changed = False
+        for deletable in _THINNING_TABLES:  # both sub-iterations; each decides from the image as it was before it
+            code = np.zeros(inner.shape, dtype=np.uint8)
+            for bit, (dy, dx) in enumerate(_NEIGHBORS_CLOCKWISE):
+                code |= image[1 + dy : h - 1 + dy, 1 + dx : w - 1 + dx] << np.uint8(bit)
+            delete = (inner == 1) & deletable[code]
+            if delete.any():
+                inner[delete] = 0
+                changed = True
+    thinned[box] = inner.astype(bool)
+    return thinned
+
+
+def ink_line_match(strokes, ink: np.ndarray, tolerance_px: float) -> dict[str, float | None]:
+    """Do the drawn lines run along the artwork's ink lines, down their middle?
+
+    ``ink`` is ``source_ink``'s mask; its ``centerlines`` are compared with the
+    pixels the drawn lines' centers pass through. ``ink_line_recall`` is the
+    share of centerline pixels within ``tolerance_px`` of a drawn line.
+    ``ink_line_precision`` is the share of drawn-line pixels on or within
+    ``tolerance_px`` of the ink that lie within ``tolerance_px`` of a
+    centerline, so lines along both edges of a wide ink line, as around a tube,
+    miss. Lines away from the ink, such as those between two fills, don't count.
+    ``ink_line_f1`` is their harmonic mean. A share of nothing is None; F1 is
+    None only when both are.
+    """
+    centers = centerlines(ink)
+    lines = _drawn_lines(strokes, ink.shape)
+    precision = _share_near(lines & _near(ink, tolerance_px), centers, tolerance_px)
+    recall = _share_near(centers, lines, tolerance_px)
+    return {"ink_line_precision": precision, "ink_line_recall": recall, "ink_line_f1": _f1(precision, recall)}
+
+
+def tube_regions(region_id_map: np.ndarray, ink: np.ndarray, max_width_px: float) -> dict[str, float | int | None]:
+    """Ink lines the page turns into shapes to paint.
+
+    ``ink`` is ``source_ink``'s mask. ``tube_regions`` counts the regions at
+    least half of whose pixels are ink: ink lines that became regions of their
+    own, outlined along both sides. ``tube_ink_fraction`` is the share of the
+    ink lying in parts of regions narrower than ``max_width_px`` (see
+    ``sliver_mask``): ink drawn as a thin shape to paint, whether a region of
+    its own or part of a bigger one, such as ink lines merged into a fill of
+    the same color. It is None without ink. Ink that the page leaves out of
+    every region, or that lies along the edge of a wide region, counts for
+    neither.
+    """
+    ids = np.asarray(region_id_map)
+    inside = ids >= 0
+    areas = np.bincount(ids[inside].ravel())
+    on_ink = np.bincount(ids[inside & ink].ravel(), minlength=areas.size)
+    ink_px = int(np.count_nonzero(ink))
+    in_thin_parts = int(np.count_nonzero(ink & sliver_mask(ids, max_width_px)))
+    return {
+        "tube_regions": int(np.count_nonzero((areas > 0) & (2 * on_ink >= areas))),
+        "tube_ink_fraction": in_thin_parts / ink_px if ink_px else None,
+    }
+
+
+def flat_color_match(flat_colors_bgr: np.ndarray, legend_bgr: np.ndarray) -> dict[str, float | None]:
+    """How closely the legend offers the artwork's flat colors.
+
+    Both are Kx3 uint8 sRGB colors in BGR order, compared by CIEDE2000 on
+    ``bgr_to_lab_exact``. Returns the mean (``flat_color_de00_mean``) and the
+    largest (``flat_color_de00_max``) difference between a flat color and the
+    legend color nearest to it; both None without flat colors or a legend.
+    """
+    flats = np.asarray(flat_colors_bgr, dtype=np.uint8).reshape(-1, 3)
+    legend = np.asarray(legend_bgr, dtype=np.uint8).reshape(-1, 3)
+    if len(flats) == 0 or len(legend) == 0:
+        return {"flat_color_de00_mean": None, "flat_color_de00_max": None}
+    differences = ciede2000(bgr_to_lab_exact(flats)[:, None, :], bgr_to_lab_exact(legend)[None, :, :]).min(axis=1)
+    return {"flat_color_de00_mean": float(differences.mean()), "flat_color_de00_max": float(differences.max())}
+
+
 _SUBPIXEL_BITS = 4  # cv2.polylines draws points given in 1/16 px
 _NEIGHBORHOOD_3X3 = np.ones((3, 3), dtype=np.uint8)
 _RESAMPLE_PX = 0.5  # jaggedness smooths lines resampled at most this far apart
 _EDGE_FIXED_POINT = 16  # Canny takes 16-bit gradients: 1/16 of a Lab unit
 # Linear sRGB (R, G, B) to CIE XYZ, as IEC 61966-2-1 gives it; each row sums to the D65 white point.
 _SRGB_TO_XYZ = np.array([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]])
+_COLOR_BATCH = 16_384  # pixel colors _nearest_colors compares at once, which keeps its temporary arrays small
+_INK_MIX_STEPS = 8  # source_ink counts mixes of two ink colors in steps of 1/8 as ink
+# A pixel's 8 neighbors as (dy, dx), clockwise from the one above; bit k of a neighborhood code is neighbor k.
+_NEIGHBORS_CLOCKWISE = ((-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1))
 
 
 def _line_neighborhoods(strokes, size: tuple[int, int]):
@@ -463,11 +578,26 @@ def _line_neighborhoods(strokes, size: tuple[int, int]):
         if x1 <= x0 or y1 <= y0:
             continue
         canvas = np.zeros((y1 - y0, x1 - x0), dtype=np.uint8)
-        fixed = np.rint((points - (x0, y0)) * 2**_SUBPIXEL_BITS).astype(np.int32)
-        if len(fixed) == 1:
-            fixed = np.repeat(fixed, 2, axis=0)  # a dot
-        cv2.polylines(canvas, [fixed], False, 1, thickness=1, lineType=cv2.LINE_8, shift=_SUBPIXEL_BITS)
+        _draw_line(canvas, points - (x0, y0))
         yield (x0, y0), cv2.dilate(canvas, _NEIGHBORHOOD_3X3).astype(bool)
+
+
+def _drawn_lines(strokes, shape: tuple[int, int]) -> np.ndarray:
+    """The pixels the drawn lines' centers pass through, rasterized as in ``boundary_lines``."""
+    canvas = np.zeros(shape, dtype=np.uint8)
+    for stroke in strokes:
+        points = np.asarray(stroke, dtype=np.float64).reshape(-1, 2)
+        if len(points):
+            _draw_line(canvas, points)
+    return canvas.astype(bool)
+
+
+def _draw_line(canvas: np.ndarray, points: np.ndarray) -> None:
+    """Rasterize an (x, y) polyline one pixel wide onto ``canvas``, at 1/16 px precision; a single point is a dot."""
+    fixed = np.rint(points * 2**_SUBPIXEL_BITS).astype(np.int32)
+    if len(fixed) == 1:
+        fixed = np.repeat(fixed, 2, axis=0)
+    cv2.polylines(canvas, [fixed], False, 1, thickness=1, lineType=cv2.LINE_8, shift=_SUBPIXEL_BITS)
 
 
 def _distance_to_junctions(ids: np.ndarray) -> np.ndarray:
@@ -559,6 +689,61 @@ def _smoothed_loop_lengths(samples: np.ndarray, kernel: np.ndarray) -> tuple[flo
 
 def _loop_length(points: np.ndarray) -> float:
     return float(np.hypot(*np.diff(points, axis=0, append=points[:1]).T).sum())
+
+
+def _nearest_colors(image_bgr: np.ndarray, colors_bgr: np.ndarray) -> np.ndarray:
+    """For every pixel, the index of the nearest of ``colors_bgr`` by CIEDE2000 (exact Lab); ties go to the first."""
+    pixels = image_bgr.reshape(-1, 3).astype(np.int32)
+    codes, pixel_code = np.unique(pixels[:, 0] << 16 | pixels[:, 1] << 8 | pixels[:, 2], return_inverse=True)
+    lab = bgr_to_lab_exact(np.column_stack([codes >> 16, codes >> 8 & 255, codes & 255]).astype(np.uint8))
+    targets = bgr_to_lab_exact(colors_bgr)[None, :, :]
+    nearest = np.empty(len(codes), dtype=np.int64)
+    for start in range(0, len(codes), _COLOR_BATCH):
+        batch = lab[start : start + _COLOR_BATCH, None, :]
+        nearest[start : start + len(batch)] = np.argmin(ciede2000(batch, targets), axis=1)
+    return nearest[pixel_code.ravel()].reshape(image_bgr.shape[:2])
+
+
+def _ink_mixes(inks: np.ndarray) -> np.ndarray:
+    """Mixes of every two of the Kx3 uint8 ``inks``, in sRGB steps of 1/_INK_MIX_STEPS, as anti-aliasing blends them."""
+    weights = np.arange(1, _INK_MIX_STEPS)[:, None] / _INK_MIX_STEPS
+    first, second = np.triu_indices(len(inks), k=1)
+    mixes = [(1 - weights) * inks[i] + weights * inks[j] for i, j in zip(first, second)]
+    return np.rint(np.concatenate(mixes)).astype(np.uint8) if mixes else np.zeros((0, 3), dtype=np.uint8)
+
+
+def _thinning_tables() -> tuple[np.ndarray, np.ndarray]:
+    """Whether Zhang–Suen's first and second sub-iteration delete a pixel, for each code of its 8 neighbors."""
+    first = np.zeros(256, dtype=bool)
+    second = np.zeros(256, dtype=bool)
+    for code in range(256):
+        ring = [(code >> bit) & 1 for bit in range(8)]  # clockwise from above, as _NEIGHBORS_CLOCKWISE
+        n, _ne, e, _se, s, _sw, w, _nw = ring
+        neighbors = sum(ring)
+        rises = sum(ring[k] == 0 and ring[(k + 1) % 8] == 1 for k in range(8))
+        removable = 2 <= neighbors <= 6 and rises == 1  # on the shape's edge, and not joining two of its parts
+        first[code] = removable and n * e * s == 0 and e * s * w == 0  # a south-east edge or a north-west corner
+        second[code] = removable and n * e * w == 0 and n * s * w == 0  # a north-west edge or a south-east corner
+    return first, second
+
+
+_THINNING_TABLES = _thinning_tables()
+
+
+def _near(mask: np.ndarray, tolerance_px: float) -> np.ndarray:
+    """Pixels within ``tolerance_px`` of a ``mask`` pixel (the mask included)."""
+    if not mask.any():
+        return np.zeros(mask.shape, dtype=bool)
+    return cv2.distanceTransform((~mask).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE) <= tolerance_px
+
+
+def _f1(precision: float | None, recall: float | None) -> float | None:
+    """Harmonic mean of precision and recall: None when both are None, 0 when either is None or 0."""
+    if precision is None and recall is None:
+        return None
+    if not precision or not recall:
+        return 0.0
+    return 2 * precision * recall / (precision + recall)
 
 
 def _share_near(pixels: np.ndarray, targets: np.ndarray, tolerance_px: float) -> float | None:

@@ -11,6 +11,7 @@ import bench_report  # noqa: E402
 PAINTABILITY_KEYS = ("unlabeled_regions", "sliver_area_fraction", "small_label_fraction", "compactness_p10", "compactness_median")
 LINE_KEYS = ("lines_per_boundary", "same_color_boundary_fraction", "jaggedness", "edge_f1")
 PALETTE_KEYS = ("palette_min_de00", "palette_close_pairs")
+LINE_ART_KEYS = ("ink_line_f1", "tube_regions", "tube_ink_fraction", "flat_color_de00_mean")
 
 
 def _case(image: str, categories: list[str], de00: float) -> dict:
@@ -44,6 +45,10 @@ def _case(image: str, categories: list[str], de00: float) -> dict:
             "edge_f1": 0.5,
             "palette_min_de00": 4.5,
             "palette_close_pairs": 2,
+            "ink_line_f1": 0.25,
+            "tube_regions": 2,
+            "tube_ink_fraction": 0.6,
+            "flat_color_de00_mean": 3.5,
             "undersized_regions": 0,
             "ink_fraction": 0.1,
         },
@@ -113,9 +118,9 @@ def test_single_result_set_report_has_summary_without_flags(tmp_path):
     assert "## Verdict" not in report
 
 
-def test_paintability_line_and_palette_columns_are_blank_for_result_sets_from_before_them(tmp_path):
+def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path):
     before = _case("lion.jpg", ["photo"], 5.0)
-    for key in PAINTABILITY_KEYS + LINE_KEYS + PALETTE_KEYS:
+    for key in PAINTABILITY_KEYS + LINE_KEYS + PALETTE_KEYS + LINE_ART_KEYS:
         del before["quality"][key]
     old = _write_set(tmp_path / "old", [before])
     new = _write_set(tmp_path / "new", [_case("lion.jpg", ["photo"], 5.0)])
@@ -126,13 +131,15 @@ def test_paintability_line_and_palette_columns_are_blank_for_result_sets_from_be
     header = (
         "| case | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | regions | labeled area ↑ | unlabeled ↓ | slivers ↓ | labels < 6 pt ↓ "
         "| compactness p10 ↑ | compactness median ↑ | lines per boundary | same-color boundary ↓ | jaggedness ↓ "
-        "| edge F1 ↑ | palette min ΔE00 ↑ | color pairs < 10 ΔE00 ↓ | undersized ↓ | ink |"
+        "| edge F1 ↑ | palette min ΔE00 ↑ | color pairs < 10 ΔE00 ↓ | ink line F1 ↑ | tubes ↓ | ink in shapes < 5 mm ↓ "
+        "| flat colors ΔE00 ↓ | undersized ↓ | ink |"
     )
     assert header in old_alone
     assert (
-        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | – | – | – | – | – | – | – | – | – | – | – | 0 | 10.0% |"
+        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
+        "| – | 0 | 10.0% |"
     ) in old_alone
     assert (
         "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | 3 | 10.0% | 0.0% | 0.10 | 0.40 | 2.00 | 1.0% | 1.100 "
-        "| 0.50 | 4.5 | 2 | 0 | 10.0% | ok |"
+        "| 0.50 | 4.5 | 2 | 0.25 | 2 | 60.0% | 3.50 | 0 | 10.0% | ok |"
     ) in old_vs_new
