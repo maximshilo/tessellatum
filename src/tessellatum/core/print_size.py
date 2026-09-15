@@ -45,11 +45,11 @@ class PaperFormat:
         return (height, width) if landscape else (width, height)
 
 
-# The print target (D-006), with default margins (D-011).
+# The print target: A4 at 300 dpi, with 10 mm margins.
 A4 = PaperFormat("A4", width_mm=210.0, height_mm=297.0, margin_mm=10.0)
 PRINT_DPI = 300
 
-# Paintability thresholds at print size (D-011).
+# Paintability thresholds at print size; benchmarks/README.md ("Print scale") explains them.
 MIN_PAINTABLE_WIDTH_MM = 3.0  # narrowest a region, or any part of one, can be and still take a brush
 MIN_LABEL_SIZE_PT = 6.0  # smallest region number, as the font's em size
 OUTLINE_WIDTH_MM = 0.3
