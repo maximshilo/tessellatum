@@ -186,7 +186,7 @@ Absolute metrics, per result. Fidelity is scored on the *finished painting*
 (every region filled with its legend color) against the source image at output
 size. Paintability is scored on the region map and the numbers, at print size
 (see "Print scale" above). Line quality is scored on the lines drawn, the region
-map and the source image:
+map and the source image, and the palette on the legend's colors:
 
 | metric | meaning | better |
 |---|---|---|
@@ -201,6 +201,8 @@ map and the source image:
 | same-color boundary | share of the boundary length that lies between two regions of the same color | lower (0) |
 | jaggedness | length of the drawn lines over their length with wiggles under 0.5 mm smoothed away | lower (1) |
 | edge F1 | how well region boundaries and the source's edges line up, within 0.5 mm; `case.json` also records `edge_precision` and `edge_recall` | higher |
+| palette min ΔE00 | smallest CIEDE2000 color difference between two colors on the legend | higher |
+| color pairs < 10 ΔE00 | pairs of legend colors that differ by less than 10 ΔE00 | lower (0) |
 | undersized | regions still below the difficulty's minimum size | lower (0) |
 | regions, ink | region count and share of dark outline/number pixels | informational |
 
@@ -272,8 +274,25 @@ How the line metrics are defined:
   - Softly shaded images have few edges, so the boundaries between the bands of
     a gradient count as off-edge.
 
-The paintability and line metrics have no tolerances yet, so they don't affect the
-verdict.
+How the palette metrics are defined:
+
+- **Palette min ΔE00** and **color pairs** compare every two colors on the
+  legend: the colors of the drawn regions, which the painter mixes. A color
+  k-means found that no drawn region has isn't on the legend and doesn't count.
+  Versions before 0.1.10 don't report their legend, so the harness rebuilds it
+  from the drawn regions' colors.
+- Colors are compared with CIEDE2000, after converting sRGB to CIE Lab (D65)
+  exactly as the standards define it. Fidelity uses OpenCV's conversion, whose
+  lookup tables put a color up to about 0.5 ΔE00 from its exact value; that
+  averages out over an image, but not over a few colors near a threshold. 10 ΔE00
+  is the clear margin `QUALITY_BENCHMARKS.md` asks for.
+- Every pair counts: five near-identical browns make 10 close pairs.
+- Whether the colors can be printed isn't checked. They are 8-bit sRGB, so they
+  always display; which of them paper and ink can reproduce depends on the
+  printer, and checking that needs its color profile.
+
+The paintability, line and palette metrics have no tolerances yet, so they don't
+affect the verdict.
 
 Agreement metrics, candidate vs. reference (computed by `compare` from the
 saved `page.png`, `painted.png` and `regions.npz` of each case):

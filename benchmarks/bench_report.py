@@ -40,6 +40,8 @@ QUALITY_COLUMNS = (
     ("same_color_boundary_fraction", "same-color boundary ↓", "{:.1%}"),
     ("jaggedness", "jaggedness ↓", "{:.3f}"),
     ("edge_f1", "edge F1 ↑", "{:.2f}"),
+    ("palette_min_de00", "palette min ΔE00 ↑", "{:.1f}"),
+    ("palette_close_pairs", f"color pairs < {bm.PALETTE_MIN_DE00:g} ΔE00 ↓", "{:d}"),
     ("undersized_regions", "undersized ↓", "{:d}"),
     ("ink_fraction", "ink", "{:.1%}"),
 )
@@ -195,7 +197,7 @@ def _quality_section(
         "",
         "**ΔE00** and **SSIM** score the *finished painting* (every region filled with its legend color) against the "
         "source image: CIEDE2000 color error (mean and 95th percentile) and structural similarity of luma. The other "
-        "metrics score the page's regions, lines and numbers. "
+        "metrics score the page's regions, lines, numbers and legend colors. "
         "**labeled area**: share of the page inside regions that carry a number. **unlabeled**: regions without a "
         f"number. **slivers**: share of the page a round brush {bm.print_size.MIN_PAINTABLE_WIDTH_MM:g} mm wide can't "
         "paint without crossing into another region. "
@@ -207,11 +209,14 @@ def _quality_section(
         f"{bm.JAGGEDNESS_SMOOTHING_MM:g} mm smoothed away (1 = smooth). "
         f"**edge F1**: how well region boundaries and the source's edges line up, within {bm.EDGE_TOLERANCE_MM:g} mm "
         "(1 = every boundary on an edge and every edge on a boundary). "
+        "**palette min ΔE00**: smallest CIEDE2000 difference between two legend colors. "
+        f"**color pairs < {bm.PALETTE_MIN_DE00:g} ΔE00**: pairs of legend colors closer than that. "
         "**undersized**: regions left below the merge threshold. **ink**: share of dark outline/number pixels.",
         "",
         "Millimeters and points are at print size on A4 (see `benchmarks/README.md`). The paintability metrics "
-        "(unlabeled, slivers, label size, compactness) and the line metrics (lines per boundary, same-color boundary, "
-        "jaggedness, edge F1) have no tolerances yet and don't affect the verdict.",
+        "(unlabeled, slivers, label size, compactness), the line metrics (lines per boundary, same-color boundary, "
+        "jaggedness, edge F1) and the palette metrics (palette min ΔE00, color pairs) have no tolerances yet and "
+        "don't affect the verdict.",
         "",
         "Categories come from the image manifest. The first table averages each category (an image counts in every "
         "category it has); the per-case tables list each image under its primary category.",

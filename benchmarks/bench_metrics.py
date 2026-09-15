@@ -6,9 +6,9 @@ Two kinds:
   finished painting (every region filled with its legend color) reproduces the
   source image, how paintable the page is at print size (slivers too thin for a
   brush, unlabeled regions, label size, region shape, leftover undersized
-  regions, outline clutter), and how cleanly its lines are drawn (lines per
+  regions, outline clutter), how cleanly its lines are drawn (lines per
   boundary, boundaries between same-colored regions, jaggedness, lines on the
-  source's edges).
+  source's edges), and how clearly its legend colors differ from each other.
 * **Agreement** metrics score a result against a reference result (usually the
   previous version), to tell "identical output" apart from "different output".
 
@@ -37,6 +37,8 @@ JAGGEDNESS_SMOOTHING_MM = 0.5
 EDGE_SMOOTHING_MM = 0.5
 EDGE_TOLERANCE_MM = 0.5
 EDGE_THRESHOLDS = (5.0, 10.0)
+# Palette. Colors that differ by less than PALETTE_MIN_DE00 (CIEDE2000) are too close to tell apart reliably.
+PALETTE_MIN_DE00 = 10.0
 
 
 def _load_print_size():
@@ -82,6 +84,20 @@ def bgr_to_lab(image_bgr: np.ndarray) -> np.ndarray:
     """uint8 sRGB (BGR order) -> float64 CIE Lab with L in 0..100."""
     lab = cv2.cvtColor(image_bgr.astype(np.float32) / 255.0, cv2.COLOR_BGR2Lab)
     return lab.astype(np.float64)
+
+
+def bgr_to_lab_exact(colors_bgr: np.ndarray) -> np.ndarray:
+    """uint8 sRGB colors (BGR order, ...x3) -> float64 CIE Lab, computed as the sRGB and CIELAB standards define it (D65).
+
+    ``bgr_to_lab`` goes through OpenCV, whose interpolated lookup tables put a
+    color up to about 0.5 ΔE00 from its exact Lab value. That averages out over
+    an image, but not when a few colors are compared against a threshold.
+    """
+    rgb = np.asarray(colors_bgr, dtype=np.float64)[..., ::-1] / 255
+    linear = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    xyz = linear @ _SRGB_TO_XYZ.T / _SRGB_TO_XYZ.sum(axis=1)  # relative to the white point, so grays have no chroma
+    f = np.where(xyz > (6 / 29) ** 3, np.cbrt(xyz), xyz * (29 / 6) ** 2 / 3 + 4 / 29)
+    return np.stack([116 * f[..., 1] - 16, 500 * (f[..., 0] - f[..., 1]), 200 * (f[..., 1] - f[..., 2])], axis=-1)
 
 
 def ciede2000(lab1: np.ndarray, lab2: np.ndarray) -> np.ndarray:
@@ -409,10 +425,30 @@ def edge_alignment(region_id_map: np.ndarray, edges: np.ndarray, tolerance_px: f
     return {"edge_precision": precision, "edge_recall": recall, "edge_f1": f1}
 
 
+def palette_separation(palette_bgr: np.ndarray, min_de00: float = PALETTE_MIN_DE00) -> dict[str, float | int | None]:
+    """How clearly the colors of a palette differ from each other.
+
+    ``palette_bgr`` holds Kx3 uint8 sRGB colors in BGR order, converted to Lab
+    with ``bgr_to_lab_exact``. Returns ``palette_min_de00``, the smallest
+    CIEDE2000 difference between two of them (None for fewer than two colors),
+    and ``palette_close_pairs``, the number of pairs that differ by less than
+    ``min_de00``.
+    """
+    colors = np.asarray(palette_bgr, dtype=np.uint8).reshape(-1, 3)
+    if len(colors) < 2:
+        return {"palette_min_de00": None, "palette_close_pairs": 0}
+    lab = bgr_to_lab_exact(colors)
+    first, second = np.triu_indices(len(lab), k=1)
+    differences = ciede2000(lab[first], lab[second])
+    return {"palette_min_de00": float(differences.min()), "palette_close_pairs": int((differences < min_de00).sum())}
+
+
 _SUBPIXEL_BITS = 4  # cv2.polylines draws points given in 1/16 px
 _NEIGHBORHOOD_3X3 = np.ones((3, 3), dtype=np.uint8)
 _RESAMPLE_PX = 0.5  # jaggedness smooths lines resampled at most this far apart
 _EDGE_FIXED_POINT = 16  # Canny takes 16-bit gradients: 1/16 of a Lab unit
+# Linear sRGB (R, G, B) to CIE XYZ, as IEC 61966-2-1 gives it; each row sums to the D65 white point.
+_SRGB_TO_XYZ = np.array([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]])
 
 
 def _line_neighborhoods(strokes, size: tuple[int, int]):

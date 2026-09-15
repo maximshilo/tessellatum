@@ -360,3 +360,50 @@ def test_edge_alignment_scores_boundaries_on_and_off_the_source_edges():
     assert bm.edge_alignment(one_region, edges, 2.2) == {"edge_precision": None, "edge_recall": 0.0, "edge_f1": 0.0}
     assert bm.edge_alignment(square, no_edges, 2.2) == {"edge_precision": 0.0, "edge_recall": None, "edge_f1": 0.0}
     assert bm.edge_alignment(one_region, no_edges, 2.2) == {"edge_precision": None, "edge_recall": None, "edge_f1": None}
+
+
+def _gray_lightness(value: int) -> float:
+    """CIE L* of the sRGB gray ``value``, from the sRGB and CIELAB definitions."""
+    c = value / 255
+    y = c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    return 116 * np.cbrt(y) - 16 if y > (6 / 29) ** 3 else y * (29 / 3) ** 3
+
+
+def _gray_de00(value1: int, value2: int) -> float:
+    """CIEDE2000 between two sRGB grays: without chroma, only the lightness term is left."""
+    l1, l2 = _gray_lightness(value1), _gray_lightness(value2)
+    mid = ((l1 + l2) / 2 - 50) ** 2
+    return abs(l1 - l2) / (1 + 0.015 * mid / np.sqrt(20 + mid))
+
+
+def test_exact_lab_conversion_gives_published_values_and_grays_without_chroma():
+    red_green_blue_white_black = np.array([[0, 0, 255], [0, 255, 0], [255, 0, 0], [255, 255, 255], [0, 0, 0]], dtype=np.uint8)
+    published = [(53.24, 80.09, 67.20), (87.73, -86.18, 83.18), (32.30, 79.19, -107.86), (100, 0, 0), (0, 0, 0)]
+    grays = np.repeat(np.arange(256, dtype=np.uint8)[:, None], 3, axis=1)
+
+    # Published values use the sRGB matrix unrounded; the standard's 4-digit one moves red's a* and b* by 0.02.
+    assert bm.bgr_to_lab_exact(red_green_blue_white_black) == pytest.approx(np.array(published, dtype=np.float64), abs=0.05)
+    lab = bm.bgr_to_lab_exact(grays)
+    assert lab[:, 0] == pytest.approx([_gray_lightness(v) for v in range(256)], abs=1e-9)
+    assert np.abs(lab[:, 1:]).max() < 1e-9
+
+
+def test_palette_separation_is_the_smallest_color_difference_and_the_pairs_closer_than_the_minimum():
+    grays = [0, 255, 100, 118, 128, 160]
+    palette = np.repeat(np.array(grays, dtype=np.uint8)[:, None], 3, axis=1)
+
+    # Closer than 10 ΔE00: 100 and 118 (7.0), 118 and 128 (3.9). Not: 128 and 160 (10.8), 100 and 128 (11.1).
+    assert bm.palette_separation(palette) == pytest.approx(
+        {"palette_min_de00": _gray_de00(118, 128), "palette_close_pairs": 2}, abs=1e-9
+    )
+    assert bm.palette_separation(palette, min_de00=11.0)["palette_close_pairs"] == 3
+
+
+def test_palette_separation_counts_every_close_pair_including_identical_colors_and_needs_two_colors():
+    gray, black = [128, 128, 128], [0, 0, 0]
+    five_near_grays = np.array([[100 + i] * 3 for i in range(5)], dtype=np.uint8)
+
+    assert bm.palette_separation(np.array([gray, black, gray], dtype=np.uint8)) == {"palette_min_de00": 0.0, "palette_close_pairs": 1}
+    assert bm.palette_separation(five_near_grays)["palette_close_pairs"] == 10
+    assert bm.palette_separation(np.array([gray], dtype=np.uint8)) == {"palette_min_de00": None, "palette_close_pairs": 0}
+    assert bm.palette_separation(np.zeros((0, 3), dtype=np.uint8)) == {"palette_min_de00": None, "palette_close_pairs": 0}
