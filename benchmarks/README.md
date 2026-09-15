@@ -129,6 +129,41 @@ Code reads the manifest with `bench_manifest.load_directory(images_dir)` or
 `bench_manifest.find_image(path)`; `ImageInfo.scaled_to((width, height))`
 converts the annotations to an output size.
 
+## Print scale
+
+Paintability is physical: a brush needs a region a few millimeters wide, and a
+number has to be legible on paper. So paintability thresholds are set in
+millimeters and points, and converted to pixels for each output image by the
+print-size model in `src/tessellatum/core/print_size.py`. The harness loads that
+file from its own checkout (`bench_metrics.print_size`), not from the version
+being measured, so every version is judged at the same scale, including
+versions older than the model.
+
+- **Paper:** A4, 210 × 297 mm, with 10 mm margins, leaving a 190 × 277 mm
+  printable area. Print resolution 300 dpi.
+- **Placement:** the page prints on a sheet of its own (the legend gets
+  another), scaled to fill the printable area with its aspect ratio kept, on a
+  landscape sheet if the image is wider than tall. Its physical size depends
+  only on its shape, so the preview and the export of an image are judged at
+  the same physical size.
+- **Label size** is the font size (the em) in points. A digit is about 0.73 em
+  tall in the default font.
+
+| threshold | print size | 825 × 1100 px (3:4) | 1800 × 2400 px (3:4) | at 300 dpi |
+|---|---|---|---|---|
+| paintable width | ≥ 3 mm | 13 px | 28 px | 35 px |
+| region number | ≥ 6 pt | 9.2 px | 20 px | 25 px |
+| outline | ≈ 0.3 mm | 1.3 px | 2.8 px | 3.5 px |
+
+`print_scale((width, height))` gives an output image's scale: `px_per_mm`,
+`px_per_pt`, `dpi`, `printed_size_mm` and `landscape`, plus the conversions
+`mm_to_px`, `pt_to_px`, `mm2_to_px`, `px_to_mm` and `px_to_pt`. Each case's
+`case.json` records it under `print`.
+
+The pipeline never upscales, so a small source prints at a low resolution:
+`scene.png` (600 × 450 px) comes out at 60 dpi, where a 0.3 mm line is less
+than a pixel wide.
+
 ## Quality metrics
 
 Absolute metrics, per result, scored on the *finished painting* (every region

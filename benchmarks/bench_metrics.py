@@ -10,15 +10,38 @@ Two kinds:
   previous version), to tell "identical output" apart from "different output".
 
 Deliberately independent of the tessellatum package, so every version of the
-pipeline is scored by the same yardstick.
+pipeline is scored by the same yardstick. The one shared piece, the print-size
+model, is loaded from this checkout's source file (``print_size``), never from
+the version being measured.
 """
 
 from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
 
 import cv2
 import numpy as np
 
 BOUNDARY_TOLERANCE_PX = 2
+PRINT_SIZE_PATH = Path(__file__).resolve().parents[1] / "src" / "tessellatum" / "core" / "print_size.py"
+
+
+def _load_print_size():
+    """``tessellatum.core.print_size`` of this checkout, loaded by file path.
+
+    A regular import would find the version being benchmarked first, which may
+    judge pages differently or predate the model.
+    """
+    spec = importlib.util.spec_from_file_location("bench_print_size", PRINT_SIZE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses look up their module while being created
+    spec.loader.exec_module(module)
+    return module
+
+
+print_size = _load_print_size()
 
 
 def reference_resize(image_bgr: np.ndarray, long_edge: int) -> np.ndarray:

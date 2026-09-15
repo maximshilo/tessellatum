@@ -134,6 +134,7 @@ def main() -> int:
     captured = probe.captured  # from the last measured run
     reference = bm.reference_resize(image_bgr, args.long_edge)
     h, w = reference.shape[:2]
+    print_scale = bm.print_size.print_scale(result.page.size)
     page_rgb = np.asarray(result.page.convert("RGB"))
     quality: dict[str, float | int] = {
         "colors_used": int(result.num_colors_used),
@@ -173,6 +174,12 @@ def main() -> int:
         "status": "ok",
         "version": getattr(tessellatum, "__version__", "unknown"),
         "output_size": [result.page.width, result.page.height],
+        "print": {
+            "landscape": print_scale.landscape,
+            "printed_size_mm": list(print_scale.printed_size_mm),
+            "px_per_mm": print_scale.px_per_mm,
+            "dpi": print_scale.dpi,
+        },
         "import_s": import_s,
         "first_run_s": (warmup_runs or runs)[0]["total_s"],
         "median_total_s": statistics.median(totals),
