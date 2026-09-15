@@ -101,7 +101,11 @@ def page_data_from_analysis(analysis) -> PageData:
         regions=analysis.regions,
         labeled_region_ids={label.region_id for label in analysis.labels},
         label_font_sizes_px=[label.font_size for label in analysis.labels],
-        strokes=analysis.strokes if hasattr(analysis, "strokes") else [outline_polyline(r.contour) for r in analysis.regions],
+        strokes=(
+            analysis.strokes
+            if hasattr(analysis, "strokes")
+            else [outline_polyline(r.contour) for r in analysis.regions if len(r.contour)]
+        ),
     )
 
 

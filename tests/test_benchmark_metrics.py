@@ -319,6 +319,18 @@ def test_jaggedness_smooths_a_closed_line_that_meets_no_junction_all_the_way_rou
     )
 
 
+def test_line_metrics_skip_empty_lines_and_lines_too_short_to_measure():
+    page = np.zeros((40, 40), dtype=np.int32)
+    page[:, 20:] = 1
+    empty, dot, speck = np.zeros((0, 2)), np.array([[10.0, 10.0]]), np.array([[10.0, 10.0], [10.0001, 10.0]])
+    straight = np.array([[5.0, 5.0], [30.0, 5.0]])
+
+    assert bm.boundary_lines(page, [empty])["lines_per_boundary"] == 0.0
+    # A line shorter than the 0.5 px resampling step is skipped rather than smoothed with a kernel sized to its length.
+    assert bm.jaggedness([empty, dot, speck], page, 2.0) is None
+    assert bm.jaggedness([empty, dot, speck, straight], page, 2.0) == pytest.approx(1.0, abs=1e-12)
+
+
 def _two_halves(left_lab, right_lab) -> np.ndarray:
     """A 60 x 60 image in two halves of the given CIE Lab colors."""
     lab = np.empty((60, 60, 3), dtype=np.float32)

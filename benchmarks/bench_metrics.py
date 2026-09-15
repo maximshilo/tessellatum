@@ -331,8 +331,8 @@ def jaggedness(strokes, region_id_map: np.ndarray, smoothing_px: float) -> float
     smoothed along its length by a Gaussian of standard deviation
     ``smoothing_px``, with its ends fixed; a closed line that meets no junction
     is smoothed all the way round. The result is the pieces' total length over
-    their total smoothed length, so longer lines weigh more. None if no line is
-    long enough to measure.
+    their total smoothed length, so longer lines weigh more. Lines shorter than
+    half a pixel are skipped; None if no line is long enough to measure.
     """
     ids = np.asarray(region_id_map)
     h, w = ids.shape
@@ -450,15 +450,24 @@ def _distance_to_junctions(ids: np.ndarray) -> np.ndarray:
 
 
 def _without_repeats(points: np.ndarray) -> np.ndarray:
+    if len(points) < 2:
+        return points
     keep = np.concatenate([[True], np.any(np.diff(points, axis=0) != 0, axis=1)])
     return points[keep]
 
 
 def _resample(points: np.ndarray, max_spacing: float) -> tuple[np.ndarray | None, float]:
-    """(points evenly spaced along the polyline, at most ``max_spacing`` apart and including both ends; their spacing)."""
+    """(points evenly spaced along the polyline, at most ``max_spacing`` apart and including both ends; their spacing).
+
+    (None, 0) for a polyline shorter than ``max_spacing``. That keeps the
+    spacing above half of ``max_spacing``, and the smoothing kernel it sets
+    bounded, however short a line is.
+    """
     if len(points) < 2:
         return None, 0.0
     along = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(points, axis=0).T))])
+    if along[-1] < max_spacing:
+        return None, 0.0
     count = int(np.ceil(along[-1] / max_spacing)) + 1
     at = np.linspace(0.0, along[-1], count)
     return np.column_stack([np.interp(at, along, points[:, 0]), np.interp(at, along, points[:, 1])]), along[-1] / (count - 1)
