@@ -189,8 +189,9 @@ def _quality_section(
     lines = [
         "## Quality",
         "",
-        "Scored on the *finished painting* (every region filled with its legend color) against the source image. "
-        "**ΔE00**: CIEDE2000 color error, mean and 95th percentile. **SSIM**: structural similarity of luma. "
+        "**ΔE00** and **SSIM** score the *finished painting* (every region filled with its legend color) against the "
+        "source image: CIEDE2000 color error (mean and 95th percentile) and structural similarity of luma. The other "
+        "metrics score the page's regions and numbers. "
         "**labeled area**: share of the page inside regions that carry a number. **unlabeled**: regions without a "
         f"number. **slivers**: share of the page a round brush {bm.print_size.MIN_PAINTABLE_WIDTH_MM:g} mm wide can't "
         "paint without crossing into another region. "

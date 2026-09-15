@@ -184,7 +184,7 @@ def label_sizes(font_sizes_px, scale) -> dict[str, float | None]:
     """How large the numbers print: the smallest, in points, and the share below the minimum legible size.
 
     ``font_sizes_px`` are the numbers' em sizes on the page; ``scale`` is its
-    ``print_size.PrintScale``. Both are None on a page without numbers.
+    ``print_size.PrintScale``. Both results are None on a page without numbers.
     """
     if len(font_sizes_px) == 0:
         return {"small_label_fraction": None, "min_label_pt": None}
