@@ -61,6 +61,9 @@ class PageAnalysis:
     regions: list[Region]  # regions drawn on the page, in region-id order
     labels: list[Label]  # numbers drawn on the page
     outlines: np.ndarray  # HxW uint8: the outline layer alone, 0 = black line, 255 = paper
+    # Every line drawn, in drawing order: Nx2 float64 (x, y) points with pixel centers at integer coordinates.
+    # A closed line repeats its first point at the end; a single point is a dot.
+    strokes: list[np.ndarray]
 
 
 @dataclass
@@ -121,6 +124,12 @@ _cache = _StageCache(max_entries=6)
 def clear_cache() -> None:
     """Forget cached intermediate results (see ``_StageCache``)."""
     _cache.clear()
+
+
+def _polyline(contour: np.ndarray) -> np.ndarray:
+    """A contour drawn as a polygon outline, as (x, y) points that return to the first one."""
+    points = contour.reshape(-1, 2).astype(np.float64)
+    return np.vstack([points, points[:1]]) if len(points) >= 2 else points
 
 
 def load_image_bgr(path: Path) -> np.ndarray:
@@ -242,6 +251,7 @@ def generate(
             regions=regions,
             labels=rendered.labels,
             outlines=np.asarray(rendered.outlines),
+            strokes=[_polyline(contour) for contour in rendered.strokes],
         )
 
     return GeneratedPage(

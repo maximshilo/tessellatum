@@ -39,13 +39,14 @@ class RenderedPage:
     image: Image.Image  # RGB: outlines + numbers
     outlines: Image.Image  # "L": the outlines alone, 0 = black line, 255 = paper
     labels: list[Label]  # every number on the page, in drawing order
+    strokes: list[np.ndarray]  # every outline drawn, in drawing order: a region contour (Nx1x2 int32), closed; one point is a dot
 
 
 def render_page(size: tuple[int, int], regions: list[Region]) -> RenderedPage:
     """Draw outlines + numbers for ``regions`` onto a white ``size`` canvas.
 
-    Returns the page, plus the layers it was built from: the outlines on their
-    own and where each number went.
+    Returns the page, plus what it was built from: the outlines on their own,
+    the contour each outline was drawn from, and where each number went.
     """
     width, height = size
     # Pillow draws a wide polygon outline through a scratch mask as big as the
@@ -56,13 +57,15 @@ def render_page(size: tuple[int, int], regions: list[Region]) -> RenderedPage:
     # their union, in any order. A 1-byte canvas keeps the copying cheap.
     outlines = Image.new("L", size, 255)
     tiles: dict[tuple[int, int], list[np.ndarray]] = {}
+    strokes: list[np.ndarray] = []
 
     for region in regions:
         contour = region.contour
+        if len(contour) == 0:
+            continue
+        strokes.append(contour)
         if len(contour) == 1:
             ImageDraw.Draw(outlines).point((int(contour[0, 0, 0]), int(contour[0, 0, 1])), fill=0)
-            continue
-        if len(contour) < 2:
             continue
         x, y, w, h = cv2.boundingRect(contour)
         box = (
@@ -99,7 +102,7 @@ def render_page(size: tuple[int, int], regions: list[Region]) -> RenderedPage:
         draw.text((left - bbox[0], top - bbox[1]), text, fill="black", font=_font(font_size))
         labels.append(Label(region.region_id, text, font_size, (left, top, left + tw, top + th)))
 
-    return RenderedPage(image=page, outlines=outlines, labels=labels)
+    return RenderedPage(image=page, outlines=outlines, labels=labels, strokes=strokes)
 
 
 def _draw_outlines(canvas: Image.Image, box: tuple[int, int, int, int], contours: list[np.ndarray]) -> None:

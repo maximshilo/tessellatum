@@ -44,12 +44,15 @@ images x presets x output sizes:
   - the region map, each region's color and the palette, legend colors first;
   - the drawn regions, with their outlines and label points;
   - every number, with its font size and bounding box;
-  - the outline layer on its own.
+  - the outline layer on its own;
+  - every line drawn, as a polyline.
 
   The timed runs don't collect it, as in the app. One more run after them
   does, and its page must match theirs for the case to count as
   deterministic. Versions from before 0.1.10 have no analysis; the stage
   wrappers capture the region map, palette and regions for them instead.
+  Versions from before 0.1.12 don't list their lines, so the harness rebuilds
+  them as the outline of every drawn region, which is what those versions draw.
   `case.json` records which source was used under `scored_from` (`analysis`
   or `probe`).
 - Cases exceeding `--timeout` (default 30 min) are killed and recorded as
@@ -182,7 +185,8 @@ than a pixel wide.
 Absolute metrics, per result. Fidelity is scored on the *finished painting*
 (every region filled with its legend color) against the source image at output
 size. Paintability is scored on the region map and the numbers, at print size
-(see "Print scale" above):
+(see "Print scale" above). Line quality is scored on the lines drawn, the region
+map and the source image:
 
 | metric | meaning | better |
 |---|---|---|
@@ -193,6 +197,10 @@ size. Paintability is scored on the region map and the numbers, at print size
 | slivers | share of the page a round brush 3 mm wide can't paint without crossing into another region | lower |
 | labels < 6 pt | share of numbers printing smaller than 6 pt; `case.json` also records the smallest, as `min_label_pt` | lower (0) |
 | compactness p10 / median | 4πA/P² over the regions: 1 for a disk, lower for stretched or ragged ones | higher |
+| lines per boundary | lines drawn along each boundary between two regions; `case.json` also records the shares with two or more (`doubled_boundary_fraction`) and with none (`undrawn_boundary_fraction`) | 1 |
+| same-color boundary | share of the boundary length that lies between two regions of the same color | lower (0) |
+| jaggedness | length of the drawn lines over their length with wiggles under 0.5 mm smoothed away | lower (1) |
+| edge F1 | how well region boundaries and the source's edges line up, within 0.5 mm; `case.json` also records `edge_precision` and `edge_recall` | higher |
 | undersized | regions still below the difficulty's minimum size | lower (0) |
 | regions, ink | region count and share of dark outline/number pixels | informational |
 
@@ -223,7 +231,48 @@ How the paintability metrics are defined:
   - Values are capped at 1, which the estimate exceeds for regions of a few
     pixels.
 
-The paintability metrics have no tolerances yet, so they don't affect the
+How the line metrics are defined:
+
+- **Lines per boundary** reads the lines the renderer reports drawing
+  (`PageAnalysis.strokes`), not the printed pixels. Two outlines drawn side by
+  side merge into one thick band, which the pixels can't tell apart from a
+  single thick line.
+  - Boundaries are measured per pixel edge between two regions; the page edge
+    doesn't count. A line runs along a pixel edge if its rasterized centerline
+    passes through or next to (8-neighborhood) either of the edge's two pixels.
+    It counts once however often it passes.
+  - Today's renderer outlines every region on its own, so it scores 2 on a
+    boundary between two regions. Around a region lying inside another it
+    scores 1, because outlines don't trace holes.
+  - Where a region is only 1–2 px wide, the lines on its two sides are within
+    reach of each other, so even one line per boundary scores 2 or more there.
+- **Same-color boundary** estimates lengths as compactness does. Merging a small
+  region into a neighbor can leave two regions of one color touching.
+- **Jaggedness** smooths each drawn line along its length by a Gaussian of
+  0.5 mm (2.0–2.4 px at preview size).
+  - Lines are cut 0.5 mm short of junctions, where three regions meet or two
+    regions meet the page edge, and where they run along the page edge. So the
+    corners where lines meet don't count.
+  - Each piece keeps its ends fixed. A closed line that meets no junction is
+    smoothed all the way round.
+  - The score is the pieces' total length over their total smoothed length, so
+    longer lines weigh more.
+  - At 2 px of smoothing, a straight line scores 1 and a staircase of 1 px steps
+    √2 (1.414). A staircase of 20 px steps scores 1.063, a lone right angle with
+    legs of about 30 and 40 px 1.018, and a circle of radius 50 px 1.0008.
+- **Edge F1** compares the region boundaries, as `boundary_map` marks them, with
+  the source's edges.
+  - The edges come from Canny on the source at output size, in CIE Lab, after a
+    Gaussian blur of 0.5 mm. Its thresholds are clean color steps of 5 and 10
+    Lab units (L runs 0–100) in whichever channel changes most: a lightness step
+    of 11 is an edge, and one of 9 isn't.
+  - Precision is the share of boundary pixels within 0.5 mm of an edge: lines on
+    real edges. Recall is the share of edge pixels within 0.5 mm of a boundary:
+    real edges that got a line.
+  - Softly shaded images have few edges, so the boundaries between the bands of
+    a gradient count as off-edge.
+
+The paintability and line metrics have no tolerances yet, so they don't affect the
 verdict.
 
 Agreement metrics, candidate vs. reference (computed by `compare` from the

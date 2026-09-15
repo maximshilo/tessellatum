@@ -4,9 +4,11 @@ Two kinds:
 
 * **Absolute** metrics score one result on its own: how faithfully the
   finished painting (every region filled with its legend color) reproduces the
-  source image, and how paintable the page is at print size (slivers too thin
-  for a brush, unlabeled regions, label size, region shape, leftover undersized
-  regions, outline clutter).
+  source image, how paintable the page is at print size (slivers too thin for a
+  brush, unlabeled regions, label size, region shape, leftover undersized
+  regions, outline clutter), and how cleanly its lines are drawn (lines per
+  boundary, boundaries between same-colored regions, jaggedness, lines on the
+  source's edges).
 * **Agreement** metrics score a result against a reference result (usually the
   previous version), to tell "identical output" apart from "different output".
 
@@ -27,6 +29,14 @@ import numpy as np
 
 BOUNDARY_TOLERANCE_PX = 2
 PRINT_SIZE_PATH = Path(__file__).resolve().parents[1] / "src" / "tessellatum" / "core" / "print_size.py"
+# Line quality. Wiggles in a drawn line smaller than JAGGEDNESS_SMOOTHING_MM count as jaggedness. The
+# source's edges are found after smoothing it by EDGE_SMOOTHING_MM, as color steps of at least
+# EDGE_THRESHOLDS (Canny's hysteresis thresholds, in CIE Lab units), and a region boundary within
+# EDGE_TOLERANCE_MM of an edge lies on it.
+JAGGEDNESS_SMOOTHING_MM = 0.5
+EDGE_SMOOTHING_MM = 0.5
+EDGE_TOLERANCE_MM = 0.5
+EDGE_THRESHOLDS = (5.0, 10.0)
 
 
 def _load_print_size():
@@ -247,16 +257,8 @@ def compactness(region_id_map: np.ndarray) -> np.ndarray:
     a few pixels.
     """
     ids, areas = _renumbered_regions(region_id_map)
-    padded = np.pad(ids, 1, constant_values=-1)
-    neighbor_pairs = (
-        (padded[:, :-1], padded[:, 1:], 1.0),
-        (padded[:-1, :], padded[1:, :], 1.0),
-        # Diagonal lines of pixel centers lie 1/√2 apart, rows and columns 1 apart.
-        (padded[:-1, :-1], padded[1:, 1:], np.sqrt(0.5)),
-        (padded[:-1, 1:], padded[1:, :-1], np.sqrt(0.5)),
-    )
     crossings = np.zeros(areas.size)
-    for a, b, line_spacing in neighbor_pairs:
+    for a, b, line_spacing in _neighbor_pairs(np.pad(ids, 1, constant_values=-1)):
         differ = a != b
         for side in (a, b):
             crossings += line_spacing * np.bincount(side[differ & (side >= 0)], minlength=areas.size)
@@ -270,6 +272,278 @@ def compactness_stats(region_id_map: np.ndarray) -> dict[str, float | None]:
     if values.size == 0:
         return {"compactness_median": None, "compactness_p10": None}
     return {"compactness_median": float(np.median(values)), "compactness_p10": float(np.percentile(values, 10))}
+
+
+def boundary_lines(region_id_map: np.ndarray, strokes) -> dict[str, float | None]:
+    """How many drawn lines run along the boundaries between regions: 1 means one line per boundary.
+
+    ``strokes`` are the lines drawn on the page, each an (x, y) polyline with
+    pixel centers at integer coordinates. Boundaries are measured per pixel
+    edge between two regions; the page edge doesn't count. A line runs along a
+    pixel edge if its rasterized centerline passes through or next to
+    (8-neighborhood) either of the edge's two pixels, and counts once however
+    often it passes. Returns the mean count, and the shares of boundary with two
+    or more lines and with none (all None on a page without boundaries).
+    """
+    ids = np.asarray(region_id_map)
+    h, w = ids.shape
+    between_columns = (ids[:, :-1] != ids[:, 1:]) & (ids[:, :-1] >= 0) & (ids[:, 1:] >= 0)
+    between_rows = (ids[:-1, :] != ids[1:, :]) & (ids[:-1, :] >= 0) & (ids[1:, :] >= 0)
+    if not (between_columns.any() or between_rows.any()):
+        return {"lines_per_boundary": None, "doubled_boundary_fraction": None, "undrawn_boundary_fraction": None}
+    lines_between_columns = np.zeros(between_columns.shape, dtype=np.int32)
+    lines_between_rows = np.zeros(between_rows.shape, dtype=np.int32)
+    for (x0, y0), near in _line_neighborhoods(strokes, (w, h)):
+        rows, cols = near.shape
+        lines_between_columns[y0 : y0 + rows, x0 : x0 + cols - 1] += near[:, :-1] | near[:, 1:]
+        lines_between_rows[y0 : y0 + rows - 1, x0 : x0 + cols] += near[:-1, :] | near[1:, :]
+    counts = np.concatenate([lines_between_columns[between_columns], lines_between_rows[between_rows]])
+    return {
+        "lines_per_boundary": float(counts.mean()),
+        "doubled_boundary_fraction": float((counts >= 2).mean()),
+        "undrawn_boundary_fraction": float((counts == 0).mean()),
+    }
+
+
+def same_color_boundary_share(region_id_map: np.ndarray, region_color: np.ndarray) -> float | None:
+    """Share of the boundary length between regions that separates two regions of the same color.
+
+    Lengths are Cauchy–Crofton estimates, as in ``compactness``; the page edge
+    doesn't count. None on a page without boundaries.
+    """
+    ids = np.asarray(region_id_map, dtype=np.int64)
+    colors = np.asarray(region_color)
+    total = same = 0.0
+    for a, b, line_spacing in _neighbor_pairs(ids):
+        differ = (a != b) & (a >= 0) & (b >= 0)
+        total += line_spacing * np.count_nonzero(differ)
+        same += line_spacing * np.count_nonzero(colors[a[differ]] == colors[b[differ]])
+    return same / total if total else None
+
+
+def jaggedness(strokes, region_id_map: np.ndarray, smoothing_px: float) -> float | None:
+    """Length of the drawn lines over their length once wiggles smaller than ``smoothing_px`` are smoothed away.
+
+    1 for straight lines and smooth curves; a staircase of 1 px steps scores
+    about √2. Lines are cut ``smoothing_px`` short of junctions, where three
+    regions, or two regions and the page edge, meet, and where they run along
+    the page edge, so corners where lines meet don't count. Each piece is
+    smoothed along its length by a Gaussian of standard deviation
+    ``smoothing_px``, with its ends fixed; a closed line that meets no junction
+    is smoothed all the way round. The result is the pieces' total length over
+    their total smoothed length, so longer lines weigh more. Lines shorter than
+    half a pixel are skipped; None if no line is long enough to measure.
+    """
+    ids = np.asarray(region_id_map)
+    h, w = ids.shape
+    to_junction = _distance_to_junctions(ids)
+    total = smoothed_total = 0.0
+    for stroke in strokes:
+        points = _without_repeats(np.asarray(stroke, dtype=np.float64).reshape(-1, 2))
+        closed = len(points) > 2 and np.array_equal(points[0], points[-1])
+        samples, spacing = _resample(points, _RESAMPLE_PX)
+        if samples is None:
+            continue
+        if closed:
+            samples = samples[:-1]  # the same point as the first
+        corner = np.rint(samples + 0.5).astype(np.int64)  # nearest pixel corner, as (column, row) of the corner grid
+        cut = to_junction[np.clip(corner[:, 1], 0, h), np.clip(corner[:, 0], 0, w)] <= smoothing_px
+        cut |= (samples < 0.5).any(axis=1) | (samples[:, 0] > w - 1.5) | (samples[:, 1] > h - 1.5)
+        kernel = _gaussian_kernel(smoothing_px / spacing)
+        if closed and not cut.any():
+            length, smoothed = _smoothed_loop_lengths(samples, kernel)
+        else:
+            if closed:  # start at a cut, so that no piece wraps around the end of the array
+                start = int(np.argmax(cut))
+                samples, cut = np.roll(samples, -start, axis=0), np.roll(cut, -start)
+            pieces = np.flatnonzero(np.diff(np.concatenate([[0], (~cut).astype(np.int8), [0]]))).reshape(-1, 2)
+            pieces = pieces[pieces[:, 1] - pieces[:, 0] >= 2]
+            length, smoothed = _smoothed_piece_lengths(samples, pieces[:, 0], pieces[:, 1] - pieces[:, 0], kernel)
+        total, smoothed_total = total + length, smoothed_total + smoothed
+    return total / smoothed_total if smoothed_total else None
+
+
+def source_edges(image_bgr: np.ndarray, smoothing_px: float, thresholds: tuple[float, float] = EDGE_THRESHOLDS) -> np.ndarray:
+    """The source image's edges: Canny on its CIE Lab colors after Gaussian smoothing by ``smoothing_px``.
+
+    ``thresholds`` (low, high) are the heights of the clean, straight color step
+    whose gradient would just reach Canny's hysteresis thresholds, in Lab units
+    (L from 0 to 100). At each pixel the channel with the steepest gradient
+    counts.
+    """
+    lab = bgr_to_lab(image_bgr).astype(np.float32)
+    if smoothing_px > 0:
+        lab = cv2.GaussianBlur(lab, (0, 0), smoothing_px)
+    # The gradient a unit step reaches after the same smoothing and Sobel filter, so thresholds read as step heights.
+    step = np.zeros((1, int(8 * smoothing_px) + 16), dtype=np.float32)
+    step[:, step.shape[1] // 2 :] = 1
+    if smoothing_px > 0:
+        step = cv2.GaussianBlur(step, (0, 0), smoothing_px)
+    scale = _EDGE_FIXED_POINT / float(np.abs(cv2.Sobel(step, cv2.CV_32F, 1, 0, ksize=3)).max())
+    dx, dy = (
+        np.clip(np.rint(cv2.Sobel(lab, cv2.CV_32F, *order, ksize=3) * scale), -32768, 32767).astype(np.int16)
+        for order in ((1, 0), (0, 1))
+    )
+    low, high = thresholds
+    return cv2.Canny(dx, dy, low * _EDGE_FIXED_POINT, high * _EDGE_FIXED_POINT, L2gradient=True) > 0
+
+
+def edge_alignment(region_id_map: np.ndarray, edges: np.ndarray, tolerance_px: float) -> dict[str, float | None]:
+    """Do the region boundaries lie on the source's edges?
+
+    ``edge_precision`` is the share of boundary pixels (``boundary_map``) within
+    ``tolerance_px`` of an edge pixel, ``edge_recall`` the share of edge pixels
+    within it of a boundary pixel, and ``edge_f1`` their harmonic mean. A share
+    of nothing is None; F1 is None only when there are neither boundaries nor
+    edges.
+    """
+    boundary = boundary_map(region_id_map)
+    precision = _share_near(boundary, edges, tolerance_px)
+    recall = _share_near(edges, boundary, tolerance_px)
+    if precision is None and recall is None:
+        f1 = None
+    elif not precision or not recall:
+        f1 = 0.0
+    else:
+        f1 = 2 * precision * recall / (precision + recall)
+    return {"edge_precision": precision, "edge_recall": recall, "edge_f1": f1}
+
+
+_SUBPIXEL_BITS = 4  # cv2.polylines draws points given in 1/16 px
+_NEIGHBORHOOD_3X3 = np.ones((3, 3), dtype=np.uint8)
+_RESAMPLE_PX = 0.5  # jaggedness smooths lines resampled at most this far apart
+_EDGE_FIXED_POINT = 16  # Canny takes 16-bit gradients: 1/16 of a Lab unit
+
+
+def _line_neighborhoods(strokes, size: tuple[int, int]):
+    """Each line's ((x0, y0), mask): the pixels in or next to its rasterized centerline, in a box at (x0, y0)."""
+    w, h = size
+    for stroke in strokes:
+        points = np.asarray(stroke, dtype=np.float64).reshape(-1, 2)
+        if len(points) == 0:
+            continue
+        x0, y0 = (int(v) for v in np.maximum(np.floor(points.min(axis=0)) - 2, 0))
+        x1, y1 = (int(v) for v in np.minimum(np.ceil(points.max(axis=0)) + 3, (w, h)))
+        if x1 <= x0 or y1 <= y0:
+            continue
+        canvas = np.zeros((y1 - y0, x1 - x0), dtype=np.uint8)
+        fixed = np.rint((points - (x0, y0)) * 2**_SUBPIXEL_BITS).astype(np.int32)
+        if len(fixed) == 1:
+            fixed = np.repeat(fixed, 2, axis=0)  # a dot
+        cv2.polylines(canvas, [fixed], False, 1, thickness=1, lineType=cv2.LINE_8, shift=_SUBPIXEL_BITS)
+        yield (x0, y0), cv2.dilate(canvas, _NEIGHBORHOOD_3X3).astype(bool)
+
+
+def _distance_to_junctions(ids: np.ndarray) -> np.ndarray:
+    """Distance from every pixel corner to the nearest junction, where three regions (or a crossing) meet.
+
+    On the (h + 1) x (w + 1) grid of pixel corners: [i, j] is the corner at
+    (x, y) = (j - 0.5, i - 0.5). Outside the page counts as a region of its own.
+    """
+    padded = np.pad(np.asarray(ids, dtype=np.int64), 1, constant_values=np.iinfo(np.int64).min)
+    a, b, c, d = padded[:-1, :-1], padded[:-1, 1:], padded[1:, :-1], padded[1:, 1:]
+    distinct = 1 + (b != a) + ((c != a) & (c != b)) + ((d != a) & (d != b) & (d != c))
+    junction = (distinct >= 3) | ((a == d) & (b == c) & (a != b))
+    if not junction.any():
+        return np.full(junction.shape, np.inf)
+    return cv2.distanceTransform((~junction).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+
+
+def _without_repeats(points: np.ndarray) -> np.ndarray:
+    if len(points) < 2:
+        return points
+    keep = np.concatenate([[True], np.any(np.diff(points, axis=0) != 0, axis=1)])
+    return points[keep]
+
+
+def _resample(points: np.ndarray, max_spacing: float) -> tuple[np.ndarray | None, float]:
+    """(points evenly spaced along the polyline, at most ``max_spacing`` apart and including both ends; their spacing).
+
+    (None, 0) for a polyline shorter than ``max_spacing``. That keeps the
+    spacing above half of ``max_spacing``, and the smoothing kernel it sets
+    bounded, however short a line is.
+    """
+    if len(points) < 2:
+        return None, 0.0
+    along = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(points, axis=0).T))])
+    if along[-1] < max_spacing:
+        return None, 0.0
+    count = int(np.ceil(along[-1] / max_spacing)) + 1
+    at = np.linspace(0.0, along[-1], count)
+    return np.column_stack([np.interp(at, along, points[:, 0]), np.interp(at, along, points[:, 1])]), along[-1] / (count - 1)
+
+
+def _gaussian_kernel(sigma: float) -> np.ndarray:
+    offsets = np.arange(-int(np.ceil(4 * sigma)), int(np.ceil(4 * sigma)) + 1)
+    kernel = np.exp(-0.5 * (offsets / sigma) ** 2)
+    return kernel / kernel.sum()
+
+
+def _smoothed_piece_lengths(
+    samples: np.ndarray, starts: np.ndarray, counts: np.ndarray, kernel: np.ndarray
+) -> tuple[float, float]:
+    """(total length, total length after smoothing with ``kernel``) of the polylines ``samples[start : start + count]``.
+
+    Each piece is extended past its ends by point reflection through them
+    (2 end - point), again and again, which keeps its ends in place and a
+    straight piece straight. Written as the piece's chord plus its offsets from
+    the chord, that extension continues the chord and repeats the offsets
+    back and forth, flipping their sign on the way back. All pieces are smoothed
+    in one convolution, each padded far enough that the kernel doesn't reach
+    the next.
+    """
+    if len(starts) == 0:
+        return 0.0, 0.0
+    pad = len(kernel) // 2
+    padded_counts = counts + 2 * pad
+    piece = np.repeat(np.arange(len(starts)), padded_counts)
+    t = np.arange(padded_counts.sum()) - np.repeat(np.cumsum(padded_counts) - padded_counts, padded_counts) - pad
+    last = (counts - 1)[piece]
+    phase = np.mod(t, 2 * last)
+    backwards = phase > last
+    local = np.where(backwards, 2 * last - phase, phase)
+    first = samples[starts][piece]
+    chord_step = ((samples[starts + counts - 1] - samples[starts]) / (counts - 1)[:, None])[piece]
+    offset = samples[starts[piece] + local] - (first + chord_step * local[:, None])
+    extended = first + chord_step * t[:, None] + np.where(backwards[:, None], -offset, offset)
+    smoothed = np.column_stack([np.convolve(extended[:, axis], kernel, mode="same") for axis in (0, 1)])
+    inside = (t >= 0) & (t <= last)
+    within_piece = piece[inside][1:] == piece[inside][:-1]
+    length, smoothed_length = (float(np.hypot(*np.diff(line[inside], axis=0)[within_piece].T).sum()) for line in (extended, smoothed))
+    return length, smoothed_length
+
+
+def _smoothed_loop_lengths(samples: np.ndarray, kernel: np.ndarray) -> tuple[float, float]:
+    """(length, length after smoothing with ``kernel``) of a closed polyline, smoothed all the way round."""
+    pad = len(kernel) // 2
+    extended = samples[np.arange(-pad, len(samples) + pad) % len(samples)]
+    smoothed = np.column_stack([np.convolve(extended[:, axis], kernel, mode="valid") for axis in (0, 1)])
+    return _loop_length(samples), _loop_length(smoothed)
+
+
+def _loop_length(points: np.ndarray) -> float:
+    return float(np.hypot(*np.diff(points, axis=0, append=points[:1]).T).sum())
+
+
+def _share_near(pixels: np.ndarray, targets: np.ndarray, tolerance_px: float) -> float | None:
+    """Share of ``pixels`` within ``tolerance_px`` of a ``targets`` pixel; None without pixels."""
+    if not pixels.any():
+        return None
+    if not targets.any():
+        return 0.0
+    distance = cv2.distanceTransform((~targets).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+    return float((distance[pixels] <= tolerance_px).mean())
+
+
+def _neighbor_pairs(ids: np.ndarray) -> tuple:
+    """Neighboring pixels along rows, columns and both diagonals: (one side, the other side, spacing of those lines)."""
+    return (
+        (ids[:, :-1], ids[:, 1:], 1.0),
+        (ids[:-1, :], ids[1:, :], 1.0),
+        # Diagonal lines of pixel centers lie 1/√2 apart, rows and columns 1 apart.
+        (ids[:-1, :-1], ids[1:, 1:], np.sqrt(0.5)),
+        (ids[:-1, 1:], ids[1:, :-1], np.sqrt(0.5)),
+    )
 
 
 def _renumbered_regions(region_id_map: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

@@ -39,10 +39,16 @@ def test_probe_fallback_reads_the_same_page_data_as_the_analysis(speckled_image_
     assert from_analysis.labeled_region_ids == from_probe.labeled_region_ids != set()
     assert from_analysis.label_font_sizes_px == from_probe.label_font_sizes_px
     assert [r.region_id for r in from_analysis.regions] == [r.region_id for r in from_probe.regions]
+    assert len(from_analysis.strokes) == len(from_probe.strokes) == len(from_analysis.regions)
+    for from_payload, rebuilt in zip(from_analysis.strokes, from_probe.strokes):
+        np.testing.assert_array_equal(from_payload, rebuilt)
 
 
 def test_probe_fallback_rebuilds_font_sizes_without_the_render_module():
-    regions = [SimpleNamespace(region_id=i, interior_radius=radius) for i, radius in enumerate([5.0, 9.0, 30.0, 60.0])]
+    dot = np.array([[[2, 3]]], dtype=np.int32)
+    regions = [
+        SimpleNamespace(region_id=i, interior_radius=radius, contour=dot) for i, radius in enumerate([5.0, 9.0, 30.0, 60.0])
+    ]
     captured = {
         "quantize": ((), {}, (None, np.zeros((2, 3), dtype=np.uint8))),
         "build_regions": ((), {}, (np.zeros((4, 4), dtype=np.int32), np.zeros(4, dtype=np.int32))),
@@ -95,5 +101,13 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path, sam
         "min_label_pt",
         "compactness_median",
         "compactness_p10",
+        "lines_per_boundary",
+        "doubled_boundary_fraction",
+        "undrawn_boundary_fraction",
+        "same_color_boundary_fraction",
+        "jaggedness",
+        "edge_precision",
+        "edge_recall",
+        "edge_f1",
     } <= case["quality"].keys()
     assert (out / "painted.png").is_file() and (out / "regions.npz").is_file()

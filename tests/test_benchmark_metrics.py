@@ -11,6 +11,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
 
 import bench_metrics as bm  # noqa: E402
+from tessellatum.core import difficulty, pipeline, render  # noqa: E402
+from tessellatum.core.regions import extract_regions  # noqa: E402
 
 # Reference pairs from Sharma, Wu & Dalal (2005), "The CIEDE2000 color-difference formula".
 SHARMA_PAIRS = [
@@ -214,3 +216,147 @@ def test_paintability_metrics_of_a_page_without_regions():
     assert bm.sliver_share(empty, BRUSH_5PX) == 0.0
     assert bm.unlabeled_regions(empty, set()) == {"unlabeled_regions": 0, "unlabeled_area_fraction": 0.0}
     assert bm.compactness_stats(empty) == {"compactness_median": None, "compactness_p10": None}
+
+
+def _drawn_outlines(region_id_map: np.ndarray) -> list[np.ndarray]:
+    """The lines today's renderer draws for a region map: every region's contour, as a closed polyline."""
+    regions = extract_regions(region_id_map, np.arange(int(region_id_map.max()) + 1, dtype=np.int32))
+    contours = [c.reshape(-1, 2).astype(np.float64) for c in render.render_page(region_id_map.shape[::-1], regions).strokes]
+    return [np.vstack([c, c[:1]]) for c in contours]
+
+
+def test_todays_renderer_draws_two_lines_along_a_boundary_where_one_would_do():
+    image = np.full((40, 60, 3), 230, dtype=np.uint8)
+    image[:, 30:] = 20
+    params = difficulty.DifficultyParams(num_colors=2, min_region_fraction=0.01, blur_sigma=0.0)
+    analysis = pipeline.generate(image, params, long_edge=60, collect_analysis=True).analysis
+    shared_line = np.array([[29.5, 0.0], [29.5, 39.0]])
+
+    assert len(analysis.strokes) == 2  # each region's outline
+    assert bm.boundary_lines(analysis.region_id_map, analysis.strokes) == {
+        "lines_per_boundary": 2.0,
+        "doubled_boundary_fraction": 1.0,
+        "undrawn_boundary_fraction": 0.0,
+    }
+    assert bm.boundary_lines(analysis.region_id_map, [shared_line]) == {
+        "lines_per_boundary": 1.0,
+        "doubled_boundary_fraction": 0.0,
+        "undrawn_boundary_fraction": 0.0,
+    }
+    assert bm.boundary_lines(analysis.region_id_map, []) == {
+        "lines_per_boundary": 0.0,
+        "doubled_boundary_fraction": 0.0,
+        "undrawn_boundary_fraction": 1.0,
+    }
+
+
+def test_a_line_runs_along_a_boundary_within_a_pixel_of_it_and_counts_once():
+    page = np.zeros((20, 20), dtype=np.int32)
+    page[:, 10:] = 1  # the boundary lies between columns 9 and 10
+
+    def lines_at(x: float) -> float:
+        there_and_back = np.array([[x, 0.0], [x, 19.0], [x, 0.0]])
+        return bm.boundary_lines(page, [there_and_back])["lines_per_boundary"]
+
+    assert [lines_at(x) for x in (7, 8, 9, 10, 11, 12)] == [0.0, 1.0, 1.0, 1.0, 1.0, 0.0]
+
+
+def test_the_page_edge_is_not_a_boundary():
+    page = np.zeros((10, 10), dtype=np.int32)
+    frame = np.array([[0.0, 0.0], [9.0, 0.0], [9.0, 9.0], [0.0, 9.0], [0.0, 0.0]])
+
+    assert bm.boundary_lines(page, [frame]) == {
+        "lines_per_boundary": None,
+        "doubled_boundary_fraction": None,
+        "undrawn_boundary_fraction": None,
+    }
+    assert bm.same_color_boundary_share(page, np.array([0])) is None
+
+
+def test_same_color_boundary_share_is_the_boundary_between_regions_of_one_color():
+    stripes = np.repeat([[0] * 10 + [1] * 10 + [2] * 10], 12, axis=0)  # two boundaries of the same length
+
+    assert bm.same_color_boundary_share(stripes, np.array([4, 4, 7])) == 0.5
+    assert bm.same_color_boundary_share(stripes, np.array([4, 5, 7])) == 0.0
+
+
+def _staircase(step: int, steps: int) -> np.ndarray:
+    """A polyline going ``step`` px right, then ``step`` px down, ``steps`` times."""
+    return np.array([[10 + step * ((k + 1) // 2), 10 + step * (k // 2)] for k in range(2 * steps + 1)], dtype=np.float64)
+
+
+def test_jaggedness_is_one_for_a_straight_line_and_about_root_two_for_a_pixel_staircase():
+    page = np.zeros((300, 300), dtype=np.int32)
+    tilted = np.array([[10.0, 10.0], [250.0, 90.0]])
+
+    assert bm.jaggedness([tilted], page, 2.0) == pytest.approx(1.0, abs=1e-12)
+    assert bm.jaggedness([_staircase(1, 200)], page, 2.0) == pytest.approx(np.sqrt(2), abs=0.005)
+    assert bm.jaggedness([_staircase(20, 10)], page, 2.0) == pytest.approx(1.063, abs=0.001)
+
+
+def test_jaggedness_ignores_corners_where_regions_meet():
+    three = np.zeros((100, 100), dtype=np.int32)
+    three[:50, 50:] = 1
+    three[50:, 50:] = 2  # the three regions meet at (49.5, 49.5)
+    corner = np.array([[20.0, 49.5], [49.5, 49.5], [49.5, 90.0]])
+    yy, xx = np.mgrid[:80, :80]
+    grid = (yy // 20 * 4 + xx // 20).astype(np.int32)
+
+    assert bm.jaggedness([corner], three, 2.0) == pytest.approx(1.0, abs=1e-12)
+    # The same corner inside one region gets rounded off.
+    assert bm.jaggedness([corner], np.zeros_like(three), 2.0) == pytest.approx(1.018, abs=0.001)
+    assert bm.jaggedness(_drawn_outlines(grid), grid, 2.0) == pytest.approx(1.0, abs=1e-12)
+
+
+def test_jaggedness_smooths_a_closed_line_that_meets_no_junction_all_the_way_round():
+    angles = np.linspace(0, 2 * np.pi, 400, endpoint=False)
+    circle = np.column_stack([100 + 50 * np.cos(angles), 100 + 50 * np.sin(angles)])
+
+    # Smoothing a circle by a Gaussian of standard deviation s shrinks it by a factor exp(-s² / 2r²).
+    expected = np.exp(2.0**2 / (2 * 50**2))
+    assert bm.jaggedness([np.vstack([circle, circle[:1]])], np.zeros((200, 200), dtype=np.int32), 2.0) == pytest.approx(
+        expected, abs=1e-4
+    )
+
+
+def test_line_metrics_skip_empty_lines_and_lines_too_short_to_measure():
+    page = np.zeros((40, 40), dtype=np.int32)
+    page[:, 20:] = 1
+    empty, dot, speck = np.zeros((0, 2)), np.array([[10.0, 10.0]]), np.array([[10.0, 10.0], [10.0001, 10.0]])
+    straight = np.array([[5.0, 5.0], [30.0, 5.0]])
+
+    assert bm.boundary_lines(page, [empty])["lines_per_boundary"] == 0.0
+    # A line shorter than the 0.5 px resampling step is skipped rather than smoothed with a kernel sized to its length.
+    assert bm.jaggedness([empty, dot, speck], page, 2.0) is None
+    assert bm.jaggedness([empty, dot, speck, straight], page, 2.0) == pytest.approx(1.0, abs=1e-12)
+
+
+def _two_halves(left_lab, right_lab) -> np.ndarray:
+    """A 60 x 60 image in two halves of the given CIE Lab colors."""
+    lab = np.empty((60, 60, 3), dtype=np.float32)
+    lab[:, :30], lab[:, 30:] = left_lab, right_lab
+    return np.clip(np.rint(cv2.cvtColor(lab, cv2.COLOR_Lab2BGR) * 255), 0, 255).astype(np.uint8)
+
+
+def test_source_edges_are_color_steps_above_the_threshold_in_lab_units():
+    def edge_pixels(right_lab) -> int:
+        return int(bm.source_edges(_two_halves((50, 0, 0), right_lab), 2.2, thresholds=(5.0, 10.0)).sum())
+
+    assert (edge_pixels((59, 0, 0)), edge_pixels((61, 0, 0))) == (0, 60)  # an edge is one pixel per row
+    # A change of hue at the same lightness is an edge too.
+    assert (edge_pixels((50, 8, 0)), edge_pixels((50, 12, 0))) == (0, 60)
+
+
+def test_edge_alignment_scores_boundaries_on_and_off_the_source_edges():
+    image = np.full((100, 100, 3), 128, dtype=np.uint8)
+    image[30:70, 30:70] = (128, 100, 160)
+    square = np.zeros((100, 100), dtype=np.int32)
+    square[30:70, 30:70] = 1
+    one_region = np.zeros_like(square)
+    edges, no_edges = bm.source_edges(image, 2.2), bm.source_edges(np.full_like(image, 128), 2.2)
+
+    assert bm.edge_alignment(square, edges, 2.2) == {"edge_precision": 1.0, "edge_recall": 1.0, "edge_f1": 1.0}
+    assert bm.edge_alignment(np.roll(square, 6, axis=(0, 1)), edges, 2.2)["edge_f1"] < 0.1
+    assert bm.edge_alignment(one_region, edges, 2.2) == {"edge_precision": None, "edge_recall": 0.0, "edge_f1": 0.0}
+    assert bm.edge_alignment(square, no_edges, 2.2) == {"edge_precision": 0.0, "edge_recall": None, "edge_f1": 0.0}
+    assert bm.edge_alignment(one_region, no_edges, 2.2) == {"edge_precision": None, "edge_recall": None, "edge_f1": None}
