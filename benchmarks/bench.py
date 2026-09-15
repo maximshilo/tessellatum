@@ -3,7 +3,8 @@
 
   run      Benchmark targets -- git refs, or WORKTREE for the current checkout
            (uncommitted changes included) -- over images x presets x sizes.
-  compare  Speedups and quality metrics of result sets against the first one.
+  compare  Speedups, quality scorecard and verdict of result sets against the first one.
+  noise    Each quality metric's typical change between cases that differ only in output size (its tolerance).
 
 See benchmarks/README.md.
 """
@@ -82,14 +83,20 @@ def main(argv: list[str] | None = None) -> int:
     cmp_p.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS_DIR)
     cmp_p.add_argument("--output", type=Path, help="also write the Markdown report here")
     cmp_p.add_argument("--detail", action="store_true", help="per-case stage breakdown")
-    cmp_p.add_argument("--tol-de00", type=float, default=bench_report.Tolerances.de00_rel, help="allowed relative rise in mean CIEDE2000")
-    cmp_p.add_argument("--tol-ssim", type=float, default=bench_report.Tolerances.ssim_abs, help="allowed absolute SSIM drop")
     cmp_p.add_argument(
-        "--tol-labeled", type=float, default=bench_report.Tolerances.labeled_area_abs, help="allowed absolute drop in labeled-area share"
+        "--tol",
+        action="append",
+        default=[],
+        metavar="METRIC=SIGMA",
+        help="use SIGMA as a metric's tolerance, by its case.json key, e.g. jaggedness=0.02 (repeatable; see benchmarks/README.md)",
     )
 
+    noise_p = sub.add_parser("noise", help="each metric's typical change between cases that differ only in output size")
+    noise_p.add_argument("result_sets", nargs="+", help="result set labels (under --results-dir) or directories")
+    noise_p.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS_DIR)
+
     args = parser.parse_args(argv)
-    return _cmd_run(args) if args.command == "run" else _cmd_compare(args)
+    return {"run": _cmd_run, "compare": _cmd_compare, "noise": _cmd_noise}[args.command](args)
 
 
 # -- run --------------------------------------------------------------------
@@ -285,8 +292,32 @@ def _machine_info() -> dict:
     }
 
 
-# -- compare ----------------------------------------------------------------
+# -- compare, noise ---------------------------------------------------------
 def _cmd_compare(args: argparse.Namespace) -> int:
+    paths = _result_set_paths(args)
+    if paths is None:
+        return 1
+    try:
+        tolerances = bench_report.Tolerances(sigma=bench_report.parse_sigma_overrides(args.tol))
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    report = bench_report.build_report(paths, tolerances, detail=args.detail)
+    print(report)
+    if args.output:
+        args.output.write_text(report, encoding="utf-8")
+    return 0
+
+
+def _cmd_noise(args: argparse.Namespace) -> int:
+    paths = _result_set_paths(args)
+    if paths is None:
+        return 1
+    print(bench_report.noise_report(paths))
+    return 0
+
+
+def _result_set_paths(args: argparse.Namespace) -> list[Path] | None:
     paths = []
     for item in args.result_sets:
         path = Path(item)
@@ -294,15 +325,9 @@ def _cmd_compare(args: argparse.Namespace) -> int:
             path = args.results_dir / item
         if not (path / "results.json").is_file():
             print(f"No results.json for {item!r} (looked in {path})", file=sys.stderr)
-            return 1
+            return None
         paths.append(path)
-
-    tolerances = bench_report.Tolerances(de00_rel=args.tol_de00, ssim_abs=args.tol_ssim, labeled_area_abs=args.tol_labeled)
-    report = bench_report.build_report(paths, tolerances, detail=args.detail)
-    print(report)
-    if args.output:
-        args.output.write_text(report, encoding="utf-8")
-    return 0
+    return paths
 
 
 if __name__ == "__main__":

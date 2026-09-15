@@ -1,11 +1,12 @@
-"""Markdown comparison report for benchmark result sets (``bench.py compare``)."""
+"""Markdown comparison report for benchmark result sets (``bench.py compare``), and metric noise (``bench.py noise``)."""
 
 from __future__ import annotations
 
+import itertools
 import json
 import math
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -24,57 +25,238 @@ STAGE_ORDER = (
     "other",
 )
 
-# (quality key, column title, format)
-QUALITY_COLUMNS = (
-    ("de00_mean", "ΔE00 mean ↓", "{:.2f}"),
-    ("de00_p95", "ΔE00 p95 ↓", "{:.1f}"),
-    ("ssim", "SSIM ↑", "{:.3f}"),
-    ("regions", "regions", "{:d}"),
-    ("labeled_area_fraction", "labeled area ↑", "{:.1%}"),
-    ("unlabeled_regions", "unlabeled ↓", "{:d}"),
-    ("sliver_area_fraction", "slivers ↓", "{:.1%}"),
-    ("small_label_fraction", f"labels < {bm.print_size.MIN_LABEL_SIZE_PT:g} pt ↓", "{:.1%}"),
-    ("compactness_p10", "compactness p10 ↑", "{:.2f}"),
-    ("compactness_median", "compactness median ↑", "{:.2f}"),
-    ("lines_per_boundary", "lines per boundary", "{:.2f}"),
-    ("same_color_boundary_fraction", "same-color boundary ↓", "{:.1%}"),
-    ("jaggedness", "jaggedness ↓", "{:.3f}"),
-    ("edge_f1", "edge F1 ↑", "{:.2f}"),
-    ("palette_min_de00", "palette min ΔE00 ↑", "{:.1f}"),
-    ("palette_close_pairs", f"color pairs < {bm.PALETTE_MIN_DE00:g} ΔE00 ↓", "{:d}"),
-    ("ink_line_f1", "ink line F1 ↑", "{:.2f}"),
-    ("tube_regions", "tubes ↓", "{:d}"),
-    ("tube_ink_fraction", f"ink in shapes < {bm.INK_MAX_WIDTH_MM:g} mm ↓", "{:.1%}"),
-    ("flat_color_de00_mean", "flat colors ΔE00 ↓", "{:.2f}"),
-    ("face_de00_mean", "face ΔE00 ↓", "{:.2f}"),
-    ("face_ssim", "face SSIM ↑", "{:.3f}"),
-    ("features_lost", "features lost ↓", "{:d}"),
-    ("labels_on_features", "labels on features ↓", "{:d}"),
-    ("text_cer_source", "text CER source", "{:.2f}"),
-    ("text_cer_page", "text CER page ↓", "{:.2f}"),
-    ("text_cer_painting", "text CER painting ↓", "{:.2f}"),
-    ("labels_on_text", "labels on text ↓", "{:d}"),
-    ("undersized_regions", "undersized ↓", "{:d}"),
-    ("ink_fraction", "ink", "{:.1%}"),
-)
+# The four jobs a page does (benchmarks/QUALITY_BENCHMARKS.md), in the scorecard's order.
+JOBS = ("resembles", "paintable", "clean drawing", "palette")
+# The scorecard's group of every case, listed after the image categories.
+ALL_CASES = "all"
+# A group of n cases regresses on a metric when its mean change is worse than this many sigma / sqrt(n).
+STANDARD_ERRORS = 3.0
 
-# Metrics averaged per image category.
-SUMMARY_COLUMNS = (
-    ("de00_mean", "ΔE00 mean ↓", "{:.2f}"),
-    ("ssim", "SSIM ↑", "{:.3f}"),
-    ("labeled_area_fraction", "labeled area ↑", "{:.1%}"),
-    ("sliver_area_fraction", "slivers ↓", "{:.1%}"),
+
+@dataclass(frozen=True)
+class Target:
+    """A value every case should reach, where the metric has a value for it.
+
+    ``limit`` is the worst value that still meets the target: the most for a
+    metric where lower is better, the least where higher is, and the farthest
+    from the ideal for a metric that has one. With ``relative_to``, the limit is
+    counted from that quality field of the same case.
+    """
+
+    limit: float
+    relative_to: str | None = None
+
+
+@dataclass(frozen=True)
+class Metric:
+    """A quality field of ``case.json``: its column in the report, and how the scorecard and the verdict judge it."""
+
+    key: str
+    title: str
+    fmt: str
+    job: str | None = None  # one of JOBS; None for a field that only informs
+    better: str | None = None  # "lower" or "higher"; None for a field that only informs or has an ideal value
+    ideal: float | None = None  # judged by the distance from this value
+    sigma: float | None = None  # the tolerance: typical change of one case between equally good pages
+    relative: bool = False  # sigma and changes are shares of the reference's value
+    target: Target | None = None
+
+    @property
+    def name(self) -> str:
+        return self.title.rstrip(" ↑↓")
+
+
+# Every quality column, in the report's order. Sigma is the root mean square change of one case between the same image
+# and preset at 1099, 1100 and 1101 px (`bench.py noise`; 144 pairs on the 12 benchmark images at Easy / Medium / Hard /
+# Max, fewer for the metrics that need annotations). Targets are the plan's definition of done.
+METRICS = (
+    Metric("de00_mean", "ΔE00 mean ↓", "{:.2f}", "resembles", "lower", sigma=0.066, relative=True),
+    Metric("de00_p95", "ΔE00 p95 ↓", "{:.1f}", "resembles", "lower", sigma=0.070, relative=True),
+    Metric("ssim", "SSIM ↑", "{:.3f}", "resembles", "higher", sigma=0.0063),
+    Metric("regions", "regions", "{:d}"),
+    Metric("labeled_area_fraction", "labeled area ↑", "{:.1%}", "paintable", "higher", sigma=0.023),
+    Metric("unlabeled_regions", "unlabeled ↓", "{:d}", "paintable", "lower", sigma=66, target=Target(0)),
+    Metric("sliver_area_fraction", "slivers ↓", "{:.1%}", "paintable", "lower", sigma=0.015, target=Target(0.01)),
+    Metric(
+        "small_label_fraction",
+        f"labels < {bm.print_size.MIN_LABEL_SIZE_PT:g} pt ↓",
+        "{:.1%}",
+        "paintable",
+        "lower",
+        sigma=0.020,
+        target=Target(0),
+    ),
+    Metric("compactness_p10", "compactness p10 ↑", "{:.2f}", "paintable", "higher", sigma=0.022),
+    Metric("compactness_median", "compactness median ↑", "{:.2f}", "paintable", "higher", sigma=0.034),
+    Metric("lines_per_boundary", "lines per boundary", "{:.2f}", "clean drawing", ideal=1.0, sigma=0.095, target=Target(0.05)),
+    Metric(
+        "same_color_boundary_fraction", "same-color boundary ↓", "{:.1%}", "clean drawing", "lower", sigma=0.027, target=Target(0)
+    ),
+    Metric("jaggedness", "jaggedness ↓", "{:.3f}", "clean drawing", "lower", sigma=0.0081, target=Target(1.02)),
+    Metric("edge_f1", "edge F1 ↑", "{:.2f}", "clean drawing", "higher", sigma=0.022),
+    Metric(
+        "palette_min_de00", "palette min ΔE00 ↑", "{:.1f}", "palette", "higher", sigma=1.2, target=Target(bm.PALETTE_MIN_DE00)
+    ),
+    Metric("palette_close_pairs", f"color pairs < {bm.PALETTE_MIN_DE00:g} ΔE00 ↓", "{:d}", "palette", "lower", sigma=3.1),
+    Metric("ink_line_f1", "ink line F1 ↑", "{:.2f}", "clean drawing", "higher", sigma=0.021, target=Target(0.9)),
+    Metric("tube_regions", "tubes ↓", "{:d}", "clean drawing", "lower", sigma=2.6, target=Target(0)),
+    Metric(
+        "tube_ink_fraction", f"ink in shapes < {bm.INK_MAX_WIDTH_MM:g} mm ↓", "{:.1%}", "clean drawing", "lower", sigma=0.031
+    ),
+    Metric("flat_color_de00_mean", "flat colors ΔE00 ↓", "{:.2f}", "palette", "lower", sigma=1.1),
+    Metric("face_de00_mean", "face ΔE00 ↓", "{:.2f}", "resembles", "lower", sigma=0.078, relative=True),
+    Metric("face_ssim", "face SSIM ↑", "{:.3f}", "resembles", "higher", sigma=0.016),
+    Metric("features_lost", "features lost ↓", "{:d}", "resembles", "lower", sigma=0.35, target=Target(0)),
+    Metric("labels_on_features", "labels on features ↓", "{:d}", "clean drawing", "lower", sigma=1.6),
+    Metric("text_cer_source", "text CER source", "{:.2f}"),
+    Metric(
+        "text_cer_page",
+        "text CER page ↓",
+        "{:.2f}",
+        "clean drawing",
+        "lower",
+        sigma=0.017,
+        target=Target(0.1, relative_to="text_cer_source"),
+    ),
+    Metric("text_cer_painting", "text CER painting ↓", "{:.2f}", "resembles", "lower", sigma=0.0096),
+    Metric("labels_on_text", "labels on text ↓", "{:d}", "clean drawing", "lower", sigma=1.3, target=Target(0)),
+    Metric("undersized_regions", "undersized ↓", "{:d}", "paintable", "lower", sigma=0.0),
+    Metric("ink_fraction", "ink", "{:.1%}"),
 )
+METRICS_BY_KEY = {metric.key: metric for metric in METRICS}
+JUDGED = tuple(metric for metric in METRICS if metric.sigma is not None)
+TARGETED = tuple(metric for metric in METRICS if metric.target is not None)
 
 
 @dataclass(frozen=True)
 class Tolerances:
-    """How much worse than the reference a candidate may score before it's flagged."""
+    """How far a candidate may drift from the reference before the report flags it."""
 
-    de00_rel: float = 0.03  # mean CIEDE2000 (source vs painting) may rise by 3%
-    ssim_abs: float = 0.01  # SSIM (source vs painting) may drop by 0.01
-    labeled_area_abs: float = 0.02  # share of page area carrying a number may drop 2 points
+    sigma: dict[str, float] = field(default_factory=dict)  # overrides of Metric.sigma, by quality key
     region_drift_rel: float = 0.15  # region-count change worth a note (not a failure)
+
+    def sigma_of(self, metric: Metric) -> float | None:
+        return self.sigma.get(metric.key, metric.sigma)
+
+
+@dataclass(frozen=True)
+class Regression:
+    """A metric whose mean change over a group of cases is worse than its tolerance allows."""
+
+    metric: Metric
+    group: str  # an image category, ALL_CASES, or a case
+    cases: int  # cases with a value in both result sets
+    change: float  # mean change, positive when worse; for a relative metric a share of the reference's value
+    allowed: float
+
+
+def parse_sigma_overrides(items) -> dict[str, float]:
+    """``METRIC=SIGMA`` strings, as ``bench.py compare --tol`` takes them, as {quality key: sigma}."""
+    overrides = {}
+    for item in items:
+        key, sep, value = item.partition("=")
+        metric = METRICS_BY_KEY.get(key.strip())
+        if not sep or metric is None or metric.sigma is None:
+            raise ValueError(f"--tol takes METRIC=SIGMA, METRIC one of {', '.join(m.key for m in JUDGED)}; got {item!r}")
+        try:
+            sigma = float(value)
+        except ValueError:
+            raise ValueError(f"--tol {item!r}: {value!r} is not a number") from None
+        if not sigma >= 0:
+            raise ValueError(f"--tol {item!r}: sigma must be 0 or more")
+        overrides[metric.key] = sigma
+    return overrides
+
+
+def regressions(metrics, pairs, group: str, tol: Tolerances) -> list[Regression]:
+    """The metrics whose mean change over ``pairs`` of (reference quality, candidate quality) is worse than allowed.
+
+    A case counts for a metric where both have a value (and, for a relative
+    metric, the reference's isn't 0). With n such cases, the mean change may be
+    worse by ``STANDARD_ERRORS`` sigma / sqrt(n).
+    """
+    found = []
+    for metric in metrics:
+        sigma = tol.sigma_of(metric)
+        if sigma is None:
+            continue
+        changes = [_change(metric, before.get(metric.key), after.get(metric.key)) for before, after in pairs]
+        changes = [change for change in changes if change is not None]
+        if not changes:
+            continue
+        mean = sum(changes) / len(changes)
+        allowed = STANDARD_ERRORS * sigma / math.sqrt(len(changes))
+        if mean > allowed:
+            found.append(Regression(metric, group, len(changes), mean, allowed))
+    return found
+
+
+def misses_target(metric: Metric, quality: dict) -> bool | None:
+    """Whether a case misses the metric's target; None where the metric has no target or no value."""
+    target = metric.target
+    value = quality.get(metric.key)
+    if target is None or value is None:
+        return None
+    limit = target.limit
+    if target.relative_to is not None:
+        base = quality.get(target.relative_to)
+        if base is None:
+            return None
+        limit += base
+    if metric.ideal is not None:
+        return abs(value - metric.ideal) > limit
+    return value < limit if metric.better == "higher" else value > limit
+
+
+# bench.py noise pairs output sizes at most this share apart (1099 and 1101 px), never a preview with an export.
+NOISE_MAX_SIZE_CHANGE = 0.01
+
+
+def noise_sigmas(sets: list[ResultSet]) -> dict[str, tuple[int, float]]:
+    """Each judged metric's (pairs, sigma): the root mean square change between cases that differ only in output size.
+
+    Every two completed cases of the same image and preset whose long edges
+    differ, by at most ``NOISE_MAX_SIZE_CHANGE`` of the smaller one, are a pair,
+    within a result set and across them, the smaller size first. So previews and
+    exports in the same result sets each pair only with sizes near their own. A
+    relative metric's change is a share of the smaller size's value.
+    """
+    by_image: dict[tuple[str, str], list[dict]] = {}
+    for result_set in sets:
+        for case in result_set.cases.values():
+            if case["status"] == "ok":
+                by_image.setdefault((case["image"], case["preset"]), []).append(case)
+    changes: dict[str, list[float]] = {metric.key: [] for metric in JUDGED}
+    for cases in by_image.values():
+        cases.sort(key=lambda case: case["long_edge"])
+        for smaller, larger in itertools.combinations(cases, 2):
+            if not 0 < larger["long_edge"] - smaller["long_edge"] <= NOISE_MAX_SIZE_CHANGE * smaller["long_edge"]:
+                continue
+            for metric in JUDGED:
+                change = _change(metric, smaller["quality"].get(metric.key), larger["quality"].get(metric.key))
+                if change is not None:
+                    changes[metric.key].append(change)
+    return {key: (len(values), math.sqrt(sum(v * v for v in values) / len(values))) for key, values in changes.items() if values}
+
+
+def noise_report(paths: list[Path]) -> str:
+    sets = [ResultSet(p) for p in paths]
+    sigmas = noise_sigmas(sets)
+    rows = []
+    for metric in JUDGED:
+        if metric.key in sigmas:
+            pairs, sigma = sigmas[metric.key]
+            rows.append([metric.key, metric.name, str(pairs), f"{sigma:.2g}", f"{metric.sigma:g}", "yes" if metric.relative else "no"])
+    lines = [
+        "# Tessellatum benchmark noise",
+        "",
+        f"Root mean square change of one case between the same image and preset at output sizes up to "
+        f"{NOISE_MAX_SIZE_CHANGE:.0%} apart, in {', '.join(s.label for s in sets)}. For pages that should be equally good, "
+        "it is a metric's tolerance "
+        "(`bench.py compare --tol METRIC=SIGMA`). A relative metric's change is a share of its value.",
+        "",
+    ]
+    return "\n".join(lines + _table(["metric", "name", "pairs", "sigma", "tolerance now", "relative"], rows)) + "\n"
 
 
 class ResultSet:
@@ -102,10 +284,11 @@ def build_report(paths: list[Path], tol: Tolerances, detail: bool = False) -> st
     lines += _header(sets)
     lines += _speed_section(sets, case_ids)
     lines += _stage_section(sets, case_ids, detail)
+    lines += _scorecard_section(sets, case_ids, categories, tol)
     lines += _quality_section(sets, case_ids, categories, tol)
     if len(sets) > 1:
         lines += _agreement_section(sets, case_ids)
-        lines += _verdict_section(sets, case_ids, tol)
+        lines += _verdict_section(sets, case_ids, categories, tol)
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -201,6 +384,55 @@ def _stage_section(sets: list[ResultSet], case_ids: list[str], detail: bool) -> 
     return lines
 
 
+def _scorecard_section(
+    sets: list[ResultSet], case_ids: list[str], categories: dict[str, tuple[str, ...]], tol: Tolerances
+) -> list[str]:
+    lines = [
+        "## Scorecard",
+        "",
+        "A page does four jobs (`benchmarks/QUALITY_BENCHMARKS.md`): it **resembles** the image, is **paintable**, reads "
+        "as a **clean drawing**, and has a **palette** that works. Each job's metrics are averaged over each image "
+        f"category (an image counts in every category it has) and over **{ALL_CASES}** cases. A metric's target, what "
+        "every case should reach, is in brackets after it; **targets met** counts the cases meeting all of the job's "
+        "targets that apply to them. Against a reference, both sets are averaged over the cases both completed, and a "
+        "mean in bold got worse by more than its tolerance allows (see the verdict).",
+        "",
+    ]
+    ref = sets[0]
+    for cand, base in [(s, ref) for s in sets[1:]] or [(ref, None)]:
+        groups = _groups(cand, base, case_ids, categories)
+        if not groups:
+            continue
+        worse = {name: regressions(JUDGED, _quality_pairs(base, cand, cids), name, tol) if base else [] for name, cids in groups}
+        lines += [f"### {cand.label}" + (f" vs {base.label}" if base else ""), ""]
+        rows = []
+        for name, cids in groups:
+            row = [name, str(len({cand.ok_case(cid)["image"] for cid in cids})), str(len(cids))]
+            for job in JOBS:
+                met = _met_cell(_job_metrics(job), cand, base, cids)
+                cell = "no targets" if met is None else f"{met} met"
+                names = [found.metric.name for found in worse[name] if found.metric.job == job]
+                row.append(cell + (f"; **{', '.join(names)} worse**" if names else ""))
+            rows.append(row)
+        lines += _table(["category", "images", "cases", *JOBS], rows) + [""]
+        for job in JOBS:
+            metrics = _job_metrics(job)
+            rows = []
+            for name, cids in groups:
+                worse_keys = {found.metric.key for found in worse[name]}
+                row = [name, str(len(cids))]
+                for metric in metrics:
+                    after = _mean(cand.ok_case(cid)["quality"].get(metric.key) for cid in cids)
+                    before = _mean(base.ok_case(cid)["quality"].get(metric.key) for cid in cids) if base else None
+                    cell = _pair_cell(before, after, _mean_fmt(metric.fmt))
+                    row.append(f"**{cell}**" if metric.key in worse_keys else cell)
+                row.append(_met_cell(metrics, cand, base, cids) or "–")
+                rows.append(row)
+            header = ["category", "cases", *(_metric_header(metric) for metric in metrics), "targets met"]
+            lines += [f"#### {job}", ""] + _table(header, rows) + [""]
+    return lines
+
+
 def _quality_section(
     sets: list[ResultSet], case_ids: list[str], categories: dict[str, tuple[str, ...]], tol: Tolerances
 ) -> list[str]:
@@ -241,23 +473,19 @@ def _quality_section(
         "**labels on text**: numbers overlapping a text box. "
         "**undersized**: regions left below the merge threshold. **ink**: share of dark outline/number pixels.",
         "",
-        "Millimeters and points are at print size on A4 (see `benchmarks/README.md`). The paintability metrics "
-        "(unlabeled, slivers, label size, compactness), the line metrics (lines per boundary, same-color boundary, "
-        "jaggedness, edge F1), the palette metrics (palette min ΔE00, color pairs), the line-art metrics (ink "
-        "line F1, tubes, ink in shapes, flat colors ΔE00), the face metrics (face ΔE00, face SSIM, features lost, "
-        "labels on features) and the text metrics (text CER, labels on text) have no tolerances yet and don't affect "
-        "the verdict.",
+        "Millimeters and points are at print size on A4 (see `benchmarks/README.md`). **targets missed**: the scorecard's "
+        "targets a case misses, out of those that apply to it. **flags**: metrics on which the case alone got worse "
+        f"than on the reference by more than {STANDARD_ERRORS:g} times their tolerance, which are cases to look at, not "
+        "regressions (see the verdict); and region-count changes worth a note.",
         "",
-        "Categories come from the image manifest. The first table averages each category (an image counts in every "
-        "category it has); the per-case tables list each image under its primary category.",
+        "Categories come from the image manifest; each table lists the images whose primary category it is.",
         "",
     ]
     ref = sets[0]
     pairs = [(s, ref) for s in sets[1:]] or [(ref, None)]
     for cand, base in pairs:
         lines += [f"### {cand.label}" + (f" vs {base.label}" if base else ""), ""]
-        lines += _category_summary(cand, base, case_ids, categories, tol)
-        header = ["case", *(title for _key, title, _fmt in QUALITY_COLUMNS)] + (["flags"] if base else [])
+        header = ["case", *(metric.title for metric in METRICS), "targets missed"] + (["flags"] if base else [])
         for category in _category_order(categories.values(), primary_only=True):
             rows = []
             for cid in case_ids:
@@ -266,39 +494,103 @@ def _quality_section(
                     continue
                 b = base.ok_case(cid) if base else None
                 row = [_case_title(cid)]
-                for key, _title, fmt in QUALITY_COLUMNS:
-                    row.append(_pair_cell(b["quality"].get(key) if b else None, c["quality"].get(key), fmt))
+                for metric in METRICS:
+                    row.append(_pair_cell(b["quality"].get(metric.key) if b else None, c["quality"].get(metric.key), metric.fmt))
+                row.append(_misses_cell(b["quality"] if b else None, c["quality"]))
                 if base:
-                    notes = _quality_flags(b["quality"], c["quality"], tol) + _drift_notes(b["quality"], c["quality"], tol) if b else []
-                    row.append(", ".join(notes) or ("ok" if b else "no reference"))
+                    row.append(_flags_cell(b["quality"], c["quality"], cid, tol) if b else "no reference")
                 rows.append(row)
             if rows:
                 lines += [f"#### {category}", ""] + _table(header, rows) + [""]
     return lines
 
 
-def _category_summary(
-    cand: ResultSet, base: ResultSet | None, case_ids: list[str], categories: dict[str, tuple[str, ...]], tol: Tolerances
-) -> list[str]:
-    rows = []
-    for category in _category_order(categories.values()):
-        cids = [cid for cid in case_ids if category in categories[cid] and cand.ok_case(cid)]
-        if not cids:
-            continue
-        row = [category, str(len({cand.ok_case(cid)["image"] for cid in cids})), str(len(cids))]
-        # With a reference, average only the cases both sets completed, so before and after cover the same cases.
-        paired = [cid for cid in cids if base.ok_case(cid)] if base else cids
-        for key, _title, fmt in SUMMARY_COLUMNS:
-            after = _mean([cand.ok_case(cid)["quality"].get(key) for cid in paired])
-            before = _mean([base.ok_case(cid)["quality"].get(key) for cid in paired]) if base else None
-            row.append(_pair_cell(before, after, fmt))
-        if base:
-            flagged = [cid for cid in paired if _quality_flags(base.ok_case(cid)["quality"], cand.ok_case(cid)["quality"], tol)]
-            row.append(str(len(flagged)))
-        rows.append(row)
-    header = ["category", "images", "cases", *(title for _key, title, _fmt in SUMMARY_COLUMNS)]
-    header += ["flagged cases"] if base else []
-    return _table(header, rows) + [""]
+def _groups(
+    cand: ResultSet, base: ResultSet | None, case_ids: list[str], categories: dict[str, tuple[str, ...]]
+) -> list[tuple[str, list[str]]]:
+    """(name, case ids) for each image category, then for all cases: the cases the candidate, and the reference if any, completed."""
+    done = [cid for cid in case_ids if cand.ok_case(cid) and (base is None or base.ok_case(cid))]
+    groups = [(category, [cid for cid in done if category in categories[cid]]) for category in _category_order(categories[cid] for cid in done)]
+    return groups + [(ALL_CASES, done)] if done else []
+
+
+def _job_metrics(job: str) -> list[Metric]:
+    return [metric for metric in METRICS if metric.job == job]
+
+
+def _quality_pairs(base: ResultSet, cand: ResultSet, case_ids: list[str]) -> list[tuple[dict, dict]]:
+    return [(base.ok_case(cid)["quality"], cand.ok_case(cid)["quality"]) for cid in case_ids]
+
+
+def _change(metric: Metric, before, after) -> float | None:
+    """How much worse ``after`` is than ``before``, negative when better; for a relative metric a share of ``before``."""
+    if before is None or after is None:
+        return None
+    if metric.ideal is not None:
+        worse = abs(after - metric.ideal) - abs(before - metric.ideal)
+    else:
+        worse = before - after if metric.better == "higher" else after - before
+    if metric.relative:
+        return worse / abs(before) if before else None
+    return worse
+
+
+def _meets_targets(metrics, quality: dict) -> bool | None:
+    """Whether a case meets every target of ``metrics`` that applies to it; None where none does."""
+    misses = [miss for miss in (misses_target(metric, quality) for metric in metrics) if miss is not None]
+    return not any(misses) if misses else None
+
+
+def _met_cell(metrics, cand: ResultSet, base: ResultSet | None, case_ids: list[str]) -> str | None:
+    """"met/scored": cases meeting all their targets among ``metrics``, of the cases any applies to; None if none does."""
+
+    def count(result_set: ResultSet) -> tuple[int, int]:
+        verdicts = [_meets_targets(metrics, result_set.ok_case(cid)["quality"]) for cid in case_ids]
+        scored = [verdict for verdict in verdicts if verdict is not None]
+        return sum(scored), len(scored)
+
+    after = count(cand)
+    before = count(base) if base else (0, 0)
+    if not after[1] and not before[1]:
+        return None
+    after_s = f"{after[0]}/{after[1]}"
+    before_s = f"{before[0]}/{before[1]}"
+    return after_s if not before[1] or before_s == after_s else f"{before_s} → {after_s}"
+
+
+def _misses_cell(before_q: dict | None, after_q: dict) -> str:
+    def text(quality: dict) -> str:
+        misses = [miss for miss in (misses_target(metric, quality) for metric in TARGETED) if miss is not None]
+        return f"{sum(misses)}/{len(misses)}" if misses else "–"
+
+    after = text(after_q)
+    before = text(before_q) if before_q is not None else after
+    return after if before == after else f"{before} → {after}"
+
+
+def _flags_cell(before_q: dict, after_q: dict, case_id: str, tol: Tolerances) -> str:
+    notes = [f"{found.metric.name} worse" for found in regressions(JUDGED, [(before_q, after_q)], _case_title(case_id), tol)]
+    return ", ".join(notes + _drift_notes(before_q, after_q, tol)) or "ok"
+
+
+def _metric_header(metric: Metric) -> str:
+    return metric.title + (f" ({_target_text(metric)})" if metric.target else "")
+
+
+def _target_text(metric: Metric) -> str:
+    target = metric.target
+    limit = f"{target.limit * 100:g}%" if "%" in metric.fmt else f"{target.limit:g}"
+    if metric.ideal is not None:
+        return f"{metric.ideal:g} ± {limit}"
+    sign = "≥" if metric.better == "higher" else "≤"
+    if target.relative_to is not None:
+        return f"{sign} {METRICS_BY_KEY[target.relative_to].name} + {limit}"
+    return "0" if target.limit == 0 and metric.better == "lower" else f"{sign} {limit}"
+
+
+def _mean_fmt(fmt: str) -> str:
+    """A mean of counts gets a decimal place."""
+    return "{:.1f}" if fmt == "{:d}" else fmt
 
 
 def _case_categories(sets: list[ResultSet], case_ids: list[str]) -> dict[str, tuple[str, ...]]:
@@ -356,11 +648,13 @@ def _agreement_section(sets: list[ResultSet], case_ids: list[str]) -> list[str]:
     return lines
 
 
-def _verdict_section(sets: list[ResultSet], case_ids: list[str], tol: Tolerances) -> list[str]:
+def _verdict_section(
+    sets: list[ResultSet], case_ids: list[str], categories: dict[str, tuple[str, ...]], tol: Tolerances
+) -> list[str]:
     ref = sets[0]
     lines = ["## Verdict", ""]
     for s in sets[1:]:
-        ratios, regressions, problems = [], [], []
+        ratios, problems = [], []
         for cid in case_ids:
             case = s.cases.get(cid)
             if case is None:
@@ -373,26 +667,76 @@ def _verdict_section(sets: list[ResultSet], case_ids: list[str], tol: Tolerances
             ratio, lower_bound = _speedup(ref.cases.get(cid), case)
             if ratio is not None and not lower_bound:
                 ratios.append(ratio)
-            base = ref.ok_case(cid)
-            if base:
-                flags = _quality_flags(base["quality"], case["quality"], tol)
-                if flags:
-                    regressions.append(f"{_case_title(cid)} ({', '.join(flags)})")
+        groups = _groups(s, ref, case_ids, categories)
+        found: dict[str, list[Regression]] = {}
+        for name, cids in groups:
+            for regression in regressions(JUDGED, _quality_pairs(ref, s, cids), name, tol):
+                found.setdefault(regression.metric.key, []).append(regression)
+        paired = dict(groups).get(ALL_CASES, [])
+
         speed = f"{_fmt_ratio(_geomean(ratios))} geometric-mean speedup" if ratios else "no comparable timings"
-        if regressions:
-            quality = f"**quality regressions in {len(regressions)} case(s)**: " + "; ".join(regressions)
-        else:
-            quality = "no quality regressions beyond tolerance"
-        line = f"- **{s.label}**: {speed}; {quality}."
+        quality = f"**quality regressions on {len(found)} metric(s)**" if found else "no quality regressions beyond tolerance"
+        lines.append(f"- **{s.label}**: {speed}; {quality}.")
+        if found:
+            texts = []
+            for key in (metric.key for metric in JUDGED if metric.key in found):
+                metric = METRICS_BY_KEY[key]
+                where = ", ".join(
+                    f"{r.group} (by {_fmt_amount(metric, r.change)}, tolerance {_fmt_amount(metric, r.allowed)}, n = {r.cases})"
+                    for r in found[key]
+                )
+                texts.append(f"{metric.name} worse in {where}")
+            lines.append("  - **Regressions:** " + "; ".join(texts) + ".")
+        counts, new_misses, newly_met = _target_changes(ref, s, paired)
+        lines.append("  - **Target misses** (cases missing each target): " + ("; ".join(counts) or "none") + ".")
+        if new_misses:
+            texts = [f"{_case_title(cid)} ({', '.join(names)})" for cid, names in new_misses]
+            lines.append(f"  - **New target misses in {len(new_misses)} case(s):** " + "; ".join(texts) + ".")
+        if newly_met:
+            lines.append(f"  - Targets newly met: {newly_met} (case, target) pair(s).")
+        look_at = []
+        for cid in paired:
+            names = [r.metric.name for r in regressions(JUDGED, _quality_pairs(ref, s, [cid]), _case_title(cid), tol)]
+            if names:
+                look_at.append(f"{_case_title(cid)} ({', '.join(names)})")
+        if look_at:
+            lines.append(f"  - Cases to look at, worse alone by more than {STANDARD_ERRORS:g} tolerances: " + "; ".join(look_at) + ".")
         if problems:
-            line += " Problems: " + "; ".join(problems) + "."
-        lines.append(line)
+            lines.append("  - Problems: " + "; ".join(problems) + ".")
     lines += [
         "",
-        f"Tolerances: mean ΔE00 may rise {tol.de00_rel:.0%}, SSIM may drop {tol.ssim_abs}, labeled area may drop "
-        f"{tol.labeled_area_abs:.0%} points, undersized regions may not increase.",
+        f"A metric regresses in a category, or over all cases, when its mean change against the reference is worse than "
+        f"{STANDARD_ERRORS:g} σ/√n: σ is its tolerance, the typical change of one case between equally good pages, and n "
+        "the number of cases with a value in both sets (see `benchmarks/README.md`). Target misses are counted separately, "
+        "on the reference → the candidate; a new miss is a case that met the target on the reference.",
     ]
+    if tol.sigma:
+        lines.append("Tolerances overridden: " + ", ".join(f"{METRICS_BY_KEY[k].name} σ = {v:g}" for k, v in tol.sigma.items()) + ".")
     return lines + [""]
+
+
+def _target_changes(ref: ResultSet, cand: ResultSet, case_ids: list[str]) -> tuple[list[str], list[tuple[str, list[str]]], int]:
+    """(each target's miss count, reference → candidate; the cases newly missing targets, with their names; newly met pairs)."""
+    verdicts = {
+        cid: [(misses_target(m, ref.ok_case(cid)["quality"]), misses_target(m, cand.ok_case(cid)["quality"])) for m in TARGETED]
+        for cid in case_ids
+    }
+    counts = []
+    for i, metric in enumerate(TARGETED):
+        before = [verdicts[cid][i][0] for cid in case_ids if verdicts[cid][i][0] is not None]
+        after = [verdicts[cid][i][1] for cid in case_ids if verdicts[cid][i][1] is not None]
+        if not before and not after:
+            continue
+        before_s, after_s = f"{sum(before)}/{len(before)}", f"{sum(after)}/{len(after)}"
+        change = after_s if not before or before_s == after_s else f"{before_s} → {after_s}"
+        counts.append(f"{metric.name} ({_target_text(metric)}) {change}")
+    new_misses = []
+    for cid in case_ids:
+        names = [m.name for m, (before, after) in zip(TARGETED, verdicts[cid]) if before is False and after]
+        if names:
+            new_misses.append((cid, names))
+    newly_met = sum(before is True and after is False for cid in case_ids for before, after in verdicts[cid])
+    return counts, new_misses, newly_met
 
 
 def _agreement(ref: ResultSet, cand: ResultSet, cid: str) -> dict | None:
@@ -411,22 +755,6 @@ def _agreement(ref: ResultSet, cand: ResultSet, cid: str) -> dict | None:
     if ref_paint is not None and cand_paint is not None and ref_paint.shape == cand_paint.shape:
         out["painted_de00"] = bm.mean_de00(ref_paint[:, :, ::-1], cand_paint[:, :, ::-1])
     return out
-
-
-def _quality_flags(ref_q: dict, cand_q: dict, tol: Tolerances) -> list[str]:
-    def both(key: str) -> bool:
-        return ref_q.get(key) is not None and cand_q.get(key) is not None
-
-    flags = []
-    if both("de00_mean") and cand_q["de00_mean"] > ref_q["de00_mean"] * (1 + tol.de00_rel):
-        flags.append("ΔE00 worse")
-    if both("ssim") and cand_q["ssim"] < ref_q["ssim"] - tol.ssim_abs:
-        flags.append("SSIM worse")
-    if both("labeled_area_fraction") and cand_q["labeled_area_fraction"] < ref_q["labeled_area_fraction"] - tol.labeled_area_abs:
-        flags.append("less labeled area")
-    if both("undersized_regions") and cand_q["undersized_regions"] > ref_q["undersized_regions"]:
-        flags.append("more undersized regions")
-    return flags
 
 
 def _drift_notes(ref_q: dict, cand_q: dict, tol: Tolerances) -> list[str]:
@@ -470,6 +798,15 @@ def _pair_cell(before, after, fmt: str) -> str:
         return after_s
     before_s = fmt.format(before)
     return after_s if before_s == after_s else f"{before_s} → {after_s}"
+
+
+def _fmt_amount(metric: Metric, value: float) -> str:
+    """A change or tolerance in a metric's unit: a share for a relative metric, points for a share of the page."""
+    if metric.relative:
+        return f"{value:.1%}"
+    if "%" in metric.fmt:
+        return f"{value * 100:.2g} points"
+    return f"{value:.2g}" if abs(value) < 100 else f"{value:.0f}"
 
 
 def _time_cell(case: dict | None) -> str:

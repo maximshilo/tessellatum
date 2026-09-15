@@ -402,8 +402,8 @@ How the text metrics are defined:
 - **Labels on text** counts the numbers whose text box overlaps a text box, as
   labels on features does.
 
-The paintability, line, palette, line-art, face and text metrics have no tolerances
-yet, so they don't affect the verdict.
+How the report judges these metrics, with their targets and tolerances, is under
+"Scorecard and verdict" below.
 
 Agreement metrics, candidate vs. reference (computed by `compare` from the
 saved `page.png`, `painted.png` and `regions.npz` of each case):
@@ -415,13 +415,125 @@ saved `page.png`, `painted.png` and `regions.npz` of each case):
 | boundary F1 | how well region outlines line up, within 2 px (1 = same) |
 | painting ΔE00 | mean color difference between the two finished paintings |
 
-## Verdict
+## Scorecard and verdict
 
-`compare` flags a case as a **quality regression** when, versus the reference,
-mean ΔE00 rises more than 3% (`--tol-de00`), SSIM drops more than 0.01
-(`--tol-ssim`), labeled area drops more than 2 points (`--tol-labeled`), or
-undersized regions increase. Region-count changes over 15% are noted but not
-failures: region count is a difficulty trait, not a quality score.
+`compare` judges quality in two separate ways:
+
+- **targets:** what every page should reach, whatever the reference scores;
+- **regressions:** where the candidate got worse than the reference by more than
+  a metric's tolerance.
+
+### Scorecard
+
+A page does four jobs (`QUALITY_BENCHMARKS.md`): it resembles the image, is
+paintable, reads as a clean drawing, and has a palette that works. For each
+result set, the scorecard averages each job's metrics over each image category
+(an image counts in every category it has) and over all cases. It also counts
+the cases meeting all of the job's targets that apply to them. Against a
+reference, it averages both sets over the cases both completed, and marks the
+means that regressed in bold.
+
+| metric | job | tolerance σ | target |
+|---|---|---|---|
+| ΔE00 mean | resembles | 6.6% of the value | – |
+| ΔE00 p95 | resembles | 7.0% of the value | – |
+| SSIM | resembles | 0.0063 | – |
+| face ΔE00 | resembles | 7.8% of the value | – |
+| face SSIM | resembles | 0.016 | – |
+| features lost | resembles | 0.35 | 0 |
+| text CER painting | resembles | 0.0096 | – |
+| labeled area | paintable | 2.3 points | – |
+| unlabeled | paintable | 66 | 0 |
+| slivers | paintable | 1.5 points | ≤ 1% |
+| labels < 6 pt | paintable | 2.0 points | 0 |
+| compactness p10 | paintable | 0.022 | – |
+| compactness median | paintable | 0.034 | – |
+| undersized | paintable | 0 | – |
+| lines per boundary | clean drawing | 0.095 | 1 ± 0.05 |
+| same-color boundary | clean drawing | 2.7 points | 0 |
+| jaggedness | clean drawing | 0.0081 | ≤ 1.02 |
+| edge F1 | clean drawing | 0.022 | – |
+| ink line F1 | clean drawing | 0.021 | ≥ 0.9 |
+| tubes | clean drawing | 2.6 | 0 |
+| ink in shapes < 5 mm | clean drawing | 3.1 points | – |
+| labels on features | clean drawing | 1.6 | – |
+| text CER page | clean drawing | 0.017 | ≤ text CER source + 0.1 |
+| labels on text | clean drawing | 1.3 | 0 |
+| palette min ΔE00 | palette | 1.2 | ≥ 10 |
+| color pairs < 10 ΔE00 | palette | 3.1 | – |
+| flat colors ΔE00 | palette | 1.1 | – |
+
+Regions, ink and text CER source only inform. The per-case tables add the
+number of targets each case misses.
+
+### Targets
+
+A target applies to a case where its metric has a value: ink line F1 and tubes on
+line art, features lost on faces, and the text targets on images with text. They
+spell out the four jobs:
+- **paintable:** no slivers, a number on every region, and every number legible
+  at print size;
+- **clean drawing:**
+  - one smooth line per boundary, and no line between neighbors of the same color;
+  - line art's ink lines printed as the page's lines, with no tubes;
+  - text still readable, with no numbers on it;
+- **resembles:** faces keep their eyes, noses and mouths;
+- **palette:** every two colors at least 10 ΔE00 apart.
+
+Three of the targets need explaining:
+
+- **Lines per boundary** may be 1 ± 0.05, not exactly 1. A renderer drawing every
+  boundary once still scores 1.02–1.03 on `scene.png`: near a point where three
+  regions meet, a line lies within reach of its neighbors' boundaries too. It
+  scores more where regions are only 1–2 px wide, the width slivers already count.
+  Too few lines miss the target as much as too many.
+- **Jaggedness ≤ 1.02** is met today by the bold-line cartoons (1.007–1.016) and
+  `scene.png` (1.002–1.008), whose lines follow smooth shapes. Photos score
+  1.05–1.25.
+- **Text CER page** counts from the source's, because OCR doesn't read all of the
+  source either (0.04–0.26 at preview size, see the text metrics).
+
+The jaggedness, lines-per-boundary and text targets are first estimates.
+
+### Regressions
+
+A metric's tolerance σ is how much one case's value typically changes between
+pages that should be equally good. It is the root mean square change between the
+same image and preset rendered at 1099, 1100 and 1101 px, over the 12 benchmark
+images at Easy, Medium, Hard and Max: 144 pairs, and 36–60 for the metrics that
+need annotations. For ΔE00 mean, ΔE00 p95 and face ΔE00, which range widely
+across images, σ is a share of the value.
+
+- **A regression** is a category, or all cases together, whose mean change
+  against the reference is worse than 3 σ/√n. The mean runs over the n cases with
+  a value in both sets.
+  - Chance changes of single cases cancel out in a mean, so a mean over more cases
+    may move less: ΔE00 mean may rise 2.9% over 48 cases, 7.0% over 8 and 19.8%
+    for one.
+  - On the pages rendered 1 px apart, no mean of any metric crossed that line.
+- **Cases to look at:** single cases worse by more than 3 σ. They aren't
+  regressions: 7 of the 48 cases rendered 1 px apart had one.
+- **Direction:** lines per boundary are judged by their distance from 1.
+  Undersized regions have σ = 0, so their mean may not rise at all.
+
+The verdict lists regressions, then target misses: each target's miss count on the
+reference and the candidate, and the cases that met a target on the reference and
+miss it now. Region-count changes over 15% are noted in the per-case tables, but
+aren't failures: region count is a difficulty trait, not a quality score.
+
+`compare --tol METRIC=SIGMA` replaces a tolerance, by its `case.json` key
+(repeatable), e.g. for a change that trades one metric for another on purpose.
+The verdict names the tolerances replaced.
+
+To measure the tolerances again, e.g. after adding or changing a metric, render
+the images at three sizes and update `sigma` in `bench_report.METRICS`. `noise`
+pairs only sizes up to 1% apart, so result sets that also hold other sizes, such
+as exports, can be passed to it as well:
+
+```
+.venv\Scripts\python benchmarks\bench.py run WORKTREE=sizes --presets Easy Medium Hard Max --long-edge 1099 1100 1101 --repeats 1 --warmup 0
+.venv\Scripts\python benchmarks\bench.py noise sizes
+```
 
 Timings are wall-clock: close heavy apps while benchmarking, and only compare
 result sets recorded on the same machine (the report warns when they're not).
