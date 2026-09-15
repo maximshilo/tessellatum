@@ -131,8 +131,10 @@ primary one: the report's per-case tables list the image under it.
 - **`text`**: one block per sign, title or caption, in reading order.
   - `string` is the ground truth: lines separated by `\n`, plain ASCII
     punctuation (straight quotes, `-` for dashes).
+  - `box` fits the lines tightly: the text metrics split it into that many lines
+    of equal height.
   - `rotation` is how far the text is turned counterclockwise from upright, in
-    degrees: `90` reads bottom to top, `180` is upside down.
+    degrees: `0`, `90` (reads bottom to top), `180` (upside down) or `270`.
   - Only text that reads clearly at full size is annotated. Lettering that's
     cut off, hidden or strongly slanted is left out and mentioned in `notes`.
 - **`flat_colors`** are the artwork's fill colors and **`ink_colors`** its line
@@ -186,10 +188,10 @@ Absolute metrics, per result. Fidelity is scored on the *finished painting*
 (every region filled with its legend color) against the source image at output
 size. Paintability is scored on the region map and the numbers, at print size
 (see "Print scale" above). Line quality is scored on the lines drawn, the region
-map and the source image, and the palette on the legend's colors. Line art and faces
-are also scored against the image's manifest entry: on how the page keeps the
-artwork's ink lines and flat colors, and on how the painting matches inside the faces
-and whether their features survive:
+map and the source image, and the palette on the legend's colors. Line art, faces
+and text are also scored against the image's manifest entry: on how the page keeps
+the artwork's ink lines and flat colors, on how the painting matches inside the faces
+and whether their features survive, and on whether OCR still reads the text:
 
 | metric | meaning | better |
 |---|---|---|
@@ -213,6 +215,8 @@ and whether their features survive:
 | face ΔE00, face SSIM | ΔE00 mean and SSIM inside the image's face boxes | lower, higher |
 | features lost | annotated eyes, noses and mouths the page no longer shows, as lines along their edges or as a region of their own; `case.json` also records the mean share of their edges drawn, as `feature_edge_recall`, and each feature's scores under `face_features` | lower (0) |
 | labels on features | numbers overlapping a feature box | lower (0) |
+| text CER source / page / painting | character error rate of OCR inside the image's text boxes, against their annotated text: on the source (how much OCR reads there at all), the page and the painting; `case.json` records the OCR engine under `ocr`, and what it read in each block under `text_blocks` | lower (0) |
+| labels on text | numbers overlapping a text box | lower (0) |
 | undersized | regions still below the difficulty's minimum size | lower (0) |
 | regions, ink | region count and share of dark outline/number pixels | informational |
 
@@ -363,8 +367,43 @@ How the face metrics are defined:
   number's text box in the default font, centered on the region's label point and
   kept on the page.
 
-The paintability, line, palette, line-art and face metrics have no tolerances yet,
-so they don't affect the verdict.
+How the text metrics are defined:
+
+- They read the image's manifest entry: its `text` blocks, scaled to output size.
+  Images without text get no value.
+- **OCR** is RapidOCR on ONNX Runtime, with the PP-OCRv6 recognition model its
+  wheel ships (Apache-2.0). Both install with the `dev` extra, and nothing is
+  downloaded at run time. `rapidocr` is pinned, because its models are the
+  yardstick. Without it, the character error rates are blank and labels on text
+  are still counted.
+- **Reading a block.** OCR reads a block line by line, as many lines as its
+  annotated text has, and recognizes each line without looking for text first:
+  - the box is turned upright by its `rotation`, and scaled so that each line is
+    48 px tall, whatever the output size;
+  - it gets a margin half a line wide, in the median color of its border;
+  - it is cut into bands of equal height, one per line, each reaching 0.15 of a
+    line into its neighbors;
+  - what OCR reads on the lines is joined with spaces.
+
+  So a text box must fit its lines tightly. RapidOCR's own text detection missed
+  text in boxes this tight, and most lines 7 px tall.
+- **Character error rate** is the edit distance from what OCR read to the annotated
+  text (the fewest insertions, deletions and substitutions), summed over the blocks
+  and divided by the annotated text's length. 0 means every block reads exactly, 1
+  that nothing does; reading extra characters can take it past 1.
+  - Before comparing, both texts get Unicode's compatibility forms (NFKC: a
+    full-width comma becomes a comma), ASCII quotes and dashes for typographic
+    ones, and one space for every run of whitespace, line breaks included.
+  - Case and punctuation count.
+- **On the source**, OCR doesn't read everything either. At preview size it scores
+  0.26 on Times Square, whose smallest signs have lines 7–8 px tall, 0.04 on the
+  postcard, and 0.11 on the comics page, whose smallest captions have lines 7 px
+  tall. A page can't be expected to read better.
+- **Labels on text** counts the numbers whose text box overlaps a text box, as
+  labels on features does.
+
+The paintability, line, palette, line-art, face and text metrics have no tolerances
+yet, so they don't affect the verdict.
 
 Agreement metrics, candidate vs. reference (computed by `compare` from the
 saved `page.png`, `painted.png` and `regions.npz` of each case):

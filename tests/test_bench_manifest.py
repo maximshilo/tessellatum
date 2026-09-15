@@ -71,7 +71,8 @@ def test_parses_every_kind_of_annotation():
         (_entry(text=[{"box": [0, 0, 0, 10], "string": "x"}]), "is empty or outside"),
         (_entry(text=[{"box": [0, 0, 10.5, 10], "string": "x"}]), "[x, y, width, height] in integer pixels"),
         (_entry(text=[{"box": [0, 0, 10, 10], "string": " "}]), "expected non-empty text"),
-        (_entry(text=[{"box": [0, 0, 10, 10], "string": "x", "rotation": 360}]), "whole degrees in 0..359"),
+        (_entry(text=[{"box": [0, 0, 10, 10], "string": "x", "rotation": 360}]), "expected one of 0, 90, 180, 270 degrees"),
+        (_entry(text=[{"box": [0, 0, 10, 10], "string": "x", "rotation": 45}]), "expected one of 0, 90, 180, 270 degrees"),
         (
             _entry(faces=[{"kind": "human", "box": [0, 0, 50, 50], "features": [{"part": "eye", "box": [40, 40, 20, 20]}]}]),
             "is not inside the face box",

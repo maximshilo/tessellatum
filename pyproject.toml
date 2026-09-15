@@ -1,6 +1,6 @@
 [project]
 name = "tessellatum"
-version = "0.1.15"
+version = "0.1.16"
 description = "Generate paint-by-numbers style coloring pages from any image."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,6 +16,10 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pyinstaller>=6.4",
+    # OCR for the benchmark's text metrics. rapidocr ships its models in the wheel and runs offline; it is pinned
+    # because those models are the yardstick.
+    "rapidocr==3.9.2",
+    "onnxruntime>=1.20",
 ]
 
 [project.scripts]

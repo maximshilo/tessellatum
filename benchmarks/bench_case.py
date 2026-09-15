@@ -44,6 +44,8 @@ EXTRA_PRESETS = {"Max": dict(num_colors=40, min_region_fraction=0.0002, blur_sig
 LINE_ART_KEYS = ("ink_line_precision", "ink_line_recall", "ink_line_f1", "tube_regions", "tube_ink_fraction")
 # Face fields, None unless the image's manifest entry has faces.
 FACE_KEYS = ("face_de00_mean", "face_ssim", "features_lost", "feature_edge_recall", "labels_on_features")
+# Text fields, None unless the image's manifest entry has text; the character error rates also without the OCR engine.
+TEXT_KEYS = ("text_cer_source", "text_cer_page", "text_cer_painting", "labels_on_text")
 
 # How render_page numbered regions in the versions before the analysis payload,
 # for when their render module doesn't say (see ``page_data_from_probe``).
@@ -284,6 +286,7 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     result.page.save(args.out / "page.png")
     face_features = None
+    ocr = text_blocks = None
 
     if page_data is not None:
         painted = bm.paint(page_data.region_id_map, page_data.region_color, page_data.palette_bgr)
@@ -322,7 +325,8 @@ def main() -> int:
             quality.update(bm.tube_regions(page_data.region_id_map, ink, ink_width_px))
         # Faces are scored inside the manifest's face boxes, and on whether their features survive on the page.
         quality.update(dict.fromkeys(FACE_KEYS))
-        faces = image_info.scaled_to(source.shape[1::-1]).faces if image_info else ()
+        annotations = image_info.scaled_to(source.shape[1::-1]) if image_info else None
+        faces = annotations.faces if annotations else ()
         if faces:
             quality.update(bm.face_fidelity(source, painted, [_xywh(face.box) for face in faces]))
             features = [feature for face in faces for feature in face.features]
@@ -338,6 +342,13 @@ def main() -> int:
             quality.update(bm.lost_features(scores))
             quality["labels_on_features"] = bm.labels_on_boxes(page_data.label_boxes, feature_boxes) if features else None
             face_features = [{"part": feature.part, **score} for feature, score in zip(features, scores)]
+        # Text is read by OCR inside the manifest's text boxes, on the source, the page and the painting.
+        blocks = annotations.text if annotations else ()
+        reader = bm.text_reader() if blocks else None
+        ocr = reader.name if reader else None
+        layers = {"source": source, "page": np.ascontiguousarray(page_rgb[:, :, ::-1]), "painting": painted}
+        text_quality, text_blocks = text_scores(blocks, layers, page_data.label_boxes, reader)
+        quality.update(text_quality)
         Image.fromarray(np.ascontiguousarray(painted[:, :, ::-1])).save(args.out / "painted.png")
         np.savez_compressed(args.out / "regions.npz", region_id_map=page_data.region_id_map)
 
@@ -373,9 +384,34 @@ def main() -> int:
         "scored_from": page_data.source if page_data else None,
         "quality": quality,
         "face_features": face_features,  # each annotated feature's part and feature_survival score
+        "ocr": ocr,  # the OCR engine and version that read the text, None without text or without the engine
+        "text_blocks": text_blocks,  # each annotated text block's string, and what OCR read on each layer
     }
     (args.out / "case.json").write_text(json.dumps(case, indent=2), encoding="utf-8")
     return 0
+
+
+def text_scores(blocks, layers: dict, label_boxes, reader) -> tuple[dict, list | None]:
+    """The text fields of a case's quality, and what OCR read in each block.
+
+    ``blocks`` are the manifest's text blocks at output size, ``layers`` the
+    images to read them on (named as the ``text_cer_`` fields), and ``reader``
+    the OCR engine (``bench_metrics.text_reader``). Without blocks every field is
+    None; without a reader only ``labels_on_text`` is scored, and no block's
+    reading is returned.
+    """
+    import bench_metrics as bm  # imported late in this module, after the measured version's package
+
+    quality = dict.fromkeys(TEXT_KEYS)
+    if not blocks:
+        return quality, None
+    boxes = [_xywh(block.box) for block in blocks]
+    quality["labels_on_text"] = bm.labels_on_boxes(label_boxes, boxes)
+    if reader is None:
+        return quality, None
+    scores = bm.text_legibility(layers, [(box, block.string, block.rotation) for box, block in zip(boxes, blocks)], reader)
+    quality.update({f"text_cer_{name}": cer for name, cer in scores["cer"].items()})
+    return quality, scores["blocks"]
 
 
 def _xywh(box) -> tuple[int, int, int, int]:

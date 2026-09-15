@@ -648,3 +648,120 @@ def test_labels_on_boxes_counts_each_number_overlapping_a_box_once():
     assert bm.labels_on_boxes(labels, eyes) == 2
     assert bm.labels_on_boxes(labels, []) == 0
     assert bm.labels_on_boxes([], eyes) == 0
+
+
+def _edit_distance_by_table(a: str, b: str) -> int:
+    table = [[i + j if i * j == 0 else 0 for j in range(len(b) + 1)] for i in range(len(a) + 1)]
+    for i in range(1, len(a) + 1):
+        for j in range(1, len(b) + 1):
+            table[i][j] = min(table[i - 1][j] + 1, table[i][j - 1] + 1, table[i - 1][j - 1] + (a[i - 1] != b[j - 1]))
+    return table[-1][-1]
+
+
+def test_edit_distance_counts_the_fewest_insertions_deletions_and_substitutions():
+    assert bm.edit_distance("kitten", "sitting") == 3
+    assert bm.edit_distance("flaw", "lawn") == 2
+    assert bm.edit_distance("", "abc") == bm.edit_distance("abc", "") == 3
+    assert bm.edit_distance("same", "same") == 0
+    # Moving a word costs its length twice over: deleted in one place, inserted in another.
+    assert bm.edit_distance("THE HOUSE AT", "AT THE HOUSE") == 6
+
+    rng = np.random.default_rng(0)
+    for _ in range(200):
+        a, b = ("".join(rng.choice(list("abc "), size=rng.integers(0, 12))) for _ in range(2))
+        assert bm.edit_distance(a, b) == _edit_distance_by_table(a, b)
+
+
+def test_normalized_text_folds_typography_and_whitespace_but_keeps_case_and_punctuation():
+    assert bm.normalized_text("“Follow me,”  she\nsaid — Lovekins’ bird…") == '"Follow me," she said - Lovekins\' bird...'
+    assert bm.normalized_text("（COPYRIGHT， 1904）\t") == "(COPYRIGHT, 1904)"
+    assert bm.normalized_text("ﬁne") == "fine"
+    assert bm.normalized_text("M&M'S Peanut") == "M&M'S Peanut"
+
+
+def _text_block_image() -> np.ndarray:
+    """A white 60 x 100 image holding a 40 x 30 block of three "lines" at (10, 20): dark bars of different grays."""
+    image = np.full((60, 100, 3), 255, dtype=np.uint8)
+    for k, gray in enumerate((0, 60, 120)):
+        image[20 + 10 * k + 2 : 20 + 10 * k + 8, 10:50] = gray
+    return image
+
+
+def test_text_lines_are_bands_one_line_high_overlapping_their_neighbors_inside_a_margin():
+    bands = bm.text_lines(_text_block_image(), (10, 20, 40, 30), rotation=0, line_count=3)
+
+    # Scaled 4.8 x so each line is 48 px tall, with a 24 px margin; each band reaches 7 px into its neighbors' lines.
+    assert len(bands) == 3
+    assert [band.shape for band in bands] == [(62, 192 + 48, 3)] * 3
+    # The margin has the border's color (white), and every band is centered on its own bar.
+    assert (bands[0][:7] == 255).all() and (bands[0][:, :24] == 255).all()
+    assert [int(band[31, 120, 0]) for band in bands] == pytest.approx([0, 60, 120], abs=2)
+
+
+def test_text_lines_undo_quarter_turns_exactly():
+    image = _text_block_image()
+    h, w = image.shape[:2]
+    upright = bm.text_lines(image, (10, 20, 40, 30), rotation=0, line_count=3)
+
+    # Turned counterclockwise a quarter and a half turn, with the block's box turned along.
+    turned_90 = bm.text_lines(np.rot90(image, k=1), (20, w - 50, 30, 40), rotation=90, line_count=3)
+    turned_180 = bm.text_lines(np.rot90(image, k=2), (w - 50, h - 50, 40, 30), rotation=180, line_count=3)
+
+    for band, band_90, band_180 in zip(upright, turned_90, turned_180):
+        np.testing.assert_array_equal(band, band_90)
+        np.testing.assert_array_equal(band, band_180)
+
+
+def test_text_legibility_sums_edit_distances_over_the_blocks():
+    dark = np.zeros((40, 40, 3), dtype=np.uint8)
+    light = np.full((40, 40, 3), 255, dtype=np.uint8)
+    # Reads "AB" on every line that has ink.
+    reader = bm.TextReader("fake", lambda line: "AB" if (line < 128).any() else "")
+    blocks = [((0, 0, 20, 20), "AB\nAB", 0), ((20, 20, 20, 10), "ABC", 0)]
+
+    scores = bm.text_legibility({"dark": dark, "light": light}, blocks, reader)
+
+    # "AB AB" reads exactly and "ABC" misses a letter: 1 error in 8 characters. Reading nothing misses all 8.
+    assert scores["cer"] == {"dark": 1 / 8, "light": 1.0}
+    assert scores["blocks"][0] == {"string": "AB\nAB", "read": {"dark": "AB AB", "light": ""}, "cer": {"dark": 0.0, "light": 1.0}}
+    assert scores["blocks"][1]["cer"] == {"dark": 1 / 3, "light": 1.0}
+    assert bm.text_legibility({"dark": dark}, [], reader) == {"cer": {"dark": None}, "blocks": []}
+
+
+def test_text_reader_is_none_without_the_ocr_package(monkeypatch):
+    monkeypatch.setitem(sys.modules, "rapidocr", None)  # makes importing it fail
+
+    assert bm.text_reader() is None
+
+
+def test_ocr_reads_upright_and_turned_text_but_not_a_page_without_it():
+    pytest.importorskip("rapidocr")
+    from PIL import Image, ImageDraw, ImageFont
+
+    sign = Image.new("RGB", (400, 100), "white")
+    draw = ImageDraw.Draw(sign)
+    draw.multiline_text((10, 10), "PAINT BY\nNUMBERS", fill="black", font=ImageFont.load_default(size=30), spacing=8)
+    x0, y0, x1, y1 = draw.multiline_textbbox((10, 10), "PAINT BY\nNUMBERS", font=ImageFont.load_default(size=30), spacing=8)
+    sign = np.asarray(sign)[:, :, ::-1][y0 - 4 : y1 + 4, x0 - 4 : x1 + 4]
+    sh, sw = sign.shape[:2]
+    source = np.full((300, 600, 3), 255, dtype=np.uint8)
+    source[20 : 20 + sh, 20 : 20 + sw] = sign
+    source[20 : 20 + sw, 300 : 300 + sh] = np.rot90(sign, k=1)  # reads bottom to top
+    source[200 : 200 + sh, 300 : 300 + sw] = np.rot90(sign, k=2)  # upside down
+    blocks = [
+        ((20, 20, sw, sh), "PAINT BY\nNUMBERS", 0),
+        ((300, 20, sh, sw), "PAINT BY\nNUMBERS", 90),
+        ((300, 200, sw, sh), "PAINT BY\nNUMBERS", 180),
+    ]
+
+    reader = bm.text_reader()
+    scores = bm.text_legibility({"source": source, "blank": np.full_like(source, 255)}, blocks, reader)
+
+    assert reader.name.startswith("rapidocr ")
+    assert [block["read"]["source"] for block in scores["blocks"]] == ["PAINT BY NUMBERS"] * 3
+    assert scores["cer"] == {"source": 0.0, "blank": 1.0}
+
+
+def test_text_lines_turn_text_upright_only_by_quarter_turns():
+    with pytest.raises(ValueError, match="quarter turns"):
+        bm.text_lines(_text_block_image(), (10, 20, 40, 30), rotation=45, line_count=3)

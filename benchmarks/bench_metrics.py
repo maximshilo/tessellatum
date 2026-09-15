@@ -9,9 +9,9 @@ Two kinds:
   regions, outline clutter), how cleanly its lines are drawn (lines per
   boundary, boundaries between same-colored regions, jaggedness, lines on the
   source's edges), how clearly its legend colors differ from each other, on
-  line art whether it keeps the artwork's ink lines and flat colors, and on
-  faces how closely the painting matches inside them and whether their
-  features survive.
+  line art whether it keeps the artwork's ink lines and flat colors, on faces
+  how closely the painting matches inside them and whether their features
+  survive, and on text whether OCR still reads it.
 * **Agreement** metrics score a result against a reference result (usually the
   previous version), to tell "identical output" apart from "different output".
 
@@ -25,6 +25,9 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import unicodedata
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -52,6 +55,12 @@ INK_LINE_TOLERANCE_MM = 0.5
 # at least FEATURE_MIN_REGION_SHARE of it.
 FEATURE_MIN_EDGE_RECALL = 0.3
 FEATURE_MIN_REGION_SHARE = 0.25
+# Text. OCR reads each annotated text block line by line. The block's box, turned upright, is scaled so that each of
+# its lines is TEXT_LINE_HEIGHT_PX tall, given a margin TEXT_MARGIN_LINES line heights wide in the color of its border,
+# and cut into one band per line, reaching TEXT_LINE_OVERLAP line heights into the lines above and below.
+TEXT_LINE_HEIGHT_PX = 48
+TEXT_MARGIN_LINES = 0.5
+TEXT_LINE_OVERLAP = 0.15
 
 
 def _load_print_size():
@@ -650,6 +659,134 @@ def labels_on_boxes(label_boxes, boxes) -> int:
     )
 
 
+@dataclass(frozen=True)
+class TextReader:
+    """An OCR engine that reads a single line of text."""
+
+    name: str  # the engine and its version, as case.json records them
+    read_line: Callable[[np.ndarray], str]  # the text on one line: a BGR image of it, its letters upright
+
+
+def text_reader() -> TextReader | None:
+    """RapidOCR's text recognizer, with the models its wheel ships, or None if it isn't installed.
+
+    Only recognition runs, on lines ``text_lines`` cuts out: neither text
+    detection nor the classifier that turns lines upside down. It runs offline.
+    """
+    try:
+        from importlib.metadata import version
+
+        import onnxruntime  # noqa: F401 - the engine RapidOCR runs its models on, which it doesn't install itself
+        from rapidocr import RapidOCR
+    except ImportError:
+        return None
+    engine = RapidOCR(params={"Global.log_level": "error"})
+
+    def read_line(line_bgr: np.ndarray) -> str:
+        result = engine(np.ascontiguousarray(line_bgr), use_det=False, use_cls=False)
+        return " ".join(text for text in (result.txts or ()) if text.strip())
+
+    return TextReader(f"rapidocr {version('rapidocr')}, onnxruntime {version('onnxruntime')}", read_line)
+
+
+def text_lines(
+    image_bgr: np.ndarray,
+    box,
+    rotation: int,
+    line_count: int,
+    line_height_px: int = TEXT_LINE_HEIGHT_PX,
+    margin_lines: float = TEXT_MARGIN_LINES,
+    overlap_lines: float = TEXT_LINE_OVERLAP,
+) -> list[np.ndarray]:
+    """The lines of a text block as OCR reads them, top to bottom.
+
+    The (x, y, width, height) ``box`` holds ``line_count`` lines of text,
+    turned ``rotation`` degrees counterclockwise from upright (0, 90, 180 or
+    270), and fits them tightly. It is turned upright and scaled so that each
+    line is ``line_height_px`` tall. It gets a margin of ``margin_lines`` line
+    heights in its border's median color, and is cut into bands of equal height,
+    one per line, each reaching ``overlap_lines`` line heights into its
+    neighbors.
+    """
+    if rotation % 90:
+        raise ValueError(f"text can only be turned upright by quarter turns, not {rotation} degrees")
+    x, y, w, h = box
+    block = np.rot90(np.asarray(image_bgr)[y : y + h, x : x + w], k=-(rotation // 90))  # clockwise, undoing the turn
+    lines = max(1, line_count)
+    scale = line_height_px * lines / block.shape[0]
+    size = (max(1, int(round(block.shape[1] * scale))), line_height_px * lines)
+    block = cv2.resize(np.ascontiguousarray(block), size, interpolation=cv2.INTER_CUBIC if scale > 1 else cv2.INTER_AREA)
+    margin = int(round(margin_lines * line_height_px))
+    border = np.concatenate([block[0], block[-1], block[:, 0], block[:, -1]])
+    color = [int(v) for v in np.median(border.reshape(len(border), -1), axis=0)]
+    block = cv2.copyMakeBorder(block, margin, margin, margin, margin, cv2.BORDER_CONSTANT, value=color)
+    bands = []
+    for k in range(lines):
+        top = max(0, margin + int(round((k - overlap_lines) * line_height_px)))
+        bottom = min(block.shape[0], margin + int(round((k + 1 + overlap_lines) * line_height_px)))
+        bands.append(block[top:bottom])
+    return bands
+
+
+def text_legibility(layers: dict[str, np.ndarray], blocks, reader: TextReader) -> dict:
+    """How much of the annotated text OCR reads on each of several images of a page, such as the source and the page.
+
+    ``layers`` maps a name to a BGR image; ``blocks`` are (box, string,
+    rotation) with the ground truth's lines separated by "\\n", as the image
+    manifest gives them, in pixels of the images. Every block is read line by
+    line (``text_lines``), and the lines' text joined by spaces. Returns:
+
+    * ``cer``: each layer's character error rate, the edit distance from what
+      OCR read to the ground truth, both ``normalized_text``, summed over the
+      blocks and divided by the ground truth's length: 0 when every block reads
+      exactly, 1 when nothing does, more when OCR reads extra characters. None
+      without blocks;
+    * ``blocks``: each block's string, and on each layer what OCR read and its
+      character error rate.
+    """
+    errors = dict.fromkeys(layers, 0)
+    length = 0
+    scores = []
+    for box, string, rotation in blocks:
+        truth = normalized_text(string)
+        length += len(truth)
+        read, cer = {}, {}
+        for name, image in layers.items():
+            lines = text_lines(image, box, rotation, string.count("\n") + 1)
+            read[name] = " ".join(text for text in map(reader.read_line, lines) if text)
+            distance = edit_distance(normalized_text(read[name]), truth)
+            errors[name] += distance
+            cer[name] = distance / len(truth) if truth else None
+        scores.append({"string": string, "read": read, "cer": cer})
+    return {"cer": {name: errors[name] / length if length else None for name in layers}, "blocks": scores}
+
+
+def normalized_text(text: str) -> str:
+    """Text as the text metrics compare it.
+
+    Unicode compatibility characters become their plain forms (NFKC, so a
+    full-width comma is a comma), typographic quotes and dashes their ASCII
+    counterparts, and every run of whitespace, line breaks included, one space.
+    """
+    text = unicodedata.normalize("NFKC", text).translate(_TYPOGRAPHIC_PUNCTUATION)
+    return " ".join(text.split())
+
+
+def edit_distance(a: str, b: str) -> int:
+    """Levenshtein distance: the fewest single-character insertions, deletions and substitutions that turn ``a`` into ``b``."""
+    if not a or not b:
+        return max(len(a), len(b))
+    target = np.fromiter(map(ord, b), dtype=np.int64, count=len(b))
+    steps = np.arange(len(b) + 1)
+    row = steps.copy()  # distances from the first i characters of a to every prefix of b, for i = 0
+    for i, char in enumerate(a, 1):
+        best = np.empty_like(row)
+        best[0] = i
+        best[1:] = np.minimum(row[1:] + 1, row[:-1] + (target != ord(char)))  # a deletion, or a substitution or match
+        row = np.minimum.accumulate(best - steps) + steps  # then insertions: the best k <= j plus j - k
+    return int(row[-1])
+
+
 _SUBPIXEL_BITS = 4  # cv2.polylines draws points given in 1/16 px
 _NEIGHBORHOOD_3X3 = np.ones((3, 3), dtype=np.uint8)
 _RESAMPLE_PX = 0.5  # jaggedness smooths lines resampled at most this far apart
@@ -658,6 +795,9 @@ _EDGE_FIXED_POINT = 16  # Canny takes 16-bit gradients: 1/16 of a Lab unit
 _SRGB_TO_XYZ = np.array([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]])
 _COLOR_BATCH = 16_384  # pixel colors _nearest_colors compares at once, which keeps its temporary arrays small
 _INK_MIX_STEPS = 8  # source_ink counts mixes of two ink colors in steps of 1/8 as ink
+_TYPOGRAPHIC_PUNCTUATION = str.maketrans(
+    {"‘": "'", "’": "'", "‚": "'", "′": "'", "“": '"', "”": '"', "„": '"', "″": '"', "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-"}
+)
 # A pixel's 8 neighbors as (dy, dx), clockwise from the one above; bit k of a neighborhood code is neighbor k.
 _NEIGHBORS_CLOCKWISE = ((-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1))
 
