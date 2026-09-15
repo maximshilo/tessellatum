@@ -480,6 +480,8 @@ spell out the four jobs:
 - **resembles:** faces keep their eyes, noses and mouths;
 - **palette:** every two colors at least 10 ΔE00 apart.
 
+Three of the targets need explaining:
+
 - **Lines per boundary** may be 1 ± 0.05, not exactly 1. A renderer drawing every
   boundary once still scores 1.02–1.03 on `scene.png`: near a point where three
   regions meet, a line lies within reach of its neighbors' boundaries too. It
@@ -524,7 +526,9 @@ aren't failures: region count is a difficulty trait, not a quality score.
 The verdict names the tolerances replaced.
 
 To measure the tolerances again, e.g. after adding or changing a metric, render
-the images at three sizes and update `sigma` in `bench_report.METRICS`:
+the images at three sizes and update `sigma` in `bench_report.METRICS`. `noise`
+pairs only sizes up to 1% apart, so result sets that also hold other sizes, such
+as exports, can be passed to it as well:
 
 ```
 .venv\Scripts\python benchmarks\bench.py run WORKTREE=sizes --presets Easy Medium Hard Max --long-edge 1099 1100 1101 --repeats 1 --warmup 0

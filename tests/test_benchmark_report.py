@@ -298,6 +298,8 @@ def test_noise_sigma_is_the_root_mean_square_change_between_sizes(tmp_path):
             _case("lion.jpg", ["photo"], 11.0, long_edge=1099, jaggedness=1.13),
             _case("lion.jpg", ["photo"], 9.0, long_edge=1101, jaggedness=1.06),
             _case("lion.jpg", ["photo"], 20.0, preset="Hard", long_edge=1099, jaggedness=2.0),  # no other size at Hard
+            _case("lion.jpg", ["photo"], 30.0, long_edge=1113, jaggedness=3.0),  # more than 1% from every other size
+            _case("lion.jpg", ["photo"], 30.0, long_edge=2400, jaggedness=3.0),  # an export, never paired with a preview
         ],
     )
 
@@ -309,6 +311,11 @@ def test_noise_sigma_is_the_root_mean_square_change_between_sizes(tmp_path):
     assert sigmas["ssim"] == (3, 0.0)
     assert "regions" not in sigmas
     assert "| jaggedness | jaggedness | 3 | 0.05 | 0.0081 | no |" in bench_report.noise_report([base, sizes])
+    # 1010 px is 1% above 1000 px and pairs with it; 1021 px is more than 1% above both.
+    edges = _write_set(
+        tmp_path / "edges", [_case("cat.jpg", ["photo"], 5.0, long_edge=e, jaggedness=j) for e, j in ((1000, 1.0), (1010, 1.5), (1021, 2.0))]
+    )
+    assert bench_report.noise_sigmas([bench_report.ResultSet(edges)])["jaggedness"] == (1, pytest.approx(0.5))
 
 
 def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path):

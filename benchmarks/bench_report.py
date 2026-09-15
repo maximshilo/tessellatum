@@ -208,12 +208,18 @@ def misses_target(metric: Metric, quality: dict) -> bool | None:
     return value < limit if metric.better == "higher" else value > limit
 
 
+# bench.py noise pairs output sizes at most this share apart (1099 and 1101 px), never a preview with an export.
+NOISE_MAX_SIZE_CHANGE = 0.01
+
+
 def noise_sigmas(sets: list[ResultSet]) -> dict[str, tuple[int, float]]:
     """Each judged metric's (pairs, sigma): the root mean square change between cases that differ only in output size.
 
-    Every two completed cases of the same image and preset at different long
-    edges are a pair, within a result set and across them, the smaller size
-    first. A relative metric's change is a share of the smaller size's value.
+    Every two completed cases of the same image and preset whose long edges
+    differ, by at most ``NOISE_MAX_SIZE_CHANGE`` of the smaller one, are a pair,
+    within a result set and across them, the smaller size first. So previews and
+    exports in the same result sets each pair only with sizes near their own. A
+    relative metric's change is a share of the smaller size's value.
     """
     by_image: dict[tuple[str, str], list[dict]] = {}
     for result_set in sets:
@@ -224,7 +230,7 @@ def noise_sigmas(sets: list[ResultSet]) -> dict[str, tuple[int, float]]:
     for cases in by_image.values():
         cases.sort(key=lambda case: case["long_edge"])
         for smaller, larger in itertools.combinations(cases, 2):
-            if smaller["long_edge"] == larger["long_edge"]:
+            if not 0 < larger["long_edge"] - smaller["long_edge"] <= NOISE_MAX_SIZE_CHANGE * smaller["long_edge"]:
                 continue
             for metric in JUDGED:
                 change = _change(metric, smaller["quality"].get(metric.key), larger["quality"].get(metric.key))
@@ -244,8 +250,9 @@ def noise_report(paths: list[Path]) -> str:
     lines = [
         "# Tessellatum benchmark noise",
         "",
-        f"Root mean square change of one case between the same image and preset at different output sizes, in "
-        f"{', '.join(s.label for s in sets)}. For pages that should be equally good, it is a metric's tolerance "
+        f"Root mean square change of one case between the same image and preset at output sizes up to "
+        f"{NOISE_MAX_SIZE_CHANGE:.0%} apart, in {', '.join(s.label for s in sets)}. For pages that should be equally good, "
+        "it is a metric's tolerance "
         "(`bench.py compare --tol METRIC=SIGMA`). A relative metric's change is a share of its value.",
         "",
     ]
