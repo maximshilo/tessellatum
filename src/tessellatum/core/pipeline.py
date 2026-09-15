@@ -57,7 +57,7 @@ class PageAnalysis:
     region_color: np.ndarray  # color of each region id (merged-away ids keep an entry)
     palette_bgr: np.ndarray  # Kx3 uint8, legend colors first
     legend_size: int
-    min_region_area_px: int  # regions smaller than this were merged into a neighbor
+    min_region_area_px: int  # merge threshold: smaller regions merge into a neighbor, if they have one
     regions: list[Region]  # regions drawn on the page, in region-id order
     labels: list[Label]  # numbers drawn on the page
     outlines: np.ndarray  # HxW uint8: the outline layer alone, 0 = black line, 255 = paper
