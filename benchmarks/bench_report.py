@@ -228,8 +228,8 @@ def _quality_section(
         "to be painted instead of printed. "
         "**flat colors ΔE00**: mean CIEDE2000 from each of the artwork's flat colors to the nearest legend color. "
         "**face ΔE00** and **face SSIM**: ΔE00 mean and SSIM inside the image's face boxes. "
-        f"**features lost**: annotated eyes, noses and mouths with neither drawn lines along "
-        f"{bm.FEATURE_MIN_EDGE_RECALL:.0%} of their edges nor a region of their own covering "
+        f"**features lost**: annotated eyes, noses and mouths with neither drawn lines along at least "
+        f"{bm.FEATURE_MIN_EDGE_RECALL:.0%} of their edges nor a region of their own covering at least "
         f"{bm.FEATURE_MIN_REGION_SHARE:.0%} of their box. "
         "**labels on features**: numbers overlapping a feature box. "
         "**undersized**: regions left below the merge threshold. **ink**: share of dark outline/number pixels.",

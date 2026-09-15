@@ -171,7 +171,11 @@ def outline_polyline(contour) -> np.ndarray:
 
 
 def label_box(text: str, font_size: int, point, page_size: tuple[int, int]) -> tuple[float, float, float, float]:
-    """The (x0, y0, x1, y1) box where ``render_page`` put a number: its text box in the default font, centered on ``point`` and kept on the page."""
+    """The (x0, y0, x1, y1) box where ``render_page`` put a number.
+
+    That is the number's text box in the default font, centered on ``point``
+    and kept on the page.
+    """
     from PIL import Image, ImageDraw, ImageFont  # imported late in this module, after the measured version's package
 
     left, top, right, bottom = ImageDraw.Draw(Image.new("RGB", (1, 1))).textbbox(
