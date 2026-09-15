@@ -42,6 +42,10 @@ def test_probe_fallback_reads_the_same_page_data_as_the_analysis(speckled_image_
     assert len(from_analysis.strokes) == len(from_probe.strokes) == len(from_analysis.regions)
     for from_payload, rebuilt in zip(from_analysis.strokes, from_probe.strokes):
         np.testing.assert_array_equal(from_payload, rebuilt)
+    # Both read the legend's colors in legend order, without the specks' color, which no drawn region has.
+    np.testing.assert_array_equal(from_analysis.legend_bgr, from_probe.legend_bgr)
+    assert len(from_probe.legend_bgr) == result.num_colors_used < len(from_probe.palette_bgr)
+    assert [tuple(color) for color in from_probe.legend_bgr[:, ::-1].tolist()] == result.palette_rgb
 
 
 def test_probe_fallback_rebuilds_font_sizes_without_the_render_module():
@@ -109,5 +113,7 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path, sam
         "edge_precision",
         "edge_recall",
         "edge_f1",
+        "palette_min_de00",
+        "palette_close_pairs",
     } <= case["quality"].keys()
     assert (out / "painted.png").is_file() and (out / "regions.npz").is_file()

@@ -79,6 +79,7 @@ class PageData:
     region_id_map: np.ndarray  # HxW region id per pixel
     region_color: np.ndarray  # color of each region id, as an index into palette_bgr
     palette_bgr: np.ndarray
+    legend_bgr: np.ndarray  # the legend's colors, in legend order: the colors of the drawn regions
     min_region_area_px: int
     regions: list  # regions drawn on the page
     labeled_region_ids: set[int]  # regions that carry a number
@@ -97,6 +98,7 @@ def page_data_from_analysis(analysis) -> PageData:
         region_id_map=analysis.region_id_map,
         region_color=analysis.region_color,
         palette_bgr=analysis.palette_bgr,
+        legend_bgr=analysis.palette_bgr[: analysis.legend_size],
         min_region_area_px=analysis.min_region_area_px,
         regions=analysis.regions,
         labeled_region_ids={label.region_id for label in analysis.labels},
@@ -117,13 +119,15 @@ def page_data_from_probe(captured: dict, params, size: tuple[int, int], render_m
     region it was given by drawing its contour as a polygon, and numbered
     exactly the regions with at least ``MIN_LABEL_RADIUS_PX`` of clearance, at
     a font size of that clearance times ``FONT_SIZE_RADIUS_RATIO``, clamped to
-    ``MIN_FONT_SIZE``..``MAX_FONT_SIZE``.
+    ``MIN_FONT_SIZE``..``MAX_FONT_SIZE``. The legend listed the drawn regions'
+    colors, in quantizer order.
     """
     if not all(stage in captured for stage in ("quantize", "build_regions", "render_page")):
         return None
     w, h = size
     region_id_map, region_color = captured["build_regions"][2]
     regions = captured["render_page"][0][1]
+    palette_bgr = captured["quantize"][2][1]
 
     def constant(name: str):
         return getattr(render_module, name, RENDER_DEFAULTS[name])
@@ -134,7 +138,9 @@ def page_data_from_probe(captured: dict, params, size: tuple[int, int], render_m
         source="probe",
         region_id_map=region_id_map,
         region_color=region_color,
-        palette_bgr=captured["quantize"][2][1],
+        palette_bgr=palette_bgr,
+        # Regions' own color_index is renumbered to legend order before rendering, so read their colors from the map's.
+        legend_bgr=palette_bgr[sorted({int(region_color[r.region_id]) for r in regions})],
         min_region_area_px=max(4, int(round(params.min_region_fraction * h * w))),
         regions=regions,
         labeled_region_ids={r.region_id for r in labeled},
@@ -268,6 +274,7 @@ def main() -> int:
             bm.fit_to(reference, page_data.region_id_map.shape[::-1]), print_scale.mm_to_px(bm.EDGE_SMOOTHING_MM)
         )
         quality.update(bm.edge_alignment(page_data.region_id_map, edges, print_scale.mm_to_px(bm.EDGE_TOLERANCE_MM)))
+        quality.update(bm.palette_separation(page_data.legend_bgr))
         Image.fromarray(np.ascontiguousarray(painted[:, :, ::-1])).save(args.out / "painted.png")
         np.savez_compressed(args.out / "regions.npz", region_id_map=page_data.region_id_map)
 
