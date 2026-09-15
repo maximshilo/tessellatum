@@ -40,7 +40,7 @@ PROBED_STAGES = (
 # setting the Custom sliders allow -- the worst case for region handling.
 EXTRA_PRESETS = {"Max": dict(num_colors=40, min_region_fraction=0.0002, blur_sigma=0.0)}
 
-# Line-art fields, None for images whose manifest entry has no ink colors.
+# Line-art fields, None unless the image's manifest entry has both flat and ink colors.
 LINE_ART_KEYS = ("ink_line_precision", "ink_line_recall", "ink_line_f1", "tube_regions", "tube_ink_fraction")
 
 # How render_page numbered regions in the versions before the analysis payload,

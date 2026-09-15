@@ -309,9 +309,10 @@ How the line-art metrics are defined:
     lies nearer.
   - Ink lines are the ink narrower than 5 mm. Parts of it a 5 mm disk fits into
     are fills drawn in an ink color.
-  - The bold-line cartoons' ink lines are 2–4 mm wide at print size. On the two
-    scans the manifest's colors are cluster centers of printed colors, so print
-    texture and hatching turn into specks and short strokes of ink.
+  - The bold-line cartoons' outlines are 2–4 mm wide at print size, and their
+    finer lines under 1 mm. On the two scans the manifest's colors are cluster
+    centers of printed colors, so print texture and hatching turn into specks
+    and short strokes of ink.
 - **Ink line F1** compares the ink lines' centerlines (Zhang–Suen thinning) with
   the centers of the lines drawn.
   - Recall is the share of centerline pixels within 0.5 mm of a drawn line.
