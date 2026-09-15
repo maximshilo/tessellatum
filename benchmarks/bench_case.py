@@ -10,15 +10,23 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import json
 import statistics
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-# Stage functions the probe times and captures, if the pipeline module exposes
-# them (``generate`` looks them up as module globals, so wrapping works).
-# Keep these names when restructuring the pipeline, or extend this list.
+if TYPE_CHECKING:
+    import numpy as np
+
+# Stage functions the probe times, if the pipeline module exposes them
+# (``generate`` looks them up as module globals, so wrapping works). For
+# versions whose ``generate`` can't collect analysis, the probe also captures
+# what scoring needs. Keep these names when restructuring the pipeline, or
+# extend this list.
 PROBED_STAGES = (
     "resize_to_long_edge",
     "quantize",
@@ -59,6 +67,56 @@ class Probe:
             return result
 
         return wrapper
+
+
+@dataclass
+class PageData:
+    """What scoring reads from a generated page, whichever way its pipeline version provides it."""
+
+    source: str  # "analysis": generate's analysis payload; "probe": captured stage calls
+    region_id_map: np.ndarray  # HxW region id per pixel
+    region_color: np.ndarray  # color of each region id, as an index into palette_bgr
+    palette_bgr: np.ndarray
+    min_region_area_px: int
+    regions: list  # regions drawn on the page
+    labeled_region_ids: set[int]  # regions that carry a number
+
+
+def page_data_from_analysis(analysis) -> PageData:
+    """Read the payload of ``generate(..., collect_analysis=True)``."""
+    return PageData(
+        source="analysis",
+        region_id_map=analysis.region_id_map,
+        region_color=analysis.region_color,
+        palette_bgr=analysis.palette_bgr,
+        min_region_area_px=analysis.min_region_area_px,
+        regions=analysis.regions,
+        labeled_region_ids={label.region_id for label in analysis.labels},
+    )
+
+
+def page_data_from_probe(captured: dict, params, size: tuple[int, int], render_module) -> PageData | None:
+    """Rebuild page data from the stage calls of a version without the analysis payload.
+
+    Relies on how those versions worked: ``generate`` derived the merge
+    threshold from the difficulty as below, and ``render_page`` numbered
+    exactly the regions with at least ``MIN_LABEL_RADIUS_PX`` of clearance.
+    """
+    if not all(stage in captured for stage in ("quantize", "build_regions", "render_page")):
+        return None
+    w, h = size
+    region_id_map, region_color = captured["build_regions"][2]
+    regions = captured["render_page"][0][1]
+    label_radius = getattr(render_module, "MIN_LABEL_RADIUS_PX", DEFAULT_LABEL_RADIUS_PX)
+    return PageData(
+        source="probe",
+        region_id_map=region_id_map,
+        region_color=region_color,
+        palette_bgr=captured["quantize"][2][1],
+        min_region_area_px=max(4, int(round(params.min_region_fraction * h * w))),
+        regions=regions,
+        labeled_region_ids={r.region_id for r in regions if r.interior_radius >= label_radius},
+    )
 
 
 def main() -> int:
@@ -102,15 +160,17 @@ def main() -> int:
 
     image_bgr = pipeline.load_image_bgr(args.image)
     probe = Probe(pipeline)
+    has_analysis = "collect_analysis" in inspect.signature(pipeline.generate).parameters
 
-    def run_once():
+    def run_once(collect_analysis: bool = False):
         probe.reset()
         # A fresh copy per run, so a pipeline that caches work per image object
         # can't turn repeats into cache hits.
         fresh = image_bgr.copy()
+        options = {"collect_analysis": True} if collect_analysis else {}
         started = time.perf_counter()
         result = pipeline.generate(
-            fresh, params, args.long_edge, progress_callback=lambda _pct: None, should_cancel=lambda: False
+            fresh, params, args.long_edge, progress_callback=lambda _pct: None, should_cancel=lambda: False, **options
         )
         total = time.perf_counter() - started
         return result, {"total_s": total, "stages_s": dict(probe.timings)}
@@ -131,9 +191,17 @@ def main() -> int:
         r["total_s"] - sum(r["stages_s"].get(name, 0.0) for name in stage_names) for r in runs
     )
 
-    captured = probe.captured  # from the last measured run
     reference = bm.reference_resize(image_bgr, args.long_edge)
     h, w = reference.shape[:2]
+    if has_analysis:
+        # The timed runs leave analysis off, as the app does; one more run collects it.
+        result = run_once(collect_analysis=True)[0]
+        page_hashes.add(hashlib.sha1(result.page.tobytes()).hexdigest())
+        page_data = page_data_from_analysis(result.analysis)
+    else:  # from the stage calls of the last measured run
+        render_module = sys.modules.get("tessellatum.core.render")
+        page_data = page_data_from_probe(probe.captured, params, (w, h), render_module)
+
     print_scale = bm.print_size.print_scale(result.page.size)
     page_rgb = np.asarray(result.page.convert("RGB"))
     quality: dict[str, float | int] = {
@@ -145,21 +213,15 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     result.page.save(args.out / "page.png")
 
-    if "build_regions" in captured and "quantize" in captured:
-        region_id_map, region_color = captured["build_regions"][2]
-        palette_bgr = captured["quantize"][2][1]
-        painted = bm.paint(region_id_map, region_color, palette_bgr)
+    if page_data is not None:
+        painted = bm.paint(page_data.region_id_map, page_data.region_color, page_data.palette_bgr)
         quality.update(bm.fidelity(reference, bm.fit_to(painted, (w, h))))
-        min_area_px = max(4, int(round(params.min_region_fraction * h * w)))
-        quality["undersized_regions"] = bm.count_undersized(region_id_map, min_area_px)
+        quality["undersized_regions"] = bm.count_undersized(page_data.region_id_map, page_data.min_region_area_px)
+        quality.update(
+            bm.label_coverage(page_data.regions, page_data.labeled_region_ids, page_rgb.shape[0] * page_rgb.shape[1])
+        )
         Image.fromarray(np.ascontiguousarray(painted[:, :, ::-1])).save(args.out / "painted.png")
-        np.savez_compressed(args.out / "regions.npz", region_id_map=region_id_map)
-
-    if "render_page" in captured:
-        regions = captured["render_page"][0][1]
-        render_module = sys.modules.get("tessellatum.core.render")
-        label_radius = getattr(render_module, "MIN_LABEL_RADIUS_PX", DEFAULT_LABEL_RADIUS_PX)
-        quality.update(bm.label_coverage(regions, label_radius, page_rgb.shape[0] * page_rgb.shape[1]))
+        np.savez_compressed(args.out / "regions.npz", region_id_map=page_data.region_id_map)
 
     case = {
         "case": args.out.name,
@@ -190,6 +252,7 @@ def main() -> int:
         "deterministic": len(page_hashes) == 1,
         "page_sha1": sorted(page_hashes)[0],
         "peak_rss_mb": peak_rss_mb,
+        "scored_from": page_data.source if page_data else None,
         "quality": quality,
     }
     (args.out / "case.json").write_text(json.dumps(case, indent=2), encoding="utf-8")

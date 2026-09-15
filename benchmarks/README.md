@@ -36,9 +36,22 @@ images x presets x output sizes:
 - Per-stage timings come from wrapping the stage functions that
   `tessellatum.core.pipeline.generate` calls: `resize_to_long_edge`,
   `quantize`, `build_regions`, `extract_regions`, `render_page`,
-  `render_legend`. The same wrappers capture the region map and palette the
-  quality metrics need. Keep those names if you restructure the pipeline, or
+  `render_legend`. Keep those names if you restructure the pipeline, or
   update `PROBED_STAGES` in `bench_case.py`.
+- Quality metrics read what the page is made of from the pipeline itself.
+  `generate(..., collect_analysis=True)` returns it as `GeneratedPage.analysis`
+  (`PageAnalysis` in `pipeline.py`):
+  - the region map, each region's color and the palette, legend colors first;
+  - the drawn regions, with their outlines and label points;
+  - every number, with its font size and bounding box;
+  - the outline layer on its own.
+
+  The timed runs don't collect it, as in the app. One more run after them
+  does, and its page must match theirs for the case to count as
+  deterministic. Versions from before 0.1.10 have no analysis; the stage
+  wrappers capture the region map, palette and regions for them instead.
+  `case.json` records which source was used under `scored_from` (`analysis`
+  or `probe`).
 - Cases exceeding `--timeout` (default 30 min) are killed and recorded as
   timeouts; speedups against them are reported as lower bounds.
 

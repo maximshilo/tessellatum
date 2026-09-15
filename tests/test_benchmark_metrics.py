@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -73,3 +74,15 @@ def test_boundary_f1_tolerates_only_small_shifts():
     assert bm.boundary_f1(a, a) == 1.0
     assert bm.boundary_f1(a, shifted_1px) == 1.0
     assert bm.boundary_f1(a, shifted_6px) == 0.0
+
+
+def test_label_coverage_counts_the_regions_that_carry_a_number():
+    regions = [
+        SimpleNamespace(region_id=0, area=60),
+        SimpleNamespace(region_id=3, area=30),
+        SimpleNamespace(region_id=7, area=10),
+    ]
+
+    coverage = bm.label_coverage(regions, {3, 7}, total_px=200)
+
+    assert coverage == pytest.approx({"labeled_region_fraction": 2 / 3, "labeled_area_fraction": 0.2})

@@ -17,8 +17,8 @@ from tessellatum.core import kernels
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import render_legend
 from tessellatum.core.quantize import quantize
-from tessellatum.core.regions import build_regions, extract_regions
-from tessellatum.core.render import render_page
+from tessellatum.core.regions import Region, build_regions, extract_regions
+from tessellatum.core.render import Label, render_page
 
 PREVIEW_LONG_EDGE = 1100
 EXPORT_LONG_EDGE = 2400
@@ -41,12 +41,36 @@ class PipelineCancelled(Exception):
 
 
 @dataclass
+class PageAnalysis:
+    """What a generated page is made of, for measuring it (see ``generate``).
+
+    Colors are indices into ``palette_bgr``. Its first ``legend_size`` colors
+    are the legend's, in legend order, so color ``i`` is numbered ``i + 1`` on
+    the page. The rest are quantized colors no drawn region has.
+
+    A region in ``region_id_map`` with no entry in ``regions`` has an outline
+    that encloses no area (e.g. it is one pixel wide), so it gets neither an
+    outline nor a number.
+    """
+
+    region_id_map: np.ndarray  # HxW int32: each pixel's region id, -1 for none
+    region_color: np.ndarray  # color of each region id (merged-away ids keep an entry)
+    palette_bgr: np.ndarray  # Kx3 uint8, legend colors first
+    legend_size: int
+    min_region_area_px: int  # regions smaller than this were merged into a neighbor
+    regions: list[Region]  # regions drawn on the page, in region-id order
+    labels: list[Label]  # numbers drawn on the page
+    outlines: np.ndarray  # HxW uint8: the outline layer alone, 0 = black line, 255 = paper
+
+
+@dataclass
 class GeneratedPage:
     page: Image.Image
     legend: Image.Image
     palette_rgb: list[tuple[int, int, int]]
     num_colors_used: int
     num_regions: int
+    analysis: PageAnalysis | None = None  # only with generate(..., collect_analysis=True)
 
 
 class _StageCache:
@@ -136,6 +160,7 @@ def generate(
     long_edge: int,
     progress_callback: Callable[[int], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    collect_analysis: bool = False,
 ) -> GeneratedPage:
     """Run the full pipeline on ``image_bgr`` and produce a coloring page + legend.
 
@@ -143,6 +168,9 @@ def generate(
     a 0-100 percentage reflecting real work completed (not a fake animation).
     ``should_cancel``, if given, is polled between stages; when it returns
     True, ``PipelineCancelled`` is raised and no more work is done.
+    ``collect_analysis`` also returns what the page is made of in
+    ``GeneratedPage.analysis`` (see ``PageAnalysis``), for benchmarks and
+    tests. The page itself is the same either way.
 
     Resizing and quantization results are cached per image object, so
     regenerating the same image with a different minimum region size, or
@@ -192,16 +220,35 @@ def generate(
         region.color_index = remap[region.color_index]
     used_palette_bgr = palette_bgr[used_color_indices]
 
-    page = render_page((w, h), regions)
+    rendered = render_page((w, h), regions)
     legend = render_legend(used_palette_bgr, width=w)
     report("render")
 
     palette_rgb = [(int(b[2]), int(b[1]), int(b[0])) for b in used_palette_bgr]
 
+    analysis = None
+    if collect_analysis:
+        # Legend colors first, so a color index means the same color in
+        # region_color as in the renumbered regions.
+        order = used_color_indices + [i for i in range(len(palette_bgr)) if i not in remap]
+        new_index = np.empty(len(order), dtype=np.int32)
+        new_index[order] = np.arange(len(order), dtype=np.int32)
+        analysis = PageAnalysis(
+            region_id_map=region_id_map,
+            region_color=new_index[region_color],
+            palette_bgr=palette_bgr[order],  # a copy: palette_bgr belongs to the stage cache
+            legend_size=len(used_color_indices),
+            min_region_area_px=min_area_px,
+            regions=regions,
+            labels=rendered.labels,
+            outlines=np.asarray(rendered.outlines),
+        )
+
     return GeneratedPage(
-        page=page,
+        page=rendered.image,
         legend=legend,
         palette_rgb=palette_rgb,
         num_colors_used=len(used_color_indices),
         num_regions=len(regions),
+        analysis=analysis,
     )

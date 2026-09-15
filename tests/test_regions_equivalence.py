@@ -1,5 +1,7 @@
 """The optimized region and render stages must match the original implementation exactly."""
 
+import dataclasses
+
 import cv2
 import numpy as np
 import pytest
@@ -72,7 +74,13 @@ def test_extract_regions_and_render_page_match_reference(seed, shape, num_colors
         np.testing.assert_array_equal(got.contour, want.contour)
 
     size = (shape[1], shape[0])
-    np.testing.assert_array_equal(np.asarray(render_page(size, actual)), np.asarray(ref.render_page(size, expected)))
+    rendered = render_page(size, actual)
+    np.testing.assert_array_equal(np.asarray(rendered.image), np.asarray(ref.render_page(size, expected)))
+    # The outline layer is the page as it would be drawn without numbers.
+    without_numbers = [dataclasses.replace(r, interior_radius=0.0) for r in expected]
+    np.testing.assert_array_equal(
+        np.asarray(rendered.outlines.convert("RGB")), np.asarray(ref.render_page(size, without_numbers))
+    )
 
 
 def test_large_case_actually_draws_numbers():
