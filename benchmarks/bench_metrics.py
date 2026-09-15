@@ -37,7 +37,7 @@ JAGGEDNESS_SMOOTHING_MM = 0.5
 EDGE_SMOOTHING_MM = 0.5
 EDGE_TOLERANCE_MM = 0.5
 EDGE_THRESHOLDS = (5.0, 10.0)
-# Palette. Colors that differ by less than PALETTE_MIN_DE00 (CIEDE2000) are too close to tell apart reliably.
+# Palette. Colors should differ from each other by a clear margin: at least PALETTE_MIN_DE00 (CIEDE2000).
 PALETTE_MIN_DE00 = 10.0
 
 
