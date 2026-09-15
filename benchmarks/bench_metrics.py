@@ -4,8 +4,9 @@ Two kinds:
 
 * **Absolute** metrics score one result on its own: how faithfully the
   finished painting (every region filled with its legend color) reproduces the
-  source image, and how paintable the page is (labeled regions, leftover
-  undersized regions, outline clutter).
+  source image, and how paintable the page is at print size (slivers too thin
+  for a brush, unlabeled regions, label size, region shape, leftover undersized
+  regions, outline clutter).
 * **Agreement** metrics score a result against a reference result (usually the
   previous version), to tell "identical output" apart from "different output".
 
@@ -165,6 +166,148 @@ def label_coverage(regions, labeled_region_ids, total_px: int) -> dict[str, floa
         "labeled_region_fraction": len(labeled) / len(regions) if regions else 0.0,
         "labeled_area_fraction": sum(r.area for r in labeled) / total_px if total_px else 0.0,
     }
+
+
+def unlabeled_regions(region_id_map: np.ndarray, labeled_region_ids) -> dict[str, float | int]:
+    """Regions without a number, counted from the region map so that regions too small to draw count too."""
+    areas = np.bincount(region_id_map[region_id_map >= 0].ravel())
+    present = np.flatnonzero(areas)
+    labeled = np.fromiter(labeled_region_ids, dtype=np.int64, count=len(labeled_region_ids))
+    unlabeled = present[~np.isin(present, labeled)]
+    return {
+        "unlabeled_regions": int(unlabeled.size),
+        "unlabeled_area_fraction": float(areas[unlabeled].sum() / region_id_map.size) if region_id_map.size else 0.0,
+    }
+
+
+def label_sizes(font_sizes_px, scale) -> dict[str, float | None]:
+    """How large the numbers print: the smallest, in points, and the share below the minimum legible size.
+
+    ``font_sizes_px`` are the numbers' em sizes on the page; ``scale`` is its
+    ``print_size.PrintScale``. Both results are None on a page without numbers.
+    """
+    if len(font_sizes_px) == 0:
+        return {"small_label_fraction": None, "min_label_pt": None}
+    sizes_pt = np.asarray(font_sizes_px, dtype=np.float64) / scale.px_per_pt
+    return {
+        "small_label_fraction": float((sizes_pt < print_size.MIN_LABEL_SIZE_PT).mean()),
+        "min_label_pt": float(sizes_pt.min()),
+    }
+
+
+def sliver_mask(region_id_map: np.ndarray, min_width_px: float) -> np.ndarray:
+    """Region pixels a round brush ``min_width_px`` wide can't paint without crossing into another region.
+
+    The brush is the disk of pixels within ``min_width_px / 2`` of a pixel
+    center. A pixel is paintable if some brush position that lies entirely
+    inside its region covers it (the region's morphological opening by that
+    disk). Pixels outside the page count as another region. Slivers are thin
+    parts of regions, and also the corners a round brush can't reach.
+    """
+    ids, areas = _renumbered_regions(region_id_map)
+    if areas.size == 0:
+        return np.zeros(ids.shape, dtype=bool)
+    radius_sq = (min_width_px / 2) ** 2
+
+    # A brush fits where the nearest pixel of another region is farther than
+    # its radius. A distance transform measures the distance to one set of
+    # pixels, so regions are split into classes in which no two regions share
+    # an edge. The nearest pixel of another region always shares an edge with
+    # this region (one step from it towards the center lands inside), so it
+    # is in another class: one distance transform per class finds it for all
+    # of the class's regions at once.
+    region_class = _edge_adjacency_classes(ids, areas.size)
+    classes = np.where(ids >= 0, region_class[ids], -1)
+    fits = np.zeros(ids.shape, dtype=bool)
+    for cls in range(int(region_class.max()) + 1):
+        in_class = classes == cls
+        padded = np.pad(in_class, 1).astype(np.uint8)  # the padding is outside the page
+        distance = cv2.distanceTransform(padded, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)[1:-1, 1:-1]
+        fits |= in_class & (_squared_distance(distance) > radius_sq)
+
+    if not fits.any():
+        return ids >= 0
+    to_brush = cv2.distanceTransform((~fits).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+    return (ids >= 0) & (_squared_distance(to_brush) > radius_sq)
+
+
+def sliver_share(region_id_map: np.ndarray, min_width_px: float) -> float:
+    """Share of page area in slivers (see ``sliver_mask``)."""
+    return float(sliver_mask(region_id_map, min_width_px).mean()) if region_id_map.size else 0.0
+
+
+def compactness(region_id_map: np.ndarray) -> np.ndarray:
+    """4πA/P² of every region in the map, in region-id order: 1 for a disk, lower the more stretched or ragged.
+
+    A is the region's pixel count. P, its boundary length including holes and
+    the page edge, is estimated with the Cauchy–Crofton formula from how often
+    rows, columns and both diagonals of pixel centers cross the boundary.
+    Counting pixel edges instead would make diagonal boundaries √2 times too
+    long. Values are capped at 1, which the estimate can exceed for regions of
+    a few pixels.
+    """
+    ids, areas = _renumbered_regions(region_id_map)
+    padded = np.pad(ids, 1, constant_values=-1)
+    neighbor_pairs = (
+        (padded[:, :-1], padded[:, 1:], 1.0),
+        (padded[:-1, :], padded[1:, :], 1.0),
+        # Diagonal lines of pixel centers lie 1/√2 apart, rows and columns 1 apart.
+        (padded[:-1, :-1], padded[1:, 1:], np.sqrt(0.5)),
+        (padded[:-1, 1:], padded[1:, :-1], np.sqrt(0.5)),
+    )
+    crossings = np.zeros(areas.size)
+    for a, b, line_spacing in neighbor_pairs:
+        differ = a != b
+        for side in (a, b):
+            crossings += line_spacing * np.bincount(side[differ & (side >= 0)], minlength=areas.size)
+    perimeter = np.pi / 8 * crossings  # (1/2) · Σ over the 4 directions of crossings · line spacing · π/4
+    return np.minimum(4 * np.pi * areas / np.maximum(perimeter, 1e-12) ** 2, 1.0)
+
+
+def compactness_stats(region_id_map: np.ndarray) -> dict[str, float | None]:
+    """Median and 10th percentile of region compactness (see ``compactness``)."""
+    values = compactness(region_id_map)
+    if values.size == 0:
+        return {"compactness_median": None, "compactness_p10": None}
+    return {"compactness_median": float(np.median(values)), "compactness_p10": float(np.percentile(values, 10))}
+
+
+def _renumbered_regions(region_id_map: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(the map with its regions renumbered 0..n-1 in id order and -1 outside any region, each region's area)."""
+    ids = np.asarray(region_id_map, dtype=np.int64)
+    inside = ids >= 0
+    areas = np.bincount(ids[inside], minlength=1)
+    present = np.flatnonzero(areas)
+    new_id = np.full(areas.size, -1, dtype=np.int32)
+    new_id[present] = np.arange(present.size, dtype=np.int32)
+    return np.where(inside, new_id[np.where(inside, ids, 0)], -1).astype(np.int32), areas[present]
+
+
+def _edge_adjacency_classes(ids: np.ndarray, count: int) -> np.ndarray:
+    """A class per region such that regions sharing a pixel edge never share a class (greedy graph coloring)."""
+    codes = []
+    for a, b in ((ids[:, :-1], ids[:, 1:]), (ids[:-1, :], ids[1:, :])):
+        differ = (a != b) & (a >= 0) & (b >= 0)
+        low = np.minimum(a[differ], b[differ]).astype(np.int64)
+        high = np.maximum(a[differ], b[differ]).astype(np.int64)
+        codes.append(low * count + high)
+    neighbors: list[list[int]] = [[] for _ in range(count)]
+    for low, high in zip(*(part.tolist() for part in np.divmod(np.unique(np.concatenate(codes)), count))):
+        neighbors[low].append(high)
+        neighbors[high].append(low)
+    region_class = [-1] * count
+    for region in sorted(range(count), key=lambda r: -len(neighbors[r])):  # most neighbors first
+        taken = {region_class[other] for other in neighbors[region]}
+        cls = 0
+        while cls in taken:
+            cls += 1
+        region_class[region] = cls
+    return np.asarray(region_class, dtype=np.int32)
+
+
+def _squared_distance(distance: np.ndarray) -> np.ndarray:
+    """Exact squared distances from ``cv2.distanceTransform`` output, which holds their float32 square roots."""
+    return np.rint(distance.astype(np.float64) ** 2)
 
 
 def ink_fraction(page_rgb: np.ndarray) -> float:

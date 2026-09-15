@@ -179,16 +179,52 @@ than a pixel wide.
 
 ## Quality metrics
 
-Absolute metrics, per result, scored on the *finished painting* (every region
-filled with its legend color) against the source image at output size:
+Absolute metrics, per result. Fidelity is scored on the *finished painting*
+(every region filled with its legend color) against the source image at output
+size. Paintability is scored on the region map and the numbers, at print size
+(see "Print scale" above):
 
 | metric | meaning | better |
 |---|---|---|
 | ΔE00 mean / p95 | CIEDE2000 color error between painting and source | lower |
 | SSIM | structural similarity of luma between painting and source | higher |
-| labeled area | share of the page inside regions big enough to carry a number | higher |
+| labeled area | share of the page inside regions that carry a number | higher |
+| unlabeled | regions without a number | lower (0) |
+| slivers | share of the page a round brush 3 mm wide can't paint without crossing into another region | lower |
+| labels < 6 pt | share of numbers printing smaller than 6 pt; `case.json` also records the smallest, as `min_label_pt` | lower (0) |
+| compactness p10 / median | 4πA/P² over the regions: 1 for a disk, lower for stretched or ragged ones | higher |
 | undersized | regions still below the difficulty's minimum size | lower (0) |
 | regions, ink | region count and share of dark outline/number pixels | informational |
+
+How the paintability metrics are defined:
+
+- **Slivers.** The brush is the disk of pixels within half the paintable width
+  of a pixel center. A pixel is paintable if the brush fits entirely inside the
+  pixel's region somewhere that covers it: the region's morphological opening
+  by that disk. The page edge counts as a boundary.
+  - Thin parts of regions are slivers, and so are the corners a round brush
+    can't reach: a square region loses a few pixels at each corner.
+  - The brush is an odd number of pixels across (13 px for a 13.2 px width,
+    15 px for 14 px), so a bar is judged to within a pixel of the width.
+- **Unlabeled** regions are counted from the region map, so a region too small
+  to get an outline counts too.
+- **Label size** is each number's em size in points. Versions before 0.1.10
+  don't report their numbers, so the harness rebuilds the sizes from the
+  renderer's formula, which all of those versions share.
+- **Compactness.** A is the region's pixel count. P, the boundary length
+  including holes and the page edge, is estimated with the Cauchy–Crofton
+  formula: from how often rows, columns and both diagonals of pixel centers
+  cross the boundary.
+  - Counting pixel edges instead would make diagonal boundaries √2 times too
+    long.
+  - A digital disk scores 0.94 at a radius of 10 px and 0.98 at 30 px. A
+    square scores about 0.88 (exactly π/4 ≈ 0.79 in the continuous plane),
+    whether upright or turned 45°.
+  - Values are capped at 1, which the estimate exceeds for regions of a few
+    pixels.
+
+The paintability metrics have no tolerances yet, so they don't affect the
+verdict.
 
 Agreement metrics, candidate vs. reference (computed by `compare` from the
 saved `page.png`, `painted.png` and `regions.npz` of each case):

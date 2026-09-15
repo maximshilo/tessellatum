@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import cv2
 import numpy as np
 import pytest
 
@@ -21,6 +22,9 @@ SHARMA_PAIRS = [
     ((60.2574, -34.0099, 36.2677), (60.4626, -34.1751, 39.4387), 1.2644),
     ((2.0776, 0.0795, -1.1350), (0.9033, -0.0636, -0.5514), 0.9082),
 ]
+
+# Pixels within 2.5 px of the center: a 5 x 5 square without its corner pixels.
+BRUSH_5PX = 5.0
 
 
 def test_ciede2000_matches_published_reference_values():
@@ -86,3 +90,127 @@ def test_label_coverage_counts_the_regions_that_carry_a_number():
     coverage = bm.label_coverage(regions, {3, 7}, total_px=200)
 
     assert coverage == pytest.approx({"labeled_region_fraction": 2 / 3, "labeled_area_fraction": 0.2})
+
+
+def test_unlabeled_regions_are_counted_from_the_region_map():
+    # Region 5 might be too small to get an outline, but it is on the page all the same.
+    region_id_map = np.array([[0, 0, 2, 2], [5, 5, 2, 2]])
+
+    assert bm.unlabeled_regions(region_id_map, {2, 9}) == {"unlabeled_regions": 2, "unlabeled_area_fraction": 0.5}
+
+
+def test_label_sizes_are_judged_in_points_at_print_size():
+    scale = bm.print_size.PrintScale(size_px=(800, 600), landscape=True, px_per_mm=2 * 72 / 25.4)  # 2 px per pt
+
+    assert bm.label_sizes([26, 10, 13, 20], scale) == pytest.approx({"small_label_fraction": 0.25, "min_label_pt": 5.0})
+    assert bm.label_sizes([], scale) == {"small_label_fraction": None, "min_label_pt": None}
+
+
+def _bands(middle_rows: int) -> np.ndarray:
+    """A page 30 px wide: an 8-row band, a band of ``middle_rows`` rows, and another 8-row band."""
+    return np.repeat([10] * 8 + [20] * middle_rows + [30] * 8, 30).reshape(-1, 30)
+
+
+def test_a_bar_as_wide_as_the_brush_loses_only_its_corners():
+    wide, narrow = _bands(5), _bands(4)
+
+    assert bm.sliver_mask(wide, BRUSH_5PX)[wide == 20].sum() == 4
+    assert bm.sliver_mask(narrow, BRUSH_5PX)[narrow == 20].all()
+    # 1 pixel at each corner of the outer bands, and all of the 4 x 30 bar.
+    assert bm.sliver_share(narrow, BRUSH_5PX) == (8 + 120) / (20 * 30)
+
+
+def test_a_ring_is_all_sliver_once_the_brush_is_wider_than_it():
+    page = np.ones((20, 20), dtype=np.int32)
+    page[5:15, 5:15] = 2  # a 10 x 10 square inside a square ring 5 px wide
+
+    five, seven = bm.sliver_mask(page, BRUSH_5PX), bm.sliver_mask(page, 7.0)
+
+    # A 5 px brush misses only the outer corner pixels of the ring and the corner pixels of the square.
+    assert (five[page == 1].sum(), five[page == 2].sum()) == (4, 4)
+    # A 7 px brush fits nowhere in the ring, and misses 3 pixels in each corner of the square.
+    assert (seven[page == 1].sum(), seven[page == 2].sum()) == (400 - 100, 4 * 3)
+
+
+def test_a_dumbbell_handle_is_sliver_except_where_the_brush_reaches_in_from_the_ends():
+    page = np.zeros((15, 30), dtype=np.int32)
+    page[3:12, 3:12] = 1  # two 9 x 9 squares...
+    page[3:12, 18:27] = 1
+    page[6:9, 12:18] = 1  # ...joined by a 3 px thick, 6 px long handle
+
+    slivers = bm.sliver_mask(page, BRUSH_5PX)
+
+    assert slivers[6:9, 13:17].all()
+    assert not slivers[6:9, [12, 17]].any()  # a brush inside a square reaches 1 px into the handle
+    assert slivers[page == 1].sum() == 2 * 4 + 3 * 4  # 4 corner pixels per square, and the handle's middle
+
+
+def _brute_force_slivers(region_id_map: np.ndarray, width: float) -> np.ndarray:
+    """``sliver_mask`` straight from its definition: try the brush at every pixel."""
+    h, w = region_id_map.shape
+    reach = int(width // 2)
+    brush = [
+        (dy, dx)
+        for dy in range(-reach, reach + 1)
+        for dx in range(-reach, reach + 1)
+        if dy * dy + dx * dx <= (width / 2) ** 2
+    ]
+    painted = np.zeros((h, w), dtype=bool)
+    for y, x in np.argwhere(region_id_map >= 0):
+        spots = [(y + dy, x + dx) for dy, dx in brush]
+        if all(0 <= sy < h and 0 <= sx < w and region_id_map[sy, sx] == region_id_map[y, x] for sy, sx in spots):
+            for sy, sx in spots:
+                painted[sy, sx] = True
+    return (region_id_map >= 0) & ~painted
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_sliver_mask_matches_trying_the_brush_at_every_pixel(seed):
+    rng = np.random.default_rng(seed)
+    field = cv2.GaussianBlur(rng.random((30, 40)).astype(np.float32), (0, 0), 2.0)
+    region_id_map = np.digitize(field, np.quantile(field, [0.25, 0.5, 0.75])).astype(np.int32) * 7
+    region_id_map[rng.random(region_id_map.shape) < 0.02] = -1  # pixels in no region
+
+    for width in (4.0, 5.0, rng.uniform(2.0, 10.0)):
+        np.testing.assert_array_equal(bm.sliver_mask(region_id_map, width), _brute_force_slivers(region_id_map, width))
+
+
+def test_compactness_of_rectangles_uses_the_crofton_perimeter():
+    page = np.zeros((20, 30), dtype=np.int32)
+    page[2:15, 2:15] = 1  # a 13 x 13 square
+    page[17, 5:15] = 2  # a 1 x 10 bar
+
+    def expected(width: int, height: int) -> float:
+        # A rectangle crosses 2 lines per row and per column, and 2 (width + height - 1) along each diagonal.
+        crossings = 2 * (width + height) + 2 * (2 * (width + height - 1)) * np.sqrt(0.5)
+        return 4 * np.pi * width * height / (np.pi / 8 * crossings) ** 2
+
+    assert bm.compactness(page)[1:] == pytest.approx([expected(13, 13), expected(10, 1)], rel=1e-12)
+
+
+def test_compactness_is_near_one_for_a_disk_and_does_not_depend_on_orientation():
+    yy, xx = np.mgrid[-45:46, -45:46]
+    squared_radius = xx**2 + yy**2
+    disk = (squared_radius <= 30**2).astype(np.int32)
+    ring = ((squared_radius <= 40**2) & (squared_radius > 20**2)).astype(np.int32)
+    square = ((np.abs(xx) <= 20) & (np.abs(yy) <= 20)).astype(np.int32)
+    diamond = (np.abs(xx) + np.abs(yy) <= 29).astype(np.int32)  # about the same square, turned 45°
+
+    assert bm.compactness(disk)[1] == pytest.approx(1.0, abs=0.03)
+    assert bm.compactness(ring)[1] == pytest.approx((40 - 20) / (40 + 20), abs=0.01)  # 4πA/P² of an annulus
+    assert bm.compactness(diamond)[1] == pytest.approx(bm.compactness(square)[1], rel=0.03)
+
+
+def test_compactness_is_capped_at_one_for_tiny_regions():
+    page = np.zeros((5, 5), dtype=np.int32)
+    page[2, 2] = 1
+
+    assert bm.compactness(page)[1] == 1.0
+
+
+def test_paintability_metrics_of_a_page_without_regions():
+    empty = np.full((4, 6), -1, dtype=np.int32)
+
+    assert bm.sliver_share(empty, BRUSH_5PX) == 0.0
+    assert bm.unlabeled_regions(empty, set()) == {"unlabeled_regions": 0, "unlabeled_area_fraction": 0.0}
+    assert bm.compactness_stats(empty) == {"compactness_median": None, "compactness_p10": None}

@@ -40,7 +40,9 @@ PROBED_STAGES = (
 # setting the Custom sliders allow -- the worst case for region handling.
 EXTRA_PRESETS = {"Max": dict(num_colors=40, min_region_fraction=0.0002, blur_sigma=0.0)}
 
-DEFAULT_LABEL_RADIUS_PX = 9.0
+# How render_page numbered regions in the versions before the analysis payload,
+# for when their render module doesn't say (see ``page_data_from_probe``).
+RENDER_DEFAULTS = {"MIN_LABEL_RADIUS_PX": 9.0, "MIN_FONT_SIZE": 10, "MAX_FONT_SIZE": 40, "FONT_SIZE_RADIUS_RATIO": 0.85}
 
 
 class Probe:
@@ -80,6 +82,7 @@ class PageData:
     min_region_area_px: int
     regions: list  # regions drawn on the page
     labeled_region_ids: set[int]  # regions that carry a number
+    label_font_sizes_px: list[int]  # em size of every number on the page
 
 
 def page_data_from_analysis(analysis) -> PageData:
@@ -92,6 +95,7 @@ def page_data_from_analysis(analysis) -> PageData:
         min_region_area_px=analysis.min_region_area_px,
         regions=analysis.regions,
         labeled_region_ids={label.region_id for label in analysis.labels},
+        label_font_sizes_px=[label.font_size for label in analysis.labels],
     )
 
 
@@ -100,14 +104,21 @@ def page_data_from_probe(captured: dict, params, size: tuple[int, int], render_m
 
     Relies on how those versions worked: ``generate`` derived the merge
     threshold from the difficulty as below, and ``render_page`` numbered
-    exactly the regions with at least ``MIN_LABEL_RADIUS_PX`` of clearance.
+    exactly the regions with at least ``MIN_LABEL_RADIUS_PX`` of clearance, at
+    a font size of that clearance times ``FONT_SIZE_RADIUS_RATIO``, clamped to
+    ``MIN_FONT_SIZE``..``MAX_FONT_SIZE``.
     """
     if not all(stage in captured for stage in ("quantize", "build_regions", "render_page")):
         return None
     w, h = size
     region_id_map, region_color = captured["build_regions"][2]
     regions = captured["render_page"][0][1]
-    label_radius = getattr(render_module, "MIN_LABEL_RADIUS_PX", DEFAULT_LABEL_RADIUS_PX)
+
+    def constant(name: str):
+        return getattr(render_module, name, RENDER_DEFAULTS[name])
+
+    labeled = [r for r in regions if r.interior_radius >= constant("MIN_LABEL_RADIUS_PX")]
+    smallest, largest, ratio = constant("MIN_FONT_SIZE"), constant("MAX_FONT_SIZE"), constant("FONT_SIZE_RADIUS_RATIO")
     return PageData(
         source="probe",
         region_id_map=region_id_map,
@@ -115,7 +126,8 @@ def page_data_from_probe(captured: dict, params, size: tuple[int, int], render_m
         palette_bgr=captured["quantize"][2][1],
         min_region_area_px=max(4, int(round(params.min_region_fraction * h * w))),
         regions=regions,
-        labeled_region_ids={r.region_id for r in regions if r.interior_radius >= label_radius},
+        labeled_region_ids={r.region_id for r in labeled},
+        label_font_sizes_px=[int(max(smallest, min(largest, r.interior_radius * ratio))) for r in labeled],
     )
 
 
@@ -204,7 +216,7 @@ def main() -> int:
 
     print_scale = bm.print_size.print_scale(result.page.size)
     page_rgb = np.asarray(result.page.convert("RGB"))
-    quality: dict[str, float | int] = {
+    quality: dict[str, float | int | None] = {
         "colors_used": int(result.num_colors_used),
         "regions": int(result.num_regions),
         "ink_fraction": bm.ink_fraction(page_rgb),
@@ -220,6 +232,11 @@ def main() -> int:
         quality.update(
             bm.label_coverage(page_data.regions, page_data.labeled_region_ids, page_rgb.shape[0] * page_rgb.shape[1])
         )
+        quality.update(bm.unlabeled_regions(page_data.region_id_map, page_data.labeled_region_ids))
+        brush_px = print_scale.mm_to_px(bm.print_size.MIN_PAINTABLE_WIDTH_MM)
+        quality["sliver_area_fraction"] = bm.sliver_share(page_data.region_id_map, brush_px)
+        quality.update(bm.label_sizes(page_data.label_font_sizes_px, print_scale))
+        quality.update(bm.compactness_stats(page_data.region_id_map))
         Image.fromarray(np.ascontiguousarray(painted[:, :, ::-1])).save(args.out / "painted.png")
         np.savez_compressed(args.out / "regions.npz", region_id_map=page_data.region_id_map)
 
