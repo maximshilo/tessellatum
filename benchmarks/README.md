@@ -186,7 +186,9 @@ Absolute metrics, per result. Fidelity is scored on the *finished painting*
 (every region filled with its legend color) against the source image at output
 size. Paintability is scored on the region map and the numbers, at print size
 (see "Print scale" above). Line quality is scored on the lines drawn, the region
-map and the source image, and the palette on the legend's colors:
+map and the source image, and the palette on the legend's colors. Line art is also
+scored against its manifest entry, on how the page keeps the artwork's ink lines and
+flat colors:
 
 | metric | meaning | better |
 |---|---|---|
@@ -203,6 +205,10 @@ map and the source image, and the palette on the legend's colors:
 | edge F1 | how well region boundaries and the source's edges line up, within 0.5 mm; `case.json` also records `edge_precision` and `edge_recall` | higher |
 | palette min ΔE00 | smallest CIEDE2000 color difference between two colors on the legend | higher |
 | color pairs < 10 ΔE00 | pairs of legend colors that differ by less than 10 ΔE00 | lower (0) |
+| ink line F1 | how well drawn lines run down the middle of the artwork's ink lines, within 0.5 mm; `case.json` also records `ink_line_precision` and `ink_line_recall` | higher |
+| tubes | regions at least half made of the artwork's ink lines | lower (0) |
+| ink in shapes < 5 mm | share of the ink lines lying in parts of regions narrower than 5 mm: ink to paint instead of print | lower (0) |
+| flat colors ΔE00 | mean CIEDE2000 from each of the artwork's flat colors to the nearest legend color; `case.json` also records the largest, as `flat_color_de00_max` | lower |
 | undersized | regions still below the difficulty's minimum size | lower (0) |
 | regions, ink | region count and share of dark outline/number pixels | informational |
 
@@ -291,8 +297,45 @@ How the palette metrics are defined:
   always display; which of them paper and ink can reproduce depends on the
   printer, and checking that needs its color profile.
 
-The paintability, line and palette metrics have no tolerances yet, so they don't
-affect the verdict.
+How the line-art metrics are defined:
+
+- They read the image's manifest entry: the ink metrics need its `ink_colors` and
+  `flat_colors` (cartoons), flat colors ΔE00 its `flat_colors` (cartoons and flat
+  art). Other images get no value.
+- **Ink lines.** Every pixel of the source at output size takes the nearest of
+  the manifest's flat and ink colors (CIEDE2000, exact Lab).
+  - Anti-aliasing between two ink colors is ink too: mixes of every two ink
+    colors, in sRGB steps of 1/8, count as ink colors, even where a flat color
+    lies nearer.
+  - Ink lines are the ink narrower than 5 mm. Parts of it a 5 mm disk fits into
+    are fills drawn in an ink color.
+  - The bold-line cartoons' ink lines are 2–4 mm wide at print size. On the two
+    scans the manifest's colors are cluster centers of printed colors, so print
+    texture and hatching turn into specks and short strokes of ink.
+- **Ink line F1** compares the ink lines' centerlines (Zhang–Suen thinning) with
+  the centers of the lines drawn.
+  - Recall is the share of centerline pixels within 0.5 mm of a drawn line.
+  - Precision is the share of drawn-line pixels on or within 0.5 mm of the ink
+    lines that lie within 0.5 mm of a centerline. Lines away from the ink, such
+    as those between two fills, don't count: a good page draws those too, and
+    edge F1 judges them.
+  - A page that prints its ink lines where they are scores 1. Today's renderer
+    makes a bold ink line a region of its own, a tube, and outlines it along both
+    edges, which lie more than 0.5 mm from its middle once it is wider than about
+    1 mm.
+- **Tubes** are regions at least half of whose pixels lie on ink lines.
+- **Ink in shapes** also counts ink lines that became thin parts of bigger
+  regions, as when they merge with a fill of the same color: the share of
+  ink-line pixels in parts of regions a 5 mm disk doesn't fit into (the opening
+  used for slivers). Ink lines along the edge of a wide region, or left out of
+  every region, count for neither.
+- **Flat colors ΔE00** takes each manifest flat color's CIEDE2000 difference to
+  the nearest legend color (exact Lab), and averages them. At Easy the legend
+  can have fewer colors than the artwork, so some flat colors have no close
+  match.
+
+The paintability, line, palette and line-art metrics have no tolerances yet, so
+they don't affect the verdict.
 
 Agreement metrics, candidate vs. reference (computed by `compare` from the
 saved `page.png`, `painted.png` and `regions.npz` of each case):

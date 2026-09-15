@@ -407,3 +407,130 @@ def test_palette_separation_counts_every_close_pair_including_identical_colors_a
     assert bm.palette_separation(five_near_grays)["palette_close_pairs"] == 10
     assert bm.palette_separation(np.array([gray], dtype=np.uint8)) == {"palette_min_de00": None, "palette_close_pairs": 0}
     assert bm.palette_separation(np.zeros((0, 3), dtype=np.uint8)) == {"palette_min_de00": None, "palette_close_pairs": 0}
+
+
+WHITE, FILL, BLACK = (255, 255, 255), (90, 150, 230), (0, 0, 0)  # BGR
+
+
+def test_source_ink_is_the_pixels_in_an_ink_color_narrower_than_the_widest_line():
+    image = np.full((60, 90, 3), WHITE, dtype=np.uint8)
+    image[10:50, 10:50] = BLACK
+    image[16:44, 16:44] = FILL  # a fill inside a black outline 6 px wide
+    image[10:50, 60:84] = BLACK  # a black shape 24 px wide: a fill drawn in the ink color
+    outline = np.zeros(image.shape[:2], dtype=bool)
+    outline[10:50, 10:50] = True
+    outline[16:44, 16:44] = False
+
+    ink = bm.source_ink(image, np.array([WHITE, FILL], dtype=np.uint8), np.array([BLACK], dtype=np.uint8), 15.0)
+
+    np.testing.assert_array_equal(ink[:, :55], outline[:, :55])
+    assert not ink[18:42, 68:76].any()  # a 15 px disk fits into the wide shape...
+    assert ink[10, 60] and ink[49, 83]  # ...but can't reach its corners
+    assert not bm.source_ink(image, np.array([WHITE, FILL], dtype=np.uint8), np.zeros((0, 3), dtype=np.uint8), 15.0).any()
+
+
+def test_anti_aliasing_between_two_ink_colors_is_ink_even_where_a_flat_color_is_nearer():
+    # The bold-line girl's colors: black and dark brown ink, and a dark brown fill close to both.
+    flats = np.array([WHITE, (10, 20, 36)], dtype=np.uint8)  # #ffffff, #24140a
+    inks = np.array([BLACK, (0, 17, 43)], dtype=np.uint8)  # #000000, #2b1100
+    blend = np.array([0, 10, 25], dtype=np.uint8)  # #190a00, where the two inks meet
+    image = np.full((20, 20, 3), WHITE, dtype=np.uint8)
+    image[5:15, 5:8] = inks[0]
+    image[5:15, 8] = blend
+    image[5:15, 9:12] = inks[1]
+    lab = bm.bgr_to_lab_exact(np.vstack([flats, inks, blend]))
+    to_fill, to_black, to_brown = (float(bm.ciede2000(lab[4], lab[k])) for k in (1, 2, 3))
+
+    assert to_fill < min(to_black, to_brown)  # 3.9 against 7.6 and 8.1
+    assert bm.source_ink(image, flats, inks, 15.0)[5:15, 5:12].all()
+
+
+def test_centerlines_thin_shapes_to_their_middle_one_pixel_wide():
+    bar = np.zeros((25, 50), dtype=bool)
+    bar[10:15, 10:40] = True  # 5 px wide
+    blocks = np.zeros((20, 30), dtype=bool)
+    blocks[3:5, 3:5] = True
+    blocks[8:15, 15:22] = True
+    yy, xx = np.mgrid[-30:31, -30:31]
+    ring = (xx**2 + yy**2 > 14**2) & (xx**2 + yy**2 <= 20**2)
+
+    # The middle row, shortened at each end as thinning eats into it.
+    assert np.argwhere(bm.centerlines(bar)).tolist() == [[12, x] for x in range(12, 37)]
+    assert np.argwhere(bm.centerlines(blocks)).tolist() == [[11, 18]]  # a 7 x 7 square thins to its center; 2 x 2 vanishes
+    loop = bm.centerlines(ring)
+    neighbors = cv2.filter2D(loop.astype(np.uint8), -1, np.ones((3, 3)), borderType=cv2.BORDER_CONSTANT) - loop
+    assert (neighbors[loop] == 2).all()  # a closed loop
+    assert np.abs(np.hypot(xx, yy)[loop] - 17).max() < 0.6  # halfway between the ring's radii
+    assert not bm.centerlines(np.zeros((5, 5), dtype=bool)).any()
+
+
+def test_ink_line_match_wants_lines_down_the_middle_of_the_ink_and_ignores_lines_away_from_it():
+    ink = np.zeros((60, 80), dtype=bool)
+    ink[20:31, 10:70] = True  # an ink line 11 px wide; its centerline is row 25, from x = 15 to 63
+    middle, top_edge, bottom_edge, far_away = (np.array([[15.0, y], [63.0, y]]) for y in (25, 20, 30, 50))
+
+    def match(strokes, ink=ink):
+        return bm.ink_line_match(strokes, ink, 2.0)
+
+    assert match([middle]) == {"ink_line_precision": 1.0, "ink_line_recall": 1.0, "ink_line_f1": 1.0}
+    # A tube's outlines run along both edges of the line, 5 px from its middle.
+    assert match([top_edge, bottom_edge]) == {"ink_line_precision": 0.0, "ink_line_recall": 0.0, "ink_line_f1": 0.0}
+    # A line between two fills, 20 px from the ink, counts for nothing.
+    assert match([middle, top_edge, bottom_edge, far_away]) == pytest.approx(
+        {"ink_line_precision": 1 / 3, "ink_line_recall": 1.0, "ink_line_f1": 0.5}, abs=1e-12
+    )
+    assert match([far_away]) == {"ink_line_precision": None, "ink_line_recall": 0.0, "ink_line_f1": 0.0}
+    assert match([middle], np.zeros_like(ink)) == {"ink_line_precision": None, "ink_line_recall": None, "ink_line_f1": None}
+
+
+def test_tube_regions_are_ink_lines_turned_into_shapes_to_paint():
+    ink = np.zeros((60, 80), dtype=bool)
+    ink[20:31, 20:60] = True  # an ink line 11 px wide and 40 px long
+    own = np.ones(ink.shape, dtype=np.int32)
+    own[31:] = 3
+    own[ink] = 2  # the line is a region of its own, between two fills
+    half = own.copy()
+    half[31:42, 20:60] = 2  # ...with as much fill again
+    split = np.ones(ink.shape, dtype=np.int32)
+    split[26:] = 3  # the fills meet down the middle of the line
+    left_out = np.where(ink, -1, own)  # the page keeps the line out of every region
+    merged = np.full(ink.shape, 2, dtype=np.int32)
+    merged[:, :20] = 1
+    merged[ink] = 1  # the line sticks out of a wide fill
+
+    def tubes(ids, ink=ink):
+        return bm.tube_regions(ids, ink, 15.0)
+
+    assert tubes(own) == {"tube_regions": 1, "tube_ink_fraction": 1.0}
+    assert tubes(half)["tube_regions"] == 1
+    assert tubes(split) == tubes(left_out) == {"tube_regions": 0, "tube_ink_fraction": 0.0}
+    # No region of its own, but paint all the same, except where a disk inside the fill reaches into it.
+    assert tubes(merged)["tube_regions"] == 0 and 0.9 < tubes(merged)["tube_ink_fraction"] < 1
+    assert tubes(own, np.zeros_like(ink)) == {"tube_regions": 0, "tube_ink_fraction": None}
+
+
+def test_todays_renderer_turns_a_bold_ink_outline_into_a_tube():
+    image = np.full((120, 160, 3), WHITE, dtype=np.uint8)
+    image[20:100, 30:130] = BLACK
+    image[28:92, 38:122] = FILL  # a flat fill inside a black outline 8 px wide
+    params = difficulty.DifficultyParams(num_colors=3, min_region_fraction=0.001, blur_sigma=0.0)
+    analysis = pipeline.generate(image, params, long_edge=160, collect_analysis=True).analysis
+    ink = bm.source_ink(image, np.array([WHITE, FILL], dtype=np.uint8), np.array([BLACK], dtype=np.uint8), 15.0)
+    one_line = np.array([[33.5, 23.5], [125.5, 23.5], [125.5, 95.5], [33.5, 95.5], [33.5, 23.5]])
+
+    assert ink.sum() == 80 * 100 - 64 * 84
+    # The outline becomes a region of its own, outlined along its edges, 3.5 px or more from its middle.
+    assert bm.tube_regions(analysis.region_id_map, ink, 15.0) == {"tube_regions": 1, "tube_ink_fraction": 1.0}
+    assert bm.ink_line_match(analysis.strokes, ink, 2.0) == {"ink_line_precision": 0.0, "ink_line_recall": 0.0, "ink_line_f1": 0.0}
+    assert bm.ink_line_match([one_line], ink, 2.0) == {"ink_line_precision": 1.0, "ink_line_recall": 1.0, "ink_line_f1": 1.0}
+
+
+def test_flat_color_match_is_the_difference_from_each_flat_color_to_the_nearest_legend_color():
+    def grays(*values):
+        return np.repeat(np.array(values, dtype=np.uint8)[:, None], 3, axis=1).reshape(-1, 3)
+
+    assert bm.flat_color_match(grays(100, 200), grays(200, 110)) == pytest.approx(
+        {"flat_color_de00_mean": _gray_de00(100, 110) / 2, "flat_color_de00_max": _gray_de00(100, 110)}, abs=1e-9
+    )
+    nothing = {"flat_color_de00_mean": None, "flat_color_de00_max": None}
+    assert bm.flat_color_match(grays(), grays(100)) == bm.flat_color_match(grays(100), grays()) == nothing

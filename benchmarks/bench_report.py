@@ -42,6 +42,10 @@ QUALITY_COLUMNS = (
     ("edge_f1", "edge F1 ↑", "{:.2f}"),
     ("palette_min_de00", "palette min ΔE00 ↑", "{:.1f}"),
     ("palette_close_pairs", f"color pairs < {bm.PALETTE_MIN_DE00:g} ΔE00 ↓", "{:d}"),
+    ("ink_line_f1", "ink line F1 ↑", "{:.2f}"),
+    ("tube_regions", "tubes ↓", "{:d}"),
+    ("tube_ink_fraction", f"ink in shapes < {bm.INK_MAX_WIDTH_MM:g} mm ↓", "{:.1%}"),
+    ("flat_color_de00_mean", "flat colors ΔE00 ↓", "{:.2f}"),
     ("undersized_regions", "undersized ↓", "{:d}"),
     ("ink_fraction", "ink", "{:.1%}"),
 )
@@ -197,7 +201,8 @@ def _quality_section(
         "",
         "**ΔE00** and **SSIM** score the *finished painting* (every region filled with its legend color) against the "
         "source image: CIEDE2000 color error (mean and 95th percentile) and structural similarity of luma. The other "
-        "metrics score the page's regions, lines, numbers and legend colors. "
+        "metrics score the page's regions, lines, numbers and legend colors, and on line art how they keep the "
+        "artwork's ink lines and flat colors, as the image manifest gives them. "
         "**labeled area**: share of the page inside regions that carry a number. **unlabeled**: regions without a "
         f"number. **slivers**: share of the page a round brush {bm.print_size.MIN_PAINTABLE_WIDTH_MM:g} mm wide can't "
         "paint without crossing into another region. "
@@ -211,12 +216,18 @@ def _quality_section(
         "(1 = every boundary on an edge and every edge on a boundary). "
         "**palette min ΔE00**: smallest CIEDE2000 difference between two legend colors. "
         f"**color pairs < {bm.PALETTE_MIN_DE00:g} ΔE00**: pairs of legend colors closer than that. "
+        f"**ink line F1**: how well drawn lines run down the middle of the artwork's ink lines, within "
+        f"{bm.INK_LINE_TOLERANCE_MM:g} mm (lines away from the ink don't count). "
+        "**tubes**: regions at least half made of ink lines. "
+        f"**ink in shapes < {bm.INK_MAX_WIDTH_MM:g} mm**: share of the ink lines lying in parts of regions that narrow, "
+        "to be painted instead of printed. "
+        "**flat colors ΔE00**: mean CIEDE2000 from each of the artwork's flat colors to the nearest legend color. "
         "**undersized**: regions left below the merge threshold. **ink**: share of dark outline/number pixels.",
         "",
         "Millimeters and points are at print size on A4 (see `benchmarks/README.md`). The paintability metrics "
         "(unlabeled, slivers, label size, compactness), the line metrics (lines per boundary, same-color boundary, "
-        "jaggedness, edge F1) and the palette metrics (palette min ΔE00, color pairs) have no tolerances yet and "
-        "don't affect the verdict.",
+        "jaggedness, edge F1), the palette metrics (palette min ΔE00, color pairs) and the line-art metrics (ink "
+        "line F1, tubes, ink in shapes, flat colors ΔE00) have no tolerances yet and don't affect the verdict.",
         "",
         "Categories come from the image manifest. The first table averages each category (an image counts in every "
         "category it has); the per-case tables list each image under its primary category.",

@@ -40,6 +40,9 @@ PROBED_STAGES = (
 # setting the Custom sliders allow -- the worst case for region handling.
 EXTRA_PRESETS = {"Max": dict(num_colors=40, min_region_fraction=0.0002, blur_sigma=0.0)}
 
+# Line-art fields, None for images whose manifest entry has no ink colors.
+LINE_ART_KEYS = ("ink_line_precision", "ink_line_recall", "ink_line_f1", "tube_regions", "tube_ink_fraction")
+
 # How render_page numbered regions in the versions before the analysis payload,
 # for when their render module doesn't say (see ``page_data_from_probe``).
 RENDER_DEFAULTS = {"MIN_LABEL_RADIUS_PX": 9.0, "MIN_FONT_SIZE": 10, "MAX_FONT_SIZE": 40, "FONT_SIZE_RADIUS_RATIO": 0.85}
@@ -186,6 +189,7 @@ def main() -> int:
     import numpy as np
     from PIL import Image
 
+    import bench_manifest
     import bench_metrics as bm
 
     if args.threads:
@@ -197,6 +201,7 @@ def main() -> int:
         params = difficulty.params_for_preset(args.preset)
 
     image_bgr = pipeline.load_image_bgr(args.image)
+    image_info = bench_manifest.find_image(args.image)
     probe = Probe(pipeline)
     has_analysis = "collect_analysis" in inspect.signature(pipeline.generate).parameters
 
@@ -270,11 +275,22 @@ def main() -> int:
         quality["jaggedness"] = bm.jaggedness(
             page_data.strokes, page_data.region_id_map, print_scale.mm_to_px(bm.JAGGEDNESS_SMOOTHING_MM)
         )
-        edges = bm.source_edges(
-            bm.fit_to(reference, page_data.region_id_map.shape[::-1]), print_scale.mm_to_px(bm.EDGE_SMOOTHING_MM)
-        )
+        source = bm.fit_to(reference, page_data.region_id_map.shape[::-1])
+        edges = bm.source_edges(source, print_scale.mm_to_px(bm.EDGE_SMOOTHING_MM))
         quality.update(bm.edge_alignment(page_data.region_id_map, edges, print_scale.mm_to_px(bm.EDGE_TOLERANCE_MM)))
         quality.update(bm.palette_separation(page_data.legend_bgr))
+        # Line art is scored against the image's manifest entry: its flat colors, and its ink lines if it has ink colors.
+        flat_colors, ink_colors = (
+            np.array(getattr(image_info, name, ()), dtype=np.uint8).reshape(-1, 3)[:, ::-1]  # the manifest's are RGB
+            for name in ("flat_colors", "ink_colors")
+        )
+        quality.update(bm.flat_color_match(flat_colors, page_data.legend_bgr))
+        quality.update(dict.fromkeys(LINE_ART_KEYS))
+        if len(flat_colors) and len(ink_colors):
+            ink_width_px = print_scale.mm_to_px(bm.INK_MAX_WIDTH_MM)
+            ink = bm.source_ink(source, flat_colors, ink_colors, ink_width_px)
+            quality.update(bm.ink_line_match(page_data.strokes, ink, print_scale.mm_to_px(bm.INK_LINE_TOLERANCE_MM)))
+            quality.update(bm.tube_regions(page_data.region_id_map, ink, ink_width_px))
         Image.fromarray(np.ascontiguousarray(painted[:, :, ::-1])).save(args.out / "painted.png")
         np.savez_compressed(args.out / "regions.npz", region_id_map=page_data.region_id_map)
 
