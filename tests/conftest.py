@@ -14,3 +14,16 @@ def sample_image_bgr() -> np.ndarray:
     noise = rng.integers(-10, 10, size=img.shape, dtype=np.int16)
     noisy = np.clip(img.astype(np.int16) + noise, 0, 255).astype(np.uint8)
     return noisy
+
+
+@pytest.fixture
+def speckled_image_bgr() -> np.ndarray:
+    """Dark and light halves sprinkled with single gray pixels.
+
+    Quantized to 3 colors, the specks get a color of their own, but merging
+    folds them into their neighbors, so that color never reaches the legend.
+    """
+    img = np.full((60, 80, 3), 230, dtype=np.uint8)
+    img[:, :40] = 20
+    img[5::10, 5::10] = 128
+    return img

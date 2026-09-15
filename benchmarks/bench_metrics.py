@@ -158,9 +158,9 @@ def count_undersized(region_id_map: np.ndarray, min_area_px: int) -> int:
     return int((areas < min_area_px).sum())
 
 
-def label_coverage(regions, label_radius: float, total_px: int) -> dict[str, float]:
-    """Share of drawn regions (and of page area) that are big enough to carry a number."""
-    labeled = [r for r in regions if r.interior_radius >= label_radius]
+def label_coverage(regions, labeled_region_ids, total_px: int) -> dict[str, float]:
+    """Share of drawn regions (and of page area) that carry a number."""
+    labeled = [r for r in regions if r.region_id in labeled_region_ids]
     return {
         "labeled_region_fraction": len(labeled) / len(regions) if regions else 0.0,
         "labeled_area_fraction": sum(r.area for r in labeled) / total_px if total_px else 0.0,

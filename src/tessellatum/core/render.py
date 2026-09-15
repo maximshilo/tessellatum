@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import lru_cache
 
 import cv2
@@ -23,8 +24,29 @@ _OUTLINE_MARGIN_PX = OUTLINE_WIDTH + 1
 _TILE_PX = 256
 
 
-def render_page(size: tuple[int, int], regions: list[Region]) -> Image.Image:
-    """Draw outlines + numbers for ``regions`` onto a white ``size`` canvas."""
+@dataclass
+class Label:
+    """A region's number as drawn on the page."""
+
+    region_id: int
+    text: str
+    font_size: int  # px: the font's em size
+    box: tuple[float, float, float, float]  # (x0, y0, x1, y1): the text's bounding box on the page
+
+
+@dataclass
+class RenderedPage:
+    image: Image.Image  # RGB: outlines + numbers
+    outlines: Image.Image  # "L": the outlines alone, 0 = black line, 255 = paper
+    labels: list[Label]  # every number on the page, in drawing order
+
+
+def render_page(size: tuple[int, int], regions: list[Region]) -> RenderedPage:
+    """Draw outlines + numbers for ``regions`` onto a white ``size`` canvas.
+
+    Returns the page, plus the layers it was built from: the outlines on their
+    own and where each number went.
+    """
     width, height = size
     # Pillow draws a wide polygon outline through a scratch mask as big as the
     # image it draws on, so drawing straight onto the page would cost a
@@ -61,6 +83,7 @@ def render_page(size: tuple[int, int], regions: list[Region]) -> Image.Image:
 
     page = outlines.convert("RGB")
     draw = ImageDraw.Draw(page)
+    labels: list[Label] = []
     for region in regions:
         if region.interior_radius < MIN_LABEL_RADIUS_PX:
             continue
@@ -71,11 +94,12 @@ def render_page(size: tuple[int, int], regions: list[Region]) -> Image.Image:
         bbox = _text_bbox(text, font_size)
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
         x, y = region.interior_point
-        draw_x = min(max(x - tw / 2, 0), size[0] - tw) - bbox[0]
-        draw_y = min(max(y - th / 2, 0), size[1] - th) - bbox[1]
-        draw.text((draw_x, draw_y), text, fill="black", font=_font(font_size))
+        left = min(max(x - tw / 2, 0), size[0] - tw)
+        top = min(max(y - th / 2, 0), size[1] - th)
+        draw.text((left - bbox[0], top - bbox[1]), text, fill="black", font=_font(font_size))
+        labels.append(Label(region.region_id, text, font_size, (left, top, left + tw, top + th)))
 
-    return page
+    return RenderedPage(image=page, outlines=outlines, labels=labels)
 
 
 def _draw_outlines(canvas: Image.Image, box: tuple[int, int, int, int], contours: list[np.ndarray]) -> None:
