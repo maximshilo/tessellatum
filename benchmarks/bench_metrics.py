@@ -676,17 +676,19 @@ def text_reader() -> TextReader | None:
     try:
         from importlib.metadata import version
 
-        import onnxruntime  # noqa: F401 - the engine RapidOCR runs its models on, which it doesn't install itself
+        import onnxruntime  # the engine RapidOCR runs its models on, which it doesn't install itself
         from rapidocr import RapidOCR
     except ImportError:
         return None
+    # onnxruntime's GPU builds install the same module under another package name, so ask the module for its version.
+    name = f"rapidocr {version('rapidocr')}, onnxruntime {onnxruntime.__version__}"
     engine = RapidOCR(params={"Global.log_level": "error"})
 
     def read_line(line_bgr: np.ndarray) -> str:
         result = engine(np.ascontiguousarray(line_bgr), use_det=False, use_cls=False)
         return " ".join(text for text in (result.txts or ()) if text.strip())
 
-    return TextReader(f"rapidocr {version('rapidocr')}, onnxruntime {version('onnxruntime')}", read_line)
+    return TextReader(name, read_line)
 
 
 def text_lines(

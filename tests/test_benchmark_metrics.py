@@ -765,3 +765,21 @@ def test_ocr_reads_upright_and_turned_text_but_not_a_page_without_it():
 def test_text_lines_turn_text_upright_only_by_quarter_turns():
     with pytest.raises(ValueError, match="quarter turns"):
         bm.text_lines(_text_block_image(), (10, 20, 40, 30), rotation=45, line_count=3)
+
+
+def test_text_reader_names_onnxruntime_by_its_module_whatever_package_installed_it(monkeypatch):
+    pytest.importorskip("rapidocr")
+    import importlib.metadata
+
+    import onnxruntime
+
+    real_version = importlib.metadata.version
+
+    def version(distribution):
+        if distribution == "onnxruntime":  # as with onnxruntime-gpu, which installs the module under another name
+            raise importlib.metadata.PackageNotFoundError(distribution)
+        return real_version(distribution)
+
+    monkeypatch.setattr(importlib.metadata, "version", version)
+
+    assert bm.text_reader().name == f"rapidocr {real_version('rapidocr')}, onnxruntime {onnxruntime.__version__}"
