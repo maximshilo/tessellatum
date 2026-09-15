@@ -355,8 +355,8 @@ How the face metrics are defined:
     as a region of its own can still leave most of the fur's edges around it
     undrawn.
   - On today's pages of the face images, the features that are gone score an edge
-    recall of 0.18 or less, with no region of their own; those still there score
-    0.41 or more, or have a region covering 28% of their box or more.
+    recall of at most 0.182, with no region of their own; those still there score
+    at least 0.411, or have a region covering at least 27.7% of their box.
 - **Labels on features** counts the numbers whose text box overlaps a feature box. A
   number across two features counts once. Versions before 0.1.10 don't report where
   their numbers are, so the harness rebuilds each box as the renderer placed it: the
