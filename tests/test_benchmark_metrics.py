@@ -534,3 +534,117 @@ def test_flat_color_match_is_the_difference_from_each_flat_color_to_the_nearest_
     )
     nothing = {"flat_color_de00_mean": None, "flat_color_de00_max": None}
     assert bm.flat_color_match(grays(), grays(100)) == bm.flat_color_match(grays(100), grays()) == nothing
+
+
+def test_face_fidelity_scores_the_painting_inside_the_face_boxes_and_counts_overlaps_once():
+    source = np.full((60, 90, 3), 100, dtype=np.uint8)
+    inside = source.copy()
+    inside[10:30, 10:20] = 110  # the left half of the 20 x 20 face box
+    both = inside.copy()
+    both[:, 60:] = 200  # outside the face, beyond the reach of SSIM's window
+    face, overlapping = (10, 10, 20, 20), (15, 15, 10, 10)
+    one_pixel = float(bm.ciede2000(bm.bgr_to_lab(source[:1, :1]), bm.bgr_to_lab(inside[10:11, 10:11]))[0, 0])
+
+    scores = bm.face_fidelity(source, inside, [face])
+    assert scores["face_de00_mean"] == pytest.approx(one_pixel / 2, rel=1e-12)
+    assert scores["face_ssim"] < 1
+    assert bm.face_fidelity(source, both, [face]) == scores
+    assert bm.face_fidelity(source, inside, [face, overlapping]) == scores
+    assert bm.face_fidelity(source, source, [face]) == {"face_de00_mean": 0.0, "face_ssim": 1.0}
+    assert bm.face_fidelity(source, inside, []) == {"face_de00_mean": None, "face_ssim": None}
+
+
+def test_ssim_gray_is_the_mean_of_the_ssim_map():
+    rng = np.random.default_rng(1)
+    a = rng.integers(0, 256, size=(30, 40, 3), dtype=np.uint8)
+    b = np.clip(a.astype(np.int16) + rng.integers(-30, 30, size=a.shape), 0, 255).astype(np.uint8)
+
+    assert bm.ssim_map(a, b).shape == (30, 40)
+    assert bm.ssim_gray(a, b) == float(bm.ssim_map(a, b).mean())
+
+
+def test_a_feature_survives_as_lines_along_its_edges_or_as_a_drawn_region_of_its_own():
+    background = np.zeros((40, 60), dtype=np.int32)
+    edges = np.zeros(background.shape, dtype=bool)
+    edges[10, 10:20] = True  # 10 edge pixels inside the feature box
+    box = (5, 5, 20, 10)  # 200 px
+
+    def score(ids=background, strokes=(), drawn=(0,), edges=edges):
+        return bm.feature_survival([box], ids, set(drawn), list(strokes), edges, 0.5)[0]
+
+    assert score() == {"edge_recall": 0.0, "region_share": 0.0, "survived": False}
+    # A line along 3 of the 10 edge pixels is enough, along 2 it isn't.
+    assert score(strokes=[np.array([[10.0, 10.0], [12.0, 10.0]])]) == {"edge_recall": 0.3, "region_share": 0.0, "survived": True}
+    assert score(strokes=[np.array([[10.0, 10.0], [11.0, 10.0]])])["survived"] is False
+
+    eye = background.copy()
+    eye[8:13, 8:18] = 1  # 50 px inside the box: a quarter of it
+    small_eye = background.copy()
+    small_eye[8:12, 8:18] = 1  # 40 px
+    assert score(eye, drawn=(0, 1)) == {"edge_recall": 0.0, "region_share": 0.25, "survived": True}
+    assert score(small_eye, drawn=(0, 1)) == {"edge_recall": 0.0, "region_share": 0.2, "survived": False}
+    assert score(eye, drawn=(0,))["survived"] is False  # a region without an outline isn't on the page
+
+    half_inside = background.copy()
+    half_inside[5:15, 20:30] = 1  # 100 px, 50 of them inside the box
+    more_outside = half_inside.copy()
+    more_outside[20, 20] = 1
+    assert score(half_inside, drawn=(0, 1))["region_share"] == 0.25
+    assert score(more_outside, drawn=(0, 1))["region_share"] == 0.0
+
+    no_edges = np.zeros_like(edges)
+    assert score(eye, drawn=(0, 1), edges=no_edges) == {"edge_recall": None, "region_share": 0.25, "survived": True}
+    assert score(edges=no_edges) == {"edge_recall": None, "region_share": 0.0, "survived": False}
+
+
+def test_lost_features_counts_the_features_that_did_not_survive_and_averages_their_edge_recall():
+    scores = [
+        {"edge_recall": 0.5, "region_share": 0.0, "survived": True},
+        {"edge_recall": None, "region_share": 0.0, "survived": False},
+        {"edge_recall": 0.1, "region_share": 0.1, "survived": False},
+    ]
+
+    assert bm.lost_features(scores) == pytest.approx({"features_lost": 2, "feature_edge_recall": 0.3}, abs=1e-12)
+    assert bm.lost_features(scores[1:2]) == {"features_lost": 1, "feature_edge_recall": None}
+    assert bm.lost_features([]) == {"features_lost": None, "feature_edge_recall": None}
+
+
+def test_todays_pipeline_loses_small_face_features_at_a_coarse_setting():
+    background, skin, dark, nose, mouth = (230, 200, 150), (150, 190, 235), (40, 40, 40), (90, 120, 170), (60, 60, 190)
+    image = np.full((240, 240, 3), background, dtype=np.uint8)
+    cv2.circle(image, (120, 125), 95, skin, -1)
+    for center in ((85, 105), (155, 105)):
+        cv2.ellipse(image, center, (14, 8), 0, 0, 360, dark, -1)  # eyes of about 350 px
+    cv2.ellipse(image, (120, 135), (6, 5), 0, 0, 360, nose, -1)  # about 95 px
+    cv2.ellipse(image, (120, 170), (28, 8), 0, 0, 360, mouth, -1)  # about 700 px
+    face, features = (25, 30, 190, 190), [(65, 92, 40, 26), (135, 92, 40, 26), (110, 126, 20, 18), (88, 158, 64, 24)]
+    edges = bm.source_edges(image, 2.0)
+
+    def score(min_region_fraction):
+        params = difficulty.DifficultyParams(num_colors=5, min_region_fraction=min_region_fraction, blur_sigma=0.0)
+        analysis = pipeline.generate(image, params, long_edge=240, collect_analysis=True).analysis
+        drawn = {region.region_id for region in analysis.regions}
+        painted = bm.paint(analysis.region_id_map, analysis.region_color, analysis.palette_bgr)
+        survival = bm.feature_survival(features, analysis.region_id_map, drawn, analysis.strokes, edges, 2.0)
+        return [feature["survived"] for feature in survival], bm.face_fidelity(image, painted, [face])["face_de00_mean"]
+
+    # Regions under 576 px merge into a neighbor: the eyes and the nose melt into the skin. Under 58 px, they keep their shapes.
+    coarse, coarse_de00 = score(0.01)
+    fine, fine_de00 = score(0.001)
+    assert coarse == [False, False, False, True]
+    assert fine == [True, True, True, True]
+    assert coarse_de00 > fine_de00
+
+
+def test_labels_on_boxes_counts_each_number_overlapping_a_box_once():
+    eyes = [(10, 10, 20, 10), (40, 10, 20, 10)]
+    labels = [
+        (0.0, 0.0, 10.0, 10.0),  # touches the first eye's corner
+        (29.5, 12.0, 40.5, 18.0),  # across both eyes
+        (50.0, 19.0, 55.0, 25.0),  # 1 px into the second eye
+        (60.0, 10.0, 70.0, 20.0),  # beside the second eye
+    ]
+
+    assert bm.labels_on_boxes(labels, eyes) == 2
+    assert bm.labels_on_boxes(labels, []) == 0
+    assert bm.labels_on_boxes([], eyes) == 0
