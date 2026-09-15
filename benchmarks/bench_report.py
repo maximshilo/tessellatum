@@ -36,6 +36,10 @@ QUALITY_COLUMNS = (
     ("small_label_fraction", f"labels < {bm.print_size.MIN_LABEL_SIZE_PT:g} pt ↓", "{:.1%}"),
     ("compactness_p10", "compactness p10 ↑", "{:.2f}"),
     ("compactness_median", "compactness median ↑", "{:.2f}"),
+    ("lines_per_boundary", "lines per boundary", "{:.2f}"),
+    ("same_color_boundary_fraction", "same-color boundary ↓", "{:.1%}"),
+    ("jaggedness", "jaggedness ↓", "{:.3f}"),
+    ("edge_f1", "edge F1 ↑", "{:.2f}"),
     ("undersized_regions", "undersized ↓", "{:d}"),
     ("ink_fraction", "ink", "{:.1%}"),
 )
@@ -191,16 +195,23 @@ def _quality_section(
         "",
         "**ΔE00** and **SSIM** score the *finished painting* (every region filled with its legend color) against the "
         "source image: CIEDE2000 color error (mean and 95th percentile) and structural similarity of luma. The other "
-        "metrics score the page's regions and numbers. "
+        "metrics score the page's regions, lines and numbers. "
         "**labeled area**: share of the page inside regions that carry a number. **unlabeled**: regions without a "
         f"number. **slivers**: share of the page a round brush {bm.print_size.MIN_PAINTABLE_WIDTH_MM:g} mm wide can't "
         "paint without crossing into another region. "
         f"**labels < {bm.print_size.MIN_LABEL_SIZE_PT:g} pt**: share of numbers printing smaller than that. "
         "**compactness**: 4πA/P² of the regions (1 = disk), 10th percentile and median. "
+        "**lines per boundary**: lines drawn along each boundary between regions (1 = one line per boundary). "
+        "**same-color boundary**: share of boundary length between two regions of the same color. "
+        f"**jaggedness**: length of the drawn lines over their length with wiggles under "
+        f"{bm.JAGGEDNESS_SMOOTHING_MM:g} mm smoothed away (1 = smooth). "
+        f"**edge F1**: how well region boundaries and the source's edges line up, within {bm.EDGE_TOLERANCE_MM:g} mm "
+        "(1 = every boundary on an edge and every edge on a boundary). "
         "**undersized**: regions left below the merge threshold. **ink**: share of dark outline/number pixels.",
         "",
         "Millimeters and points are at print size on A4 (see `benchmarks/README.md`). The paintability metrics "
-        "(unlabeled, slivers, label size, compactness) have no tolerances yet and don't affect the verdict.",
+        "(unlabeled, slivers, label size, compactness) and the line metrics (lines per boundary, same-color boundary, "
+        "jaggedness, edge F1) have no tolerances yet and don't affect the verdict.",
         "",
         "Categories come from the image manifest. The first table averages each category (an image counts in every "
         "category it has); the per-case tables list each image under its primary category.",

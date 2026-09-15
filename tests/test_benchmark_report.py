@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
 import bench_report  # noqa: E402
 
 PAINTABILITY_KEYS = ("unlabeled_regions", "sliver_area_fraction", "small_label_fraction", "compactness_p10", "compactness_median")
+LINE_KEYS = ("lines_per_boundary", "same_color_boundary_fraction", "jaggedness", "edge_f1")
 
 
 def _case(image: str, categories: list[str], de00: float) -> dict:
@@ -36,6 +37,10 @@ def _case(image: str, categories: list[str], de00: float) -> dict:
             "small_label_fraction": 0.0,
             "compactness_p10": 0.1,
             "compactness_median": 0.4,
+            "lines_per_boundary": 2.0,
+            "same_color_boundary_fraction": 0.01,
+            "jaggedness": 1.1,
+            "edge_f1": 0.5,
             "undersized_regions": 0,
             "ink_fraction": 0.1,
         },
@@ -105,9 +110,9 @@ def test_single_result_set_report_has_summary_without_flags(tmp_path):
     assert "## Verdict" not in report
 
 
-def test_paintability_columns_are_blank_for_result_sets_from_before_them(tmp_path):
+def test_paintability_and_line_columns_are_blank_for_result_sets_from_before_them(tmp_path):
     before = _case("lion.jpg", ["photo"], 5.0)
-    for key in PAINTABILITY_KEYS:
+    for key in PAINTABILITY_KEYS + LINE_KEYS:
         del before["quality"][key]
     old = _write_set(tmp_path / "old", [before])
     new = _write_set(tmp_path / "new", [_case("lion.jpg", ["photo"], 5.0)])
@@ -117,8 +122,12 @@ def test_paintability_columns_are_blank_for_result_sets_from_before_them(tmp_pat
 
     header = (
         "| case | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | regions | labeled area ↑ | unlabeled ↓ | slivers ↓ | labels < 6 pt ↓ "
-        "| compactness p10 ↑ | compactness median ↑ | undersized ↓ | ink |"
+        "| compactness p10 ↑ | compactness median ↑ | lines per boundary | same-color boundary ↓ | jaggedness ↓ "
+        "| edge F1 ↑ | undersized ↓ | ink |"
     )
     assert header in old_alone
-    assert "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | – | – | – | – | – | 0 | 10.0% |" in old_alone
-    assert "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | 3 | 10.0% | 0.0% | 0.10 | 0.40 | 0 | 10.0% | ok |" in old_vs_new
+    assert "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | – | – | – | – | – | – | – | – | – | 0 | 10.0% |" in old_alone
+    assert (
+        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | 3 | 10.0% | 0.0% | 0.10 | 0.40 | 2.00 | 1.0% | 1.100 "
+        "| 0.50 | 0 | 10.0% | ok |"
+    ) in old_vs_new

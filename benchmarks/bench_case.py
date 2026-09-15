@@ -83,10 +83,15 @@ class PageData:
     regions: list  # regions drawn on the page
     labeled_region_ids: set[int]  # regions that carry a number
     label_font_sizes_px: list[int]  # em size of every number on the page
+    strokes: list[np.ndarray]  # every line drawn: (x, y) polylines, pixel centers at integers; a closed one returns to its start
 
 
 def page_data_from_analysis(analysis) -> PageData:
-    """Read the payload of ``generate(..., collect_analysis=True)``."""
+    """Read the payload of ``generate(..., collect_analysis=True)``.
+
+    Versions before 0.1.12 don't list the lines they draw; like the probe, their
+    lines are rebuilt as the outlines of the drawn regions.
+    """
     return PageData(
         source="analysis",
         region_id_map=analysis.region_id_map,
@@ -96,6 +101,7 @@ def page_data_from_analysis(analysis) -> PageData:
         regions=analysis.regions,
         labeled_region_ids={label.region_id for label in analysis.labels},
         label_font_sizes_px=[label.font_size for label in analysis.labels],
+        strokes=analysis.strokes if hasattr(analysis, "strokes") else [outline_polyline(r.contour) for r in analysis.regions],
     )
 
 
@@ -103,7 +109,8 @@ def page_data_from_probe(captured: dict, params, size: tuple[int, int], render_m
     """Rebuild page data from the stage calls of a version without the analysis payload.
 
     Relies on how those versions worked: ``generate`` derived the merge
-    threshold from the difficulty as below, and ``render_page`` numbered
+    threshold from the difficulty as below, and ``render_page`` outlined every
+    region it was given by drawing its contour as a polygon, and numbered
     exactly the regions with at least ``MIN_LABEL_RADIUS_PX`` of clearance, at
     a font size of that clearance times ``FONT_SIZE_RADIUS_RATIO``, clamped to
     ``MIN_FONT_SIZE``..``MAX_FONT_SIZE``.
@@ -128,7 +135,16 @@ def page_data_from_probe(captured: dict, params, size: tuple[int, int], render_m
         regions=regions,
         labeled_region_ids={r.region_id for r in labeled},
         label_font_sizes_px=[int(max(smallest, min(largest, r.interior_radius * ratio))) for r in labeled],
+        strokes=[outline_polyline(r.contour) for r in regions if len(r.contour)],
     )
+
+
+def outline_polyline(contour) -> np.ndarray:
+    """A region contour drawn as a polygon outline, as (x, y) points that return to the first one."""
+    import numpy as np  # imported late in this module, after the measured version's package
+
+    points = np.asarray(contour, dtype=np.float64).reshape(-1, 2)
+    return np.vstack([points, points[:1]]) if len(points) >= 2 else points
 
 
 def main() -> int:
@@ -237,6 +253,17 @@ def main() -> int:
         quality["sliver_area_fraction"] = bm.sliver_share(page_data.region_id_map, brush_px)
         quality.update(bm.label_sizes(page_data.label_font_sizes_px, print_scale))
         quality.update(bm.compactness_stats(page_data.region_id_map))
+        quality.update(bm.boundary_lines(page_data.region_id_map, page_data.strokes))
+        quality["same_color_boundary_fraction"] = bm.same_color_boundary_share(
+            page_data.region_id_map, page_data.region_color
+        )
+        quality["jaggedness"] = bm.jaggedness(
+            page_data.strokes, page_data.region_id_map, print_scale.mm_to_px(bm.JAGGEDNESS_SMOOTHING_MM)
+        )
+        edges = bm.source_edges(
+            bm.fit_to(reference, page_data.region_id_map.shape[::-1]), print_scale.mm_to_px(bm.EDGE_SMOOTHING_MM)
+        )
+        quality.update(bm.edge_alignment(page_data.region_id_map, edges, print_scale.mm_to_px(bm.EDGE_TOLERANCE_MM)))
         Image.fromarray(np.ascontiguousarray(painted[:, :, ::-1])).save(args.out / "painted.png")
         np.savez_compressed(args.out / "regions.npz", region_id_map=page_data.region_id_map)
 
