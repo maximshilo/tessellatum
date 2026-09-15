@@ -8,6 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
 
 import bench_report  # noqa: E402
 
+PAINTABILITY_KEYS = ("unlabeled_regions", "sliver_area_fraction", "small_label_fraction", "compactness_p10", "compactness_median")
+
 
 def _case(image: str, categories: list[str], de00: float) -> dict:
     return {
@@ -29,6 +31,11 @@ def _case(image: str, categories: list[str], de00: float) -> dict:
             "ssim": 0.8,
             "regions": 100,
             "labeled_area_fraction": 0.5,
+            "unlabeled_regions": 3,
+            "sliver_area_fraction": 0.1,
+            "small_label_fraction": 0.0,
+            "compactness_p10": 0.1,
+            "compactness_median": 0.4,
             "undersized_regions": 0,
             "ink_fraction": 0.1,
         },
@@ -75,10 +82,10 @@ def test_quality_is_grouped_by_primary_category(tmp_path):
 def test_category_summary_counts_images_in_every_category(tmp_path):
     report = bench_report.build_report(_sets(tmp_path), bench_report.Tolerances())
 
-    assert "| category | images | cases | ΔE00 mean ↓ | SSIM ↑ | labeled area ↑ | flagged cases |" in report
-    assert "| face | 1 | 1 | 5.00 → 6.00 | 0.800 | 50.0% | 1 |" in report
-    assert "| text | 1 | 1 | 4.00 | 0.800 | 50.0% | 0 |" in report
-    assert "| uncategorized | 1 | 1 | 3.00 | 0.800 | 50.0% | 0 |" in report
+    assert "| category | images | cases | ΔE00 mean ↓ | SSIM ↑ | labeled area ↑ | slivers ↓ | flagged cases |" in report
+    assert "| face | 1 | 1 | 5.00 → 6.00 | 0.800 | 50.0% | 10.0% | 1 |" in report
+    assert "| text | 1 | 1 | 4.00 | 0.800 | 50.0% | 10.0% | 0 |" in report
+    assert "| uncategorized | 1 | 1 | 3.00 | 0.800 | 50.0% | 10.0% | 0 |" in report
 
 
 def test_every_case_table_uses_the_category_order(tmp_path):
@@ -92,7 +99,26 @@ def test_every_case_table_uses_the_category_order(tmp_path):
 def test_single_result_set_report_has_summary_without_flags(tmp_path):
     report = bench_report.build_report(_sets(tmp_path)[:1], bench_report.Tolerances())
 
-    assert "| category | images | cases | ΔE00 mean ↓ | SSIM ↑ | labeled area ↑ |\n" in report
-    assert "| photo | 1 | 1 | 5.00 | 0.800 | 50.0% |" in report
+    assert "| category | images | cases | ΔE00 mean ↓ | SSIM ↑ | labeled area ↑ | slivers ↓ |\n" in report
+    assert "| photo | 1 | 1 | 5.00 | 0.800 | 50.0% | 10.0% |" in report
     assert "#### cartoon" in report
     assert "## Verdict" not in report
+
+
+def test_paintability_columns_are_blank_for_result_sets_from_before_them(tmp_path):
+    before = _case("lion.jpg", ["photo"], 5.0)
+    for key in PAINTABILITY_KEYS:
+        del before["quality"][key]
+    old = _write_set(tmp_path / "old", [before])
+    new = _write_set(tmp_path / "new", [_case("lion.jpg", ["photo"], 5.0)])
+
+    old_alone = bench_report.build_report([old], bench_report.Tolerances())
+    old_vs_new = bench_report.build_report([old, new], bench_report.Tolerances())
+
+    header = (
+        "| case | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | regions | labeled area ↑ | unlabeled ↓ | slivers ↓ | labels < 6 pt ↓ "
+        "| compactness p10 ↑ | compactness median ↑ | undersized ↓ | ink |"
+    )
+    assert header in old_alone
+    assert "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | – | – | – | – | – | 0 | 10.0% |" in old_alone
+    assert "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | 3 | 10.0% | 0.0% | 0.10 | 0.40 | 0 | 10.0% | ok |" in old_vs_new

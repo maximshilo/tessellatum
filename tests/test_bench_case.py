@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 from PIL import Image
@@ -36,7 +37,24 @@ def test_probe_fallback_reads_the_same_page_data_as_the_analysis(speckled_image_
     )
     assert from_analysis.min_region_area_px == from_probe.min_region_area_px
     assert from_analysis.labeled_region_ids == from_probe.labeled_region_ids != set()
+    assert from_analysis.label_font_sizes_px == from_probe.label_font_sizes_px
     assert [r.region_id for r in from_analysis.regions] == [r.region_id for r in from_probe.regions]
+
+
+def test_probe_fallback_rebuilds_font_sizes_without_the_render_module():
+    regions = [SimpleNamespace(region_id=i, interior_radius=radius) for i, radius in enumerate([5.0, 9.0, 30.0, 60.0])]
+    captured = {
+        "quantize": ((), {}, (None, np.zeros((2, 3), dtype=np.uint8))),
+        "build_regions": ((), {}, (np.zeros((4, 4), dtype=np.int32), np.zeros(4, dtype=np.int32))),
+        "render_page": (((4, 4), regions), {}, None),
+    }
+    params = difficulty.DifficultyParams(num_colors=2, min_region_fraction=0.5, blur_sigma=0.0)
+
+    page_data = bench_case.page_data_from_probe(captured, params, (4, 4), render_module=None)
+
+    # Clearance of at least 9 px gets a number, at 0.85 x the clearance, between 10 and 40 px.
+    assert page_data.labeled_region_ids == {1, 2, 3}
+    assert page_data.label_font_sizes_px == [10, 25, 40]
 
 
 def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path, sample_image_bgr):
@@ -65,5 +83,17 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path, sam
     assert case["scored_from"] == "analysis"
     assert len(case["runs"]) == 2  # the analysis run isn't timed...
     assert case["deterministic"]  # ...but its page must match the timed runs'
-    assert {"de00_mean", "ssim", "undersized_regions", "labeled_area_fraction"} <= case["quality"].keys()
+    assert {
+        "de00_mean",
+        "ssim",
+        "undersized_regions",
+        "labeled_area_fraction",
+        "unlabeled_regions",
+        "unlabeled_area_fraction",
+        "sliver_area_fraction",
+        "small_label_fraction",
+        "min_label_pt",
+        "compactness_median",
+        "compactness_p10",
+    } <= case["quality"].keys()
     assert (out / "painted.png").is_file() and (out / "regions.npz").is_file()

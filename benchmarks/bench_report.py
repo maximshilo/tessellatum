@@ -31,6 +31,11 @@ QUALITY_COLUMNS = (
     ("ssim", "SSIM ↑", "{:.3f}"),
     ("regions", "regions", "{:d}"),
     ("labeled_area_fraction", "labeled area ↑", "{:.1%}"),
+    ("unlabeled_regions", "unlabeled ↓", "{:d}"),
+    ("sliver_area_fraction", "slivers ↓", "{:.1%}"),
+    ("small_label_fraction", f"labels < {bm.print_size.MIN_LABEL_SIZE_PT:g} pt ↓", "{:.1%}"),
+    ("compactness_p10", "compactness p10 ↑", "{:.2f}"),
+    ("compactness_median", "compactness median ↑", "{:.2f}"),
     ("undersized_regions", "undersized ↓", "{:d}"),
     ("ink_fraction", "ink", "{:.1%}"),
 )
@@ -40,6 +45,7 @@ SUMMARY_COLUMNS = (
     ("de00_mean", "ΔE00 mean ↓", "{:.2f}"),
     ("ssim", "SSIM ↑", "{:.3f}"),
     ("labeled_area_fraction", "labeled area ↑", "{:.1%}"),
+    ("sliver_area_fraction", "slivers ↓", "{:.1%}"),
 )
 
 
@@ -185,8 +191,15 @@ def _quality_section(
         "",
         "Scored on the *finished painting* (every region filled with its legend color) against the source image. "
         "**ΔE00**: CIEDE2000 color error, mean and 95th percentile. **SSIM**: structural similarity of luma. "
-        "**labeled area**: share of the page inside regions big enough to carry a number. "
+        "**labeled area**: share of the page inside regions that carry a number. **unlabeled**: regions without a "
+        f"number. **slivers**: share of the page a round brush {bm.print_size.MIN_PAINTABLE_WIDTH_MM:g} mm wide can't "
+        "paint without crossing into another region. "
+        f"**labels < {bm.print_size.MIN_LABEL_SIZE_PT:g} pt**: share of numbers printing smaller than that. "
+        "**compactness**: 4πA/P² of the regions (1 = disk), 10th percentile and median. "
         "**undersized**: regions left below the merge threshold. **ink**: share of dark outline/number pixels.",
+        "",
+        "Millimeters and points are at print size on A4 (see `benchmarks/README.md`). The paintability metrics "
+        "(unlabeled, slivers, label size, compactness) have no tolerances yet and don't affect the verdict.",
         "",
         "Categories come from the image manifest. The first table averages each category (an image counts in every "
         "category it has); the per-case tables list each image under its primary category.",
