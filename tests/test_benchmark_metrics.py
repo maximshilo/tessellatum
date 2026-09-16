@@ -218,29 +218,41 @@ def test_paintability_metrics_of_a_page_without_regions():
     assert bm.compactness_stats(empty) == {"compactness_median": None, "compactness_p10": None}
 
 
-def _drawn_outlines(region_id_map: np.ndarray) -> list[np.ndarray]:
-    """The lines today's renderer draws for a region map: every region's contour, as a closed polyline."""
+def _drawn_lines(region_id_map: np.ndarray) -> list[np.ndarray]:
+    """The lines today's renderer draws for a region map: one per boundary."""
     regions = extract_regions(region_id_map, np.arange(int(region_id_map.max()) + 1, dtype=np.int32))
-    contours = [c.reshape(-1, 2).astype(np.float64) for c in render.render_page(region_id_map.shape[::-1], regions).strokes]
+    return render.render_page(region_id_map.shape[::-1], regions, region_id_map).strokes
+
+
+def _outlines_of_every_region(region_id_map: np.ndarray) -> list[np.ndarray]:
+    """What a renderer that outlines every region on its own would draw, as closed polylines."""
+    regions = extract_regions(region_id_map, np.arange(int(region_id_map.max()) + 1, dtype=np.int32))
+    contours = [r.contour.reshape(-1, 2).astype(np.float64) for r in regions]
     return [np.vstack([c, c[:1]]) for c in contours]
 
 
-def test_todays_renderer_draws_two_lines_along_a_boundary_where_one_would_do():
+def test_two_outlines_along_a_boundary_count_double_and_one_shared_line_counts_once():
     image = np.full((40, 60, 3), 230, dtype=np.uint8)
     image[:, 30:] = 20
     params = difficulty.DifficultyParams(num_colors=2, min_region_fraction=0.01, blur_sigma=0.0)
     analysis = pipeline.generate(image, params, long_edge=60, collect_analysis=True).analysis
-    shared_line = np.array([[29.5, 0.0], [29.5, 39.0]])
+    once = {"lines_per_boundary": 1.0, "doubled_boundary_fraction": 0.0, "undrawn_boundary_fraction": 0.0}
 
-    assert len(analysis.strokes) == 2  # each region's outline
+    assert bm.boundary_lines(analysis.region_id_map, [np.array([[29.5, 0.0], [29.5, 39.0]])]) == once
+    # Today's renderer draws that line once, plus the page edge on either side of
+    # it. The two meet it at the top and bottom of the page, and a line counts
+    # wherever it passes within a pixel, so the boundary's first and last pixel
+    # edge see all three: near a junction the metric cannot help counting the
+    # lines that end there.
+    assert len(analysis.strokes) == 3
     assert bm.boundary_lines(analysis.region_id_map, analysis.strokes) == {
-        "lines_per_boundary": 2.0,
-        "doubled_boundary_fraction": 1.0,
+        "lines_per_boundary": 1 + 2 * 2 / 40,
+        "doubled_boundary_fraction": 2 / 40,
         "undrawn_boundary_fraction": 0.0,
     }
-    assert bm.boundary_lines(analysis.region_id_map, [shared_line]) == {
-        "lines_per_boundary": 1.0,
-        "doubled_boundary_fraction": 0.0,
+    assert bm.boundary_lines(analysis.region_id_map, _outlines_of_every_region(analysis.region_id_map)) == {
+        "lines_per_boundary": 2.0,
+        "doubled_boundary_fraction": 1.0,
         "undrawn_boundary_fraction": 0.0,
     }
     assert bm.boundary_lines(analysis.region_id_map, []) == {
@@ -305,7 +317,7 @@ def test_jaggedness_ignores_corners_where_regions_meet():
     assert bm.jaggedness([corner], three, 2.0) == pytest.approx(1.0, abs=1e-12)
     # The same corner inside one region gets rounded off.
     assert bm.jaggedness([corner], np.zeros_like(three), 2.0) == pytest.approx(1.018, abs=0.001)
-    assert bm.jaggedness(_drawn_outlines(grid), grid, 2.0) == pytest.approx(1.0, abs=1e-12)
+    assert bm.jaggedness(_drawn_lines(grid), grid, 2.0) == pytest.approx(1.0, abs=1e-12)
 
 
 def test_jaggedness_smooths_a_closed_line_that_meets_no_junction_all_the_way_round():

@@ -50,8 +50,9 @@ class PageAnalysis:
     the page. The rest are quantized colors no drawn region has.
 
     A region in ``region_id_map`` with no entry in ``regions`` has an outline
-    that encloses no area (e.g. it is one pixel wide), so it gets neither an
-    outline nor a number.
+    that encloses no area (e.g. it is one pixel wide), so it gets no number.
+    Its boundaries are still drawn: the lines come from the region map, not
+    from the regions.
     """
 
     region_id_map: np.ndarray  # HxW int32: each pixel's region id, -1 for none
@@ -62,9 +63,10 @@ class PageAnalysis:
     min_paintable_width_px: float  # brush width: narrower parts of a region are given to a neighbor
     regions: list[Region]  # regions drawn on the page, in region-id order
     labels: list[Label]  # numbers drawn on the page
-    outlines: np.ndarray  # HxW uint8: the outline layer alone, 0 = black line, 255 = paper
+    outlines: np.ndarray  # HxW uint8: the line layer alone, 0 = black line, 255 = paper
     # Every line drawn, in drawing order: Nx2 float64 (x, y) points with pixel centers at integer coordinates.
-    # A closed line repeats its first point at the end; a single point is a dot.
+    # One line per boundary between two regions, so its points lie on pixel cracks, at half-integers.
+    # A closed line repeats its first point at the end.
     strokes: list[np.ndarray]
 
 
@@ -126,12 +128,6 @@ _cache = _StageCache(max_entries=6)
 def clear_cache() -> None:
     """Forget cached intermediate results (see ``_StageCache``)."""
     _cache.clear()
-
-
-def _polyline(contour: np.ndarray) -> np.ndarray:
-    """A contour drawn as a polygon outline, as (x, y) points that return to the first one."""
-    points = contour.reshape(-1, 2).astype(np.float64)
-    return np.vstack([points, points[:1]]) if len(points) >= 2 else points
 
 
 def _paintable_limits(params: DifficultyParams, size: tuple[int, int]) -> tuple[int, float]:
@@ -251,7 +247,7 @@ def generate(
         region.color_index = remap[region.color_index]
     used_palette_bgr = palette_bgr[used_color_indices]
 
-    rendered = render_page((w, h), regions)
+    rendered = render_page((w, h), regions, region_id_map)
     legend = render_legend(used_palette_bgr, width=w)
     report("render")
 
@@ -274,7 +270,7 @@ def generate(
             regions=regions,
             labels=rendered.labels,
             outlines=np.asarray(rendered.outlines),
-            strokes=[_polyline(contour) for contour in rendered.strokes],
+            strokes=rendered.strokes,
         )
 
     return GeneratedPage(

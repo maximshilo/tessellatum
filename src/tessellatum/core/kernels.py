@@ -2,7 +2,8 @@
 
 Pixel-level work NumPy can't vectorize -- union-find labeling, the sequential
 small-region merge, the same-color union that follows it, the greedy coloring
-that groups regions for the width measurement, and the bilateral filter's
+that groups regions for the width measurement, the walk that turns the
+boundaries between regions into one path each, and the bilateral filter's
 per-pixel weighting -- runs here as compiled code. Arrays are passed
 flattened (row-major) with explicit ``height``/``width``.
 
@@ -410,6 +411,125 @@ def edge_adjacency_classes(ids, height, width, num_regions, out_classes):
 
 
 @njit(cache=True, nogil=True)
+def _crack_edge(right, down, stride, corner, direction):
+    """Is there a crack edge leaving ``corner`` in ``direction`` (0 right, 1 down, 2 left, 3 up)?
+
+    The edge left of a corner is the one right of its left neighbor, and the
+    edge above it the one below the corner above; both are absent in the
+    column and row where those neighbors would fall off the grid, which
+    ``right`` and ``down`` mark as absent anyway (see
+    ``boundaries.crack_edges``).
+    """
+    if direction == 0:
+        return right[corner]
+    if direction == 1:
+        return down[corner]
+    if direction == 2:
+        return corner >= 1 and right[corner - 1]
+    return corner >= stride and down[corner - stride]
+
+
+@njit(cache=True, nogil=True)
+def _use_crack_edge(used, stride, corner, direction):
+    """Mark the crack edge leaving ``corner`` in ``direction`` as drawn."""
+    if direction == 0:
+        used[corner] |= 1
+    elif direction == 1:
+        used[corner] |= 2
+    elif direction == 2:
+        used[corner - 1] |= 1
+    else:
+        used[corner - stride] |= 2
+
+
+@njit(cache=True, nogil=True)
+def _crack_edge_used(used, stride, corner, direction):
+    if direction == 0:
+        return (used[corner] & 1) != 0
+    if direction == 1:
+        return (used[corner] & 2) != 0
+    if direction == 2:
+        return corner >= 1 and (used[corner - 1] & 1) != 0
+    return corner >= stride and (used[corner - stride] & 2) != 0
+
+
+@njit(cache=True, nogil=True)
+def trace_boundary_paths(right, down, degree, stride, num_edges):
+    """Walk the crack graph into one path per boundary between two regions.
+
+    The graph lives on the grid of pixel corners: corner ``i * stride + j``
+    is the point ``(x, y) = (j - 0.5, i - 0.5)``, and ``right[c]`` / ``down[c]``
+    say whether a crack edge joins it to the corner on its right / below it
+    (see ``boundaries.crack_edges``). ``degree[c]`` counts the crack edges
+    around a corner, which is 0, 2, 3 or 4: a corner with three or more is a
+    junction, where boundaries meet.
+
+    Every other corner has exactly two edges, which separate the same two
+    regions, so following them from junction to junction gives the whole
+    boundary between one pair of regions as a single path. Edges left over
+    belong to boundaries with no junction at all -- a region lying inside
+    another, or the page edge around a page of one region -- and come back as
+    closed paths that repeat their first corner.
+
+    Returns ``(corners, starts)``: every path's corners in order, and where
+    each path begins in that array, with its length last. Each of the
+    ``num_edges`` crack edges is walked exactly once, so each boundary gets
+    exactly one line.
+    """
+    used = np.zeros(right.size, np.uint8)
+    # A path of k edges has k + 1 corners, and there are at most num_edges paths.
+    corners = np.empty(2 * num_edges + 2, np.int32)
+    starts = np.empty(num_edges + 2, np.int32)
+    on_graph = np.flatnonzero(degree > 0)
+    n = 0
+    paths = 0
+
+    # Junctions first, so that the paths between them are traced end to end;
+    # whatever is left over after that is a boundary that meets no junction.
+    for junctions_first in range(2):
+        for k in range(on_graph.size):
+            corner = on_graph[k]
+            if (degree[corner] >= 3) != (junctions_first == 0):
+                continue
+            for direction in range(4):
+                if not _crack_edge(right, down, stride, corner, direction):
+                    continue
+                if _crack_edge_used(used, stride, corner, direction):
+                    continue
+                starts[paths] = n
+                paths += 1
+                c, d = corner, direction
+                corners[n] = c
+                n += 1
+                while True:
+                    _use_crack_edge(used, stride, c, d)
+                    if d == 0:
+                        c += 1
+                    elif d == 1:
+                        c += stride
+                    elif d == 2:
+                        c -= 1
+                    else:
+                        c -= stride
+                    corners[n] = c
+                    n += 1
+                    if degree[c] != 2:
+                        break  # a junction: the boundary to the next one is another path
+                    back = (d + 2) & 3
+                    nd = -1
+                    for e in range(4):
+                        if e != back and _crack_edge(right, down, stride, c, e):
+                            nd = e
+                            break
+                    if nd < 0 or _crack_edge_used(used, stride, c, nd):
+                        break  # back where this path started: a closed boundary
+                    d = nd
+
+    starts[paths] = n
+    return corners[:n], starts[: paths + 1]
+
+
+@njit(cache=True, nogil=True)
 def region_bounds(ids, height, width, num_regions):
     """Per region id: inclusive bounding box ``(x0, y0, x1, y1)`` and pixel count."""
     bounds = np.empty((num_regions, 4), np.int32)
@@ -488,6 +608,11 @@ def warm_up() -> None:
     merge_same_color_neighbors(ids, 3, 3, region_color, areas)
     edge_adjacency_classes(ids, 3, 3, int(ids.max()) + 1, np.empty(9, dtype=np.int8))
     region_bounds(ids, 3, 3, int(ids.max()) + 1)
+
+    from tessellatum.core.boundaries import crack_edges  # imported here: boundaries imports this module
+
+    right, down, degree, num_edges = crack_edges(ids.reshape(3, 3))
+    trace_boundary_paths(right, down, degree, 4, num_edges)
 
     padded = np.zeros(5 * 5 * 3, dtype=np.uint8)
     out = np.empty(3 * 3 * 3, dtype=np.uint8)

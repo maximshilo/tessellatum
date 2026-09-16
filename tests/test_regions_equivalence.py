@@ -96,12 +96,18 @@ def test_extract_regions_and_render_page_match_reference(
         np.testing.assert_array_equal(got.contour, want.contour)
 
     size = (shape[1], shape[0])
-    rendered = render_page(size, actual)
-    np.testing.assert_array_equal(np.asarray(rendered.image), np.asarray(ref.render_page(size, expected)))
-    # The outline layer is the page as it would be drawn without numbers.
+    rendered = render_page(size, actual, region_id_map)
+    expected_lines = ref.trace_boundaries(region_id_map)
+    assert len(rendered.strokes) == len(expected_lines)
+    for got_line, want_line in zip(rendered.strokes, expected_lines):
+        np.testing.assert_array_equal(got_line, want_line)
+    np.testing.assert_array_equal(
+        np.asarray(rendered.image), np.asarray(ref.render_page(size, expected, region_id_map))
+    )
+    # The line layer is the page as it would be drawn without numbers.
     without_numbers = [dataclasses.replace(r, interior_radius=0.0) for r in expected]
     np.testing.assert_array_equal(
-        np.asarray(rendered.outlines.convert("RGB")), np.asarray(ref.render_page(size, without_numbers))
+        np.asarray(rendered.outlines.convert("RGB")), np.asarray(ref.render_page(size, without_numbers, region_id_map))
     )
 
 

@@ -41,9 +41,12 @@ def test_probe_fallback_reads_the_same_page_data_as_the_analysis(speckled_image_
     assert from_analysis.label_font_sizes_px == from_probe.label_font_sizes_px
     assert from_analysis.label_boxes == from_probe.label_boxes
     assert [r.region_id for r in from_analysis.regions] == [r.region_id for r in from_probe.regions]
-    assert len(from_analysis.strokes) == len(from_probe.strokes) == len(from_analysis.regions)
-    for from_payload, rebuilt in zip(from_analysis.strokes, from_probe.strokes):
-        np.testing.assert_array_equal(from_payload, rebuilt)
+    # Lines are the exception: the payload reports one per boundary, while the
+    # rebuild can only assume what the versions it is there for did, which is to
+    # outline every region. The payload is what scoring uses when it has one.
+    assert len(from_probe.strokes) == len(from_analysis.regions) < len(from_analysis.strokes)
+    for rebuilt, region in zip(from_probe.strokes, from_probe.regions):
+        np.testing.assert_array_equal(rebuilt[:-1], region.contour.reshape(-1, 2))
     # Both read the legend's colors in legend order, without the specks' color, which no drawn region has.
     np.testing.assert_array_equal(from_analysis.legend_bgr, from_probe.legend_bgr)
     assert len(from_probe.legend_bgr) == result.num_colors_used < len(from_probe.palette_bgr)

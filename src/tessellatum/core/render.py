@@ -1,4 +1,4 @@
-"""Render the final coloring page: outlines + numbers on a white canvas."""
+"""Render the final coloring page: lines + numbers on a white canvas."""
 
 from __future__ import annotations
 
@@ -9,19 +9,20 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from tessellatum.core.boundaries import trace_boundaries
 from tessellatum.core.regions import Region
 
 MIN_LABEL_RADIUS_PX = 9.0
 MIN_FONT_SIZE = 10
 MAX_FONT_SIZE = 40
 FONT_SIZE_RADIUS_RATIO = 0.85
-OUTLINE_WIDTH = 2
+OUTLINE_WIDTH = 2  # px across the whole line, which straddles the crack it is drawn on
 
-# Pillow never draws a polygon outline outside the polygon itself (it masks
-# wide strokes to the fill); keep a little extra room around it anyway.
-_OUTLINE_MARGIN_PX = OUTLINE_WIDTH + 1
-# Outlines that fit inside one tile of this size are drawn together on that tile.
-_TILE_PX = 256
+# Lines run along pixel cracks, so their coordinates are half-integers; a shift
+# of one bit carries them exactly.
+_SUBPIXEL_BITS = 1
+# Room for a line on the page edge, and for the widening below, before cropping.
+_CANVAS_MARGIN_PX = OUTLINE_WIDTH
 
 
 @dataclass
@@ -39,50 +40,21 @@ class RenderedPage:
     image: Image.Image  # RGB: outlines + numbers
     outlines: Image.Image  # "L": the outlines alone, 0 = black line, 255 = paper
     labels: list[Label]  # every number on the page, in drawing order
-    strokes: list[np.ndarray]  # every outline drawn, in drawing order: a region contour (Nx1x2 int32), closed; one point is a dot
+    strokes: list[np.ndarray]  # every line drawn, in drawing order: Nx2 float64 (x, y); a closed one returns to its first point
 
 
-def render_page(size: tuple[int, int], regions: list[Region]) -> RenderedPage:
-    """Draw outlines + numbers for ``regions`` onto a white ``size`` canvas.
+def render_page(size: tuple[int, int], regions: list[Region], region_id_map: np.ndarray) -> RenderedPage:
+    """Draw the boundaries of ``region_id_map`` + numbers for ``regions`` onto a white ``size`` canvas.
 
-    Returns the page, plus what it was built from: the outlines on their own,
-    the contour each outline was drawn from, and where each number went.
+    Every boundary between two regions is drawn once, as the line its two
+    regions share (see ``boundaries.trace_boundaries``), rather than as part
+    of an outline around each of them.
+
+    Returns the page, plus what it was built from: the lines on their own, the
+    geometry each was drawn from, and where each number went.
     """
-    width, height = size
-    # Pillow draws a wide polygon outline through a scratch mask as big as the
-    # image it draws on, so drawing straight onto the page would cost a
-    # full-page allocation per region. Instead, draw each outline on a small
-    # crop -- shared by all outlines that fit in the same tile -- and paste it
-    # back. Same pixels: strokes are pure black on white, so the page is just
-    # their union, in any order. A 1-byte canvas keeps the copying cheap.
-    outlines = Image.new("L", size, 255)
-    tiles: dict[tuple[int, int], list[np.ndarray]] = {}
-    strokes: list[np.ndarray] = []
-
-    for region in regions:
-        contour = region.contour
-        if len(contour) == 0:
-            continue
-        strokes.append(contour)
-        if len(contour) == 1:
-            ImageDraw.Draw(outlines).point((int(contour[0, 0, 0]), int(contour[0, 0, 1])), fill=0)
-            continue
-        x, y, w, h = cv2.boundingRect(contour)
-        box = (
-            max(x - _OUTLINE_MARGIN_PX, 0),
-            max(y - _OUTLINE_MARGIN_PX, 0),
-            min(x + w + _OUTLINE_MARGIN_PX, width),
-            min(y + h + _OUTLINE_MARGIN_PX, height),
-        )
-        tile = (box[0] // _TILE_PX, box[1] // _TILE_PX)
-        if ((box[2] - 1) // _TILE_PX, (box[3] - 1) // _TILE_PX) == tile:
-            tiles.setdefault(tile, []).append(contour)
-        else:
-            _draw_outlines(outlines, box, [contour])
-
-    for (tx, ty), contours in tiles.items():
-        box = (tx * _TILE_PX, ty * _TILE_PX, min((tx + 1) * _TILE_PX, width), min((ty + 1) * _TILE_PX, height))
-        _draw_outlines(outlines, box, contours)
+    strokes = trace_boundaries(region_id_map)
+    outlines = _draw_lines(size, strokes)
 
     page = outlines.convert("RGB")
     draw = ImageDraw.Draw(page)
@@ -105,14 +77,33 @@ def render_page(size: tuple[int, int], regions: list[Region]) -> RenderedPage:
     return RenderedPage(image=page, outlines=outlines, labels=labels, strokes=strokes)
 
 
-def _draw_outlines(canvas: Image.Image, box: tuple[int, int, int, int], contours: list[np.ndarray]) -> None:
-    """Draw polygon outlines lying entirely inside ``box`` onto ``canvas``."""
-    crop = canvas.crop(box)
-    draw = ImageDraw.Draw(crop)
-    for contour in contours:
-        local_points = (contour.reshape(-1, 2) - (box[0], box[1])).reshape(-1).tolist()
-        draw.polygon(local_points, outline=0, width=OUTLINE_WIDTH)
-    canvas.paste(crop, box)
+def _draw_lines(size: tuple[int, int], strokes: list[np.ndarray]) -> Image.Image:
+    """The line layer: ``strokes`` drawn ``OUTLINE_WIDTH`` px wide, 0 = line, 255 = paper.
+
+    A line sits on the crack between two pixels, so it cannot be centered on a
+    pixel. It is rasterized one pixel wide -- which puts it on the pixel right
+    of or below the crack -- and then widened up and left, so that it covers
+    the pixels on both sides of the crack evenly. The canvas has a margin so
+    that a line on the page edge, whose other half falls off the page, is
+    drawn rather than clipped away.
+    """
+    width, height = size
+    margin = _CANVAS_MARGIN_PX
+    canvas = np.zeros((height + 2 * margin, width + 2 * margin), dtype=np.uint8)
+    paths = [np.rint((stroke + margin) * (1 << _SUBPIXEL_BITS)).astype(np.int32) for stroke in strokes]
+    if paths:
+        cv2.polylines(canvas, paths, False, 255, thickness=1, lineType=cv2.LINE_8, shift=_SUBPIXEL_BITS)
+        # The anchor decides which way the widening goes: at (0, 0) a 2x2
+        # element spreads a pixel up and left, which is the side of the crack
+        # the one-pixel line missed.
+        spread_up_left = (OUTLINE_WIDTH - 1) // 2
+        cv2.dilate(
+            canvas,
+            np.ones((OUTLINE_WIDTH, OUTLINE_WIDTH), np.uint8),
+            dst=canvas,
+            anchor=(spread_up_left, spread_up_left),
+        )
+    return Image.fromarray(np.invert(canvas[margin : margin + height, margin : margin + width]), "L")
 
 
 @lru_cache(maxsize=None)
