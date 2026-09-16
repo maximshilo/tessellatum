@@ -31,11 +31,10 @@ JOBS = ("resembles", "paintable", "clean drawing", "palette")
 ALL_CASES = "all"
 # A group of cases regresses on a metric when its mean change is worse than this many standard errors of the mean.
 STANDARD_ERRORS = 3.0
-# The size previews are judged at, and where a metric's `sigma` was measured.
-PREVIEW_LONG_EDGE = 1100
 # A case whose page is at least this share of its image's own long edge is judged with `sigma_export`.
 EXPORT_SIGMA_MIN_PAGE_SHARE = 0.99
-# Without `source_size`, a case counts as an export when the size asked for is at least this large.
+# Without `source_size`, a case counts as an export when the size asked for is at least this large: a quarter above the
+# 1100 px preview, so that a preview rendered a pixel or two wide of it is still judged with `sigma`.
 EXPORT_SIGMA_MIN_LONG_EDGE = 1375
 
 
