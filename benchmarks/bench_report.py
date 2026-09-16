@@ -29,8 +29,14 @@ STAGE_ORDER = (
 JOBS = ("resembles", "paintable", "clean drawing", "palette")
 # The scorecard's group of every case, listed after the image categories.
 ALL_CASES = "all"
-# A group of n cases regresses on a metric when its mean change is worse than this many sigma / sqrt(n).
+# A group of cases regresses on a metric when its mean change is worse than this many standard errors of the mean.
 STANDARD_ERRORS = 3.0
+# The size previews are judged at, and where a metric's `sigma` was measured.
+PREVIEW_LONG_EDGE = 1100
+# A case whose page is at least this share of its image's own long edge is judged with `sigma_export`.
+EXPORT_SIGMA_MIN_PAGE_SHARE = 0.99
+# Without `source_size`, a case counts as an export when the size asked for is at least this large.
+EXPORT_SIGMA_MIN_LONG_EDGE = 1375
 
 
 @dataclass(frozen=True)
@@ -57,7 +63,8 @@ class Metric:
     job: str | None = None  # one of JOBS; None for a field that only informs
     better: str | None = None  # "lower" or "higher"; None for a field that only informs or has an ideal value
     ideal: float | None = None  # judged by the distance from this value
-    sigma: float | None = None  # the tolerance: typical change of one case between equally good pages
+    sigma: float | None = None  # the tolerance at preview size: typical change of one case between equally good pages
+    sigma_export: float | None = None  # the tolerance at an image's own size, where a page keeps the source's detail
     relative: bool = False  # sigma and changes are shares of the reference's value
     target: Target | None = None
 
@@ -65,49 +72,97 @@ class Metric:
     def name(self) -> str:
         return self.title.rstrip(" ↑↓")
 
+    def sigma_at(self, size: str) -> float | None:
+        """The tolerance for a case of this size, ``"preview"`` or ``"export"`` (see ``_sigma_size``)."""
+        return self.sigma_export if size == "export" and self.sigma_export is not None else self.sigma
 
-# Every quality column, in the report's order. Sigma is the root mean square change of one case between the same image
-# and preset at 1099, 1100 and 1101 px (`bench.py noise`; 144 pairs on the 12 benchmark images at Easy / Medium / Hard /
-# Max, fewer for the metrics that need annotations). Targets are the plan's definition of done.
+
+# Every quality column, in the report's order. A tolerance is the root mean square change of one case between two sizes
+# of the same image and preset (`bench.py noise`), measured on `main` at 36d75ed (T1.8):
+# - `sigma`, at 1099, 1100 and 1101 px: 132 pairs over the 12 benchmark images at Easy / Medium / Hard / Max, fewer for
+#   the metrics that need annotations;
+# - `sigma_export`, at 1, 2 and 3 px below each image's own long edge, where a page keeps the source's detail: 144 pairs.
+#   A case rendered at an image's own size is judged with it (`_sigma_size`).
+# Targets are the plan's definition of done.
 METRICS = (
-    Metric("de00_mean", "ΔE00 mean ↓", "{:.2f}", "resembles", "lower", sigma=0.066, relative=True),
-    Metric("de00_p95", "ΔE00 p95 ↓", "{:.1f}", "resembles", "lower", sigma=0.070, relative=True),
-    Metric("ssim", "SSIM ↑", "{:.3f}", "resembles", "higher", sigma=0.0063),
+    Metric("de00_mean", "ΔE00 mean ↓", "{:.2f}", "resembles", "lower", sigma=0.069, sigma_export=0.073, relative=True),
+    Metric("de00_p95", "ΔE00 p95 ↓", "{:.1f}", "resembles", "lower", sigma=0.073, sigma_export=0.12, relative=True),
+    Metric("ssim", "SSIM ↑", "{:.3f}", "resembles", "higher", sigma=0.0066, sigma_export=0.0070),
     Metric("regions", "regions", "{:d}"),
-    Metric("labeled_area_fraction", "labeled area ↑", "{:.1%}", "paintable", "higher", sigma=0.023),
-    Metric("unlabeled_regions", "unlabeled ↓", "{:d}", "paintable", "lower", sigma=66, target=Target(0)),
-    Metric("sliver_area_fraction", "slivers ↓", "{:.1%}", "paintable", "lower", sigma=0.015, target=Target(0.01)),
+    Metric("labeled_area_fraction", "labeled area ↑", "{:.1%}", "paintable", "higher", sigma=0.024, sigma_export=0.0064),
+    Metric("unlabeled_regions", "unlabeled ↓", "{:d}", "paintable", "lower", sigma=69, sigma_export=18, target=Target(0)),
+    Metric(
+        "sliver_area_fraction", "slivers ↓", "{:.1%}", "paintable", "lower", sigma=0.015, sigma_export=0.014, target=Target(0.01)
+    ),
     Metric(
         "small_label_fraction",
         f"labels < {bm.print_size.MIN_LABEL_SIZE_PT:g} pt ↓",
         "{:.1%}",
         "paintable",
         "lower",
-        sigma=0.020,
+        sigma=0.021,
+        sigma_export=0.022,
         target=Target(0),
     ),
-    Metric("compactness_p10", "compactness p10 ↑", "{:.2f}", "paintable", "higher", sigma=0.022),
-    Metric("compactness_median", "compactness median ↑", "{:.2f}", "paintable", "higher", sigma=0.034),
-    Metric("lines_per_boundary", "lines per boundary", "{:.2f}", "clean drawing", ideal=1.0, sigma=0.095, target=Target(0.05)),
+    Metric("compactness_p10", "compactness p10 ↑", "{:.2f}", "paintable", "higher", sigma=0.023, sigma_export=0.020),
+    Metric("compactness_median", "compactness median ↑", "{:.2f}", "paintable", "higher", sigma=0.036, sigma_export=0.029),
     Metric(
-        "same_color_boundary_fraction", "same-color boundary ↓", "{:.1%}", "clean drawing", "lower", sigma=0.027, target=Target(0)
+        "lines_per_boundary",
+        "lines per boundary",
+        "{:.2f}",
+        "clean drawing",
+        ideal=1.0,
+        sigma=0.10,
+        sigma_export=0.048,
+        target=Target(0.05),
     ),
-    Metric("jaggedness", "jaggedness ↓", "{:.3f}", "clean drawing", "lower", sigma=0.0081, target=Target(1.02)),
-    Metric("edge_f1", "edge F1 ↑", "{:.2f}", "clean drawing", "higher", sigma=0.022),
     Metric(
-        "palette_min_de00", "palette min ΔE00 ↑", "{:.1f}", "palette", "higher", sigma=1.2, target=Target(bm.PALETTE_MIN_DE00)
+        "same_color_boundary_fraction",
+        "same-color boundary ↓",
+        "{:.1%}",
+        "clean drawing",
+        "lower",
+        sigma=0.028,
+        sigma_export=0.014,
+        target=Target(0),
     ),
-    Metric("palette_close_pairs", f"color pairs < {bm.PALETTE_MIN_DE00:g} ΔE00 ↓", "{:d}", "palette", "lower", sigma=3.1),
-    Metric("ink_line_f1", "ink line F1 ↑", "{:.2f}", "clean drawing", "higher", sigma=0.021, target=Target(0.9)),
-    Metric("tube_regions", "tubes ↓", "{:d}", "clean drawing", "lower", sigma=2.6, target=Target(0)),
+    Metric("jaggedness", "jaggedness ↓", "{:.3f}", "clean drawing", "lower", sigma=0.0085, sigma_export=0.011, target=Target(1.02)),
+    Metric("edge_f1", "edge F1 ↑", "{:.2f}", "clean drawing", "higher", sigma=0.023, sigma_export=0.020),
     Metric(
-        "tube_ink_fraction", f"ink in shapes < {bm.INK_MAX_WIDTH_MM:g} mm ↓", "{:.1%}", "clean drawing", "lower", sigma=0.031
+        "palette_min_de00",
+        "palette min ΔE00 ↑",
+        "{:.1f}",
+        "palette",
+        "higher",
+        sigma=1.3,
+        sigma_export=0.93,
+        target=Target(bm.PALETTE_MIN_DE00),
     ),
-    Metric("flat_color_de00_mean", "flat colors ΔE00 ↓", "{:.2f}", "palette", "lower", sigma=1.1),
-    Metric("face_de00_mean", "face ΔE00 ↓", "{:.2f}", "resembles", "lower", sigma=0.078, relative=True),
-    Metric("face_ssim", "face SSIM ↑", "{:.3f}", "resembles", "higher", sigma=0.016),
-    Metric("features_lost", "features lost ↓", "{:d}", "resembles", "lower", sigma=0.35, target=Target(0)),
-    Metric("labels_on_features", "labels on features ↓", "{:d}", "clean drawing", "lower", sigma=1.6),
+    Metric(
+        "palette_close_pairs",
+        f"color pairs < {bm.PALETTE_MIN_DE00:g} ΔE00 ↓",
+        "{:d}",
+        "palette",
+        "lower",
+        sigma=3.2,
+        sigma_export=3.1,
+    ),
+    Metric("ink_line_f1", "ink line F1 ↑", "{:.2f}", "clean drawing", "higher", sigma=0.021, sigma_export=0.023, target=Target(0.9)),
+    Metric("tube_regions", "tubes ↓", "{:d}", "clean drawing", "lower", sigma=2.6, sigma_export=1.9, target=Target(0)),
+    Metric(
+        "tube_ink_fraction",
+        f"ink in shapes < {bm.INK_MAX_WIDTH_MM:g} mm ↓",
+        "{:.1%}",
+        "clean drawing",
+        "lower",
+        sigma=0.031,
+        sigma_export=0.028,
+    ),
+    Metric("flat_color_de00_mean", "flat colors ΔE00 ↓", "{:.2f}", "palette", "lower", sigma=1.2, sigma_export=0.81),
+    Metric("face_de00_mean", "face ΔE00 ↓", "{:.2f}", "resembles", "lower", sigma=0.078, sigma_export=0.082, relative=True),
+    Metric("face_ssim", "face SSIM ↑", "{:.3f}", "resembles", "higher", sigma=0.016, sigma_export=0.038),
+    Metric("features_lost", "features lost ↓", "{:d}", "resembles", "lower", sigma=0.35, sigma_export=0.29, target=Target(0)),
+    Metric("labels_on_features", "labels on features ↓", "{:d}", "clean drawing", "lower", sigma=1.6, sigma_export=3.6),
     Metric("text_cer_source", "text CER source", "{:.2f}"),
     Metric(
         "text_cer_page",
@@ -116,11 +171,12 @@ METRICS = (
         "clean drawing",
         "lower",
         sigma=0.017,
+        sigma_export=0.018,
         target=Target(0.1, relative_to="text_cer_source"),
     ),
-    Metric("text_cer_painting", "text CER painting ↓", "{:.2f}", "resembles", "lower", sigma=0.0096),
-    Metric("labels_on_text", "labels on text ↓", "{:d}", "clean drawing", "lower", sigma=1.3, target=Target(0)),
-    Metric("undersized_regions", "undersized ↓", "{:d}", "paintable", "lower", sigma=0.0),
+    Metric("text_cer_painting", "text CER painting ↓", "{:.2f}", "resembles", "lower", sigma=0.0096, sigma_export=0.017),
+    Metric("labels_on_text", "labels on text ↓", "{:d}", "clean drawing", "lower", sigma=1.3, sigma_export=2.7, target=Target(0)),
+    Metric("undersized_regions", "undersized ↓", "{:d}", "paintable", "lower", sigma=0.0, sigma_export=0.0),
     Metric("ink_fraction", "ink", "{:.1%}"),
 )
 METRICS_BY_KEY = {metric.key: metric for metric in METRICS}
@@ -132,11 +188,11 @@ TARGETED = tuple(metric for metric in METRICS if metric.target is not None)
 class Tolerances:
     """How far a candidate may drift from the reference before the report flags it."""
 
-    sigma: dict[str, float] = field(default_factory=dict)  # overrides of Metric.sigma, by quality key
+    sigma: dict[str, float] = field(default_factory=dict)  # overrides of a metric's tolerances, at every size, by quality key
     region_drift_rel: float = 0.15  # region-count change worth a note (not a failure)
 
-    def sigma_of(self, metric: Metric) -> float | None:
-        return self.sigma.get(metric.key, metric.sigma)
+    def sigma_of(self, metric: Metric, size: str = "preview") -> float | None:
+        return self.sigma.get(metric.key, metric.sigma_at(size))
 
 
 @dataclass(frozen=True)
@@ -169,23 +225,27 @@ def parse_sigma_overrides(items) -> dict[str, float]:
 
 
 def regressions(metrics, pairs, group: str, tol: Tolerances) -> list[Regression]:
-    """The metrics whose mean change over ``pairs`` of (reference quality, candidate quality) is worse than allowed.
+    """The metrics whose mean change over ``pairs`` of (reference quality, candidate quality, size) is worse than allowed.
 
     A case counts for a metric where both have a value (and, for a relative
-    metric, the reference's isn't 0). With n such cases, the mean change may be
-    worse by ``STANDARD_ERRORS`` sigma / sqrt(n).
+    metric, the reference's isn't 0). Its tolerance is the metric's sigma at its
+    size, ``"preview"`` or ``"export"``. Over n such cases the mean change may be
+    worse by ``STANDARD_ERRORS`` standard errors of the mean, sqrt(sum of their
+    sigmas squared) / n, which is sigma / sqrt(n) where they share one sigma.
     """
     found = []
     for metric in metrics:
-        sigma = tol.sigma_of(metric)
-        if sigma is None:
-            continue
-        changes = [_change(metric, before.get(metric.key), after.get(metric.key)) for before, after in pairs]
-        changes = [change for change in changes if change is not None]
+        changes, sigmas = [], []
+        for before, after, size in pairs:
+            sigma = tol.sigma_of(metric, size)
+            change = None if sigma is None else _change(metric, before.get(metric.key), after.get(metric.key))
+            if change is not None:
+                changes.append(change)
+                sigmas.append(sigma)
         if not changes:
             continue
         mean = sum(changes) / len(changes)
-        allowed = STANDARD_ERRORS * sigma / math.sqrt(len(changes))
+        allowed = STANDARD_ERRORS * math.sqrt(sum(sigma * sigma for sigma in sigmas)) / len(changes)
         if mean > allowed:
             found.append(Regression(metric, group, len(changes), mean, allowed))
     return found
@@ -215,28 +275,62 @@ NOISE_MAX_SIZE_CHANGE = 0.01
 def noise_sigmas(sets: list[ResultSet]) -> dict[str, tuple[int, float]]:
     """Each judged metric's (pairs, sigma): the root mean square change between cases that differ only in output size.
 
-    Every two completed cases of the same image and preset whose long edges
-    differ, by at most ``NOISE_MAX_SIZE_CHANGE`` of the smaller one, are a pair,
-    within a result set and across them, the smaller size first. So previews and
-    exports in the same result sets each pair only with sizes near their own. A
-    relative metric's change is a share of the smaller size's value.
+    Every two completed cases of the same image and preset whose pages' long
+    edges differ, by at most ``NOISE_MAX_SIZE_CHANGE`` of the smaller one, are a
+    pair, within a result set and across them, the smaller size first. So previews
+    and exports in the same result sets each pair only with sizes near their own.
+    Sizes are the pages' own, not the ones asked for, and a size rendered in
+    several result sets counts once.
+
+    Pages at an image's own size are left out. The pipeline never upscales, so
+    every size asked for at or above it renders that one page, and resizing
+    changes a page by more than chance does: on the benchmark images, SSIM changes
+    by 0.05 between an image's own size and 1 px less, and by 0.008 between two
+    sizes below it. A relative metric's change is a share of the smaller size's
+    value.
     """
-    by_image: dict[tuple[str, str], list[dict]] = {}
+    by_image: dict[tuple[str, str], dict[int, dict]] = {}
     for result_set in sets:
         for case in result_set.cases.values():
-            if case["status"] == "ok":
-                by_image.setdefault((case["image"], case["preset"]), []).append(case)
+            if case["status"] == "ok" and not _unscaled(case):
+                by_image.setdefault((case["image"], case["preset"]), {}).setdefault(_page_long_edge(case), case)
     changes: dict[str, list[float]] = {metric.key: [] for metric in JUDGED}
     for cases in by_image.values():
-        cases.sort(key=lambda case: case["long_edge"])
-        for smaller, larger in itertools.combinations(cases, 2):
-            if not 0 < larger["long_edge"] - smaller["long_edge"] <= NOISE_MAX_SIZE_CHANGE * smaller["long_edge"]:
+        for (smaller_edge, smaller), (larger_edge, larger) in itertools.combinations(sorted(cases.items()), 2):
+            if larger_edge - smaller_edge > NOISE_MAX_SIZE_CHANGE * smaller_edge:
                 continue
             for metric in JUDGED:
                 change = _change(metric, smaller["quality"].get(metric.key), larger["quality"].get(metric.key))
                 if change is not None:
                     changes[metric.key].append(change)
     return {key: (len(values), math.sqrt(sum(v * v for v in values) / len(values))) for key, values in changes.items() if values}
+
+
+def _page_long_edge(case: dict) -> int:
+    """The long edge of a case's page in px; result sets from before ``output_size`` was recorded give the size asked for."""
+    return max(case["output_size"]) if case.get("output_size") else case["long_edge"]
+
+
+def _unscaled(case: dict) -> bool:
+    """Whether a case's page is its image at the image's own size.
+
+    Result sets from before ``source_size`` was recorded tell it only where a
+    larger size was asked for than the page has.
+    """
+    if case.get("source_size"):
+        return _page_long_edge(case) >= max(case["source_size"])
+    return case["long_edge"] > _page_long_edge(case)
+
+
+def _sigma_size(case: dict) -> str:
+    """Which tolerance judges a case: ``"export"`` where its page keeps the image's own size, else ``"preview"``.
+
+    Result sets from before ``source_size`` was recorded go by the size asked
+    for, so that a preview rendered a pixel wide of 1100 px still counts as one.
+    """
+    if case.get("source_size"):
+        return "export" if _page_long_edge(case) >= EXPORT_SIGMA_MIN_PAGE_SHARE * max(case["source_size"]) else "preview"
+    return "export" if case["long_edge"] >= EXPORT_SIGMA_MIN_LONG_EDGE else "preview"
 
 
 def noise_report(paths: list[Path]) -> str:
@@ -246,17 +340,29 @@ def noise_report(paths: list[Path]) -> str:
     for metric in JUDGED:
         if metric.key in sigmas:
             pairs, sigma = sigmas[metric.key]
-            rows.append([metric.key, metric.name, str(pairs), f"{sigma:.2g}", f"{metric.sigma:g}", "yes" if metric.relative else "no"])
+            rows.append(
+                [
+                    metric.key,
+                    metric.name,
+                    str(pairs),
+                    f"{sigma:.2g}",
+                    f"{metric.sigma:g}",
+                    "–" if metric.sigma_export is None else f"{metric.sigma_export:g}",
+                    "yes" if metric.relative else "no",
+                ]
+            )
     lines = [
         "# Tessellatum benchmark noise",
         "",
-        f"Root mean square change of one case between the same image and preset at output sizes up to "
-        f"{NOISE_MAX_SIZE_CHANGE:.0%} apart, in {', '.join(s.label for s in sets)}. For pages that should be equally good, "
+        f"Root mean square change of one case between the same image and preset at page sizes up to "
+        f"{NOISE_MAX_SIZE_CHANGE:.0%} apart, in {', '.join(s.label for s in sets)}. Sizes are the pages' own, each counted "
+        "once, and pages at an image's own size, which aren't resized, are left out. For pages that should be equally good, "
         "it is a metric's tolerance "
         "(`bench.py compare --tol METRIC=SIGMA`). A relative metric's change is a share of its value.",
         "",
     ]
-    return "\n".join(lines + _table(["metric", "name", "pairs", "sigma", "tolerance now", "relative"], rows)) + "\n"
+    header = ["metric", "name", "pairs", "sigma", "preview now", "export now", "relative"]
+    return "\n".join(lines + _table(header, rows)) + "\n"
 
 
 class ResultSet:
@@ -498,7 +604,7 @@ def _quality_section(
                     row.append(_pair_cell(b["quality"].get(metric.key) if b else None, c["quality"].get(metric.key), metric.fmt))
                 row.append(_misses_cell(b["quality"] if b else None, c["quality"]))
                 if base:
-                    row.append(_flags_cell(b["quality"], c["quality"], cid, tol) if b else "no reference")
+                    row.append(_flags_cell(b, c, cid, tol) if b else "no reference")
                 rows.append(row)
             if rows:
                 lines += [f"#### {category}", ""] + _table(header, rows) + [""]
@@ -518,8 +624,10 @@ def _job_metrics(job: str) -> list[Metric]:
     return [metric for metric in METRICS if metric.job == job]
 
 
-def _quality_pairs(base: ResultSet, cand: ResultSet, case_ids: list[str]) -> list[tuple[dict, dict]]:
-    return [(base.ok_case(cid)["quality"], cand.ok_case(cid)["quality"]) for cid in case_ids]
+def _quality_pairs(base: ResultSet, cand: ResultSet, case_ids: list[str]) -> list[tuple[dict, dict, str]]:
+    return [
+        (base.ok_case(cid)["quality"], cand.ok_case(cid)["quality"], _sigma_size(cand.ok_case(cid))) for cid in case_ids
+    ]
 
 
 def _change(metric: Metric, before, after) -> float | None:
@@ -568,9 +676,10 @@ def _misses_cell(before_q: dict | None, after_q: dict) -> str:
     return after if before == after else f"{before} → {after}"
 
 
-def _flags_cell(before_q: dict, after_q: dict, case_id: str, tol: Tolerances) -> str:
-    notes = [f"{found.metric.name} worse" for found in regressions(JUDGED, [(before_q, after_q)], _case_title(case_id), tol)]
-    return ", ".join(notes + _drift_notes(before_q, after_q, tol)) or "ok"
+def _flags_cell(before: dict, after: dict, case_id: str, tol: Tolerances) -> str:
+    pairs = [(before["quality"], after["quality"], _sigma_size(after))]
+    notes = [f"{found.metric.name} worse" for found in regressions(JUDGED, pairs, _case_title(case_id), tol)]
+    return ", ".join(notes + _drift_notes(before["quality"], after["quality"], tol)) or "ok"
 
 
 def _metric_header(metric: Metric) -> str:
@@ -706,9 +815,11 @@ def _verdict_section(
     lines += [
         "",
         f"A metric regresses in a category, or over all cases, when its mean change against the reference is worse than "
-        f"{STANDARD_ERRORS:g} σ/√n: σ is its tolerance, the typical change of one case between equally good pages, and n "
-        "the number of cases with a value in both sets (see `benchmarks/README.md`). Target misses are counted separately, "
-        "on the reference → the candidate; a new miss is a case that met the target on the reference.",
+        f"{STANDARD_ERRORS:g} standard errors of the mean, {STANDARD_ERRORS:g} √(Σσ²)/n: σ is a case's tolerance, the "
+        "typical change between equally good pages at its size (preview, or export where the page is the image at its own "
+        f"size), and n the number of cases with a value in both sets, so it is {STANDARD_ERRORS:g} σ/√n where they are all "
+        "of one size (see `benchmarks/README.md`). Target misses are counted separately, on the reference → the candidate; "
+        "a new miss is a case that met the target on the reference.",
     ]
     if tol.sigma:
         lines.append("Tolerances overridden: " + ", ".join(f"{METRICS_BY_KEY[k].name} σ = {v:g}" for k, v in tol.sigma.items()) + ".")

@@ -433,35 +433,39 @@ the cases meeting all of the job's targets that apply to them. Against a
 reference, it averages both sets over the cases both completed, and marks the
 means that regressed in bold.
 
-| metric | job | tolerance σ | target |
-|---|---|---|---|
-| ΔE00 mean | resembles | 6.6% of the value | – |
-| ΔE00 p95 | resembles | 7.0% of the value | – |
-| SSIM | resembles | 0.0063 | – |
-| face ΔE00 | resembles | 7.8% of the value | – |
-| face SSIM | resembles | 0.016 | – |
-| features lost | resembles | 0.35 | 0 |
-| text CER painting | resembles | 0.0096 | – |
-| labeled area | paintable | 2.3 points | – |
-| unlabeled | paintable | 66 | 0 |
-| slivers | paintable | 1.5 points | ≤ 1% |
-| labels < 6 pt | paintable | 2.0 points | 0 |
-| compactness p10 | paintable | 0.022 | – |
-| compactness median | paintable | 0.034 | – |
-| undersized | paintable | 0 | – |
-| lines per boundary | clean drawing | 0.095 | 1 ± 0.05 |
-| same-color boundary | clean drawing | 2.7 points | 0 |
-| jaggedness | clean drawing | 0.0081 | ≤ 1.02 |
-| edge F1 | clean drawing | 0.022 | – |
-| ink line F1 | clean drawing | 0.021 | ≥ 0.9 |
-| tubes | clean drawing | 2.6 | 0 |
-| ink in shapes < 5 mm | clean drawing | 3.1 points | – |
-| labels on features | clean drawing | 1.6 | – |
-| text CER page | clean drawing | 0.017 | ≤ text CER source + 0.1 |
-| labels on text | clean drawing | 1.3 | 0 |
-| palette min ΔE00 | palette | 1.2 | ≥ 10 |
-| color pairs < 10 ΔE00 | palette | 3.1 | – |
-| flat colors ΔE00 | palette | 1.1 | – |
+A metric has two tolerances, one for each size it is measured at: **preview**, a
+page of 1100 px, and **export**, a page at the image's own size (see
+"Regressions" below).
+
+| metric | job | σ preview | σ export | target |
+|---|---|---|---|---|
+| ΔE00 mean | resembles | 6.9% of the value | 7.3% of the value | – |
+| ΔE00 p95 | resembles | 7.3% of the value | 12% of the value | – |
+| SSIM | resembles | 0.0066 | 0.0070 | – |
+| face ΔE00 | resembles | 7.8% of the value | 8.2% of the value | – |
+| face SSIM | resembles | 0.016 | 0.038 | – |
+| features lost | resembles | 0.35 | 0.29 | 0 |
+| text CER painting | resembles | 0.0096 | 0.017 | – |
+| labeled area | paintable | 2.4 points | 0.64 points | – |
+| unlabeled | paintable | 69 | 18 | 0 |
+| slivers | paintable | 1.5 points | 1.4 points | ≤ 1% |
+| labels < 6 pt | paintable | 2.1 points | 2.2 points | 0 |
+| compactness p10 | paintable | 0.023 | 0.020 | – |
+| compactness median | paintable | 0.036 | 0.029 | – |
+| undersized | paintable | 0 | 0 | – |
+| lines per boundary | clean drawing | 0.10 | 0.048 | 1 ± 0.05 |
+| same-color boundary | clean drawing | 2.8 points | 1.4 points | 0 |
+| jaggedness | clean drawing | 0.0085 | 0.011 | ≤ 1.02 |
+| edge F1 | clean drawing | 0.023 | 0.020 | – |
+| ink line F1 | clean drawing | 0.021 | 0.023 | ≥ 0.9 |
+| tubes | clean drawing | 2.6 | 1.9 | 0 |
+| ink in shapes < 5 mm | clean drawing | 3.1 points | 2.8 points | – |
+| labels on features | clean drawing | 1.6 | 3.6 | – |
+| text CER page | clean drawing | 0.017 | 0.018 | ≤ text CER source + 0.1 |
+| labels on text | clean drawing | 1.3 | 2.7 | 0 |
+| palette min ΔE00 | palette | 1.3 | 0.93 | ≥ 10 |
+| color pairs < 10 ΔE00 | palette | 3.2 | 3.1 | – |
+| flat colors ΔE00 | palette | 1.2 | 0.81 | – |
 
 Regions, ink and text CER source only inform. The per-case tables add the
 number of targets each case misses.
@@ -493,20 +497,34 @@ Three of the targets need explaining:
 - **Text CER page** counts from the source's, because OCR doesn't read all of the
   source either (0.04–0.26 at preview size, see the text metrics).
 
-The jaggedness, lines-per-boundary and text targets are first estimates.
+The baseline confirmed all three (T1.8): line art scores 1.007–1.017 on jaggedness
+at both sizes, a renderer drawing each boundary once scores 1.017–1.047 on the
+pages without slivers, and OCR reads the sources at 0.04–0.26 at preview size and
+0.05–0.11 at export size.
 
 ### Regressions
 
 A metric's tolerance σ is how much one case's value typically changes between
-pages that should be equally good. It is the root mean square change between the
-same image and preset rendered at 1099, 1100 and 1101 px, over the 12 benchmark
-images at Easy, Medium, Hard and Max: 144 pairs, and 36–60 for the metrics that
-need annotations. For ΔE00 mean, ΔE00 p95 and face ΔE00, which range widely
-across images, σ is a share of the value.
+pages that should be equally good. It is the root mean square change between two
+sizes of the same image and preset, over the 12 benchmark images at Easy, Medium,
+Hard and Max. For ΔE00 mean, ΔE00 p95 and face ΔE00, which range widely across
+images, σ is a share of the value.
+
+Each case is judged at its own size, because a page at an image's own size keeps
+the source's detail and moves more between renders than a preview does: face SSIM
+by 0.038 rather than 0.016, labels on features by 3.6 rather than 1.6.
+
+- **σ preview** comes from 1099, 1100 and 1101 px: 132 pairs, and 36–48 for the
+  metrics that need annotations.
+- **σ export** comes from 1, 2 and 3 px below each image's own long edge: 144
+  pairs, and 48–60. A case counts as an export where its page is within 1% of its
+  image's own long edge (`source_size` in `case.json`), or, for result sets from
+  before that was recorded, where the size asked for is at least 1375 px.
 
 - **A regression** is a category, or all cases together, whose mean change
-  against the reference is worse than 3 σ/√n. The mean runs over the n cases with
-  a value in both sets.
+  against the reference is worse than 3 standard errors of the mean:
+  3 √(Σσ²)/n over the n cases with a value in both sets, which is 3 σ/√n where
+  they are all of one size.
   - Chance changes of single cases cancel out in a mean, so a mean over more cases
     may move less: ΔE00 mean may rise 2.9% over 48 cases, 7.0% over 8 and 19.8%
     for one.
@@ -521,9 +539,9 @@ reference and the candidate, and the cases that met a target on the reference an
 miss it now. Region-count changes over 15% are noted in the per-case tables, but
 aren't failures: region count is a difficulty trait, not a quality score.
 
-`compare --tol METRIC=SIGMA` replaces a tolerance, by its `case.json` key
-(repeatable), e.g. for a change that trades one metric for another on purpose.
-The verdict names the tolerances replaced.
+`compare --tol METRIC=SIGMA` replaces a metric's tolerance at both sizes, by its
+`case.json` key (repeatable), e.g. for a change that trades one metric for another
+on purpose. The verdict names the tolerances replaced.
 
 To measure the tolerances again, e.g. after adding or changing a metric, render
 the images at three sizes and update `sigma` in `bench_report.METRICS`. `noise`
@@ -533,6 +551,24 @@ as exports, can be passed to it as well:
 ```
 .venv\Scripts\python benchmarks\bench.py run WORKTREE=sizes --presets Easy Medium Hard Max --long-edge 1099 1100 1101 --repeats 1 --warmup 0
 .venv\Scripts\python benchmarks\bench.py noise sizes
+```
+
+`noise` pairs the pages' own sizes, not the sizes asked for, and counts a size
+once however many result sets hold it. Pages at an image's own size are left out:
+the pipeline never upscales, so every size asked for at or above that renders the
+one page, and resizing changes a page by more than chance does. Between an image's
+own size and 1 px less, SSIM moves by 0.05 and ΔE00 mean by 17%; between two sizes
+below it, by 0.008 and 4.9%.
+
+Every benchmark image is at most 2048 px, so an "export" at 2400 px is the image
+at its own size, and `scene.png` (600 px) renders the same page at every size from
+600 px up. To measure σ at export size, render each image 1, 2 and 3 px below its
+own long edge — one `run --images ... --append` per size, since each image has its
+own — and pass that result set alone:
+
+```
+.venv\Scripts\python benchmarks\bench.py run WORKTREE=export-sizes --images tests\sample_images\l-photo-lion.jpg --presets Easy Medium Hard Max --long-edge 2044 2045 2046 --repeats 1 --warmup 0 --append
+.venv\Scripts\python benchmarks\bench.py noise export-sizes
 ```
 
 Timings are wall-clock: close heavy apps while benchmarking, and only compare

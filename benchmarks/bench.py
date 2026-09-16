@@ -88,7 +88,8 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         default=[],
         metavar="METRIC=SIGMA",
-        help="use SIGMA as a metric's tolerance, by its case.json key, e.g. jaggedness=0.02 (repeatable; see benchmarks/README.md)",
+        help="use SIGMA as a metric's tolerance at every size, by its case.json key, e.g. jaggedness=0.02 "
+        "(repeatable; see benchmarks/README.md)",
     )
 
     noise_p = sub.add_parser("noise", help="each metric's typical change between cases that differ only in output size")
