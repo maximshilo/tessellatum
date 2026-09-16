@@ -272,9 +272,16 @@ How the line metrics are defined:
     is rounded onto the pixel grid: half a pixel from a crack to the center of
     the pixel beside it, one pixel (√2 at the corners) for the neighborhood the
     count reaches into, and half a pixel of rounding.
-  - It is not a way round the doubling the metric is there to catch: a renderer
-    that outlines every region scores 1.80–2.00 on it, the same as on the plain
-    count. What it removes is the part no renderer can do anything about.
+  - It is not a way round the doubling the metric is there to catch. Over the
+    96 baseline cases, a renderer that outlines every region scores 1.183–2.000
+    on it against 1.187–2.099 plain: the cut moves it by 0.029 on average and
+    0.114 at worst, because doubling is everywhere on such a page and not only
+    near junctions. On pages drawn one line per boundary the same cut is worth
+    0.080 on average and 0.323 at worst. What it removes is the part no renderer
+    can do anything about.
+    (Those pages score below 2 for a separate reason the plain count shares:
+    outlines don't trace holes, so a region lying inside another gets one line,
+    which is why the line art at Easy scores 1.18–1.43 either way.)
   - `clear_boundary_fraction`, how much of the boundary is clear, falls as a
     page gets more regions: 95.5% on `scene.png` at Hard (7 regions), 75.1% on
     the lion at Max (778). That is why the plain count rises with region count
