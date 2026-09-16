@@ -39,7 +39,9 @@ run the binary from a terminal to see the error.
    flat colors via k-means clustering in Lab color space.
 2. **Regionize**: same-color pixels are grouped into connected regions;
    regions smaller than the difficulty's threshold are merged into their
-   largest neighbor.
+   largest neighbor, and neighbors left sharing a color by that merge become
+   one region, so the page never draws a line between two areas the painter
+   fills alike.
 3. **Outline + number**: each surviving region gets a black outline and a
    number (matched to a legend swatch) placed at its most interior point.
 

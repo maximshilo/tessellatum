@@ -1,9 +1,9 @@
 """Numba-compiled inner loops for the pipeline's hot spots.
 
 Pixel-level work NumPy can't vectorize -- union-find labeling, the sequential
-small-region merge, and the bilateral filter's per-pixel weighting -- runs
-here as compiled code. Arrays are passed flattened (row-major) with explicit
-``height``/``width``.
+small-region merge, the same-color union that follows it, and the bilateral
+filter's per-pixel weighting -- runs here as compiled code. Arrays are passed
+flattened (row-major) with explicit ``height``/``width``.
 
 Kernels compile on first call and are cached on disk (``cache=True``), so only
 the first run after an install pays the compile cost; ``warm_up`` pays it
@@ -30,8 +30,9 @@ def _find(parent, i):
 
 @njit(cache=True, nogil=True)
 def _union(parent, a, b):
-    # Always keep the smaller pixel index as root, so a component's root is
-    # its first pixel in raster order.
+    # Always keep the smaller index as root: a pixel component's root is then
+    # its first pixel in raster order, and a group of regions keeps its
+    # lowest id.
     ra = _find(parent, a)
     rb = _find(parent, b)
     if ra < rb:
@@ -254,6 +255,67 @@ def merge_small_regions(ids, height, width, areas, min_area_px):
 
 
 @njit(cache=True, nogil=True)
+def merge_same_color_neighbors(ids, height, width, region_color, areas):
+    """Union 8-adjacent regions of the same color into one region, in place.
+
+    Components start out one color each, so only ``merge_small_regions`` can
+    leave two neighbors sharing a color: a small region merges into whichever
+    neighbor shares the most boundary, whatever its color, and the grown
+    region can end up touching another region of its own color. Those pairs
+    would be drawn with a line between them that no painter should see.
+
+    A group of regions connected by such contacts becomes one region, keeping
+    the group's lowest id (so its color and its place in the numbering are
+    unchanged). ``areas`` is updated to match: the surviving id gains the
+    group's pixels, the others drop to 0. One pass suffices -- the union-find
+    closes chains of contacts transitively.
+    """
+    num_regions = areas.shape[0]
+    if num_regions <= 1:
+        return
+    parent = np.empty(num_regions, np.int32)
+    for r in range(num_regions):
+        parent[r] = r
+
+    # Each pixel looks right and along the row below, so every 8-adjacent
+    # pair of pixels is visited exactly once.
+    for y in range(height):
+        row = y * width
+        for x in range(width):
+            p = row + x
+            r = ids[p]
+            if r < 0:
+                continue
+            c = region_color[r]
+            if x + 1 < width:
+                s = ids[p + 1]
+                if s >= 0 and s != r and region_color[s] == c:
+                    _union(parent, r, s)
+            if y + 1 < height:
+                below = row + width
+                for xx in range(max(x - 1, 0), min(x + 2, width)):
+                    s = ids[below + xx]
+                    if s >= 0 and s != r and region_color[s] == c:
+                        _union(parent, r, s)
+
+    # _union keeps the lower id as the root, so every group already survives
+    # under its lowest id.
+    changed = False
+    for r in range(num_regions):
+        root = _find(parent, r)
+        if root != r:
+            areas[root] += areas[r]
+            areas[r] = 0
+            changed = True
+    if not changed:
+        return
+    for p in range(height * width):
+        r = ids[p]
+        if r >= 0:
+            ids[p] = _find(parent, r)
+
+
+@njit(cache=True, nogil=True)
 def region_bounds(ids, height, width, num_regions):
     """Per region id: inclusive bounding box ``(x0, y0, x1, y1)`` and pixel count."""
     bounds = np.empty((num_regions, 4), np.int32)
@@ -327,8 +389,9 @@ def warm_up() -> None:
     """
     labels = np.array([0, 0, 1, 0, 1, 1, 2, 2, 1], dtype=np.int32)
     ids = np.empty(9, dtype=np.int32)
-    _region_color, areas = label_components(labels, 3, 3, 3, ids)
+    region_color, areas = label_components(labels, 3, 3, 3, ids)
     merge_small_regions(ids, 3, 3, areas, 3)
+    merge_same_color_neighbors(ids, 3, 3, region_color, areas)
     region_bounds(ids, 3, 3, int(ids.max()) + 1)
 
     padded = np.zeros(5 * 5 * 3, dtype=np.uint8)
