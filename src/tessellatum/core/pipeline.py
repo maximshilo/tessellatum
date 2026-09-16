@@ -16,6 +16,7 @@ from PIL import Image
 from tessellatum.core import kernels
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import render_legend
+from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, MIN_REGION_AREA_MM2, print_scale
 from tessellatum.core.quantize import quantize
 from tessellatum.core.regions import Region, build_regions, extract_regions
 from tessellatum.core.render import Label, render_page
@@ -58,6 +59,7 @@ class PageAnalysis:
     palette_bgr: np.ndarray  # Kx3 uint8, legend colors first
     legend_size: int
     min_region_area_px: int  # merge threshold: smaller regions merge into a neighbor, if they have one
+    min_paintable_width_px: float  # brush width: narrower parts of a region are given to a neighbor
     regions: list[Region]  # regions drawn on the page, in region-id order
     labels: list[Label]  # numbers drawn on the page
     outlines: np.ndarray  # HxW uint8: the outline layer alone, 0 = black line, 255 = paper
@@ -130,6 +132,26 @@ def _polyline(contour: np.ndarray) -> np.ndarray:
     """A contour drawn as a polygon outline, as (x, y) points that return to the first one."""
     points = contour.reshape(-1, 2).astype(np.float64)
     return np.vstack([points, points[:1]]) if len(points) >= 2 else points
+
+
+def _paintable_limits(params: DifficultyParams, size: tuple[int, int]) -> tuple[int, float]:
+    """The region stage's limits for a page of ``size`` (width, height) in pixels.
+
+    The difficulty sets the smallest region as a share of the image; the
+    printed page sets the smallest one a brush can paint at all, and how
+    narrow any part of a region may get (see ``print_size``). Both of the
+    printed page's limits follow the image's shape rather than its pixel
+    count, so a preview and an export of one image are held to the same
+    physical sizes.
+    """
+    scale = print_scale(size)
+    width, height = size
+    min_area_px = max(
+        4,
+        int(round(params.min_region_fraction * width * height)),
+        int(round(scale.mm2_to_px(MIN_REGION_AREA_MM2))),
+    )
+    return min_area_px, scale.mm_to_px(MIN_PAINTABLE_WIDTH_MM)
 
 
 def load_image_bgr(path: Path) -> np.ndarray:
@@ -210,8 +232,8 @@ def generate(
     report("quantize")
 
     check_cancelled()
-    min_area_px = max(4, int(round(params.min_region_fraction * h * w)))
-    region_id_map, region_color = build_regions(labels, params.num_colors, min_area_px)
+    min_area_px, min_width_px = _paintable_limits(params, (w, h))
+    region_id_map, region_color = build_regions(labels, params.num_colors, min_area_px, min_width_px)
     report("regions")
 
     check_cancelled()
@@ -248,6 +270,7 @@ def generate(
             palette_bgr=palette_bgr[order],  # a copy: palette_bgr belongs to the stage cache
             legend_size=len(used_color_indices),
             min_region_area_px=min_area_px,
+            min_paintable_width_px=min_width_px,
             regions=regions,
             labels=rendered.labels,
             outlines=np.asarray(rendered.outlines),

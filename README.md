@@ -42,12 +42,19 @@ run the binary from a terminal to see the error.
    largest neighbor, and neighbors left sharing a color by that merge become
    one region, so the page never draws a line between two areas the painter
    fills alike.
-3. **Outline + number**: each surviving region gets a black outline and a
+3. **Widen**: anything a brush cannot paint is given away. Every part of a
+   region narrower than the brush — 3 mm on the printed page — goes to the
+   region whose paint reaches it first, and a region thinner than that
+   everywhere disappears into its neighbors, so the page asks for no stroke
+   too fine to make.
+4. **Outline + number**: each surviving region gets a black outline and a
    number (matched to a legend swatch) placed at its most interior point.
 
 Difficulty controls three things: how many colors are used, how small a
 region is allowed to get before being merged away, and how much smoothing
 is applied before quantizing — see `src/tessellatum/core/difficulty.py`.
+The brush width comes from the printed page instead, along with the smallest
+region any setting can keep — see `src/tessellatum/core/print_size.py`.
 
 ### Performance
 

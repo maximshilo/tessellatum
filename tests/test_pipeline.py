@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from tessellatum.core import difficulty, pipeline, render
+from tessellatum.core import difficulty, pipeline, print_size, render
 from tessellatum.core.pipeline import PipelineCancelled, generate
 
 
@@ -174,3 +174,31 @@ def test_no_boundary_separates_two_regions_of_one_color(sample_image_bgr):
         differ = (a != b) & (a >= 0) & (b >= 0)
         assert differ.any()
         assert not (color[a[differ]] == color[b[differ]]).any()
+
+
+def test_a_line_too_thin_to_paint_is_not_a_region_on_the_page():
+    # Two blocks split by a line 2 px wide. The page prints at about 1 px per
+    # mm, so the line is narrower than the 3 mm brush and cannot be painted.
+    image = np.zeros((200, 200, 3), dtype=np.uint8)
+    image[:, :100] = (200, 60, 60)
+    image[:, 100:] = (60, 180, 60)
+    image[:, 99:101] = (20, 20, 20)
+    params = difficulty.DifficultyParams(num_colors=3, min_region_fraction=0.0001, blur_sigma=0.0)
+
+    result = generate(image, params, long_edge=200, collect_analysis=True)
+
+    assert result.num_regions == result.num_colors_used == 2
+    assert (20, 20, 20) not in result.palette_rgb
+    ids = result.analysis.region_id_map
+    assert (ids[:, :99] == ids[0, 0]).all() and (ids[:, 101:] == ids[0, -1]).all()
+
+
+def test_the_region_limits_come_from_the_printed_page():
+    params = difficulty.DifficultyParams(num_colors=4, min_region_fraction=0.0001, blur_sigma=0.0)
+    scale = print_size.print_scale((200, 200))
+
+    min_area_px, min_width_px = pipeline._paintable_limits(params, (200, 200))
+
+    assert min_width_px == scale.mm_to_px(print_size.MIN_PAINTABLE_WIDTH_MM)
+    # 0.0001 of the image is 4 px, less than the brush's own footprint.
+    assert min_area_px == round(scale.mm2_to_px(print_size.MIN_REGION_AREA_MM2)) > 4

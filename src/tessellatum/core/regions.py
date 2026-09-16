@@ -1,4 +1,4 @@
-"""Connected-component region extraction, small-region merging, and contour extraction."""
+"""Connected-component region extraction, region merging, and contour extraction."""
 
 from __future__ import annotations
 
@@ -27,8 +27,10 @@ class Region:
     area: int
 
 
-def build_regions(labels: np.ndarray, num_colors: int, min_area_px: int) -> tuple[np.ndarray, np.ndarray]:
-    """Split ``labels`` into connected regions and merge tiny ones into neighbors.
+def build_regions(
+    labels: np.ndarray, num_colors: int, min_area_px: int, min_width_px: float = 0.0
+) -> tuple[np.ndarray, np.ndarray]:
+    """Split ``labels`` into connected regions and merge away what can't be painted.
 
     Regions are 8-connected runs of one color, numbered by color and then by
     raster position. Regions below ``min_area_px`` are merged, smallest first,
@@ -38,12 +40,28 @@ def build_regions(labels: np.ndarray, num_colors: int, min_area_px: int) -> tupl
     region (``kernels.merge_same_color_neighbors``), so no boundary on the
     page separates two areas the painter fills with the same color.
 
+    With ``min_width_px`` set, every part of a region narrower than that --
+    which a brush that wide cannot paint without crossing a line -- is then
+    given away to the region whose paint reaches it first, and the regions
+    are rebuilt from the result (see ``absorb_thin_parts``). A region thinner
+    than the brush everywhere disappears into its neighbors.
+
     Returns:
         (region_id_map, region_color): region_id_map is HxW int32 (each pixel's
         region id), region_color is region_count-length int32 array mapping a
         region id to its color index in the palette.
     """
     labels = np.ascontiguousarray(labels, dtype=np.int32)
+    region_id_map, region_color = _regions_from_labels(labels, num_colors, min_area_px)
+    if min_width_px > 0 and region_color.size:
+        widened = absorb_thin_parts(region_id_map, region_color, labels, min_width_px)
+        if widened is not None:
+            region_id_map, region_color = _regions_from_labels(widened, num_colors, min_area_px)
+    return region_id_map, region_color
+
+
+def _regions_from_labels(labels: np.ndarray, num_colors: int, min_area_px: int) -> tuple[np.ndarray, np.ndarray]:
+    """Connected components of ``labels``, with the two merges that always apply."""
     h, w = labels.shape
     region_id_map = np.empty((h, w), dtype=np.int32)
     flat_ids = region_id_map.reshape(-1)
@@ -53,6 +71,76 @@ def build_regions(labels: np.ndarray, num_colors: int, min_area_px: int) -> tupl
         kernels.merge_small_regions(flat_ids, h, w, areas, int(min_area_px))
         kernels.merge_same_color_neighbors(flat_ids, h, w, region_color, areas)
     return region_id_map, region_color
+
+
+def absorb_thin_parts(
+    region_id_map: np.ndarray, region_color: np.ndarray, labels: np.ndarray, min_width_px: float
+) -> np.ndarray | None:
+    """Give every pixel the color of the region whose core lies nearest, or None if there is no core.
+
+    A region's *core* is the pixels where a round brush ``min_width_px``
+    across fits inside the region: the places a painter can put the brush
+    without crossing into a neighbor. Every pixel then takes the color of the
+    nearest core pixel, which leaves each region its core plus everything the
+    brush sweeps around it, and hands the parts too thin to paint -- and
+    regions with no core at all -- to whichever neighbor reaches them first.
+
+    A pixel its own region's brush can reach keeps its color: no other
+    region's core can be nearer than its own. So only thin parts move, and a
+    thin part between two regions is split down its middle rather than given
+    to one side.
+
+    Pixels in no region (``labels`` outside the palette) keep their label and
+    take no part.
+
+    Returns the new HxW int32 label map, or None when the brush fits nowhere
+    on the page, leaving nothing to grow from.
+    """
+    fits = _brush_fits(region_id_map, int(region_color.size), min_width_px / 2)
+    if not fits.any():
+        return None
+
+    # For every pixel, the label of the nearest zero pixel: of the nearest core pixel.
+    _distance, nearest = cv2.distanceTransformWithLabels(
+        (~fits).view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE, labelType=cv2.DIST_LABEL_PIXEL
+    )
+    color_of_label = np.zeros(int(nearest.max()) + 1, dtype=np.int32)
+    color_of_label[nearest[fits]] = region_color[region_id_map[fits]]
+    widened = color_of_label[nearest]
+
+    outside = region_id_map < 0
+    if outside.any():
+        widened[outside] = labels[outside]
+    return widened
+
+
+def _brush_fits(region_id_map: np.ndarray, num_regions: int, radius: float) -> np.ndarray:
+    """Pixels where a round brush of ``radius`` sits inside one region.
+
+    A brush fits where the nearest pixel of another region is farther away
+    than its radius, so one distance transform per class of
+    ``kernels.edge_adjacency_classes`` measures that for every region in the
+    class at once. Pixels off the page count as another region: the page edge
+    is a line like any other.
+    """
+    h, w = region_id_map.shape
+    class_map = np.empty((h, w), dtype=np.int8)
+    num_classes = kernels.edge_adjacency_classes(
+        region_id_map.reshape(-1), h, w, num_regions, class_map.reshape(-1)
+    )
+
+    in_class = np.zeros((h + 2, w + 2), dtype=np.uint8)  # the border stays 0: off the page is another region
+    interior = in_class[1:-1, 1:-1]
+    distance = np.empty((h + 2, w + 2), dtype=np.float32)
+    far_enough = np.empty((h, w), dtype=bool)
+    fits = np.zeros((h, w), dtype=bool)
+    for region_class in range(num_classes):
+        np.equal(class_map, region_class, out=interior, casting="unsafe")
+        cv2.distanceTransform(in_class, cv2.DIST_L2, cv2.DIST_MASK_PRECISE, dst=distance)
+        np.greater(distance[1:-1, 1:-1], radius, out=far_enough)
+        far_enough &= interior.view(bool)  # only pixels of this class: the rest measure another distance
+        fits |= far_enough
+    return fits
 
 
 def extract_regions(region_id_map: np.ndarray, region_color: np.ndarray, min_contour_area: float = 1.0) -> list[Region]:

@@ -78,17 +78,21 @@ def test_probe_fallback_rebuilds_font_sizes_without_the_render_module():
 def _drawing(tmp_path: Path) -> Path:
     """Line art with a face and a text block in its manifest: a fill inside a black outline 2 px wide.
 
-    The outline is narrower than the widest ink line at this size (3.6 px).
+    The outline is narrower than the widest ink line at this size (5.3 px),
+    and also narrower than the brush the region stage paints with (3.2 px),
+    so the page prints no shape of its own for it. The eye is a black square
+    wide enough to paint, which stays a region.
     """
     drawing = np.full((200, 200, 3), 255, dtype=np.uint8)
     drawing[40:160, 40:160] = 0
     drawing[42:158, 42:158] = (230, 150, 90)
+    drawing[70:84, 70:84] = 0
     image = tmp_path / "drawing.png"
     Image.fromarray(drawing).save(image)
     manifest = {
         "size": [200, 200],
         "categories": ["cartoon", "face", "text"],
-        "faces": [{"kind": "cartoon", "box": [30, 30, 140, 140], "features": [{"part": "eye", "box": [35, 35, 30, 30]}]}],
+        "faces": [{"kind": "cartoon", "box": [30, 30, 140, 140], "features": [{"part": "eye", "box": [66, 66, 22, 22]}]}],
         "text": [{"box": [60, 90, 80, 20], "string": "INK"}],
         "flat_colors": ["#ffffff", "#e6965a"],
         "ink_colors": ["#000000"],
@@ -167,7 +171,7 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
     # Scored against the drawing's manifest entry: the outline is ink, and the legend has the fill's color.
     assert case["quality"]["ink_line_f1"] is not None and case["quality"]["tube_ink_fraction"] is not None
     assert case["quality"]["flat_color_de00_mean"] < 1.0
-    # The "eye" is the outline's corner, drawn on the page.
+    # The "eye" is the black square, which fills enough of its box to count as still on the page.
     assert case["quality"]["face_de00_mean"] is not None and case["quality"]["labels_on_features"] is not None
     assert case["quality"]["features_lost"] == 0
     assert [feature["part"] for feature in case["face_features"]] == ["eye"]
