@@ -1,9 +1,14 @@
 """The original (slow) region + render implementations, kept as a test oracle.
 
 Straightforward whole-image versions of ``build_regions``,
-``extract_regions`` and ``render_page`` from before the performance rewrite.
-The optimized versions in ``tessellatum.core`` must produce exactly the same
-output; ``test_regions_equivalence.py`` checks that.
+``extract_regions`` and ``render_page``, written from the implementations
+before the performance rewrite. The optimized versions in
+``tessellatum.core`` must produce exactly the same output;
+``test_regions_equivalence.py`` checks that.
+
+A change meant to alter that output updates this file deliberately, so it
+keeps saying what the stages should do rather than what they used to. Since
+the rewrite: ``_merge_same_color_neighbors`` (T2.1).
 """
 
 from __future__ import annotations
@@ -43,6 +48,7 @@ def build_regions(labels: np.ndarray, num_colors: int, min_area_px: int) -> tupl
     active = np.ones(next_id, dtype=bool)
 
     _merge_small_regions(region_id_map, areas, active, min_area_px)
+    _merge_same_color_neighbors(region_id_map, region_color_arr)
 
     return region_id_map, region_color_arr
 
@@ -75,6 +81,19 @@ def _merge_small_regions(region_id_map: np.ndarray, areas: np.ndarray, active: n
         areas[target] += areas[rid]
         areas[rid] = 0
         active[rid] = False
+
+
+def _merge_same_color_neighbors(region_id_map: np.ndarray, region_color: np.ndarray) -> None:
+    """Union 8-adjacent regions of one color, keeping the lowest id (see ``kernels``)."""
+    inside = region_id_map >= 0
+    pixel_color = np.where(inside, region_color[np.where(inside, region_id_map, 0)], -1)
+
+    for c in np.unique(pixel_color[inside]):
+        mask = (pixel_color == c).astype(np.uint8)
+        num_components, components = cv2.connectedComponents(mask, connectivity=8)
+        for comp_id in range(1, num_components):
+            comp_mask = components == comp_id
+            region_id_map[comp_mask] = region_id_map[comp_mask].min()
 
 
 def extract_regions(region_id_map: np.ndarray, region_color: np.ndarray, min_contour_area: float = 1.0) -> list[Region]:

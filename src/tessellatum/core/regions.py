@@ -33,7 +33,10 @@ def build_regions(labels: np.ndarray, num_colors: int, min_area_px: int) -> tupl
     Regions are 8-connected runs of one color, numbered by color and then by
     raster position. Regions below ``min_area_px`` are merged, smallest first,
     into the neighbor sharing the most boundary (see
-    ``kernels.merge_small_regions``).
+    ``kernels.merge_small_regions``). That merge ignores color, so it can
+    leave two neighbors sharing one: those are then unioned into a single
+    region (``kernels.merge_same_color_neighbors``), so no boundary on the
+    page separates two areas the painter fills with the same color.
 
     Returns:
         (region_id_map, region_color): region_id_map is HxW int32 (each pixel's
@@ -48,6 +51,7 @@ def build_regions(labels: np.ndarray, num_colors: int, min_area_px: int) -> tupl
     region_color, areas = kernels.label_components(labels.reshape(-1), h, w, int(num_colors), flat_ids)
     if region_color.size:
         kernels.merge_small_regions(flat_ids, h, w, areas, int(min_area_px))
+        kernels.merge_same_color_neighbors(flat_ids, h, w, region_color, areas)
     return region_id_map, region_color
 
 

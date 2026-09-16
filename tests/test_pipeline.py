@@ -157,3 +157,20 @@ def test_analysis_arrays_are_not_the_cached_ones(sample_image_bgr):
     again = generate(sample_image_bgr, params, long_edge=200, collect_analysis=True)  # quantized colors from the cache
 
     assert again.palette_rgb == first.palette_rgb
+
+
+def test_no_boundary_separates_two_regions_of_one_color(sample_image_bgr):
+    result = generate(sample_image_bgr, difficulty.params_for_preset("Hard"), long_edge=200, collect_analysis=True)
+    ids = result.analysis.region_id_map.astype(np.int64)
+    color = result.analysis.region_color
+
+    # Every pair of 8-adjacent pixels: neighboring regions must differ in color.
+    for a, b in (
+        (ids[:, :-1], ids[:, 1:]),
+        (ids[:-1, :], ids[1:, :]),
+        (ids[:-1, :-1], ids[1:, 1:]),
+        (ids[:-1, 1:], ids[1:, :-1]),
+    ):
+        differ = (a != b) & (a >= 0) & (b >= 0)
+        assert differ.any()
+        assert not (color[a[differ]] == color[b[differ]]).any()
