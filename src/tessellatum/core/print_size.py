@@ -58,8 +58,9 @@ OUTLINE_WIDTH_MM = 0.3
 # The smallest region worth keeping: the brush's own footprint, a disk as wide
 # as MIN_PAINTABLE_WIDTH_MM. Anything smaller cannot hold the brush whatever
 # its shape, so it merges into a neighbor however fine the difficulty setting
-# is. Every difficulty preset asks for larger regions than this, so today it
-# only bounds what the Custom setting can do.
+# is. On a page of ordinary proportions every difficulty already asks for more
+# than this; it bites at the finest settings, and on pages so long or so short
+# that they print at a small scale.
 MIN_REGION_AREA_MM2 = math.pi * (MIN_PAINTABLE_WIDTH_MM / 2) ** 2
 
 

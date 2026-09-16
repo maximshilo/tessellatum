@@ -139,9 +139,10 @@ def _paintable_limits(params: DifficultyParams, size: tuple[int, int]) -> tuple[
 
     The difficulty sets the smallest region as a share of the image; the
     printed page sets the smallest one a brush can paint at all, and how
-    narrow any part of a region may get (see ``print_size``). A page is
-    measured at the size it prints, so both limits follow the image's shape
-    rather than its pixel count.
+    narrow any part of a region may get (see ``print_size``). Both of the
+    printed page's limits follow the image's shape rather than its pixel
+    count, so a preview and an export of one image are held to the same
+    physical sizes.
     """
     scale = print_scale(size)
     width, height = size
