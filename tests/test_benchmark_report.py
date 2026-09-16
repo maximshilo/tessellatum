@@ -231,8 +231,8 @@ def test_a_group_regresses_when_its_mean_change_is_worse_than_three_standard_err
         found = bench_report.regressions([METRICS[key]], pairs, "group", tolerances)
         return [(r.cases, round(r.change, 9), round(r.allowed, 9)) for r in found]
 
-    def pair(key, before, after):
-        return ({key: before}, {key: after})
+    def pair(key, before, after, size="preview"):
+        return ({key: before}, {key: after}, size)
 
     # Over 4 cases the mean may get worse by 3 × 0.1 / √4 = 0.15; one case alone by 0.3.
     assert worse("jaggedness", [pair("jaggedness", 1.0, 1.16)] * 4) == [(4, 0.16, 0.15)]
@@ -240,7 +240,12 @@ def test_a_group_regresses_when_its_mean_change_is_worse_than_three_standard_err
     assert worse("jaggedness", [pair("jaggedness", 1.0, 1.25)]) == []
     assert worse("jaggedness", [pair("jaggedness", 1.0, 1.35)]) == [(1, 0.35, 0.3)]
     # Better cases offset worse ones, and only cases with a value in both count: mean 0.1 over n = 2, 0.212 allowed.
-    mixed = [pair("jaggedness", 1.0, 1.4), pair("jaggedness", 1.2, 1.0), pair("jaggedness", None, 2.0), ({}, {"jaggedness": 2.0})]
+    mixed = [
+        pair("jaggedness", 1.0, 1.4),
+        pair("jaggedness", 1.2, 1.0),
+        pair("jaggedness", None, 2.0),
+        ({}, {"jaggedness": 2.0}, "preview"),
+    ]
     assert worse("jaggedness", mixed) == []
     assert worse("jaggedness", mixed[:1] * 2 + mixed[2:]) == [(2, 0.4, 0.212132034)]
     # Higher is better: a drop is worse.
@@ -257,6 +262,43 @@ def test_a_group_regresses_when_its_mean_change_is_worse_than_three_standard_err
     assert worse("undersized_regions", [pair("undersized_regions", 0, 1)], default) == [(1, 1, 0.0)]
     assert worse("undersized_regions", [pair("undersized_regions", 2, 2)], default) == []
     assert worse("regions", [pair("regions", 10, 1000)], default) == []
+
+
+def test_a_case_is_judged_with_the_tolerance_of_its_size():
+    metric = bench_report.Metric("jaggedness", "jaggedness ↓", "{:.3f}", "clean drawing", "lower", sigma=0.1, sigma_export=0.3)
+
+    def worse(pairs, tol=bench_report.Tolerances()):
+        found = bench_report.regressions([metric], pairs, "group", tol)
+        return [(r.cases, round(r.change, 9), round(r.allowed, 9)) for r in found]
+
+    def pair(after, size):
+        return ({"jaggedness": 1.0}, {"jaggedness": after}, size)
+
+    # One preview case may get worse by 3 × 0.1, one export case by 3 × 0.3.
+    assert worse([pair(1.35, "preview")]) == [(1, 0.35, 0.3)]
+    assert worse([pair(1.35, "export")]) == []
+    # Over cases of both sizes the allowance is 3 × √(0.1² + 0.3²) / 2.
+    both = [pair(1.5, "preview"), pair(1.5, "export")]
+    assert worse(both) == [(2, 0.5, round(3 * math.sqrt(0.1**2 + 0.3**2) / 2, 9))]
+    # An override replaces the tolerance at every size.
+    assert worse(both, bench_report.Tolerances(sigma={"jaggedness": 0.1})) == [(2, 0.5, round(3 * math.sqrt(0.02) / 2, 9))]
+
+
+def test_the_export_tolerance_judges_a_page_at_the_images_own_size():
+    def size(long_edge: int, page_edge: int, source_edge: int | None = None) -> str:
+        case = _case("lion.jpg", ["photo"], 5.0, long_edge=long_edge)
+        case["output_size"] = [page_edge, page_edge * 3 // 4]
+        if source_edge:
+            case["source_size"] = [source_edge, source_edge * 3 // 4]
+        return bench_report._sigma_size(case)
+
+    assert size(2400, 2047, source_edge=2047) == "export"  # an export: the image at its own size
+    assert size(2045, 2045, source_edge=2047) == "export"  # 3 px below it, where the export tolerance was measured
+    assert size(1166, 1166, source_edge=1166) == "export"  # a small image's export is barely above preview size
+    assert size(1100, 1100, source_edge=2047) == "preview"
+    # Without source_size the size asked for decides, so a preview rendered a pixel wide of 1100 px stays a preview.
+    assert size(2400, 2048) == "export"
+    assert size(1101, 1101) == "preview"
 
 
 def test_a_case_misses_a_target_on_its_worse_side_where_it_has_a_value():
@@ -310,12 +352,37 @@ def test_noise_sigma_is_the_root_mean_square_change_between_sizes(tmp_path):
     assert sigmas["de00_mean"] == (3, pytest.approx(math.sqrt(((1 / 11) ** 2 + (2 / 11) ** 2 + 0.1**2) / 3)))
     assert sigmas["ssim"] == (3, 0.0)
     assert "regions" not in sigmas
-    assert "| jaggedness | jaggedness | 3 | 0.05 | 0.0081 | no |" in bench_report.noise_report([base, sizes])
+    assert "| jaggedness | jaggedness | 3 | 0.05 | 0.0085 | 0.011 | no |" in bench_report.noise_report([base, sizes])
     # 1010 px is 1% above 1000 px and pairs with it; 1021 px is more than 1% above both.
     edges = _write_set(
         tmp_path / "edges", [_case("cat.jpg", ["photo"], 5.0, long_edge=e, jaggedness=j) for e, j in ((1000, 1.0), (1010, 1.5), (1021, 2.0))]
     )
     assert bench_report.noise_sigmas([bench_report.ResultSet(edges)])["jaggedness"] == (1, pytest.approx(0.5))
+
+
+def test_noise_pairs_resized_pages_by_their_own_size_and_leaves_out_pages_at_the_images_size(tmp_path):
+    def sized(image: str, long_edge: int, page_edge: int, jaggedness: float, source_edge: int | None = None) -> dict:
+        case = _case(image, ["photo"], 5.0, long_edge=long_edge, jaggedness=jaggedness)
+        case["output_size"] = [page_edge, page_edge * 3 // 4]
+        if source_edge:
+            case["source_size"] = [source_edge, source_edge * 3 // 4]
+        return case
+
+    # The pipeline never upscales: a 600 px image renders its own 600 px page at every size asked for above it.
+    scene = [sized("scene.png", edge, 600, 1.6) for edge in (1099, 1100, 2400)]
+    scene += [sized("scene.png", 599, 599, 1.1), sized("scene.png", 598, 598, 1.0)]
+    # A 2047 px image's own page, whether a larger size was asked for or source_size says so, doesn't pair with the
+    # resized pages just below it: resizing alone changes a page.
+    lion = [sized("lion.jpg", 2400, 2047, 9.0), sized("lion.jpg", 2047, 2047, 9.0, source_edge=2047)]
+    lion += [sized("lion.jpg", 2046, 2046, 1.25, source_edge=2047), sized("lion.jpg", 2045, 2045, 1.2, source_edge=2047)]
+    lion.append(sized("lion.jpg", 1100, 1100, 1.0))  # a preview, more than 1% from every other page
+    again = [sized("lion.jpg", 2046, 2046, 1.25, source_edge=2047)]  # a size rendered in another result set counts once
+
+    sets = [bench_report.ResultSet(_write_set(tmp_path / name, cases)) for name, cases in (("pages", scene + lion), ("again", again))]
+    sigmas = bench_report.noise_sigmas(sets)
+
+    # Pairs: scene 598 → 599; lion 2045 → 2046.
+    assert sigmas["jaggedness"] == (2, pytest.approx(math.sqrt((0.1**2 + 0.05**2) / 2)))
 
 
 def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path):

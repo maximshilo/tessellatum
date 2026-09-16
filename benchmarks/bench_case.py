@@ -365,6 +365,7 @@ def main() -> int:
         "status": "ok",
         "version": getattr(tessellatum, "__version__", "unknown"),
         "output_size": [result.page.width, result.page.height],
+        "source_size": [int(image_bgr.shape[1]), int(image_bgr.shape[0])],
         "print": {
             "landscape": print_scale.landscape,
             "printed_size_mm": list(print_scale.printed_size_mm),
