@@ -1,15 +1,16 @@
 """The original (slow) region + render implementations, kept as a test oracle.
 
 Straightforward whole-image versions of ``build_regions``,
-``extract_regions`` and ``render_page``, written from the implementations
-before the performance rewrite. The optimized versions in
+``extract_regions``, ``trace_boundaries`` and ``render_page``, written from
+the implementations before the performance rewrite. The optimized versions in
 ``tessellatum.core`` must produce exactly the same output;
 ``test_regions_equivalence.py`` checks that.
 
 A change meant to alter that output updates this file deliberately, so it
 keeps saying what the stages should do rather than what they used to. Since
 the rewrite: ``_merge_same_color_neighbors``, then ``_absorb_thin_parts``
-with the rebuild that follows it.
+with the rebuild that follows it, then ``trace_boundaries`` and the
+``render_page`` that draws its lines instead of outlining every region.
 """
 
 from __future__ import annotations
@@ -18,8 +19,11 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from tessellatum.core.boundaries import SIMPLIFY_EPSILON_PX
 from tessellatum.core.regions import Region
 from tessellatum.core.render import FONT_SIZE_RADIUS_RATIO, MAX_FONT_SIZE, MIN_FONT_SIZE, MIN_LABEL_RADIUS_PX, OUTLINE_WIDTH
+
+_OUTSIDE = -2  # the label of everything off the page: its edge is a boundary like any other
 
 _NEIGHBOR_KERNEL = np.ones((3, 3), np.uint8)
 
@@ -171,16 +175,102 @@ def extract_regions(region_id_map: np.ndarray, region_color: np.ndarray, min_con
     return regions
 
 
-def render_page(size: tuple[int, int], regions: list[Region]) -> Image.Image:
-    page = Image.new("RGB", size, "white")
-    draw = ImageDraw.Draw(page)
+def trace_boundaries(region_id_map: np.ndarray, simplify_px: float = SIMPLIFY_EPSILON_PX) -> list[np.ndarray]:
+    """One line per boundary between two regions, as ``boundaries.py`` describes it.
 
-    for region in regions:
-        points = [(int(p[0][0]), int(p[0][1])) for p in region.contour]
-        if len(points) >= 2:
-            draw.polygon(points, outline="black", width=OUTLINE_WIDTH)
-        elif len(points) == 1:
-            draw.point(points[0], fill="black")
+    The crack graph is built as a dict of pixel corners, each holding the
+    corners it shares a crack with. Corners with three or more of them are
+    junctions; the rest have two, and following those from junction to
+    junction gives one boundary at a time. Corners are visited in raster
+    order and their edges in the order right, down, left, up, which is the
+    order the kernel walks them in too, so the lines come out the same way
+    round.
+    """
+    h, w = region_id_map.shape
+
+    def pixel(y: int, x: int) -> int:
+        return int(region_id_map[y, x]) if 0 <= y < h and 0 <= x < w else _OUTSIDE
+
+    neighbors: dict[tuple[int, int], list[tuple[int, int]]] = {}
+
+    def join(a: tuple[int, int], b: tuple[int, int]) -> None:
+        neighbors.setdefault(a, []).append(b)
+        neighbors.setdefault(b, []).append(a)
+
+    for i in range(h + 1):
+        for j in range(w + 1):
+            if j < w and pixel(i - 1, j) != pixel(i, j):  # the crack right of this corner
+                join((i, j), (i, j + 1))
+            if i < h and pixel(i, j - 1) != pixel(i, j):  # the crack below it
+                join((i, j), (i + 1, j))
+
+    def steps(corner: tuple[int, int]) -> list[tuple[int, int]]:
+        i, j = corner
+        order = [(i, j + 1), (i + 1, j), (i, j - 1), (i - 1, j)]  # right, down, left, up
+        return [c for c in order if c in neighbors.get(corner, ())]
+
+    walked: set[frozenset] = set()
+
+    def walk(corner: tuple[int, int], to: tuple[int, int]) -> list[tuple[int, int]]:
+        path = [corner]
+        while True:
+            walked.add(frozenset((corner, to)))
+            path.append(to)
+            corner = to
+            if len(neighbors[corner]) != 2:
+                break  # a junction: the next boundary is another line
+            onwards = [c for c in steps(corner) if c != path[-2]]
+            if not onwards or frozenset((corner, onwards[0])) in walked:
+                break  # back where this line started: a closed boundary
+            to = onwards[0]
+        return path
+
+    corners = sorted(neighbors)
+    paths: list[list[tuple[int, int]]] = []
+    for junctions_first in (True, False):
+        for corner in corners:
+            if (len(neighbors[corner]) >= 3) != junctions_first:
+                continue
+            for to in steps(corner):
+                if frozenset((corner, to)) not in walked:
+                    paths.append(walk(corner, to))
+
+    lines = []
+    for path in paths:
+        points = np.array([(j - 0.5, i - 0.5) for i, j in path], dtype=np.float32)
+        simplified = cv2.approxPolyDP(points, epsilon=simplify_px, closed=False).reshape(-1, 2)
+        if path[0] == path[-1]:
+            # approxPolyDP measures a line whose ends meet from its first point
+            # and returns it without the repeat, which has to be put back.
+            simplified = np.vstack([simplified, simplified[:1]])
+            if len({tuple(point) for point in simplified}) < 3:
+                simplified = points  # too small to simplify and still have an inside
+        lines.append(simplified.astype(np.float64))
+    return lines
+
+
+def render_page(size: tuple[int, int], regions: list[Region], region_id_map: np.ndarray) -> Image.Image:
+    width, height = size
+    margin = OUTLINE_WIDTH
+    canvas = np.zeros((height + 2 * margin, width + 2 * margin), dtype=np.uint8)
+    for stroke in trace_boundaries(region_id_map):
+        points = np.rint((stroke + margin) * 2).astype(np.int32)
+        cv2.polylines(canvas, [points], False, 1, thickness=1, lineType=cv2.LINE_8, shift=1)
+
+    # The line is one pixel wide, on the pixel right of or below its crack.
+    # Widening it up and left puts it on both sides of the crack instead.
+    spread = (OUTLINE_WIDTH - 1) // 2
+    padded = np.pad(canvas, OUTLINE_WIDTH)
+    band = np.zeros_like(canvas)
+    for dy in range(-spread, OUTLINE_WIDTH - spread):
+        for dx in range(-spread, OUTLINE_WIDTH - spread):
+            y0, x0 = OUTLINE_WIDTH + dy, OUTLINE_WIDTH + dx
+            band |= padded[y0 : y0 + canvas.shape[0], x0 : x0 + canvas.shape[1]]
+    inked = band[margin : margin + height, margin : margin + width] > 0
+
+    page = Image.new("RGB", size, "white")
+    page.paste(Image.new("RGB", size, "black"), (0, 0), Image.fromarray((inked * 255).astype(np.uint8), "L"))
+    draw = ImageDraw.Draw(page)
 
     for region in regions:
         if region.interior_radius < MIN_LABEL_RADIUS_PX:

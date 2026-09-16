@@ -218,35 +218,85 @@ def test_paintability_metrics_of_a_page_without_regions():
     assert bm.compactness_stats(empty) == {"compactness_median": None, "compactness_p10": None}
 
 
-def _drawn_outlines(region_id_map: np.ndarray) -> list[np.ndarray]:
-    """The lines today's renderer draws for a region map: every region's contour, as a closed polyline."""
+def _drawn_lines(region_id_map: np.ndarray) -> list[np.ndarray]:
+    """The lines today's renderer draws for a region map: one per boundary."""
     regions = extract_regions(region_id_map, np.arange(int(region_id_map.max()) + 1, dtype=np.int32))
-    contours = [c.reshape(-1, 2).astype(np.float64) for c in render.render_page(region_id_map.shape[::-1], regions).strokes]
+    return render.render_page(region_id_map.shape[::-1], regions, region_id_map).strokes
+
+
+def _outlines_of_every_region(region_id_map: np.ndarray) -> list[np.ndarray]:
+    """What a renderer that outlines every region on its own would draw, as closed polylines."""
+    regions = extract_regions(region_id_map, np.arange(int(region_id_map.max()) + 1, dtype=np.int32))
+    contours = [r.contour.reshape(-1, 2).astype(np.float64) for r in regions]
     return [np.vstack([c, c[:1]]) for c in contours]
 
 
-def test_todays_renderer_draws_two_lines_along_a_boundary_where_one_would_do():
+def test_two_outlines_along_a_boundary_count_double_and_one_shared_line_counts_once():
     image = np.full((40, 60, 3), 230, dtype=np.uint8)
     image[:, 30:] = 20
     params = difficulty.DifficultyParams(num_colors=2, min_region_fraction=0.01, blur_sigma=0.0)
     analysis = pipeline.generate(image, params, long_edge=60, collect_analysis=True).analysis
-    shared_line = np.array([[29.5, 0.0], [29.5, 39.0]])
 
-    assert len(analysis.strokes) == 2  # each region's outline
+    lone_line = bm.boundary_lines(analysis.region_id_map, [np.array([[29.5, 0.0], [29.5, 39.0]])])
+    assert lone_line["lines_per_boundary"] == lone_line["lines_per_boundary_clear"] == 1.0
+    assert (lone_line["doubled_boundary_fraction"], lone_line["undrawn_boundary_fraction"]) == (0.0, 0.0)
+
+    # Today's renderer draws that line once, plus the page edge on either side of
+    # it. The two meet it at the top and bottom of the page, and a line counts
+    # wherever it passes within a pixel, so the boundary's first and last pixel
+    # edge see all three. That is what the clear count leaves out.
+    assert len(analysis.strokes) == 3
     assert bm.boundary_lines(analysis.region_id_map, analysis.strokes) == {
-        "lines_per_boundary": 2.0,
-        "doubled_boundary_fraction": 1.0,
+        "lines_per_boundary": 1 + 2 * 2 / 40,
+        "lines_per_boundary_clear": 1.0,
+        "clear_boundary_fraction": 34 / 40,  # three pixel edges at each end of it lie within 2.5 px of a junction
+        "doubled_boundary_fraction": 2 / 40,
         "undrawn_boundary_fraction": 0.0,
     }
-    assert bm.boundary_lines(analysis.region_id_map, [shared_line]) == {
-        "lines_per_boundary": 1.0,
-        "doubled_boundary_fraction": 0.0,
-        "undrawn_boundary_fraction": 0.0,
-    }
+    # Leaving junctions out must not hide the doubling it is there to catch:
+    # an outline round each region still counts two, clear of them or not.
+    doubled = bm.boundary_lines(analysis.region_id_map, _outlines_of_every_region(analysis.region_id_map))
+    assert doubled["lines_per_boundary"] == doubled["lines_per_boundary_clear"] == 2.0
+    assert doubled["doubled_boundary_fraction"] == 1.0
+    # A page with no lines at all: every boundary undrawn, clear of junctions or not.
     assert bm.boundary_lines(analysis.region_id_map, []) == {
         "lines_per_boundary": 0.0,
+        "lines_per_boundary_clear": 0.0,
+        "clear_boundary_fraction": 34 / 40,
         "doubled_boundary_fraction": 0.0,
         "undrawn_boundary_fraction": 1.0,
+    }
+
+
+def test_the_page_is_enclosed_when_no_white_area_covers_two_regions():
+    ids = np.zeros((9, 9), dtype=np.int32)
+    ids[:, 4:] = 1
+    outlines = np.asarray(render.render_page((9, 9), [], ids).outlines)
+
+    assert bm.enclosure(ids, outlines) == {"unenclosed_area_fraction": 0.0, "unenclosed_areas": 0, "split_regions": 0}
+
+    with_a_gap = outlines.copy()
+    with_a_gap[4, 3:5] = 255  # rub out the two pixels of line between the regions
+
+    leaked = bm.enclosure(ids, with_a_gap)
+    assert leaked["unenclosed_areas"] == 1
+    assert leaked["unenclosed_area_fraction"] == pytest.approx(((with_a_gap != 0).sum()) / ids.size)
+    assert leaked["split_regions"] == 0
+
+
+def test_a_region_pinched_shut_by_its_own_lines_is_split_but_still_enclosed():
+    ids = np.zeros((15, 20), dtype=np.int32)
+    ids[:5, 8:12] = 1  # two neighbors that leave region 0 a neck five pixels wide between them
+    ids[10:, 8:12] = 2
+    outlines = np.asarray(render.render_page((20, 15), [], ids).outlines)
+    pinched = outlines.copy()
+    pinched[6:9, 8:12] = 0  # ink the neck shut, as a wider line would
+
+    assert bm.enclosure(ids, outlines)["split_regions"] == 0
+    assert bm.enclosure(ids, pinched) == {
+        "unenclosed_area_fraction": 0.0,
+        "unenclosed_areas": 0,
+        "split_regions": 1,
     }
 
 
@@ -267,6 +317,8 @@ def test_the_page_edge_is_not_a_boundary():
 
     assert bm.boundary_lines(page, [frame]) == {
         "lines_per_boundary": None,
+        "lines_per_boundary_clear": None,
+        "clear_boundary_fraction": None,
         "doubled_boundary_fraction": None,
         "undrawn_boundary_fraction": None,
     }
@@ -305,7 +357,7 @@ def test_jaggedness_ignores_corners_where_regions_meet():
     assert bm.jaggedness([corner], three, 2.0) == pytest.approx(1.0, abs=1e-12)
     # The same corner inside one region gets rounded off.
     assert bm.jaggedness([corner], np.zeros_like(three), 2.0) == pytest.approx(1.018, abs=0.001)
-    assert bm.jaggedness(_drawn_outlines(grid), grid, 2.0) == pytest.approx(1.0, abs=1e-12)
+    assert bm.jaggedness(_drawn_lines(grid), grid, 2.0) == pytest.approx(1.0, abs=1e-12)
 
 
 def test_jaggedness_smooths_a_closed_line_that_meets_no_junction_all_the_way_round():

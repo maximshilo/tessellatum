@@ -203,6 +203,8 @@ and whether their features survive, and on whether OCR still reads the text:
 | labels < 6 pt | share of numbers printing smaller than 6 pt; `case.json` also records the smallest, as `min_label_pt` | lower (0) |
 | compactness p10 / median | 4πA/P² over the regions: 1 for a disk, lower for stretched or ragged ones | higher |
 | lines per boundary | lines drawn along each boundary between two regions; `case.json` also records the shares with two or more (`doubled_boundary_fraction`) and with none (`undrawn_boundary_fraction`) | 1 |
+| lines per boundary (clear) | the same, over the boundary clear of junctions, where the count means what it says; `case.json` also records how much of the boundary that is, as `clear_boundary_fraction` | 1 |
+| unenclosed | share of the page in a white area covering more than one region: where two regions' paint would run together; `case.json` also records how many such areas there are (`unenclosed_areas`), and how many regions the lines pinch into more than one white piece (`split_regions`) | lower (0) |
 | same-color boundary | share of the boundary length that lies between two regions of the same color | lower (0) |
 | jaggedness | length of the drawn lines over their length with wiggles under 0.5 mm smoothed away | lower (1) |
 | edge F1 | how well region boundaries and the source's edges line up, within 0.5 mm; `case.json` also records `edge_precision` and `edge_recall` | higher |
@@ -257,11 +259,45 @@ How the line metrics are defined:
     doesn't count. A line runs along a pixel edge if its rasterized centerline
     passes through or next to (8-neighborhood) either of the edge's two pixels.
     It counts once however often it passes.
-  - Today's renderer outlines every region on its own, so it scores 2 on a
-    boundary between two regions. Around a region lying inside another it
-    scores 1, because outlines don't trace holes.
+  - A renderer that outlines every region on its own scores 2 on a boundary
+    between two regions. Around a region lying inside another it scores 1,
+    because outlines don't trace holes.
   - Where a region is only 1–2 px wide, the lines on its two sides are within
     reach of each other, so even one line per boundary scores 2 or more there.
+- **Lines per boundary (clear)** is the same count over the boundary more than
+  2.5 px from a junction. Within that reach the count cannot tell one
+  boundary's line from the lines of the boundaries that end at the junction, so
+  it counts all of them however few a page draws.
+  - The clearance is in pixels, not on paper, because it corrects for how a line
+    is rounded onto the pixel grid: half a pixel from a crack to the center of
+    the pixel beside it, one pixel (√2 at the corners) for the neighborhood the
+    count reaches into, and half a pixel of rounding.
+  - It is not a way round the doubling the metric is there to catch. Over the
+    96 baseline cases, a renderer that outlines every region scores 1.183–2.000
+    on it against 1.187–2.099 plain: the cut moves it by 0.029 on average and
+    0.114 at worst, because doubling is everywhere on such a page and not only
+    near junctions. On pages drawn one line per boundary the same cut is worth
+    0.080 on average and 0.323 at worst. What it removes is the part no renderer
+    can do anything about.
+    (Those pages score below 2 for a separate reason the plain count shares:
+    outlines don't trace holes, so a region lying inside another gets one line,
+    which is why the line art at Easy scores 1.18–1.43 either way.)
+  - `clear_boundary_fraction`, how much of the boundary is clear, falls as a
+    page gets more regions: 95.5% on `scene.png` at Hard (7 regions), 75.1% on
+    the lion at Max (778). That is why the plain count rises with region count
+    however the page is drawn.
+- **Unenclosed** area reads the page's line layer (`PageAnalysis.outlines`), not
+  the lines' geometry: what is filled is pixels. Its white is split into
+  4-connected areas, and an area covering more than one region is one the paint
+  can run out of — a gap in the lines. Pixels in no region count as one more
+  region, so a region is not allowed to leak into them either.
+  - It is the flood-fill test in plain terms: fill the white from any point and
+    you should never reach out of the region that point is in.
+  - `split_regions` counts the opposite fault, a region whose white the lines
+    pinch into more than one piece where it is narrow. A line takes a pixel from
+    each side of its crack, so a region narrower than about twice the line width
+    closes up. Those places are slivers already, so this only informs.
+  - Versions before 0.1.10 report no line layer, and get no value.
 - **Same-color boundary** estimates lengths as compactness does. Merging a small
   region into a neighbor can leave two regions of one color touching.
 - **Jaggedness** smooths each drawn line along its length by a Gaussian of
@@ -453,7 +489,9 @@ page of 1100 px, and **export**, a page at the image's own size (see
 | compactness p10 | paintable | 0.023 | 0.020 | – |
 | compactness median | paintable | 0.036 | 0.029 | – |
 | undersized | paintable | 0 | 0 | – |
-| lines per boundary | clean drawing | 0.10 | 0.048 | 1 ± 0.05 |
+| lines per boundary | clean drawing | 0.10 | 0.048 | – |
+| lines per boundary (clear) | clean drawing | 0.10 | 0.048 | 1 ± 0.05 |
+| unenclosed | clean drawing | 0 | 0 | 0 |
 | same-color boundary | clean drawing | 2.8 points | 1.4 points | 0 |
 | jaggedness | clean drawing | 0.0085 | 0.011 | ≤ 1.02 |
 | edge F1 | clean drawing | 0.023 | 0.020 | – |
@@ -479,6 +517,7 @@ spell out the four jobs:
   at print size;
 - **clean drawing:**
   - one smooth line per boundary, and no line between neighbors of the same color;
+  - every region enclosed, so no two regions' paint can run together;
   - line art's ink lines printed as the page's lines, with no tubes;
   - text still readable, with no numbers on it;
 - **resembles:** faces keep their eyes, noses and mouths;
@@ -486,11 +525,15 @@ spell out the four jobs:
 
 Three of the targets need explaining:
 
-- **Lines per boundary** may be 1 ± 0.05, not exactly 1. A renderer drawing every
-  boundary once still scores 1.02–1.03 on `scene.png`: near a point where three
-  regions meet, a line lies within reach of its neighbors' boundaries too. It
-  scores more where regions are only 1–2 px wide, the width slivers already count.
-  Too few lines miss the target as much as too many.
+- **Lines per boundary** carries the target on the count clear of junctions, and
+  may be 1 ± 0.05 there, not exactly 1. Near a point where three regions meet, a
+  line lies within reach of its neighbors' boundaries too, and no renderer can
+  change that: the plain count reaches 1.31 on a page of 778 regions drawn
+  strictly once each, against 1.04 on a page of 7 (D-028). The clear count reads
+  1.000–1.001 on the same pages, and still reads 2 for a renderer that outlines
+  every region, so the doubling it is there to catch is still caught. The plain
+  count stays in the report, and both are judged for regressions. Too few lines
+  miss the target as much as too many.
 - **Jaggedness ≤ 1.02** is met today by the bold-line cartoons (1.007–1.016) and
   `scene.png` (1.002–1.008), whose lines follow smooth shapes. Photos score
   1.05–1.25.
@@ -538,6 +581,11 @@ The verdict lists regressions, then target misses: each target's miss count on t
 reference and the candidate, and the cases that met a target on the reference and
 miss it now. Region-count changes over 15% are noted in the per-case tables, but
 aren't failures: region count is a difficulty trait, not a quality score.
+
+Lines per boundary (clear) has not been through `noise` yet: it takes the plain
+count's tolerances until the next run measures its own (D-028). Unenclosed area
+takes 0, as undersized regions do — a page whose lines close has none of it, so
+any at all is a regression.
 
 `compare --tol METRIC=SIGMA` replaces a metric's tolerance at both sizes, by its
 `case.json` key (repeatable), e.g. for a change that trades one metric for another

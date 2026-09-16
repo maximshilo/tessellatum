@@ -12,7 +12,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
 import bench_report  # noqa: E402
 
 PAINTABILITY_KEYS = ("unlabeled_regions", "sliver_area_fraction", "small_label_fraction", "compactness_p10", "compactness_median")
-LINE_KEYS = ("lines_per_boundary", "same_color_boundary_fraction", "jaggedness", "edge_f1")
+LINE_KEYS = (
+    "lines_per_boundary",
+    "lines_per_boundary_clear",
+    "unenclosed_area_fraction",
+    "same_color_boundary_fraction",
+    "jaggedness",
+    "edge_f1",
+)
 PALETTE_KEYS = ("palette_min_de00", "palette_close_pairs")
 LINE_ART_KEYS = ("ink_line_f1", "tube_regions", "tube_ink_fraction", "flat_color_de00_mean")
 FACE_KEYS = ("face_de00_mean", "face_ssim", "features_lost", "labels_on_features")
@@ -46,6 +53,8 @@ def _case(image: str, categories: list[str], de00: float, preset: str = "Easy", 
             "compactness_p10": 0.1,
             "compactness_median": 0.4,
             "lines_per_boundary": 2.0,
+            "lines_per_boundary_clear": 1.9,
+            "unenclosed_area_fraction": 0.0,
             "same_color_boundary_fraction": 0.01,
             "jaggedness": 1.1,
             "edge_f1": 0.5,
@@ -169,7 +178,8 @@ def test_scorecard_scores_each_job_per_category_and_over_all_cases(tmp_path):
     assert "| cartoon | 1 | 50.0% | 3.0 | 10.0% → 0.5% | 0.0% | 0.10 | 0.40 | 0.0 | 0/1 |" in paintable
     drawing = _section(scorecard, "#### clean drawing", "#### palette")
     assert (
-        "| category | cases | lines per boundary (1 ± 0.05) | same-color boundary ↓ (0) | jaggedness ↓ (≤ 1.02) | edge F1 ↑ "
+        "| category | cases | lines per boundary | lines per boundary (clear) (1 ± 0.05) | unenclosed ↓ (0) "
+        "| same-color boundary ↓ (0) | jaggedness ↓ (≤ 1.02) | edge F1 ↑ "
         "| ink line F1 ↑ (≥ 0.9) | tubes ↓ (0) | ink in shapes < 5 mm ↓ | labels on features ↓ "
         "| text CER page ↓ (≤ text CER source + 0.1) | labels on text ↓ (0) | targets met |"
     ) in drawing
@@ -313,8 +323,15 @@ def test_a_case_misses_a_target_on_its_worse_side_where_it_has_a_value():
     assert miss("jaggedness", jaggedness=1.021) is True
     assert miss("unlabeled_regions", unlabeled_regions=0) is False
     assert miss("unlabeled_regions", unlabeled_regions=1) is True
-    # One line per boundary: too few lines miss as much as too many.
-    assert [miss("lines_per_boundary", lines_per_boundary=v) for v in (0.94, 0.96, 1.04, 1.06)] == [True, False, False, True]
+    # One line per boundary: too few lines miss as much as too many. The target is on
+    # the count clear of junctions, where the count means what it says.
+    assert [miss("lines_per_boundary_clear", lines_per_boundary_clear=v) for v in (0.94, 0.96, 1.04, 1.06)] == [
+        True,
+        False,
+        False,
+        True,
+    ]
+    assert miss("lines_per_boundary", lines_per_boundary=2.0) is None  # reported, but not a target of its own
     # The page's text counts from what OCR reads on the source.
     assert miss("text_cer_page", text_cer_page=0.3, text_cer_source=0.25) is False
     assert miss("text_cer_page", text_cer_page=0.36, text_cer_source=0.25) is True
@@ -397,7 +414,8 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
 
     header = (
         "| case | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | regions | labeled area ↑ | unlabeled ↓ | slivers ↓ | labels < 6 pt ↓ "
-        "| compactness p10 ↑ | compactness median ↑ | lines per boundary | same-color boundary ↓ | jaggedness ↓ "
+        "| compactness p10 ↑ | compactness median ↑ | lines per boundary | lines per boundary (clear) "
+        "| unenclosed ↓ | same-color boundary ↓ | jaggedness ↓ "
         "| edge F1 ↑ | palette min ΔE00 ↑ | color pairs < 10 ΔE00 ↓ | ink line F1 ↑ | tubes ↓ | ink in shapes < 5 mm ↓ "
         "| flat colors ΔE00 ↓ | face ΔE00 ↓ | face SSIM ↑ | features lost ↓ | labels on features ↓ | text CER source "
         "| text CER page ↓ | text CER painting ↓ | labels on text ↓ | undersized ↓ | ink | targets missed |"
@@ -405,11 +423,12 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
     assert header in old_alone
     assert (
         "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
-        "| – | – | – | – | – | – | – | – | – | 0 | 10.0% | – |"
+        "| – | – | – | – | – | – | – | – | – | – | – | 0 | 10.0% | – |"
     ) in old_alone
     assert "| all | 1 | 1 | no targets | no targets | no targets | no targets |" in old_alone
     assert (
-        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | 3 | 10.0% | 0.0% | 0.10 | 0.40 | 2.00 | 1.0% | 1.100 "
-        "| 0.50 | 4.5 | 2 | 0.25 | 2 | 60.0% | 3.50 | 7.50 | 0.600 | 1 | 2 | 0.10 | 0.95 | 0.98 | 1 | 0 | 10.0% | – → 11/12 | ok |"
+        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | 3 | 10.0% | 0.0% | 0.10 | 0.40 | 2.00 | 1.90 | 0.0% "
+        "| 1.0% | 1.100 | 0.50 | 4.5 | 2 | 0.25 | 2 | 60.0% | 3.50 | 7.50 | 0.600 | 1 | 2 | 0.10 | 0.95 | 0.98 | 1 | 0 "
+        "| 10.0% | – → 11/13 | ok |"
     ) in old_vs_new
     assert "| all | 1 | 1 | 0/1 met | 0/1 met | 0/1 met | 0/1 met |" in old_vs_new

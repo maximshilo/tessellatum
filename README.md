@@ -47,8 +47,10 @@ run the binary from a terminal to see the error.
    region whose paint reaches it first, and a region thinner than that
    everywhere disappears into its neighbors, so the page asks for no stroke
    too fine to make.
-4. **Outline + number**: each surviving region gets a black outline and a
-   number (matched to a legend swatch) placed at its most interior point.
+4. **Draw + number**: the boundaries between regions are traced from the
+   region map and each one is drawn once, as a single line its two regions
+   share, so no boundary is doubled or left out. Every region then gets a
+   number (matched to a legend swatch) at its most interior point.
 
 Difficulty controls three things: how many colors are used, how small a
 region is allowed to get before being merged away, and how much smoothing
@@ -62,11 +64,12 @@ Previews are meant to be quick enough to tweak difficulty interactively:
 
 - Smoothing samples the bilateral filter's window on a sparse lattice (a few
   hundred taps per pixel instead of thousands) and filters rows in parallel.
-- Region labeling and small-region merging run as compiled
+- Region labeling, small-region merging and the walk that turns the region
+  map into one line per boundary run as compiled
   [Numba](https://numba.pydata.org/) kernels whose cost grows roughly
-  linearly with image size, and contour extraction and outline drawing work
-  on each region's bounding box rather than the whole image. Their output is
-  pixel-identical to the original straightforward implementation.
+  linearly with image size, and contour extraction works on each region's
+  bounding box rather than the whole image. Their output is pixel-identical
+  to the original straightforward implementation.
 - Resizing and quantization results are cached per image, so changing only
   the region size skips straight to the region stages.
 - The compiled kernels are built on the very first launch (a few seconds, in

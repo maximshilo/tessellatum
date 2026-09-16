@@ -105,15 +105,26 @@ METRICS = (
     ),
     Metric("compactness_p10", "compactness p10 ↑", "{:.2f}", "paintable", "higher", sigma=0.023, sigma_export=0.020),
     Metric("compactness_median", "compactness median ↑", "{:.2f}", "paintable", "higher", sigma=0.036, sigma_export=0.029),
+    Metric("lines_per_boundary", "lines per boundary", "{:.2f}", "clean drawing", ideal=1.0, sigma=0.10, sigma_export=0.048),
     Metric(
-        "lines_per_boundary",
-        "lines per boundary",
+        "lines_per_boundary_clear",
+        "lines per boundary (clear)",
         "{:.2f}",
         "clean drawing",
         ideal=1.0,
-        sigma=0.10,
+        sigma=0.10,  # provisional: inherited from lines per boundary until `noise` measures it (D-027)
         sigma_export=0.048,
         target=Target(0.05),
+    ),
+    Metric(
+        "unenclosed_area_fraction",
+        "unenclosed ↓",
+        "{:.1%}",
+        "clean drawing",
+        "lower",
+        sigma=0,  # a page whose lines close has none of it, so any is a regression
+        sigma_export=0,
+        target=Target(0),
     ),
     Metric(
         "same_color_boundary_fraction",
@@ -554,7 +565,11 @@ def _quality_section(
         "paint without crossing into another region. "
         f"**labels < {bm.print_size.MIN_LABEL_SIZE_PT:g} pt**: share of numbers printing smaller than that. "
         "**compactness**: 4πA/P² of the regions (1 = disk), 10th percentile and median. "
-        "**lines per boundary**: lines drawn along each boundary between regions (1 = one line per boundary). "
+        "**lines per boundary**: lines drawn along each boundary between regions (1 = one line per boundary), and "
+        f"**(clear)** the same over the boundary more than {bm.JUNCTION_CLEARANCE_PX:g} px from a junction, where "
+        "the lines of the boundaries that end there are not counted too. "
+        "**unenclosed**: share of the page in a white area covering more than one region, where two regions' "
+        "paint would run together. "
         "**same-color boundary**: share of boundary length between two regions of the same color. "
         f"**jaggedness**: length of the drawn lines over their length with wiggles under "
         f"{bm.JAGGEDNESS_SMOOTHING_MM:g} mm smoothed away (1 = smooth). "

@@ -40,6 +40,13 @@ PRINT_SIZE_PATH = Path(__file__).resolve().parents[1] / "src" / "tessellatum" / 
 # EDGE_THRESHOLDS (Canny's hysteresis thresholds, in CIE Lab units), and a region boundary within
 # EDGE_TOLERANCE_MM of an edge lies on it.
 JAGGEDNESS_SMOOTHING_MM = 0.5
+# Boundary edges within JUNCTION_CLEARANCE_PX of a junction are left out of the count of lines per
+# boundary: there the lines of the boundaries that end at the junction are close enough to be counted
+# too, however few of them there are. It is set in pixels, not on paper, because it corrects for how a
+# line is rounded onto the pixel grid: half a pixel from a crack to the center of the pixel beside it,
+# one pixel (sqrt 2 at the corners) for the neighborhood the count reaches into, and half a pixel of
+# rounding.
+JUNCTION_CLEARANCE_PX = 2.5
 EDGE_SMOOTHING_MM = 0.5
 EDGE_TOLERANCE_MM = 0.5
 EDGE_THRESHOLDS = (5.0, 10.0)
@@ -316,7 +323,9 @@ def compactness_stats(region_id_map: np.ndarray) -> dict[str, float | None]:
     return {"compactness_median": float(np.median(values)), "compactness_p10": float(np.percentile(values, 10))}
 
 
-def boundary_lines(region_id_map: np.ndarray, strokes) -> dict[str, float | None]:
+def boundary_lines(
+    region_id_map: np.ndarray, strokes, junction_clearance_px: float = JUNCTION_CLEARANCE_PX
+) -> dict[str, float | None]:
     """How many drawn lines run along the boundaries between regions: 1 means one line per boundary.
 
     ``strokes`` are the lines drawn on the page, each an (x, y) polyline with
@@ -324,15 +333,33 @@ def boundary_lines(region_id_map: np.ndarray, strokes) -> dict[str, float | None
     edge between two regions; the page edge doesn't count. A line runs along a
     pixel edge if its rasterized centerline passes through or next to
     (8-neighborhood) either of the edge's two pixels, and counts once however
-    often it passes. Returns the mean count, and the shares of boundary with two
-    or more lines and with none (all None on a page without boundaries).
+    often it passes.
+
+    Near a junction that reach cannot tell the lines of one boundary from
+    those of the boundaries that end there, so however few lines a page draws,
+    every one of them counts around a junction. ``lines_per_boundary_clear``
+    is the same mean over the boundary that lies more than
+    ``junction_clearance_px`` from any junction, where the question has an
+    answer; ``clear_boundary_fraction`` says how much of the boundary that is,
+    which falls as a page gets more regions.
+
+    Returns those, the mean over all of it, and the shares of boundary with
+    two or more lines and with none (all None on a page without boundaries).
     """
     ids = np.asarray(region_id_map)
     h, w = ids.shape
     between_columns = (ids[:, :-1] != ids[:, 1:]) & (ids[:, :-1] >= 0) & (ids[:, 1:] >= 0)
     between_rows = (ids[:-1, :] != ids[1:, :]) & (ids[:-1, :] >= 0) & (ids[1:, :] >= 0)
     if not (between_columns.any() or between_rows.any()):
-        return {"lines_per_boundary": None, "doubled_boundary_fraction": None, "undrawn_boundary_fraction": None}
+        return dict.fromkeys(
+            (
+                "lines_per_boundary",
+                "lines_per_boundary_clear",
+                "clear_boundary_fraction",
+                "doubled_boundary_fraction",
+                "undrawn_boundary_fraction",
+            )
+        )
     lines_between_columns = np.zeros(between_columns.shape, dtype=np.int32)
     lines_between_rows = np.zeros(between_rows.shape, dtype=np.int32)
     for (x0, y0), near in _line_neighborhoods(strokes, (w, h)):
@@ -340,10 +367,55 @@ def boundary_lines(region_id_map: np.ndarray, strokes) -> dict[str, float | None
         lines_between_columns[y0 : y0 + rows, x0 : x0 + cols - 1] += near[:, :-1] | near[:, 1:]
         lines_between_rows[y0 : y0 + rows - 1, x0 : x0 + cols] += near[:-1, :] | near[1:, :]
     counts = np.concatenate([lines_between_columns[between_columns], lines_between_rows[between_rows]])
+
+    # A boundary edge is clear when both of its ends are: on the corner grid,
+    # the edge between two pixels of a row runs down the corners [y, x + 1] and
+    # [y + 1, x + 1], and the edge between two pixels of a column along the
+    # corners [y + 1, x] and [y + 1, x + 1].
+    to_junction = _distance_to_junctions(ids)
+    rows, columns = np.nonzero(between_columns)
+    from_column_edges = np.minimum(to_junction[rows, columns + 1], to_junction[rows + 1, columns + 1])
+    rows, columns = np.nonzero(between_rows)
+    from_row_edges = np.minimum(to_junction[rows + 1, columns], to_junction[rows + 1, columns + 1])
+    clear = np.concatenate([from_column_edges, from_row_edges]) > junction_clearance_px
     return {
         "lines_per_boundary": float(counts.mean()),
+        "lines_per_boundary_clear": float(counts[clear].mean()) if clear.any() else None,
+        "clear_boundary_fraction": float(clear.mean()),
         "doubled_boundary_fraction": float((counts >= 2).mean()),
         "undrawn_boundary_fraction": float((counts == 0).mean()),
+    }
+
+
+def enclosure(region_id_map: np.ndarray, outlines: np.ndarray) -> dict[str, float | int | None]:
+    """Do the page's lines close every region, so that no two regions' paint can run together?
+
+    ``outlines`` is the page's line layer, 0 where there is a line. Filling its
+    white from any point should never reach out of the region that point is in:
+    that is what makes the page a set of shapes to paint rather than a drawing.
+    ``unenclosed_area_fraction`` is the share of the page in a white area that
+    covers more than one region, and ``unenclosed_areas`` counts those areas.
+
+    ``split_regions`` counts the regions whose white is in more than one piece
+    instead, which is the opposite fault: lines thick enough to pinch a region
+    shut where it is narrow. Pixels in no region count as one more region.
+    """
+    ids = np.asarray(region_id_map)
+    white = np.asarray(outlines) != 0
+    count, areas = cv2.connectedComponents(white.view(np.uint8), connectivity=4)
+    if count <= 1:
+        return {"unenclosed_area_fraction": 0.0, "unenclosed_areas": 0, "split_regions": 0}
+
+    # Every (white area, region) pair that occurs, as one number each.
+    region_of = ids - ids.min() + 1  # 0 is kept for the ink, which is in no white area
+    pairs = np.unique((areas.astype(np.int64) * (int(region_of.max()) + 1) + region_of)[white])
+    in_area, of_region = np.divmod(pairs, int(region_of.max()) + 1)
+    regions_per_area = np.bincount(in_area, minlength=count)
+    unenclosed = np.flatnonzero(regions_per_area > 1)
+    return {
+        "unenclosed_area_fraction": float(np.isin(areas, unenclosed).sum() / ids.size) if unenclosed.size else 0.0,
+        "unenclosed_areas": int(unenclosed.size),
+        "split_regions": int((np.bincount(of_region) > 1).sum()),
     }
 
 

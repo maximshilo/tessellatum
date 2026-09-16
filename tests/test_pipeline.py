@@ -100,12 +100,13 @@ def test_analysis_regions_colors_and_labels_match_the_page(sample_image_bgr):
         assert analysis.region_id_map[y, x] == region.region_id
         assert analysis.region_color[region.region_id] == region.color_index < analysis.legend_size
 
-    assert len(analysis.strokes) == len(analysis.regions)  # every drawn region's outline...
-    for stroke, region in zip(analysis.strokes, analysis.regions):
-        contour = region.contour.reshape(-1, 2)
-        np.testing.assert_array_equal(stroke[: len(contour)], contour)
-        if len(contour) >= 2:
-            np.testing.assert_array_equal(stroke[-1], contour[0])  # ...closed, as a polygon outline is
+    # One line per boundary, not one outline per region, so the lines run along
+    # pixel cracks: every coordinate is a half-integer, inside the page or on its edge.
+    assert len(analysis.strokes) > len(analysis.regions)
+    for stroke in analysis.strokes:
+        assert stroke.shape[1:] == (2,) and len(stroke) >= 2
+        np.testing.assert_array_equal(stroke % 1, 0.5)
+        assert stroke.min() >= -0.5 and stroke.max() <= 199.5
 
     labeled = {r.region_id: r for r in analysis.regions if r.interior_radius >= render.MIN_LABEL_RADIUS_PX}
     assert labeled
