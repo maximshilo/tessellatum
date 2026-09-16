@@ -1,8 +1,9 @@
 """Numba-compiled inner loops for the pipeline's hot spots.
 
 Pixel-level work NumPy can't vectorize -- union-find labeling, the sequential
-small-region merge, the same-color union that follows it, and the bilateral
-filter's per-pixel weighting -- runs here as compiled code. Arrays are passed
+small-region merge, the same-color union that follows it, the greedy coloring
+that groups regions for the width measurement, and the bilateral filter's
+per-pixel weighting -- runs here as compiled code. Arrays are passed
 flattened (row-major) with explicit ``height``/``width``.
 
 Kernels compile on first call and are cached on disk (``cache=True``), so only
@@ -316,6 +317,99 @@ def merge_same_color_neighbors(ids, height, width, region_color, areas):
 
 
 @njit(cache=True, nogil=True)
+def edge_adjacency_classes(ids, height, width, num_regions, out_classes):
+    """Split the regions into classes in which no two share a pixel edge, in place.
+
+    Writes each pixel's class to ``out_classes`` (-1 where it is in no
+    region) and returns the number of classes used. A greedy coloring of the
+    region adjacency graph, most-connected region first, which takes 5-6
+    classes on real pages.
+
+    The region stage measures how wide a region is by how far its pixels lie
+    from the nearest pixel of another region. One distance transform per
+    class answers that for every region in the class at once: the nearest
+    pixel of another region always shares an edge with this one (a step from
+    it towards the region's inside lands there), so it is never in the same
+    class.
+    """
+    n = height * width
+    degree = np.zeros(num_regions, np.int64)
+    for y in range(height):
+        row = y * width
+        for x in range(width):
+            p = row + x
+            r = ids[p]
+            if r < 0:
+                continue
+            if x + 1 < width:
+                s = ids[p + 1]
+                if s >= 0 and s != r:
+                    degree[r] += 1
+                    degree[s] += 1
+            if y + 1 < height:
+                s = ids[p + width]
+                if s >= 0 and s != r:
+                    degree[r] += 1
+                    degree[s] += 1
+
+    # Adjacency as one flat array, a region's neighbors at
+    # start[r]:start[r + 1]. A pair is stored once per shared pixel edge;
+    # repeats only make the scan below a little longer.
+    start = np.empty(num_regions + 1, np.int64)
+    total = 0
+    for r in range(num_regions):
+        start[r] = total
+        total += degree[r]
+    start[num_regions] = total
+    fill = start[:num_regions].copy()
+    neighbors = np.empty(total, np.int32)
+    for y in range(height):
+        row = y * width
+        for x in range(width):
+            p = row + x
+            r = ids[p]
+            if r < 0:
+                continue
+            if x + 1 < width:
+                s = ids[p + 1]
+                if s >= 0 and s != r:
+                    neighbors[fill[r]] = s
+                    fill[r] += 1
+                    neighbors[fill[s]] = r
+                    fill[s] += 1
+            if y + 1 < height:
+                s = ids[p + width]
+                if s >= 0 and s != r:
+                    neighbors[fill[r]] = s
+                    fill[r] += 1
+                    neighbors[fill[s]] = r
+                    fill[s] += 1
+
+    order = np.argsort(-degree)  # most neighbors first: the usual greedy coloring order
+    region_class = np.full(num_regions, -1, np.int32)
+    seen = np.zeros(num_regions + 1, np.int64)  # seen[c] == stamp: class c is taken by a neighbor
+    num_classes = 0
+    for k in range(num_regions):
+        r = order[k]
+        stamp = k + 1
+        for i in range(start[r], start[r + 1]):
+            c = region_class[neighbors[i]]
+            if c >= 0:
+                seen[c] = stamp
+        c = 0
+        while seen[c] == stamp:
+            c += 1
+        region_class[r] = c
+        if c >= num_classes:
+            num_classes = c + 1
+
+    for p in range(n):
+        r = ids[p]
+        out_classes[p] = region_class[r] if r >= 0 else -1
+    return num_classes
+
+
+@njit(cache=True, nogil=True)
 def region_bounds(ids, height, width, num_regions):
     """Per region id: inclusive bounding box ``(x0, y0, x1, y1)`` and pixel count."""
     bounds = np.empty((num_regions, 4), np.int32)
@@ -392,6 +486,7 @@ def warm_up() -> None:
     region_color, areas = label_components(labels, 3, 3, 3, ids)
     merge_small_regions(ids, 3, 3, areas, 3)
     merge_same_color_neighbors(ids, 3, 3, region_color, areas)
+    edge_adjacency_classes(ids, 3, 3, int(ids.max()) + 1, np.empty(9, dtype=np.int8))
     region_bounds(ids, 3, 3, int(ids.max()) + 1)
 
     padded = np.zeros(5 * 5 * 3, dtype=np.uint8)

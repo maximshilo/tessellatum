@@ -8,7 +8,8 @@ before the performance rewrite. The optimized versions in
 
 A change meant to alter that output updates this file deliberately, so it
 keeps saying what the stages should do rather than what they used to. Since
-the rewrite: ``_merge_same_color_neighbors`` (T2.1).
+the rewrite: ``_merge_same_color_neighbors``, then ``_absorb_thin_parts``
+with the rebuild that follows it.
 """
 
 from __future__ import annotations
@@ -23,7 +24,18 @@ from tessellatum.core.render import FONT_SIZE_RADIUS_RATIO, MAX_FONT_SIZE, MIN_F
 _NEIGHBOR_KERNEL = np.ones((3, 3), np.uint8)
 
 
-def build_regions(labels: np.ndarray, num_colors: int, min_area_px: int) -> tuple[np.ndarray, np.ndarray]:
+def build_regions(
+    labels: np.ndarray, num_colors: int, min_area_px: int, min_width_px: float = 0.0
+) -> tuple[np.ndarray, np.ndarray]:
+    region_id_map, region_color = _regions_from_labels(labels, num_colors, min_area_px)
+    if min_width_px > 0 and region_color.size:
+        widened = _absorb_thin_parts(region_id_map, region_color, labels, min_width_px)
+        if widened is not None:
+            region_id_map, region_color = _regions_from_labels(widened, num_colors, min_area_px)
+    return region_id_map, region_color
+
+
+def _regions_from_labels(labels: np.ndarray, num_colors: int, min_area_px: int) -> tuple[np.ndarray, np.ndarray]:
     h, w = labels.shape
     region_id_map = np.full((h, w), -1, dtype=np.int32)
     region_color: list[int] = []
@@ -94,6 +106,34 @@ def _merge_same_color_neighbors(region_id_map: np.ndarray, region_color: np.ndar
         for comp_id in range(1, num_components):
             comp_mask = components == comp_id
             region_id_map[comp_mask] = region_id_map[comp_mask].min()
+
+
+def _absorb_thin_parts(
+    region_id_map: np.ndarray, region_color: np.ndarray, labels: np.ndarray, min_width_px: float
+) -> np.ndarray | None:
+    """Every pixel takes the color of the nearest region a brush ``min_width_px`` wide fits in (see ``regions``)."""
+    radius = min_width_px / 2
+    fits = np.zeros(region_id_map.shape, dtype=bool)
+    for rid in np.unique(region_id_map):
+        if rid < 0:
+            continue
+        mask = (region_id_map == rid).astype(np.uint8)
+        padded = cv2.copyMakeBorder(mask, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
+        # How far each of the region's pixels is from the nearest pixel of
+        # another region, or from off the page.
+        distance = cv2.distanceTransform(padded, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)[1:-1, 1:-1]
+        fits |= mask.astype(bool) & (distance > radius)
+    if not fits.any():
+        return None
+
+    _distance, nearest = cv2.distanceTransformWithLabels(
+        (~fits).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE, labelType=cv2.DIST_LABEL_PIXEL
+    )
+    widened = np.array(labels, dtype=np.int32, copy=True)
+    color_of_label = {int(nearest[y, x]): int(region_color[region_id_map[y, x]]) for y, x in zip(*np.nonzero(fits))}
+    for y, x in zip(*np.nonzero(region_id_map >= 0)):
+        widened[y, x] = color_of_label[int(nearest[y, x])]
+    return widened
 
 
 def extract_regions(region_id_map: np.ndarray, region_color: np.ndarray, min_contour_area: float = 1.0) -> list[Region]:

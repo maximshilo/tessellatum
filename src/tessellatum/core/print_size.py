@@ -17,6 +17,7 @@ without importing the package (see ``bench_metrics``).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 MM_PER_INCH = 25.4
@@ -53,6 +54,13 @@ PRINT_DPI = 300
 MIN_PAINTABLE_WIDTH_MM = 3.0  # narrowest a region, or any part of one, can be and still take a brush
 MIN_LABEL_SIZE_PT = 6.0  # smallest region number, as the font's em size
 OUTLINE_WIDTH_MM = 0.3
+
+# The smallest region worth keeping: the brush's own footprint, a disk as wide
+# as MIN_PAINTABLE_WIDTH_MM. Anything smaller cannot hold the brush whatever
+# its shape, so it merges into a neighbor however fine the difficulty setting
+# is. Every difficulty preset asks for larger regions than this, so today it
+# only bounds what the Custom setting can do.
+MIN_REGION_AREA_MM2 = math.pi * (MIN_PAINTABLE_WIDTH_MM / 2) ** 2
 
 
 @dataclass(frozen=True)

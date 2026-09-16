@@ -1,5 +1,6 @@
 """The print-size model: placing a page on A4, unit conversions, and how the benchmark harness loads it."""
 
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -103,3 +104,14 @@ def test_harness_loads_the_model_without_importing_the_package():
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
 
     assert float(result.stdout) == pytest.approx(10.0)
+
+
+def test_the_smallest_region_is_the_brushs_own_footprint():
+    # A disk as wide as the narrowest paintable width.
+    assert ps.MIN_REGION_AREA_MM2 == pytest.approx(math.pi * (ps.MIN_PAINTABLE_WIDTH_MM / 2) ** 2)
+
+    scale = ps.print_scale((1100, 825))
+    disk_px = scale.mm2_to_px(ps.MIN_REGION_AREA_MM2)
+
+    # In pixels, it is the area of a disk as wide as the brush.
+    assert disk_px == pytest.approx(math.pi * (scale.mm_to_px(ps.MIN_PAINTABLE_WIDTH_MM) / 2) ** 2)
