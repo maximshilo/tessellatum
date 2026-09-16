@@ -2,8 +2,8 @@
 
 Pixel-level work NumPy can't vectorize -- union-find labeling, the sequential
 small-region merge, the same-color union that follows it, and the bilateral
-filter's per-pixel weighting -- runs here as compiled code. Arrays are passed flattened (row-major) with explicit
-``height``/``width``.
+filter's per-pixel weighting -- runs here as compiled code. Arrays are passed
+flattened (row-major) with explicit ``height``/``width``.
 
 Kernels compile on first call and are cached on disk (``cache=True``), so only
 the first run after an install pays the compile cost; ``warm_up`` pays it
