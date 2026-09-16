@@ -1,8 +1,8 @@
 """Numba-compiled inner loops for the pipeline's hot spots.
 
 Pixel-level work NumPy can't vectorize -- union-find labeling, the sequential
-small-region merge, and the bilateral filter's per-pixel weighting -- runs
-here as compiled code. Arrays are passed flattened (row-major) with explicit
+small-region merge, the same-color union that follows it, and the bilateral
+filter's per-pixel weighting -- runs here as compiled code. Arrays are passed flattened (row-major) with explicit
 ``height``/``width``.
 
 Kernels compile on first call and are cached on disk (``cache=True``), so only
@@ -30,8 +30,9 @@ def _find(parent, i):
 
 @njit(cache=True, nogil=True)
 def _union(parent, a, b):
-    # Always keep the smaller pixel index as root, so a component's root is
-    # its first pixel in raster order.
+    # Always keep the smaller index as root: a pixel component's root is then
+    # its first pixel in raster order, and a group of regions keeps its
+    # lowest id.
     ra = _find(parent, a)
     rb = _find(parent, b)
     if ra < rb:
