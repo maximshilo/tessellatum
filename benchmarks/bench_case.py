@@ -46,6 +46,8 @@ LINE_ART_KEYS = ("ink_line_precision", "ink_line_recall", "ink_line_f1", "tube_r
 FACE_KEYS = ("face_de00_mean", "face_ssim", "features_lost", "feature_edge_recall", "labels_on_features")
 # Text fields, None unless the image's manifest entry has text; the character error rates also without the OCR engine.
 TEXT_KEYS = ("text_cer_source", "text_cer_page", "text_cer_painting", "labels_on_text")
+# Enclosure fields, None for versions that report no line layer (before 0.1.10).
+ENCLOSURE_KEYS = ("unenclosed_area_fraction", "unenclosed_areas", "split_regions")
 
 # How render_page numbered regions in the versions before the analysis payload,
 # for when their render module doesn't say (see ``page_data_from_probe``).
@@ -93,6 +95,7 @@ class PageData:
     label_font_sizes_px: list[int]  # em size of every number on the page
     label_boxes: list[tuple[float, float, float, float]]  # every number's (x0, y0, x1, y1) text box on the page
     strokes: list[np.ndarray]  # every line drawn: (x, y) polylines, pixel centers at integers; a closed one returns to its start
+    outlines: np.ndarray | None  # HxW: the line layer alone, 0 where there is a line; None before 0.1.10
 
 
 def page_data_from_analysis(analysis) -> PageData:
@@ -117,6 +120,7 @@ def page_data_from_analysis(analysis) -> PageData:
             if hasattr(analysis, "strokes")
             else [outline_polyline(r.contour) for r in analysis.regions if len(r.contour)]
         ),
+        outlines=analysis.outlines,
     )
 
 
@@ -161,6 +165,7 @@ def page_data_from_probe(captured: dict, params, size: tuple[int, int], render_m
             label_box(str(r.color_index + 1), font_size, r.interior_point, (w, h)) for r, font_size in zip(labeled, font_sizes)
         ],
         strokes=[outline_polyline(r.contour) for r in regions if len(r.contour)],
+        outlines=None,  # those versions report no layers; enclosure goes unscored for them
     )
 
 
@@ -301,6 +306,11 @@ def main() -> int:
         quality.update(bm.label_sizes(page_data.label_font_sizes_px, print_scale))
         quality.update(bm.compactness_stats(page_data.region_id_map))
         quality.update(bm.boundary_lines(page_data.region_id_map, page_data.strokes))
+        quality.update(
+            bm.enclosure(page_data.region_id_map, page_data.outlines)
+            if page_data.outlines is not None
+            else dict.fromkeys(ENCLOSURE_KEYS)
+        )
         quality["same_color_boundary_fraction"] = bm.same_color_boundary_share(
             page_data.region_id_map, page_data.region_color
         )
