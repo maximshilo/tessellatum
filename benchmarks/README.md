@@ -522,7 +522,7 @@ Three of the targets need explaining:
   may be 1 ± 0.05 there, not exactly 1. Near a point where three regions meet, a
   line lies within reach of its neighbors' boundaries too, and no renderer can
   change that: the plain count reaches 1.31 on a page of 778 regions drawn
-  strictly once each, against 1.04 on a page of 7 (D-027). The clear count reads
+  strictly once each, against 1.04 on a page of 7 (D-028). The clear count reads
   1.000–1.001 on the same pages, and still reads 2 for a renderer that outlines
   every region, so the doubling it is there to catch is still caught. The plain
   count stays in the report, and both are judged for regressions. Too few lines
@@ -576,7 +576,7 @@ miss it now. Region-count changes over 15% are noted in the per-case tables, but
 aren't failures: region count is a difficulty trait, not a quality score.
 
 Lines per boundary (clear) has not been through `noise` yet: it takes the plain
-count's tolerances until the next run measures its own (D-027). Unenclosed area
+count's tolerances until the next run measures its own (D-028). Unenclosed area
 takes 0, as undersized regions do — a page whose lines close has none of it, so
 any at all is a regression.
 
