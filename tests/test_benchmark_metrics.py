@@ -290,7 +290,7 @@ def test_a_region_pinched_shut_by_its_own_lines_is_split_but_still_enclosed():
     ids[10:, 8:12] = 2
     outlines = np.asarray(render.render_page((20, 15), [], ids).outlines)
     pinched = outlines.copy()
-    pinched[6:9, 8:12] = 0  # ink the neck shut, as a wider line would
+    pinched[5:10, 8:12] = 0  # ink the whole neck shut, as a wider line would
 
     assert bm.enclosure(ids, outlines)["split_regions"] == 0
     assert bm.enclosure(ids, pinched) == {

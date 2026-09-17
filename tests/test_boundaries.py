@@ -1,10 +1,10 @@
-"""One line per boundary: what the crack graph is traced into, and what gets drawn."""
+"""One line per boundary: what the crack graph is traced into, how it is smoothed, and what gets drawn."""
 
 import cv2
 import numpy as np
 import pytest
 
-from tessellatum.core.boundaries import crack_edges, trace_boundaries
+from tessellatum.core.boundaries import MAX_SHIFT_PX, crack_edges, smooth_boundaries, trace_boundaries
 from tessellatum.core.regions import build_regions, extract_regions
 from tessellatum.core.render import OUTLINE_WIDTH, render_page
 
@@ -46,6 +46,16 @@ def _walked_cracks(lines: list[np.ndarray], width: int) -> list[tuple[int, int]]
     return walked
 
 
+def _loop_area(loop: np.ndarray) -> float:
+    """The area a closed line encloses."""
+    x, y = loop[:-1, 0], loop[:-1, 1]
+    return abs(float(np.dot(x, np.roll(y, -1)) - np.dot(np.roll(x, -1), y))) / 2
+
+
+def _length(line: np.ndarray) -> float:
+    return float(np.hypot(*np.diff(line, axis=0).T).sum())
+
+
 def _blobby_labels(seed: int, shape: tuple[int, int], num_colors: int, blur_sigma: float) -> np.ndarray:
     rng = np.random.default_rng(seed)
     field = rng.random(shape).astype(np.float32)
@@ -62,10 +72,13 @@ def test_a_boundary_between_two_regions_becomes_one_line_the_two_share():
     lines = trace_boundaries(ids)
 
     # The shared boundary, and the page edge round each region: three lines, not
-    # two closed outlines that run down the middle twice.
+    # two closed outlines that run down the middle twice. The shared one runs
+    # straight down the crack between the two, from page edge to page edge, and
+    # smoothing leaves a straight line alone.
     shared = [line for line in lines if line.min(axis=0)[0] == line.max(axis=0)[0] == 4.5]
-    assert len(lines) == 3
-    np.testing.assert_array_equal(shared, [[[4.5, -0.5], [4.5, 5.5]]])
+    assert len(lines) == 3 and len(shared) == 1
+    np.testing.assert_array_equal(shared[0][[0, -1]], [[4.5, -0.5], [4.5, 5.5]])
+    np.testing.assert_array_equal(np.unique(shared[0][:, 1]), np.arange(-0.5, 6.0))
 
 
 def test_lines_end_where_three_regions_meet():
@@ -88,12 +101,20 @@ def test_a_region_lying_inside_another_gets_one_closed_line():
     ids[3:6, 3:6] = 1
 
     lines = trace_boundaries(ids)
+    unsmoothed = trace_boundaries(ids, smoothing_px=0)
 
     assert len(lines) == 2  # the page edge and the island, each a loop
     for line in lines:
         np.testing.assert_array_equal(line[0], line[-1])
-    inner = min(lines, key=lambda line: line.max())
-    assert sorted(map(tuple, inner[:-1])) == [(2.5, 2.5), (2.5, 5.5), (5.5, 2.5), (5.5, 5.5)]
+    inner = min(unsmoothed, key=lambda line: line.max())
+    assert inner.min() == 2.5 and inner.max() == 5.5 and _loop_area(inner) == 9
+    # Smoothing rounds the island's corners off but leaves it a shape to paint,
+    # centered where it was, and no corner moves further than the corridor.
+    island = min(lines, key=lambda line: line.max())
+    assert len(island) == len(inner)
+    assert np.abs(island[:-1].mean(axis=0) - 4.0).max() < 1e-9  # still centered on the same pixel
+    assert np.hypot(*(island - inner).T).max() <= MAX_SHIFT_PX + 1e-9
+    assert _loop_area(island) >= 1.0  # a shape to paint, not a stroke
 
 
 def test_the_page_edge_is_a_boundary_so_a_page_of_one_region_still_has_a_frame():
@@ -102,7 +123,12 @@ def test_the_page_edge_is_a_boundary_so_a_page_of_one_region_still_has_a_frame()
     (frame,) = trace_boundaries(ids)
 
     np.testing.assert_array_equal(frame[0], frame[-1])
-    assert sorted(map(tuple, frame[:-1])) == [(-0.5, -0.5), (-0.5, 4.5), (6.5, -0.5), (6.5, 4.5)]
+    # Smoothing leaves the paper's own edge alone: the frame is the rectangle
+    # round the page, corners and all, not a rounded-off version of it.
+    assert set(map(tuple, frame)) == {
+        (x, y) for x in np.arange(-0.5, 7.0) for y in (-0.5, 4.5)
+    } | {(x, y) for x in (-0.5, 6.5) for y in np.arange(-0.5, 5.0)}
+    assert _loop_area(frame) == 7 * 5
     # It is drawn on the page, not half a pixel off it.
     assert _line_layer(ids)[0].all() and _line_layer(ids)[:, 0].all()
 
@@ -125,7 +151,7 @@ def test_every_crack_is_walked_exactly_once(seed, shape, num_colors, blur_sigma)
     region_id_map, _colors = build_regions(_blobby_labels(seed, shape, num_colors, blur_sigma), num_colors, 0)
     right, down, _degree, num_edges = crack_edges(region_id_map)
 
-    walked = _walked_cracks(trace_boundaries(region_id_map, simplify_px=0), shape[1])
+    walked = _walked_cracks(trace_boundaries(region_id_map, smoothing_px=0), shape[1])
 
     stride = shape[1] + 1
     expected = {(c, c + 1) for c in np.flatnonzero(right)} | {(c, c + stride) for c in np.flatnonzero(down)}
@@ -143,6 +169,44 @@ def test_no_white_area_of_the_page_belongs_to_two_regions(seed, shape, num_color
 
     assert pieces >= len(np.unique(region_id_map))
     assert [len(ids) for ids in ids_per_piece] == [1] * pieces
+
+
+def _thin_page(name: str) -> np.ndarray:
+    """A region map full of parts a pixel or two across, which smoothing must not cross."""
+    ids = np.zeros((20, 30), dtype=np.int32)
+    if name == "spur":
+        ids[:, 15:] = 1
+        ids[5:9, 14] = 1  # 1 px wide and 4 px deep: the shape that leaked at eps 1.2
+    elif name == "bar":
+        ids[:, 15:] = 1
+        ids[9:11, 10:20] = 2  # 2 px tall, lying across the boundary
+    elif name == "comb":
+        ids[:, 15:] = 1
+        ids[:10, ::2] = 1  # teeth 1 px wide
+    elif name == "one pixel wide":
+        ids[:, 15] = 1  # a region one pixel wide, from edge to edge
+    elif name == "diagonal":
+        rows, columns = np.indices((20, 30))
+        ids = (columns > 1.5 * rows).astype(np.int32)
+    else:
+        # Nothing merged and no brush pass: hundreds of regions, most of them thin.
+        seed, colors, blur = {"blobs": (5, 5, 2.0), "noise": (6, 3, 0.0), "specks": (7, 8, 1.0)}[name]
+        ids, _colors = build_regions(_blobby_labels(seed, (20, 30), colors, blur), colors, 0, 0.0)
+    return ids.astype(np.int32)
+
+
+@pytest.mark.parametrize(
+    "name", ["spur", "bar", "comb", "one pixel wide", "diagonal", "blobs", "noise", "specks"]
+)
+def test_smoothing_leaves_no_gap_even_where_a_region_is_a_pixel_across(name):
+    # A smoothed line stays inside the two pixels whose boundary it draws, so
+    # however thin the regions are, no two of them share a white area to paint.
+    ids = _thin_page(name)
+
+    pieces, ids_per_piece = _white_pieces(ids)
+
+    assert pieces > 0
+    assert [len(region_ids) for region_ids in ids_per_piece] == [1] * pieces
 
 
 def test_a_line_covers_the_pixels_on_both_sides_of_its_crack():
@@ -190,15 +254,81 @@ def _distance_to_line(point: np.ndarray, line: np.ndarray) -> float:
     return float(np.hypot(*(point - (starts + t[:, None] * along)).T).min())
 
 
-def test_simplifying_keeps_the_junctions_and_never_moves_a_line_further_than_its_epsilon():
+def test_smoothing_keeps_the_junctions_and_never_moves_a_point_off_its_crack_by_more_than_the_corridor():
     region_id_map, _colors = build_regions(_blobby_labels(6, (40, 50), 5, 1.0), 5, 10)
-    exact = trace_boundaries(region_id_map, simplify_px=0)
+    cracks = trace_boundaries(region_id_map, smoothing_px=0)
 
-    simplified = trace_boundaries(region_id_map, simplify_px=1.2)
+    smoothed = trace_boundaries(region_id_map)
 
-    assert len(simplified) == len(exact) > 0
-    assert sum(len(line) for line in simplified) < sum(len(line) for line in exact)
-    for rough, smooth in zip(exact, simplified):
-        np.testing.assert_array_equal(smooth[[0, -1]], rough[[0, -1]])  # junctions stay put
-        assert np.array_equal(smooth[0], smooth[-1]) == np.array_equal(rough[0], rough[-1])  # closed stays closed
-        assert max(_distance_to_line(point, smooth) for point in rough) <= 1.2 + 1e-9
+    assert len(smoothed) == len(cracks) > 0
+    moved = 0
+    for crack, smooth in zip(cracks, smoothed):
+        closed = np.array_equal(crack[0], crack[-1])
+        assert len(smooth) == len(crack)  # no point is ever dropped
+        assert np.array_equal(smooth[0], smooth[-1]) == closed  # closed stays closed
+        if not closed:
+            np.testing.assert_array_equal(smooth[[0, -1]], crack[[0, -1]])  # junctions stay put
+        assert np.hypot(*(smooth - crack).T).max() <= MAX_SHIFT_PX + 1e-9
+        assert _length(smooth) <= _length(crack) + 1e-9  # a staircase is the long way round
+        moved += int((smooth != crack).any())
+    assert moved > len(cracks) // 2  # the smoothing really does something to most lines
+
+
+def test_smoothing_blurs_a_line_along_its_length_until_the_corridor_stops_it():
+    path = np.array([[float(x), 0.0] for x in range(31)])
+    path[5, 1] = 1.0  # one pixel out of line: a step the grid could have made
+    path[20, 1] = 5.0  # five pixels out: a shape the region map really has
+
+    (smoothed,) = smooth_boundaries([path])
+
+    np.testing.assert_array_equal(smoothed[[0, -1]], path[[0, -1]])  # the junctions
+    assert smoothed[5, 1] < 0.2  # the step is blurred away into its neighbors
+    assert smoothed[20, 1] == pytest.approx(5.0 - MAX_SHIFT_PX)  # the shape stays, the corridor's worth shorter
+    assert np.abs(smoothed - path).max() <= MAX_SHIFT_PX + 1e-9
+
+
+def test_smoothing_takes_the_staircase_off_a_diagonal_boundary():
+    # A diamond: every one of its four sides is a 45 degree staircase, which is
+    # sqrt(2) times longer than the line it is drawing.
+    rows, columns = np.indices((31, 31))
+    ids = (np.abs(rows - 15) + np.abs(columns - 15) <= 10).astype(np.int32)
+
+    staircase = _island(trace_boundaries(ids, smoothing_px=0), 31, 31)
+    smoothed = _island(trace_boundaries(ids), 31, 31)
+
+    # The staircase is 84 px long: 4 sides of 21 steps, each a pixel across and a
+    # pixel down. Smoothed it is the diamond itself, 59.4 px round, less the four
+    # corners the corridor lets it round off -- and it holds the region's area.
+    assert _length(staircase) == pytest.approx(84.0)
+    assert 0.9 * 4 * np.hypot(10.5, 10.5) < _length(smoothed) < 4 * np.hypot(10.5, 10.5)
+    assert _loop_area(staircase) == 221 == int((ids == 1).sum())
+    assert _loop_area(smoothed) == pytest.approx(221, rel=0.02)
+
+
+def test_a_notch_deeper_than_the_corridor_is_not_smoothed_away():
+    ids = np.zeros((20, 20), dtype=np.int32)
+    ids[:, 10:] = 1
+    ids[8:12, 6:10] = 1  # a notch 4 px deep cut into region 0, twice the corridor
+
+    # The boundary between the two regions, rather than either region's frame:
+    # its ends are on the page edge and everything between them is inside.
+    (into_the_notch,) = [
+        line for line in trace_boundaries(ids) if line[1:-1].min() > -0.5 and line[1:-1].max() < 19.5
+    ]
+
+    # The line still turns into the notch, to within a fraction of a pixel of
+    # its far side: 4 px of the region map is the region map's, not the grid's.
+    assert 5.5 <= into_the_notch[:, 0].min() < 6.0
+
+
+def _island(lines: list[np.ndarray], width: int, height: int) -> np.ndarray:
+    """The one closed line that doesn't run along the page edge."""
+    (island,) = [
+        line
+        for line in lines
+        if np.array_equal(line[0], line[-1])
+        and line.min() > -0.5
+        and line[:, 0].max() < width - 0.5
+        and line[:, 1].max() < height - 0.5
+    ]
+    return island

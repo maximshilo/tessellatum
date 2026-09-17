@@ -18,9 +18,11 @@ MAX_FONT_SIZE = 40
 FONT_SIZE_RADIUS_RATIO = 0.85
 OUTLINE_WIDTH = 2  # px across the whole line, which straddles the crack it is drawn on
 
-# Lines run along pixel cracks, so their coordinates are half-integers; a shift
-# of one bit carries them exactly.
-_SUBPIXEL_BITS = 1
+# Lines are smoothed off the pixel cracks they are traced from (see
+# ``boundaries.smooth_boundaries``), by as little as a fraction of a pixel, so they
+# are rasterized at 1/16 px: rounding them onto a coarser grid would put the
+# staircase back. It is the precision the benchmark harness rasterizes with too.
+_SUBPIXEL_BITS = 4
 # Room for a line on the page edge, and for the widening below, before cropping.
 _CANVAS_MARGIN_PX = OUTLINE_WIDTH
 

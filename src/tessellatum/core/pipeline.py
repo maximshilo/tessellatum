@@ -65,7 +65,8 @@ class PageAnalysis:
     labels: list[Label]  # numbers drawn on the page
     outlines: np.ndarray  # HxW uint8: the line layer alone, 0 = black line, 255 = paper
     # Every line drawn, in drawing order: Nx2 float64 (x, y) points with pixel centers at integer coordinates.
-    # One line per boundary between two regions, so its points lie on pixel cracks, at half-integers.
+    # One line per boundary between two regions, traced along the pixel cracks and smoothed off them
+    # by at most boundaries.MAX_SHIFT_PX.
     # A closed line repeats its first point at the end.
     strokes: list[np.ndarray]
 
