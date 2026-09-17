@@ -16,31 +16,38 @@ from __future__ import annotations
 import numpy as np
 
 from tessellatum.core import kernels
+from tessellatum.core.print_size import print_scale
 
 # How far the smoothing may move a line from the crack it is drawn on, in pixels.
 # One pixel is the finest step the region map can take, so a wiggle that moving a
 # line this far can straighten is the grid's own staircase rather than a shape the
-# image asked for. It is also what keeps the page closed: the line stays inside the
-# two pixels whose boundary it is, so neither region's paint can run into the other.
+# image asked for. It is also what keeps the page closed: the two pixels a crack
+# separates are one pixel deep each, so a line held this close still runs inside
+# them, and neither region's paint can run into the other.
 MAX_SHIFT_PX = 1.0
 
 # How much the smoothing blurs a line along its length, as the standard deviation of
-# the Gaussian it amounts to. The staircase of a pixel crack is not a line anyone
-# drew -- a step of one pixel is smaller than the brush, the paper's grain and the
-# printer's dot, and keeping it only makes the page look ragged. Its wiggles are 2 to
-# 3 px long, which 2 px of smoothing flattens; more changes nothing, because the
-# corridor above binds first.
-SMOOTHING_PX = 2.0
+# the Gaussian it amounts to. The staircase of a pixel crack is not a line anyone drew,
+# and keeping it only makes the page look ragged. A wiggle is the grid's own, rather
+# than a shape the image asked for, when it is either a single pixel step -- those run
+# 2 to 3 px along the line -- or too small for the printed page to show, which is half
+# a millimeter: the brush, the paper's grain and the printer's dot are all coarser than
+# that. So a line is blurred by whichever of the two is longer (``smoothing_length_px``):
+# 2 px at preview size, where half a millimeter is about that anyway, and 4 to 5 px on an
+# export, whose finer grid can hold a wiggle the paper still cannot show.
+SMOOTHING_MIN_PX = 2.0
+SMOOTHING_MM = 0.5
 
 # The smallest area a closed line may be left enclosing. A region a pixel or two
 # across is smaller than the corridor, so smoothing its outline would pull it shut
 # into a stroke with nothing inside to paint; such a line is kept as it was traced.
 _MIN_LOOP_AREA_PX = 1.0
 
-# One pass of the smoothing is the kernel [step / 2, 1 - step, step / 2], whose
-# variance is `step` in units of the point spacing, which is 1 px along a crack path.
-# So n passes blur by sqrt(n * step), and half a pixel per pass -- the most a pass can
-# take without amplifying the finest wiggle of all -- makes that 2 * SMOOTHING_PX**2.
+# One pass of the smoothing is the kernel [step / 2, 1 - step, step / 2], which leaves
+# a wiggle alternating from point to point multiplied by 1 - 2 * step: half a step is
+# as far as a pass can go, and it wipes that wiggle out rather than turning it back on
+# itself. A pass adds `step` to the variance, in units of the point spacing, which is
+# 1 px along a crack path, so blurring by SMOOTHING_PX takes 2 * SMOOTHING_PX**2 of them.
 _SMOOTHING_STEP = 0.5
 
 
@@ -82,8 +89,19 @@ def crack_edges(region_id_map: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.n
     return right.reshape(-1), down.reshape(-1), degree.reshape(-1), int(right.sum() + down.sum())
 
 
+def smoothing_length_px(size: tuple[int, int]) -> float:
+    """How far to blur a line along its length, on a page of ``size`` (width, height) pixels.
+
+    The longer of a pixel step and what the printed page can show (see
+    ``SMOOTHING_MIN_PX`` and ``SMOOTHING_MM``); the printed size of a page
+    depends only on its shape, so both previews and exports of one image are
+    smoothed to the same thing on paper.
+    """
+    return max(SMOOTHING_MIN_PX, print_scale(size).mm_to_px(SMOOTHING_MM))
+
+
 def trace_boundaries(
-    region_id_map: np.ndarray, smoothing_px: float = SMOOTHING_PX, max_shift_px: float = MAX_SHIFT_PX
+    region_id_map: np.ndarray, smoothing_px: float | None = None, max_shift_px: float = MAX_SHIFT_PX
 ) -> list[np.ndarray]:
     """The page's lines: one smooth polyline per boundary between two regions.
 
@@ -95,7 +113,8 @@ def trace_boundaries(
 
     The crack itself is a staircase of single pixel steps, which
     ``smooth_boundaries`` takes out without letting a line move further than
-    ``max_shift_px`` from it. ``smoothing_px=0`` gives the staircase as traced.
+    ``max_shift_px`` from it. ``smoothing_px`` defaults to what the page's
+    size asks for (``smoothing_length_px``); 0 gives the staircase as traced.
 
     Returns Nx2 float64 ``(x, y)`` arrays in page coordinates.
     """
@@ -116,12 +135,14 @@ def trace_boundaries(
     points[:, 1] = rows - 0.5
 
     paths = [points[begin:end] for begin, end in zip(starts[:-1], starts[1:])]
+    if smoothing_px is None:
+        smoothing_px = smoothing_length_px((width, height))
     return smooth_boundaries(paths, smoothing_px, max_shift_px, size=(width, height))
 
 
 def smooth_boundaries(
     paths: list[np.ndarray],
-    smoothing_px: float = SMOOTHING_PX,
+    smoothing_px: float,
     max_shift_px: float = MAX_SHIFT_PX,
     size: tuple[int, int] | None = None,
 ) -> list[np.ndarray]:

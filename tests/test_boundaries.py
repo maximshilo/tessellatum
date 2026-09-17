@@ -4,7 +4,16 @@ import cv2
 import numpy as np
 import pytest
 
-from tessellatum.core.boundaries import MAX_SHIFT_PX, crack_edges, smooth_boundaries, trace_boundaries
+from tessellatum.core.boundaries import (
+    MAX_SHIFT_PX,
+    SMOOTHING_MIN_PX,
+    SMOOTHING_MM,
+    crack_edges,
+    smooth_boundaries,
+    smoothing_length_px,
+    trace_boundaries,
+)
+from tessellatum.core.print_size import print_scale
 from tessellatum.core.regions import build_regions, extract_regions
 from tessellatum.core.render import OUTLINE_WIDTH, render_page
 
@@ -26,7 +35,7 @@ def _white_pieces(region_id_map: np.ndarray) -> tuple[int, list[np.ndarray]]:
 def _walked_cracks(lines: list[np.ndarray], width: int) -> list[tuple[int, int]]:
     """Every crack edge the lines run along, as a pair of corner numbers, once per pass.
 
-    The lines must be unsimplified, so that each of their segments is a run of
+    The lines must be unsmoothed, so that each of their segments is a run of
     whole crack edges along one row or column of the corner grid.
     """
     walked = []
@@ -274,12 +283,26 @@ def test_smoothing_keeps_the_junctions_and_never_moves_a_point_off_its_crack_by_
     assert moved > len(cracks) // 2  # the smoothing really does something to most lines
 
 
+def test_the_smoothing_length_is_half_a_millimeter_of_paper_or_a_pixel_step_whichever_is_longer():
+    preview, export = (1100, 730), (2400, 1593)  # one page, previewed and exported
+
+    lengths = [smoothing_length_px(size) for size in (preview, export)]
+
+    # At preview size half a millimeter is 1.99 px, so the pixel step is the longer
+    # of the two; the export's grid is finer, and there the paper sets the length.
+    assert lengths[0] == SMOOTHING_MIN_PX
+    assert print_scale(preview).px_to_mm(lengths[0]) > SMOOTHING_MM
+    assert print_scale(export).px_to_mm(lengths[1]) == pytest.approx(SMOOTHING_MM)
+    # scene.png prints at 60 dpi, where a pixel is nearly half a millimeter itself.
+    assert smoothing_length_px((600, 450)) == SMOOTHING_MIN_PX
+
+
 def test_smoothing_blurs_a_line_along_its_length_until_the_corridor_stops_it():
     path = np.array([[float(x), 0.0] for x in range(31)])
     path[5, 1] = 1.0  # one pixel out of line: a step the grid could have made
     path[20, 1] = 5.0  # five pixels out: a shape the region map really has
 
-    (smoothed,) = smooth_boundaries([path])
+    (smoothed,) = smooth_boundaries([path], SMOOTHING_MIN_PX)
 
     np.testing.assert_array_equal(smoothed[[0, -1]], path[[0, -1]])  # the junctions
     assert smoothed[5, 1] < 0.2  # the step is blurred away into its neighbors

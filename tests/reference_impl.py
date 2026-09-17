@@ -22,7 +22,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from tessellatum.core.boundaries import MAX_SHIFT_PX, SMOOTHING_PX, _MIN_LOOP_AREA_PX, _SMOOTHING_STEP
+from tessellatum.core.boundaries import MAX_SHIFT_PX, SMOOTHING_MIN_PX, SMOOTHING_MM, _MIN_LOOP_AREA_PX, _SMOOTHING_STEP
+from tessellatum.core.print_size import print_scale
 from tessellatum.core.regions import Region
 from tessellatum.core.render import FONT_SIZE_RADIUS_RATIO, MAX_FONT_SIZE, MIN_FONT_SIZE, MIN_LABEL_RADIUS_PX, OUTLINE_WIDTH
 
@@ -179,7 +180,7 @@ def extract_regions(region_id_map: np.ndarray, region_color: np.ndarray, min_con
 
 
 def trace_boundaries(
-    region_id_map: np.ndarray, smoothing_px: float = SMOOTHING_PX, max_shift_px: float = MAX_SHIFT_PX
+    region_id_map: np.ndarray, smoothing_px: float | None = None, max_shift_px: float = MAX_SHIFT_PX
 ) -> list[np.ndarray]:
     """One line per boundary between two regions, as ``boundaries.py`` describes it.
 
@@ -192,6 +193,9 @@ def trace_boundaries(
     round.
     """
     h, w = region_id_map.shape
+    if smoothing_px is None:
+        # The longer of a pixel step and what the printed page can show.
+        smoothing_px = max(SMOOTHING_MIN_PX, print_scale((w, h)).mm_to_px(SMOOTHING_MM))
 
     def pixel(y: int, x: int) -> int:
         return int(region_id_map[y, x]) if 0 <= y < h and 0 <= x < w else _OUTSIDE
