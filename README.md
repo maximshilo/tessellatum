@@ -36,7 +36,12 @@ run the binary from a terminal to see the error.
 ## How it works
 
 1. **Quantize**: the image is smoothed and reduced to a small palette of
-   flat colors via k-means clustering in Lab color space.
+   flat colors via k-means clustering in Lab color space. Colors the painter
+   could not tell apart or mix — closer than 10 CIEDE2000 — are then merged
+   into the color their pixels average to, so a photograph of fur or stone
+   comes back with a handful of clearly different browns instead of twenty
+   near-identical ones. That is why the legend can be shorter than the
+   difficulty asked for.
 2. **Regionize**: same-color pixels are grouped into connected regions;
    regions smaller than the difficulty's threshold are merged into their
    largest neighbor, and neighbors left sharing a color by that merge become
@@ -62,9 +67,10 @@ run the binary from a terminal to see the error.
    cover them and a number is not mistaken for writing in the picture. Width
    and tone are `PageStyle` in `src/tessellatum/core/render.py`.
 
-Difficulty controls three things: how many colors are used, how small a
-region is allowed to get before being merged away, and how much smoothing
-is applied before quantizing — see `src/tessellatum/core/difficulty.py`.
+Difficulty controls three things: how many colors k-means looks for, how
+small a region is allowed to get before being merged away, and how much
+smoothing is applied before quantizing — see
+`src/tessellatum/core/difficulty.py`.
 The brush width comes from the printed page instead, along with the smallest
 region any setting can keep and how wide a line prints — see
 `src/tessellatum/core/print_size.py`.

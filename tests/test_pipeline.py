@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from tessellatum.core import boundaries, difficulty, pipeline, print_size, render
+from tessellatum.core.color import MIN_PALETTE_DE00, pairwise_de00
 from tessellatum.core.pipeline import PipelineCancelled, generate
 
 
@@ -177,6 +178,21 @@ def test_analysis_arrays_are_not_the_cached_ones(sample_image_bgr):
     again = generate(sample_image_bgr, params, long_edge=200, collect_analysis=True)  # quantized colors from the cache
 
     assert again.palette_rgb == first.palette_rgb
+
+
+def test_every_two_colors_on_the_legend_stand_clearly_apart():
+    # A narrow band of browns cannot hold 20 colors a painter could tell
+    # apart, so the page comes back with fewer of them rather than with a
+    # legend of near-identical swatches.
+    ramp = np.linspace(0, 1, 200)[None, :, None]
+    gradient = (np.array([40, 60, 80]) + ramp * np.array([50, 50, 50])).repeat(200, axis=0).astype(np.uint8)
+    params = difficulty.DifficultyParams(num_colors=20, min_region_fraction=0.001, blur_sigma=1.0)
+
+    result = generate(gradient, params, long_edge=200, collect_analysis=True)
+
+    legend = result.analysis.palette_bgr[: result.analysis.legend_size]
+    assert result.num_colors_used < params.num_colors
+    assert pairwise_de00(legend).min() >= MIN_PALETTE_DE00
 
 
 def test_no_boundary_separates_two_regions_of_one_color(sample_image_bgr):

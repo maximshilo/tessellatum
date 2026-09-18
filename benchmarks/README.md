@@ -220,7 +220,7 @@ and whether their features survive, and on whether OCR still reads the text:
 | text CER source / page / painting | character error rate of OCR inside the image's text boxes, against their annotated text: on the source (how much OCR reads there at all), the page and the painting; `case.json` records the OCR engine under `ocr`, and what it read in each block under `text_blocks` | lower (0) |
 | labels on text | numbers overlapping a text box | lower (0) |
 | undersized | regions still below the difficulty's minimum size | lower (0) |
-| regions, ink | region count, and how much of the page the lines and numbers cover in ink (a pixel counts by how far it is from bare paper) | informational |
+| colors, regions, ink | how many colors the legend lists, which is fewer than the difficulty asked for wherever colors had to be merged to keep the palette apart; the region count; and how much of the page the lines and numbers cover in ink (a pixel counts by how far it is from bare paper) | informational |
 
 How the paintability metrics are defined:
 
@@ -342,6 +342,13 @@ How the palette metrics are defined:
   averages out over an image, but not over a few colors near a threshold. 10 ΔE00
   is the clear margin `QUALITY_BENCHMARKS.md` asks for.
 - Every pair counts: five near-identical browns make 10 close pairs.
+- Since 0.1.24 the pipeline keeps that margin itself, with its own copy of this
+  math (`tessellatum.core.color`): the harness has to score versions that
+  predate it, so the two cannot be one file. `tests/test_color.py` pins them to
+  the same values, because a page is judged on the margin measured here.
+- **Colors** is the legend's length, as the pipeline reports it
+  (`GeneratedPage.num_colors_used`). It can be well below the difficulty's color
+  count on an image whose colors crowd together; see D-031 in the plan.
 - Whether the colors can be printed isn't checked. They are 8-bit sRGB, so they
   always display; which of them paper and ink can reproduce depends on the
   printer, and checking that needs its color profile.
@@ -510,7 +517,7 @@ page of 1100 px, and **export**, a page at the image's own size (see
 | color pairs < 10 ΔE00 | palette | 3.2 | 3.1 | – |
 | flat colors ΔE00 | palette | 1.2 | 0.81 | – |
 
-Regions, ink and text CER source only inform. The per-case tables add the
+Colors, regions, ink and text CER source only inform. The per-case tables add the
 number of targets each case misses.
 
 ### Targets

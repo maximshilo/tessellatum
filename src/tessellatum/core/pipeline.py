@@ -233,7 +233,9 @@ def generate(
 
     check_cancelled()
     min_area_px, min_width_px = _paintable_limits(params, (w, h))
-    region_id_map, region_color = build_regions(labels, params.num_colors, min_area_px, min_width_px)
+    # The palette can be shorter than the difficulty asked for: colors too
+    # close to tell apart are merged (see ``quantize``).
+    region_id_map, region_color = build_regions(labels, len(palette_bgr), min_area_px, min_width_px)
     report("regions")
 
     check_cancelled()
