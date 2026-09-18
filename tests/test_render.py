@@ -7,7 +7,7 @@ import pytest
 
 from tessellatum.core.print_size import OUTLINE_WIDTH_MM, print_scale
 from tessellatum.core.regions import extract_regions
-from tessellatum.core.render import LINE_GRAY, PAPER, PageStyle, render_page
+from tessellatum.core.render import LINE_GRAY, PAPER, PageStyle, ink_coverage, render_page
 
 
 def _split_page(size: tuple[int, int]) -> np.ndarray:
@@ -37,6 +37,40 @@ def test_a_line_lays_down_as_much_ink_as_the_paper_asks_for(width_mm):
 
     assert ink.sum() == pytest.approx(style.line_width_px(size), abs=0.02)
     assert print_scale(size).px_to_mm(ink.sum()) == pytest.approx(width_mm, abs=0.005)
+
+
+def _ink_along(side: int, angle_deg: float, width_px: float) -> float:
+    """Ink a straight line at ``angle_deg`` lays down, per unit of its length on the page.
+
+    The line runs through the middle of a square page and far past both edges,
+    so its round ends fall outside and what is left is the band alone. A line
+    through the middle of a square of this side is this long on the page.
+    """
+    direction = np.array([np.cos(np.radians(angle_deg)), np.sin(np.radians(angle_deg))])
+    middle = np.array([side / 2 - 0.5, side / 2 - 0.5])
+    line = np.stack([middle - 2 * side * direction, middle + 2 * side * direction])
+    ink = ink_coverage((side, side), [line], width_px).sum() / PAPER
+    return ink / (side / max(abs(direction[0]), abs(direction[1])))
+
+
+@pytest.mark.parametrize("width_px", [1.0, 1.3, 2.84])
+def test_a_line_down_a_crack_lays_down_its_width_to_a_fraction_of_a_percent(width_px):
+    for angle_deg in (0, 90):
+        assert _ink_along(200, angle_deg, width_px) == pytest.approx(width_px, rel=0.01)
+
+
+@pytest.mark.parametrize("angle_deg", [10, 20, 30, 45, 60, 80])
+@pytest.mark.parametrize("width_px", [1.0, 1.3, 2.84])
+def test_a_line_running_any_other_way_lays_down_its_width_to_within_a_tenth(angle_deg, width_px):
+    # The pen is dragged along a centreline rasterized on the drawing grid, and
+    # a staircase is not the line it stands for: where a line follows neither a
+    # row nor a column, the band comes out a little wide, or a little thin at
+    # the floor. On the shipped grid that runs from 0.883 of the asked-for ink
+    # (45 degrees, 1 px) to 1.088 (near 20 degrees), against 0.999-1.004 down a
+    # crack. It is the grid's coarseness rather than the pen's shape: against
+    # the width measured exactly, a circle's band goes 1.061x at this grid to
+    # 1.035x, 1.023x and 1.014x as the grid doubles.
+    assert _ink_along(200, angle_deg, width_px) == pytest.approx(width_px, rel=0.12)
 
 
 def test_a_line_is_centred_on_the_crack_it_is_drawn_on():

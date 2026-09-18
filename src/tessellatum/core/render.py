@@ -136,9 +136,13 @@ def ink_coverage(size: tuple[int, int], strokes: list[np.ndarray], width_px: flo
     line be thinner than a pixel.
 
     The pen's diameter on that grid is a whole number of grid pixels, so a
-    width in between is drawn as a blend of the two diameters around it. That
-    puts the asked-for amount of ink on the page whatever the width, rather
-    than rounding every line to the grid.
+    width in between is drawn as a blend of the two diameters around it, rather
+    than every line being rounded to the grid's own steps. Down a crack that
+    lays down the asked-for width to a fraction of a percent. A line that
+    follows neither a row nor a column is drawn along a staircase of grid
+    pixels, which is not quite the line it stands for, so its band comes out
+    within about a tenth of the width asked for -- a difference that shrinks
+    with the grid, and that no page is drawn at a size where it can be seen.
 
     A line runs between pixels, not down the middle of them, so the pen is
     centered on the crack: an even diameter, reaching the same distance either
