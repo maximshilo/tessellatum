@@ -54,12 +54,20 @@ run the binary from a terminal to see the error.
    more than a pixel, so it stays on the boundary it draws and the page still
    closes. Every region then gets a number (matched to a legend swatch) at its
    most interior point.
+5. **Ink**: the lines go down as a round pen 0.3 mm across — a size on paper,
+   so a preview and an export of one image print the same line — laid on a
+   grid four times finer than the page and averaged back down, which
+   anti-aliases it and lets it be thinner than a pixel. Lines and numbers
+   print gray rather than black, so they vanish under the paint meant to
+   cover them and a number is not mistaken for writing in the picture. Width
+   and tone are `PageStyle` in `src/tessellatum/core/render.py`.
 
 Difficulty controls three things: how many colors are used, how small a
 region is allowed to get before being merged away, and how much smoothing
 is applied before quantizing — see `src/tessellatum/core/difficulty.py`.
 The brush width comes from the printed page instead, along with the smallest
-region any setting can keep — see `src/tessellatum/core/print_size.py`.
+region any setting can keep and how wide a line prints — see
+`src/tessellatum/core/print_size.py`.
 
 ### Performance
 

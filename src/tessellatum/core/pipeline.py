@@ -19,7 +19,7 @@ from tessellatum.core.legend import render_legend
 from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, MIN_REGION_AREA_MM2, print_scale
 from tessellatum.core.quantize import quantize
 from tessellatum.core.regions import Region, build_regions, extract_regions
-from tessellatum.core.render import Label, render_page
+from tessellatum.core.render import Label, PageStyle, render_page
 
 PREVIEW_LONG_EDGE = 1100
 EXPORT_LONG_EDGE = 2400
@@ -63,7 +63,7 @@ class PageAnalysis:
     min_paintable_width_px: float  # brush width: narrower parts of a region are given to a neighbor
     regions: list[Region]  # regions drawn on the page, in region-id order
     labels: list[Label]  # numbers drawn on the page
-    outlines: np.ndarray  # HxW uint8: the line layer alone, 0 = black line, 255 = paper
+    outlines: np.ndarray  # HxW uint8: the ink the lines alone put on the page, 0 = solid ink, 255 = bare paper
     # Every line drawn, in drawing order: Nx2 float64 (x, y) points with pixel centers at integer coordinates.
     # One line per boundary between two regions, traced along the pixel cracks and smoothed off them
     # by at most boundaries.MAX_SHIFT_PX.
@@ -189,6 +189,7 @@ def generate(
     progress_callback: Callable[[int], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
     collect_analysis: bool = False,
+    style: PageStyle = PageStyle(),
 ) -> GeneratedPage:
     """Run the full pipeline on ``image_bgr`` and produce a coloring page + legend.
 
@@ -198,7 +199,9 @@ def generate(
     True, ``PipelineCancelled`` is raised and no more work is done.
     ``collect_analysis`` also returns what the page is made of in
     ``GeneratedPage.analysis`` (see ``PageAnalysis``), for benchmarks and
-    tests. The page itself is the same either way.
+    tests. The page itself is the same either way. ``style`` says how the page
+    is drawn -- line width and the tone of the ink (see ``PageStyle``); it
+    changes nothing about which regions the page has.
 
     Resizing and quantization results are cached per image object, so
     regenerating the same image with a different minimum region size, or
@@ -248,7 +251,7 @@ def generate(
         region.color_index = remap[region.color_index]
     used_palette_bgr = palette_bgr[used_color_indices]
 
-    rendered = render_page((w, h), regions, region_id_map)
+    rendered = render_page((w, h), regions, region_id_map, style)
     legend = render_legend(used_palette_bgr, width=w)
     report("render")
 

@@ -44,7 +44,7 @@ images x presets x output sizes:
   - the region map, each region's color and the palette, legend colors first;
   - the drawn regions, with their outlines and label points;
   - every number, with its font size and bounding box;
-  - the outline layer on its own;
+  - the ink the lines alone put on the page, 0 solid and 255 bare paper;
   - every line drawn, as a polyline.
 
   The timed runs don't collect it, as in the app. One more run after them
@@ -220,7 +220,7 @@ and whether their features survive, and on whether OCR still reads the text:
 | text CER source / page / painting | character error rate of OCR inside the image's text boxes, against their annotated text: on the source (how much OCR reads there at all), the page and the painting; `case.json` records the OCR engine under `ocr`, and what it read in each block under `text_blocks` | lower (0) |
 | labels on text | numbers overlapping a text box | lower (0) |
 | undersized | regions still below the difficulty's minimum size | lower (0) |
-| regions, ink | region count and share of dark outline/number pixels | informational |
+| regions, ink | region count, and how much of the page the lines and numbers cover in ink (a pixel counts by how far it is from bare paper) | informational |
 
 How the paintability metrics are defined:
 
@@ -293,10 +293,15 @@ How the line metrics are defined:
   region, so a region is not allowed to leak into them either.
   - It is the flood-fill test in plain terms: fill the white from any point and
     you should never reach out of the region that point is in.
+  - White is bare paper: any ink at all is a line, however faint. What the
+    metric looks for is a gap where no line was drawn, and the pale edge of an
+    anti-aliased line is the line, not a gap. On a page of solid black lines
+    both readings give the same answer, so this is how every result set from
+    0.1.10 on is scored.
   - `split_regions` counts the opposite fault, a region whose white the lines
-    pinch into more than one piece where it is narrow. A line takes a pixel from
-    each side of its crack, so a region narrower than about twice the line width
-    closes up. Those places are slivers already, so this only informs.
+    pinch into more than one piece where it is narrow. A line takes ink from
+    each side of its crack, so a region much narrower than the line closes up.
+    Those places are slivers already, so this only informs.
   - Versions before 0.1.10 report no line layer, and get no value.
 - **Same-color boundary** estimates lengths as compactness does. Merging a small
   region into a neighbor can leave two regions of one color touching.

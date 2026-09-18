@@ -119,8 +119,11 @@ def test_analysis_regions_colors_and_labels_match_the_page(sample_image_bgr):
         assert 0 <= x0 < x1 <= 200 and 0 <= y0 < y1 <= 200
 
 
-def test_page_is_the_outline_layer_plus_the_numbers(sample_image_bgr):
-    result = generate(sample_image_bgr, difficulty.params_for_preset("Hard"), long_edge=200, collect_analysis=True)
+def test_page_is_the_line_layer_inked_in_gray_plus_the_numbers(sample_image_bgr):
+    style = render.PageStyle()
+    result = generate(
+        sample_image_bgr, difficulty.params_for_preset("Hard"), long_edge=200, collect_analysis=True, style=style
+    )
     page = np.asarray(result.page)
     outlines = result.analysis.outlines
 
@@ -130,9 +133,24 @@ def test_page_is_the_outline_layer_plus_the_numbers(sample_image_bgr):
         # A number drawn at a fractional position can shade the pixel just past its box.
         near_numbers[max(int(y0) - 1, 0) : int(y1) + 2, max(int(x0) - 1, 0) : int(x1) + 2] = True
 
+    # Away from the numbers the page is white paper with the line gray laid on
+    # it as thickly as the line layer says.
+    ink = render.PAPER - outlines.astype(np.float64)
+    inked = np.rint(render.PAPER - ink * ((render.PAPER - style.line_gray) / render.PAPER)).astype(np.uint8)
     assert near_numbers.any()
-    np.testing.assert_array_equal(page[~near_numbers], np.repeat(outlines[~near_numbers][:, None], 3, axis=1))
-    assert (page[near_numbers] != outlines[near_numbers][:, None]).any()  # the numbers are really there
+    np.testing.assert_array_equal(page[~near_numbers], np.repeat(inked[~near_numbers][:, None], 3, axis=1))
+    assert (page[near_numbers] != inked[near_numbers][:, None]).any()  # the numbers are really there
+
+
+def test_the_line_layer_says_where_the_ink_is_whatever_tone_it_is_printed_in(sample_image_bgr):
+    params = difficulty.params_for_preset("Hard")
+    kwargs = dict(long_edge=200, collect_analysis=True)
+
+    default = generate(sample_image_bgr, params, **kwargs)
+    black = generate(sample_image_bgr, params, **kwargs, style=render.PageStyle(line_gray=0, label_gray=0))
+
+    np.testing.assert_array_equal(default.analysis.outlines, black.analysis.outlines)
+    assert not np.array_equal(np.asarray(default.page), np.asarray(black.page))
 
 
 def test_analysis_lists_legend_colors_first(speckled_image_bgr):

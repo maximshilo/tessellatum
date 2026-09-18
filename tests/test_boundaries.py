@@ -15,14 +15,14 @@ from tessellatum.core.boundaries import (
 )
 from tessellatum.core.print_size import print_scale
 from tessellatum.core.regions import build_regions, extract_regions
-from tessellatum.core.render import OUTLINE_WIDTH, render_page
+from tessellatum.core.render import PAPER, PageStyle, render_page
 
 
 def _line_layer(region_id_map: np.ndarray) -> np.ndarray:
-    """The page's lines alone, as a boolean array: True where there is ink."""
+    """The page's lines alone, as a boolean array: True where any ink falls, however little."""
     height, width = region_id_map.shape
     rendered = render_page((width, height), [], region_id_map)
-    return np.asarray(rendered.outlines) == 0
+    return np.asarray(rendered.outlines) != PAPER
 
 
 def _white_pieces(region_id_map: np.ndarray) -> tuple[int, list[np.ndarray]]:
@@ -239,8 +239,15 @@ def test_a_line_covers_the_pixels_on_both_sides_of_its_crack():
 
     # The crack at x = 3.5 inks the pixels either side of it; the page edge has
     # only one side on the page, so it inks one column.
-    assert OUTLINE_WIDTH == 2
     assert list(inked) == [0, 3, 4, 8]
+
+    # A page this small prints at a few pixels per millimetre, so the line is
+    # at its floor of one pixel, laid half on each side of the crack.
+    style = PageStyle()
+    assert style.line_width_px((9, 9)) == style.min_line_width_px == 1.0
+    ink = PAPER - np.asarray(render_page((9, 9), [], ids).outlines)[4]
+    assert list(ink[[3, 4]]) == [PAPER // 2 + 1, PAPER // 2 + 1]
+    assert ink[0] == PAPER // 2 + 1  # the half of the frame line that falls on the page
 
 
 def test_pixels_in_no_region_are_fenced_off_from_the_regions():
