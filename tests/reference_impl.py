@@ -10,16 +10,20 @@ A change meant to alter that output updates this file deliberately, so it
 keeps saying what the stages should do rather than what they used to. Since
 the rewrite: ``_merge_same_color_neighbors``, then ``_absorb_thin_parts``
 with the rebuild that follows it, then ``trace_boundaries`` and the
-``render_page`` that draws its lines instead of outlining every region.
+``render_page`` that draws its lines instead of outlining every region, and
+now ``_smooth`` in place of the Douglas-Peucker pass those lines used to get.
 """
 
 from __future__ import annotations
+
+import math
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from tessellatum.core.boundaries import SIMPLIFY_EPSILON_PX
+from tessellatum.core.boundaries import MAX_SHIFT_PX, SMOOTHING_MIN_PX, SMOOTHING_MM, _MIN_LOOP_AREA_PX, _SMOOTHING_STEP
+from tessellatum.core.print_size import print_scale
 from tessellatum.core.regions import Region
 from tessellatum.core.render import FONT_SIZE_RADIUS_RATIO, MAX_FONT_SIZE, MIN_FONT_SIZE, MIN_LABEL_RADIUS_PX, OUTLINE_WIDTH
 
@@ -175,7 +179,9 @@ def extract_regions(region_id_map: np.ndarray, region_color: np.ndarray, min_con
     return regions
 
 
-def trace_boundaries(region_id_map: np.ndarray, simplify_px: float = SIMPLIFY_EPSILON_PX) -> list[np.ndarray]:
+def trace_boundaries(
+    region_id_map: np.ndarray, smoothing_px: float | None = None, max_shift_px: float = MAX_SHIFT_PX
+) -> list[np.ndarray]:
     """One line per boundary between two regions, as ``boundaries.py`` describes it.
 
     The crack graph is built as a dict of pixel corners, each holding the
@@ -187,6 +193,9 @@ def trace_boundaries(region_id_map: np.ndarray, simplify_px: float = SIMPLIFY_EP
     round.
     """
     h, w = region_id_map.shape
+    if smoothing_px is None:
+        # The longer of a pixel step and what the printed page can show.
+        smoothing_px = max(SMOOTHING_MIN_PX, print_scale((w, h)).mm_to_px(SMOOTHING_MM))
 
     def pixel(y: int, x: int) -> int:
         return int(region_id_map[y, x]) if 0 <= y < h and 0 <= x < w else _OUTSIDE
@@ -235,18 +244,69 @@ def trace_boundaries(region_id_map: np.ndarray, simplify_px: float = SIMPLIFY_EP
                 if frozenset((corner, to)) not in walked:
                     paths.append(walk(corner, to))
 
-    lines = []
-    for path in paths:
-        points = np.array([(j - 0.5, i - 0.5) for i, j in path], dtype=np.float32)
-        simplified = cv2.approxPolyDP(points, epsilon=simplify_px, closed=False).reshape(-1, 2)
-        if path[0] == path[-1]:
-            # approxPolyDP measures a line whose ends meet from its first point
-            # and returns it without the repeat, which has to be put back.
-            simplified = np.vstack([simplified, simplified[:1]])
-            if len({tuple(point) for point in simplified}) < 3:
-                simplified = points  # too small to simplify and still have an inside
-        lines.append(simplified.astype(np.float64))
-    return lines
+    return [
+        np.array(_smooth([(j - 0.5, i - 0.5) for i, j in path], smoothing_px, max_shift_px, w, h), dtype=np.float64)
+        for path in paths
+    ]
+
+
+def _smooth(
+    path: list[tuple[float, float]], smoothing_px: float, max_shift_px: float, width: int, height: int
+) -> list[tuple[float, float]]:
+    """``path`` blurred along its length, no point further than ``max_shift_px`` from where it started.
+
+    Every point moves a fixed step of the way towards the middle of its two
+    neighbors, all of them at once, over and over. A closed path -- one whose
+    first and last point are the same -- is smoothed round its own ring; an
+    open path's ends are junctions and stay where they are, as does any point
+    on the page edge. A closed path that smoothing would pull shut, leaving
+    nothing inside to paint, is kept as it was.
+    """
+    passes = int(round(smoothing_px**2 / _SMOOTHING_STEP))
+    if passes < 1:
+        return path
+    closed = len(path) > 2 and path[0] == path[-1]
+    crack = path[:-1] if closed else path
+
+    def on_the_page_edge(point: tuple[float, float]) -> bool:
+        return point[0] in (-0.5, width - 0.5) or point[1] in (-0.5, height - 0.5)
+
+    def neighbors(at: int) -> tuple[int, int]:
+        if closed:
+            return (at - 1) % len(crack), (at + 1) % len(crack)
+        return max(at - 1, 0), min(at + 1, len(crack) - 1)
+
+    movable = [
+        (closed or 0 < at < len(crack) - 1) and not on_the_page_edge(point) for at, point in enumerate(crack)
+    ]
+    smoothed = list(crack)
+    for _ in range(passes):
+        moved = []
+        for at, (x, y) in enumerate(smoothed):
+            if movable[at]:
+                before, after = neighbors(at)
+                middle_x = 0.5 * (smoothed[before][0] + smoothed[after][0])
+                middle_y = 0.5 * (smoothed[before][1] + smoothed[after][1])
+                x, y = x + _SMOOTHING_STEP * (middle_x - x), y + _SMOOTHING_STEP * (middle_y - y)
+                shift_x, shift_y = x - crack[at][0], y - crack[at][1]
+                distance = math.sqrt(shift_x * shift_x + shift_y * shift_y)
+                if distance > max_shift_px:
+                    pull = max_shift_px / distance
+                    x, y = crack[at][0] + shift_x * pull, crack[at][1] + shift_y * pull
+            moved.append((x, y))
+        smoothed = moved
+    if not closed:
+        return smoothed
+    loop = smoothed + smoothed[:1]
+    return loop if _enclosed_area(smoothed) >= _MIN_LOOP_AREA_PX else path
+
+
+def _enclosed_area(loop: list[tuple[float, float]]) -> float:
+    """How much a closed line encloses, by the shoelace formula."""
+    total = 0.0
+    for (x0, y0), (x1, y1) in zip(loop, loop[1:] + loop[:1]):
+        total += x0 * y1 - x1 * y0
+    return abs(total) / 2
 
 
 def render_page(size: tuple[int, int], regions: list[Region], region_id_map: np.ndarray) -> Image.Image:
@@ -254,8 +314,8 @@ def render_page(size: tuple[int, int], regions: list[Region], region_id_map: np.
     margin = OUTLINE_WIDTH
     canvas = np.zeros((height + 2 * margin, width + 2 * margin), dtype=np.uint8)
     for stroke in trace_boundaries(region_id_map):
-        points = np.rint((stroke + margin) * 2).astype(np.int32)
-        cv2.polylines(canvas, [points], False, 1, thickness=1, lineType=cv2.LINE_8, shift=1)
+        points = np.rint((stroke + margin) * 16).astype(np.int32)  # 1/16 px, as the renderer draws
+        cv2.polylines(canvas, [points], False, 1, thickness=1, lineType=cv2.LINE_8, shift=4)
 
     # The line is one pixel wide, on the pixel right of or below its crack.
     # Widening it up and left puts it on both sides of the crack instead.

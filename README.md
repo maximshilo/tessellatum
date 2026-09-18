@@ -49,8 +49,11 @@ run the binary from a terminal to see the error.
    too fine to make.
 4. **Draw + number**: the boundaries between regions are traced from the
    region map and each one is drawn once, as a single line its two regions
-   share, so no boundary is doubled or left out. Every region then gets a
-   number (matched to a legend swatch) at its most interior point.
+   share, so no boundary is doubled or left out. Each line is then smoothed
+   along its length to take the pixel grid's staircase off it, but never by
+   more than a pixel, so it stays on the boundary it draws and the page still
+   closes. Every region then gets a number (matched to a legend swatch) at its
+   most interior point.
 
 Difficulty controls three things: how many colors are used, how small a
 region is allowed to get before being merged away, and how much smoothing
