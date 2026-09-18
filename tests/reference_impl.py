@@ -11,7 +11,9 @@ keeps saying what the stages should do rather than what they used to. Since
 the rewrite: ``_merge_same_color_neighbors``, then ``_absorb_thin_parts``
 with the rebuild that follows it, then ``trace_boundaries`` and the
 ``render_page`` that draws its lines instead of outlining every region, and
-now ``_smooth`` in place of the Douglas-Peucker pass those lines used to get.
+now ``_smooth`` in place of the Douglas-Peucker pass those lines used to get,
+and ``line_layer``, which lays those lines down with a round pen of the width
+the paper asks for instead of a two-pixel band.
 """
 
 from __future__ import annotations
@@ -25,7 +27,15 @@ from PIL import Image, ImageDraw, ImageFont
 from tessellatum.core.boundaries import MAX_SHIFT_PX, SMOOTHING_MIN_PX, SMOOTHING_MM, _MIN_LOOP_AREA_PX, _SMOOTHING_STEP
 from tessellatum.core.print_size import print_scale
 from tessellatum.core.regions import Region
-from tessellatum.core.render import FONT_SIZE_RADIUS_RATIO, MAX_FONT_SIZE, MIN_FONT_SIZE, MIN_LABEL_RADIUS_PX, OUTLINE_WIDTH
+from tessellatum.core.render import (
+    FONT_SIZE_RADIUS_RATIO,
+    MAX_FONT_SIZE,
+    MIN_FONT_SIZE,
+    MIN_LABEL_RADIUS_PX,
+    PAPER,
+    PageStyle,
+    _SUPERSAMPLE,
+)
 
 _OUTSIDE = -2  # the label of everything off the page: its edge is a boundary like any other
 
@@ -309,27 +319,61 @@ def _enclosed_area(loop: list[tuple[float, float]]) -> float:
     return abs(total) / 2
 
 
-def render_page(size: tuple[int, int], regions: list[Region], region_id_map: np.ndarray) -> Image.Image:
+def line_layer(size: tuple[int, int], region_id_map: np.ndarray, style: PageStyle) -> np.ndarray:
+    """The ink the page's lines put on it, 0 solid and 255 bare paper: ``RenderedPage.outlines``.
+
+    A round pen as wide as the paper asks for, dragged along every line on a
+    grid ``_SUPERSAMPLE`` times finer than the page, and averaged back down. A
+    width between two whole grid pixels is a blend of the two pens around it.
+    """
     width, height = size
-    margin = OUTLINE_WIDTH
-    canvas = np.zeros((height + 2 * margin, width + 2 * margin), dtype=np.uint8)
+    width_px = style.line_width_px(size)
+    margin = int(math.ceil(width_px / 2)) + 1
+    grid = _SUPERSAMPLE
+    canvas = np.zeros(((height + 2 * margin) * grid, (width + 2 * margin) * grid), dtype=np.uint8)
     for stroke in trace_boundaries(region_id_map):
-        points = np.rint((stroke + margin) * 16).astype(np.int32)  # 1/16 px, as the renderer draws
+        # 1/16 of a grid pixel, as the renderer draws; the half pixel is the
+        # step from a page pixel's middle to the grid pixel that starts it.
+        points = np.rint(((stroke + (margin + 0.5)) * grid - 0.5) * 16).astype(np.int32)
         cv2.polylines(canvas, [points], False, 1, thickness=1, lineType=cv2.LINE_8, shift=4)
 
-    # The line is one pixel wide, on the pixel right of or below its crack.
-    # Widening it up and left puts it on both sides of the crack instead.
-    spread = (OUTLINE_WIDTH - 1) // 2
-    padded = np.pad(canvas, OUTLINE_WIDTH)
-    band = np.zeros_like(canvas)
-    for dy in range(-spread, OUTLINE_WIDTH - spread):
-        for dx in range(-spread, OUTLINE_WIDTH - spread):
-            y0, x0 = OUTLINE_WIDTH + dy, OUTLINE_WIDTH + dx
-            band |= padded[y0 : y0 + canvas.shape[0], x0 : x0 + canvas.shape[1]]
-    inked = band[margin : margin + height, margin : margin + width] > 0
+    diameter = max(2.0, width_px * grid)  # two grid pixels is the finest pen there is
+    thinner = 2 * int(diameter // 2)
+    wider_share = (diameter - thinner) / 2
+    covered = _pen_coverage(canvas, thinner, size, margin).astype(np.float64)
+    if wider_share > 0:
+        wider = _pen_coverage(canvas, thinner + 2, size, margin).astype(np.float64)
+        covered = (1 - wider_share) * covered + wider_share * wider
+    return PAPER - np.rint(covered).astype(np.uint8)
 
-    page = Image.new("RGB", size, "white")
-    page.paste(Image.new("RGB", size, "black"), (0, 0), Image.fromarray((inked * 255).astype(np.uint8), "L"))
+
+def _pen_coverage(canvas: np.ndarray, diameter: int, size: tuple[int, int], margin: int) -> np.ndarray:
+    """``canvas``, a line one grid pixel wide, widened by a pen ``diameter`` across and averaged down."""
+    half = diameter // 2
+    # The line lies on the grid pixel right of or below its crack, so the pen
+    # reaches one further up and left than down and right, and lands centred.
+    reach = range(-half, half)
+    offsets = [(dy, dx) for dy in reach for dx in reach if (dx + 0.5) ** 2 + (dy + 0.5) ** 2 <= half * half]
+    padded = np.pad(canvas, half)
+    band = np.zeros_like(canvas)
+    for dy, dx in offsets:
+        y0, x0 = half - dy, half - dx
+        band |= padded[y0 : y0 + canvas.shape[0], x0 : x0 + canvas.shape[1]]
+
+    grid = _SUPERSAMPLE
+    rows, columns = band.shape[0] // grid, band.shape[1] // grid
+    inked = band.reshape(rows, grid, columns, grid).sum(axis=(1, 3), dtype=np.uint16)
+    covered = np.rint(inked.astype(np.float64) * PAPER / grid**2).astype(np.uint8)
+    width, height = size
+    return covered[margin : margin + height, margin : margin + width]
+
+
+def render_page(
+    size: tuple[int, int], regions: list[Region], region_id_map: np.ndarray, style: PageStyle = PageStyle()
+) -> Image.Image:
+    ink = PAPER - line_layer(size, region_id_map, style).astype(np.float64)
+    paper = np.rint(PAPER - ink * ((PAPER - style.line_gray) / PAPER)).astype(np.uint8)
+    page = Image.fromarray(paper, "L").convert("RGB")
     draw = ImageDraw.Draw(page)
 
     for region in regions:
@@ -343,6 +387,6 @@ def render_page(size: tuple[int, int], regions: list[Region], region_id_map: np.
         x, y = region.interior_point
         draw_x = min(max(x - tw / 2, 0), size[0] - tw) - bbox[0]
         draw_y = min(max(y - th / 2, 0), size[1] - th) - bbox[1]
-        draw.text((draw_x, draw_y), text, fill="black", font=font)
+        draw.text((draw_x, draw_y), text, fill=(style.label_gray,) * 3, font=font)
 
     return page

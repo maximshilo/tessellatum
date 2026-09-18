@@ -34,6 +34,8 @@ import cv2
 import numpy as np
 
 BOUNDARY_TOLERANCE_PX = 2
+# The value of a page pixel no ink falls on at all, in the page's line layer and on the page itself.
+BARE_PAPER = 255
 PRINT_SIZE_PATH = Path(__file__).resolve().parents[1] / "src" / "tessellatum" / "core" / "print_size.py"
 # Line quality. Wiggles in a drawn line smaller than JAGGEDNESS_SMOOTHING_MM count as jaggedness. The
 # source's edges are found after smoothing it by EDGE_SMOOTHING_MM, as color steps of at least
@@ -390,18 +392,24 @@ def boundary_lines(
 def enclosure(region_id_map: np.ndarray, outlines: np.ndarray) -> dict[str, float | int | None]:
     """Do the page's lines close every region, so that no two regions' paint can run together?
 
-    ``outlines`` is the page's line layer, 0 where there is a line. Filling its
-    white from any point should never reach out of the region that point is in:
-    that is what makes the page a set of shapes to paint rather than a drawing.
-    ``unenclosed_area_fraction`` is the share of the page in a white area that
-    covers more than one region, and ``unenclosed_areas`` counts those areas.
+    ``outlines`` is the ink the page's lines put on it, 255 where the paper is
+    bare. Filling its white from any point should never reach out of the region
+    that point is in: that is what makes the page a set of shapes to paint
+    rather than a drawing. ``unenclosed_area_fraction`` is the share of the page
+    in a white area that covers more than one region, and ``unenclosed_areas``
+    counts those areas.
+
+    Any ink at all is a line, however faint: what the metric is looking for is a
+    gap where no line was drawn, and the pale edge of an anti-aliased line is
+    the line, not a gap. On a page whose lines are solid black either reading
+    gives the same answer.
 
     ``split_regions`` counts the regions whose white is in more than one piece
     instead, which is the opposite fault: lines thick enough to pinch a region
     shut where it is narrow. Pixels in no region count as one more region.
     """
     ids = np.asarray(region_id_map)
-    white = np.asarray(outlines) != 0
+    white = np.asarray(outlines) == BARE_PAPER
     count, areas = cv2.connectedComponents(white.view(np.uint8), connectivity=4)
     if count <= 1:
         return {"unenclosed_area_fraction": 0.0, "unenclosed_areas": 0, "split_regions": 0}
@@ -1124,8 +1132,13 @@ def _squared_distance(distance: np.ndarray) -> np.ndarray:
 
 
 def ink_fraction(page_rgb: np.ndarray) -> float:
-    """Share of page pixels that are dark (outlines + numbers): visual clutter."""
-    return float((page_rgb.mean(axis=2) < 128).mean())
+    """How much of the page is covered in ink (lines + numbers): visual clutter.
+
+    Each pixel counts by how far it is from bare paper, so a pixel a gray line
+    half covers counts for half of one a black line covers whole. On a page of
+    solid black lines on white that is the share of pixels that are black.
+    """
+    return float(1.0 - np.asarray(page_rgb, dtype=np.float64).mean() / BARE_PAPER)
 
 
 def page_diff_fraction(page_a: np.ndarray, page_b: np.ndarray) -> float:

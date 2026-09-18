@@ -1,5 +1,6 @@
 """Sanity checks for the benchmark harness's quality metrics."""
 
+import dataclasses
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -276,12 +277,26 @@ def test_the_page_is_enclosed_when_no_white_area_covers_two_regions():
     assert bm.enclosure(ids, outlines) == {"unenclosed_area_fraction": 0.0, "unenclosed_areas": 0, "split_regions": 0}
 
     with_a_gap = outlines.copy()
-    with_a_gap[4, 3:5] = 255  # rub out the two pixels of line between the regions
+    with_a_gap[4, 3:6] = bm.BARE_PAPER  # rub out the pixels of line between the regions
 
     leaked = bm.enclosure(ids, with_a_gap)
     assert leaked["unenclosed_areas"] == 1
-    assert leaked["unenclosed_area_fraction"] == pytest.approx(((with_a_gap != 0).sum()) / ids.size)
+    assert leaked["unenclosed_area_fraction"] == pytest.approx(
+        (with_a_gap == bm.BARE_PAPER).sum() / ids.size
+    )
     assert leaked["split_regions"] == 0
+
+
+def test_the_faint_edge_of_an_anti_aliased_line_is_line_rather_than_a_gap_in_it():
+    # A line thinner than a pixel inks every pixel it runs through only partly.
+    # None of that is paper the paint can run across.
+    ids = np.zeros((9, 9), dtype=np.int32)
+    ids[:, 4:] = 1
+    style = dataclasses.replace(render.PageStyle(), line_width_mm=0.05, min_line_width_px=0.5)
+    outlines = np.asarray(render.render_page((9, 9), [], ids, style).outlines)
+
+    assert 0 < outlines[4, 3] < bm.BARE_PAPER  # partly inked, which is what the test is about
+    assert bm.enclosure(ids, outlines)["unenclosed_areas"] == 0
 
 
 def test_a_region_pinched_shut_by_its_own_lines_is_split_but_still_enclosed():
@@ -298,6 +313,19 @@ def test_a_region_pinched_shut_by_its_own_lines_is_split_but_still_enclosed():
         "unenclosed_areas": 0,
         "split_regions": 1,
     }
+
+
+def test_ink_counts_a_pale_pixel_for_as_much_of_it_as_is_covered():
+    black_on_white = np.full((10, 10, 3), 255, dtype=np.uint8)
+    black_on_white[:, :2] = 0  # a fifth of the page, solid
+
+    assert bm.ink_fraction(black_on_white) == pytest.approx(0.2)
+
+    half_covered = np.full((10, 10, 3), 255, dtype=np.uint8)
+    half_covered[:, :2] = 128  # the same fifth, half as dark
+
+    assert bm.ink_fraction(half_covered) == pytest.approx(0.2 * (255 - 128) / 255)
+    assert bm.ink_fraction(np.full((10, 10, 3), 255, dtype=np.uint8)) == 0.0
 
 
 def test_a_line_runs_along_a_boundary_within_a_pixel_of_it_and_counts_once():

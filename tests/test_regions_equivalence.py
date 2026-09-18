@@ -1,14 +1,12 @@
 """The optimized region and render stages must match the original implementation exactly."""
 
-import dataclasses
-
 import cv2
 import numpy as np
 import pytest
 
 import reference_impl as ref
 from tessellatum.core.regions import build_regions, extract_regions
-from tessellatum.core.render import render_page
+from tessellatum.core.render import PageStyle, render_page
 
 
 def _blobby_labels(seed: int, shape: tuple[int, int], num_colors: int, blur_sigma: float) -> np.ndarray:
@@ -104,11 +102,25 @@ def test_extract_regions_and_render_page_match_reference(
     np.testing.assert_array_equal(
         np.asarray(rendered.image), np.asarray(ref.render_page(size, expected, region_id_map))
     )
-    # The line layer is the page as it would be drawn without numbers.
-    without_numbers = [dataclasses.replace(r, interior_radius=0.0) for r in expected]
     np.testing.assert_array_equal(
-        np.asarray(rendered.outlines.convert("RGB")), np.asarray(ref.render_page(size, without_numbers, region_id_map))
+        np.asarray(rendered.outlines), ref.line_layer(size, region_id_map, PageStyle())
     )
+
+
+@pytest.mark.parametrize("width_px", [1.0, 1.3, 2.0, 2.84, 3.0, 4.75])
+def test_the_line_layer_matches_the_reference_at_any_width(width_px):
+    # The cases above all print at a few pixels per millimetre, where every line
+    # is at its floor; these are the widths a page of ordinary size asks for,
+    # including the ones that fall between two steps of the drawing grid.
+    labels = _blobby_labels(0, (60, 80), 5, 2.0)
+    region_id_map, _color = ref.build_regions(labels, 5, 30, 5.0)
+    size = (80, 60)
+    style = PageStyle(min_line_width_px=width_px)
+    assert style.line_width_px(size) == width_px
+
+    rendered = render_page(size, [], region_id_map, style)
+
+    np.testing.assert_array_equal(np.asarray(rendered.outlines), ref.line_layer(size, region_id_map, style))
 
 
 def test_large_case_actually_draws_numbers():
