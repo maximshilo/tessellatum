@@ -138,6 +138,7 @@ METRICS = (
     ),
     Metric("jaggedness", "jaggedness ↓", "{:.3f}", "clean drawing", "lower", sigma=0.0085, sigma_export=0.011, target=Target(1.02)),
     Metric("edge_f1", "edge F1 ↑", "{:.2f}", "clean drawing", "higher", sigma=0.023, sigma_export=0.020),
+    Metric("colors_used", "colors", "{:d}"),
     Metric(
         "palette_min_de00",
         "palette min ΔE00 ↑",
@@ -575,6 +576,7 @@ def _quality_section(
         f"{bm.JAGGEDNESS_SMOOTHING_MM:g} mm smoothed away (1 = smooth). "
         f"**edge F1**: how well region boundaries and the source's edges line up, within {bm.EDGE_TOLERANCE_MM:g} mm "
         "(1 = every boundary on an edge and every edge on a boundary). "
+        "**colors**: how many colors the legend lists, which can be fewer than the difficulty asked for. "
         "**palette min ΔE00**: smallest CIEDE2000 difference between two legend colors. "
         f"**color pairs < {bm.PALETTE_MIN_DE00:g} ΔE00**: pairs of legend colors closer than that. "
         f"**ink line F1**: how well drawn lines run down the middle of the artwork's ink lines, within "

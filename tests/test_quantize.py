@@ -1,15 +1,116 @@
 import cv2
 import numpy as np
+import pytest
 
-from tessellatum.core.quantize import _sparse_bilateral, bilateral_filter, quantize
+from tessellatum.core.color import MIN_PALETTE_DE00, pairwise_de00
+from tessellatum.core.quantize import (
+    _lab_centers_to_bgr,
+    _merge_close_colors,
+    _sparse_bilateral,
+    bilateral_filter,
+    quantize,
+)
+
+# Two colors a painter cannot tell apart (2.1 ΔE00) and two that stand well clear of them and of each other.
+NEAR_BLUE, NEARER_BLUE, GREEN, CYAN = (60, 80, 120), (66, 86, 126), (30, 180, 30), (200, 200, 30)
 
 
-def test_quantize_returns_requested_color_count(sample_image_bgr):
+@pytest.fixture
+def two_near_colors_bgr() -> np.ndarray:
+    """Four flat blocks, two of which are almost the same color and cover nine tenths and one tenth of their half."""
+    image = np.zeros((100, 100, 3), dtype=np.uint8)
+    image[:50, :90] = NEAR_BLUE
+    image[:50, 90:] = NEARER_BLUE
+    image[50:, :50] = GREEN
+    image[50:, 50:] = CYAN
+    return image
+
+
+def test_quantize_keeps_every_cluster_whose_colors_stand_apart(sample_image_bgr):
     labels, palette = quantize(sample_image_bgr, num_colors=4, blur_sigma=5.0)
 
     assert labels.shape == sample_image_bgr.shape[:2]
-    assert palette.shape == (4, 3)
+    assert palette.shape == (4, 3)  # the fixture's four blocks are nowhere near each other
     assert set(np.unique(labels)).issubset(set(range(4)))
+
+
+def test_quantize_merges_colors_closer_than_the_margin(two_near_colors_bgr):
+    labels, palette = quantize(two_near_colors_bgr, num_colors=4, blur_sigma=0.0)
+
+    assert len(palette) == 3  # the two blues became one
+    assert pairwise_de00(palette).min() >= MIN_PALETTE_DE00
+    assert set(np.unique(labels)) == set(range(3))
+    # Both blue areas are painted in one color, the one their pixels average to -- which is
+    # nine tenths of the way to the bigger one, not the midpoint between the two.
+    assert labels[10, 10] == labels[10, 95]
+    merged = palette[labels[10, 10]].astype(float)
+    by_area = 0.9 * np.array(NEAR_BLUE) + 0.1 * np.array(NEARER_BLUE)
+    midpoint = np.mean([NEAR_BLUE, NEARER_BLUE], axis=0)
+    assert np.abs(merged - by_area).max() < np.abs(merged - midpoint).max()
+    assert merged.tolist() == pytest.approx(by_area.tolist(), abs=1.5)
+
+
+def test_quantize_without_a_margin_keeps_k_means_colors_as_they_are(two_near_colors_bgr):
+    labels, palette = quantize(two_near_colors_bgr, num_colors=4, blur_sigma=0.0, min_de00=0.0)
+
+    assert len(palette) == 4
+    assert pairwise_de00(palette).min() < MIN_PALETTE_DE00
+    assert set(np.unique(labels)) == set(range(4))
+
+
+def test_quantize_labels_stay_inside_the_palette_it_returns(two_near_colors_bgr):
+    labels, palette = quantize(two_near_colors_bgr, num_colors=12, blur_sigma=0.0)
+
+    assert labels.min() >= 0
+    assert labels.max() < len(palette)
+    assert len(palette) <= 12
+
+
+def test_merge_close_colors_joins_the_closest_pair_and_stops_at_the_margin():
+    centers = cv2.cvtColor(
+        np.array([NEAR_BLUE, NEARER_BLUE, GREEN, CYAN], dtype=np.uint8).reshape(-1, 1, 3), cv2.COLOR_BGR2LAB
+    ).reshape(-1, 3).astype(np.float64)
+    weights = np.array([300, 100, 50, 50])
+
+    merged, group = _merge_close_colors(centers, weights, MIN_PALETTE_DE00)
+
+    assert group.tolist() == [0, 0, 2, 3]  # the two blues share a slot; which of them keeps it does not matter
+    assert merged[0] == pytest.approx((centers[0] * 300 + centers[1] * 100) / 400)
+    assert (merged[2:] == centers[2:]).all()  # colors that stand apart are left alone
+
+
+def test_merge_close_colors_leaves_a_separated_palette_untouched():
+    centers = cv2.cvtColor(
+        np.array([NEAR_BLUE, GREEN, CYAN], dtype=np.uint8).reshape(-1, 1, 3), cv2.COLOR_BGR2LAB
+    ).reshape(-1, 3).astype(np.float64)
+
+    merged, group = _merge_close_colors(centers, np.array([10, 10, 10]), MIN_PALETTE_DE00)
+
+    assert group.tolist() == [0, 1, 2]
+    assert (merged == centers).all()
+
+
+def test_lab_centers_outside_the_8_bit_range_are_clipped_rather_than_wrapped():
+    # k-means returns the mean of its cluster, and its float accumulation can land
+    # just past 255: 255.34 on the reaper at Hard. Casting that to uint8 without
+    # clipping first turns a value over 256 into black.
+    inside, over = np.array([[255.0, 128.0, 128.0]]), np.array([[256.4, 128.0, 128.0]])
+
+    assert _lab_centers_to_bgr(over).tolist() == _lab_centers_to_bgr(inside).tolist()
+    assert _lab_centers_to_bgr(np.array([[-0.4, 128.0, 128.0]])).tolist() == _lab_centers_to_bgr(
+        np.array([[0.0, 128.0, 128.0]])
+    ).tolist()
+
+
+def test_merge_close_colors_can_collapse_a_whole_run_of_near_colors():
+    ramp = np.linspace(100, 118, 10)  # ten grays a couple of ΔE00 apart
+    centers = np.stack([ramp, np.full(10, 128.0), np.full(10, 128.0)], axis=1)
+
+    merged, group = _merge_close_colors(centers, np.ones(10), MIN_PALETTE_DE00)
+
+    kept = np.unique(group)
+    assert len(kept) < 10
+    assert pairwise_de00(_lab_centers_to_bgr(merged[kept])).min() >= MIN_PALETTE_DE00
 
 
 def test_quantize_palette_sorted_by_lightness(sample_image_bgr):

@@ -20,7 +20,7 @@ LINE_KEYS = (
     "jaggedness",
     "edge_f1",
 )
-PALETTE_KEYS = ("palette_min_de00", "palette_close_pairs")
+PALETTE_KEYS = ("colors_used", "palette_min_de00", "palette_close_pairs")
 LINE_ART_KEYS = ("ink_line_f1", "tube_regions", "tube_ink_fraction", "flat_color_de00_mean")
 FACE_KEYS = ("face_de00_mean", "face_ssim", "features_lost", "labels_on_features")
 TEXT_KEYS = ("text_cer_source", "text_cer_page", "text_cer_painting", "labels_on_text")
@@ -58,6 +58,7 @@ def _case(image: str, categories: list[str], de00: float, preset: str = "Easy", 
             "same_color_boundary_fraction": 0.01,
             "jaggedness": 1.1,
             "edge_f1": 0.5,
+            "colors_used": 8,
             "palette_min_de00": 4.5,
             "palette_close_pairs": 2,
             "ink_line_f1": 0.25,
@@ -416,19 +417,19 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
         "| case | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | regions | labeled area ↑ | unlabeled ↓ | slivers ↓ | labels < 6 pt ↓ "
         "| compactness p10 ↑ | compactness median ↑ | lines per boundary | lines per boundary (clear) "
         "| unenclosed ↓ | same-color boundary ↓ | jaggedness ↓ "
-        "| edge F1 ↑ | palette min ΔE00 ↑ | color pairs < 10 ΔE00 ↓ | ink line F1 ↑ | tubes ↓ | ink in shapes < 5 mm ↓ "
+        "| edge F1 ↑ | colors | palette min ΔE00 ↑ | color pairs < 10 ΔE00 ↓ | ink line F1 ↑ | tubes ↓ | ink in shapes < 5 mm ↓ "
         "| flat colors ΔE00 ↓ | face ΔE00 ↓ | face SSIM ↑ | features lost ↓ | labels on features ↓ | text CER source "
         "| text CER page ↓ | text CER painting ↓ | labels on text ↓ | undersized ↓ | ink | targets missed |"
     )
     assert header in old_alone
     assert (
         "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
-        "| – | – | – | – | – | – | – | – | – | – | – | 0 | 10.0% | – |"
+        "| – | – | – | – | – | – | – | – | – | – | – | – | 0 | 10.0% | – |"
     ) in old_alone
     assert "| all | 1 | 1 | no targets | no targets | no targets | no targets |" in old_alone
     assert (
         "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | 3 | 10.0% | 0.0% | 0.10 | 0.40 | 2.00 | 1.90 | 0.0% "
-        "| 1.0% | 1.100 | 0.50 | 4.5 | 2 | 0.25 | 2 | 60.0% | 3.50 | 7.50 | 0.600 | 1 | 2 | 0.10 | 0.95 | 0.98 | 1 | 0 "
+        "| 1.0% | 1.100 | 0.50 | 8 | 4.5 | 2 | 0.25 | 2 | 60.0% | 3.50 | 7.50 | 0.600 | 1 | 2 | 0.10 | 0.95 | 0.98 | 1 | 0 "
         "| 10.0% | – → 11/13 | ok |"
     ) in old_vs_new
     assert "| all | 1 | 1 | 0/1 met | 0/1 met | 0/1 met | 0/1 met |" in old_vs_new
