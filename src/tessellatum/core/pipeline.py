@@ -234,7 +234,10 @@ def generate(
     check_cancelled()
     min_area_px, min_width_px = _paintable_limits(params, (w, h))
     # The palette can be shorter than the difficulty asked for: colors too
-    # close to tell apart are merged (see ``quantize``).
+    # close to tell apart are merged (see ``quantize``). Passing the count the
+    # difficulty asked for gives the same regions -- the labeling only needs an
+    # upper bound -- but not the same meaning, and it sizes its arrays for
+    # colors that do not exist.
     region_id_map, region_color = build_regions(labels, len(palette_bgr), min_area_px, min_width_px)
     report("regions")
 

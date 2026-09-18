@@ -67,6 +67,13 @@ def test_the_app_measures_color_distance_exactly_as_the_benchmark_does():
     assert np.abs(color.ciede2000(lab[:2000], lab[2000:]) - bm.ciede2000(expected_lab[:2000], expected_lab[2000:])).max() == 0.0
 
 
+def test_the_margin_is_the_one_the_benchmark_judges_the_page_on():
+    # The page is scored against the harness's own threshold, so the pipeline has
+    # to keep that number and not one of its own. 10 ΔE00 is what
+    # benchmarks/QUALITY_BENCHMARKS.md and the plan's definition of done ask for.
+    assert color.MIN_PALETTE_DE00 == bm.PALETTE_MIN_DE00 == 10.0
+
+
 def test_pairwise_de00_puts_infinity_down_the_diagonal():
     colors = np.array([[10, 20, 30], [200, 40, 60], [11, 21, 31]], dtype=np.uint8)
 

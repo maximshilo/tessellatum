@@ -17,10 +17,10 @@ NEAR_BLUE, NEARER_BLUE, GREEN, CYAN = (60, 80, 120), (66, 86, 126), (30, 180, 30
 
 @pytest.fixture
 def two_near_colors_bgr() -> np.ndarray:
-    """Four flat blocks, two of which are almost the same color."""
+    """Four flat blocks, two of which are almost the same color and cover nine tenths and one tenth of their half."""
     image = np.zeros((100, 100, 3), dtype=np.uint8)
-    image[:50, :50] = NEAR_BLUE
-    image[:50, 50:] = NEARER_BLUE
+    image[:50, :90] = NEAR_BLUE
+    image[:50, 90:] = NEARER_BLUE
     image[50:, :50] = GREEN
     image[50:, 50:] = CYAN
     return image
@@ -40,10 +40,14 @@ def test_quantize_merges_colors_closer_than_the_margin(two_near_colors_bgr):
     assert len(palette) == 3  # the two blues became one
     assert pairwise_de00(palette).min() >= MIN_PALETTE_DE00
     assert set(np.unique(labels)) == set(range(3))
-    # Both blue halves are painted in one color, the one the two average to.
-    assert labels[10, 10] == labels[10, 90]
-    merged = palette[labels[10, 10]]
-    assert merged.tolist() == pytest.approx(np.mean([NEAR_BLUE, NEARER_BLUE], axis=0).tolist(), abs=2)
+    # Both blue areas are painted in one color, the one their pixels average to -- which is
+    # nine tenths of the way to the bigger one, not the midpoint between the two.
+    assert labels[10, 10] == labels[10, 95]
+    merged = palette[labels[10, 10]].astype(float)
+    by_area = 0.9 * np.array(NEAR_BLUE) + 0.1 * np.array(NEARER_BLUE)
+    midpoint = np.mean([NEAR_BLUE, NEARER_BLUE], axis=0)
+    assert np.abs(merged - by_area).max() < np.abs(merged - midpoint).max()
+    assert merged.tolist() == pytest.approx(by_area.tolist(), abs=1.5)
 
 
 def test_quantize_without_a_margin_keeps_k_means_colors_as_they_are(two_near_colors_bgr):
@@ -70,7 +74,7 @@ def test_merge_close_colors_joins_the_closest_pair_and_stops_at_the_margin():
 
     merged, group = _merge_close_colors(centers, weights, MIN_PALETTE_DE00)
 
-    assert group.tolist() == [0, 0, 2, 3]  # the bigger of the two blues survives
+    assert group.tolist() == [0, 0, 2, 3]  # the two blues share a slot; which of them keeps it does not matter
     assert merged[0] == pytest.approx((centers[0] * 300 + centers[1] * 100) / 400)
     assert (merged[2:] == centers[2:]).all()  # colors that stand apart are left alone
 
@@ -84,6 +88,18 @@ def test_merge_close_colors_leaves_a_separated_palette_untouched():
 
     assert group.tolist() == [0, 1, 2]
     assert (merged == centers).all()
+
+
+def test_lab_centers_outside_the_8_bit_range_are_clipped_rather_than_wrapped():
+    # k-means returns the mean of its cluster, and its float accumulation can land
+    # just past 255: 255.34 on the reaper at Hard. Casting that to uint8 without
+    # clipping first turns a value over 256 into black.
+    inside, over = np.array([[255.0, 128.0, 128.0]]), np.array([[256.4, 128.0, 128.0]])
+
+    assert _lab_centers_to_bgr(over).tolist() == _lab_centers_to_bgr(inside).tolist()
+    assert _lab_centers_to_bgr(np.array([[-0.4, 128.0, 128.0]])).tolist() == _lab_centers_to_bgr(
+        np.array([[0.0, 128.0, 128.0]])
+    ).tolist()
 
 
 def test_merge_close_colors_can_collapse_a_whole_run_of_near_colors():
