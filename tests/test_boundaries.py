@@ -126,6 +126,19 @@ def test_a_region_lying_inside_another_gets_one_closed_line():
     assert _loop_area(island) >= 1.0  # a shape to paint, not a stroke
 
 
+@pytest.mark.parametrize("shape, label, area", [((7, 7), (3, 3), 1.0), ((9, 9), (4, slice(3, 5)), 2.0)])
+def test_a_region_the_blur_would_pull_shut_keeps_the_line_it_was_traced_with(shape, label, area):
+    ids = np.zeros(shape, dtype=np.int32)
+    ids[label] = 1  # a pixel or two across: its outline is smaller than the corridor
+
+    island = _island(trace_boundaries(ids), shape[1], shape[0])
+
+    # Blurring it would leave nothing inside to paint, so it is kept as traced:
+    # a region has to stay a shape, not become a stroke.
+    np.testing.assert_array_equal(island, _island(trace_boundaries(ids, smoothing_px=0), shape[1], shape[0]))
+    assert _loop_area(island) == area
+
+
 def test_the_page_edge_is_a_boundary_so_a_page_of_one_region_still_has_a_frame():
     ids = np.zeros((5, 7), dtype=np.int32)
 

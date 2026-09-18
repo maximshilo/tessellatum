@@ -47,7 +47,7 @@ _MIN_LOOP_AREA_PX = 1.0
 # a wiggle alternating from point to point multiplied by 1 - 2 * step: half a step is
 # as far as a pass can go, and it wipes that wiggle out rather than turning it back on
 # itself. A pass adds `step` to the variance, in units of the point spacing, which is
-# 1 px along a crack path, so blurring by SMOOTHING_PX takes 2 * SMOOTHING_PX**2 of them.
+# 1 px along a crack path, so a blur of `s` px takes 2 * s**2 passes.
 _SMOOTHING_STEP = 0.5
 
 
