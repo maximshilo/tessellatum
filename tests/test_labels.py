@@ -1,0 +1,217 @@
+"""Where each region's number goes: inside it and clear of the lines, smaller if it must, or outside it with a leader."""
+
+import itertools
+import math
+
+import cv2
+import numpy as np
+import pytest
+
+from tessellatum.core.boundaries import trace_boundaries
+from tessellatum.core.labels import (
+    FONT_SIZE_RADIUS_RATIO,
+    MAX_FONT_SIZE,
+    MIN_FONT_SIZE,
+    LabelSpacing,
+    _pixels_along,
+    min_font_size,
+    place_labels,
+    text_box_size,
+)
+from tessellatum.core.print_size import MIN_LABEL_SIZE_PT, print_scale
+from tessellatum.core.regions import extract_regions
+from tessellatum.core.render import ink_coverage
+
+LINE_PX = 1.3  # a 0.3 mm line on a 3:4 preview
+SPACING = LabelSpacing(min_font_size=10, label_gap_px=LINE_PX, leader_width_px=LINE_PX, leader_reach_px=35.0)
+
+
+def _page(ids: np.ndarray, colors=None):
+    """The page's regions, and where its lines leave the paper bare."""
+    colors = np.arange(ids.max() + 1, dtype=np.int32) if colors is None else np.asarray(colors, dtype=np.int32)
+    regions = extract_regions(ids, colors)
+    free = ink_coverage(ids.shape[::-1], trace_boundaries(ids), LINE_PX) == 0
+    return regions, free
+
+
+def _pixels(box) -> tuple[slice, slice]:
+    x0, y0, x1, y1 = (int(v) for v in box)
+    return slice(y0, y1), slice(x0, x1)
+
+
+def _preferred(region) -> int:
+    return max(SPACING.min_font_size, int(min(MAX_FONT_SIZE, region.interior_radius * FONT_SIZE_RADIUS_RATIO)))
+
+
+@pytest.mark.parametrize("size", [(825, 1100), (1100, 825), (1100, 1100), (1800, 2400), (2048, 1366), (600, 450), (64, 48), (4000, 3000)])
+def test_the_smallest_number_prints_at_least_six_points_and_is_never_under_ten_pixels(size):
+    scale = print_scale(size)
+
+    smallest = min_font_size(size)
+
+    assert smallest >= MIN_FONT_SIZE
+    assert smallest / scale.px_per_pt >= MIN_LABEL_SIZE_PT  # the arithmetic the benchmark measures a number with
+    assert smallest == MIN_FONT_SIZE or (smallest - 1) / scale.px_per_pt < MIN_LABEL_SIZE_PT  # and no larger than that
+
+
+def test_the_preview_keeps_its_ten_pixel_floor_and_an_export_gets_six_points():
+    assert min_font_size((825, 1100)) == 10  # 6 pt is 8.4 px here
+    assert min_font_size((1800, 2400)) == 21  # 6 pt is 20.05 px here: the whole pixel above it
+
+
+def test_a_roomy_region_keeps_its_number_at_its_middle_at_the_size_it_prefers():
+    ids = np.zeros((200, 300), dtype=np.int32)
+    ids[40:160, 60:240] = 1
+    regions, free = _page(ids)
+    inner = regions[1]
+
+    label = next(label for label in place_labels(regions, ids, free, SPACING) if label.region_id == 1)
+
+    width, height = text_box_size("2", _preferred(inner))
+    x, y = inner.interior_point
+    assert (label.text, label.font_size, label.leader) == ("2", _preferred(inner), None)
+    assert label.box == (x - width // 2, y - height // 2, x - width // 2 + width, y - height // 2 + height)
+
+
+def test_a_number_moves_off_a_line_through_the_middle_and_keeps_as_far_from_the_lines_as_it_can():
+    ids = np.ones((60, 200), dtype=np.int32)
+    ids[:, :1] = 0  # a sliver down the left edge, so the page has a line at all
+    regions, free = _page(ids)
+    wide = next(region for region in regions if region.region_id == 1)
+    x, _y = wide.interior_point
+    free[:, x - 2 : x + 3] = False  # something drawn down the middle of the region
+
+    label = next(label for label in place_labels(regions, ids, free, SPACING) if label.region_id == 1)
+
+    assert label.font_size == _preferred(wide) and label.leader is None
+    rows, columns = _pixels(label.box)
+    assert free[rows, columns].all() and (ids[rows, columns] == 1).all()
+    # Well clear of what runs down the middle, and of the page's edges above and below.
+    assert columns.stop <= x - 2 - 10 or columns.start >= x + 3 + 10
+    assert rows.start >= 10 and rows.stop <= 50
+
+
+def test_a_number_that_does_not_fit_at_the_size_it_prefers_is_made_smaller_but_never_under_the_smallest():
+    ids = np.zeros((150, 150), dtype=np.int32)
+    ids[20:130, 20:130] = 1
+    regions, free = _page(ids)
+    big = next(region for region in regions if region.region_id == 1)
+    room = np.zeros_like(free)
+    room[60:70, 50:63] = True  # a window 13 x 10 is all the room the region has
+    free &= room | (ids == 0)
+
+    label = next(label for label in place_labels(regions, ids, free, SPACING) if label.region_id == 1)
+
+    assert SPACING.min_font_size <= label.font_size < _preferred(big)
+    assert label.leader is None
+    assert free[_pixels(label.box)].all() and room[_pixels(label.box)].all()
+    for larger in range(label.font_size + 1, _preferred(big) + 1):  # the largest that fits: every larger one is too big
+        width, height = text_box_size("2", larger)
+        assert width > 13 or height > 10
+
+
+def _small_squares(count: int, side: int, spacing: int) -> np.ndarray:
+    """A 200 x 300 page of background with ``count`` squares ``side`` px wide in a row across its middle."""
+    ids = np.zeros((200, 300), dtype=np.int32)
+    for i in range(count):
+        left = 150 - (count * (side + spacing)) // 2 + i * (side + spacing)
+        ids[100 : 100 + side, left : left + side] = i + 1
+    return ids
+
+
+def test_a_region_too_small_for_its_number_gets_it_written_beside_it_with_a_leader_pointing_in():
+    ids = _small_squares(1, side=8, spacing=0)
+    regions, free = _page(ids, colors=[0, 11])  # the square is color 12: a two-digit number
+    square = next(region for region in regions if region.region_id == 1)
+
+    label = next(label for label in place_labels(regions, ids, free, SPACING) if label.region_id == 1)
+
+    assert (label.text, label.font_size) == ("12", SPACING.min_font_size)
+    rows, columns = _pixels(label.box)
+    assert free[rows, columns].all() and (ids[rows, columns] == 0).all()  # in the neighbor, clear of its lines
+    end, anchor = label.leader
+    assert anchor == tuple(float(v) for v in square.interior_point)  # it points at the middle of the square
+    # It stops short of the number, by half its own width and a pixel of anti-aliasing...
+    x0, y0, x1, y1 = label.box
+    gap = math.hypot(max(x0 - 0.5 - end[0], 0, end[0] - (x1 - 0.5)), max(y0 - 0.5 - end[1], 0, end[1] - (y1 - 0.5)))
+    assert gap == pytest.approx(SPACING.leader_width_px / 2 + 1)
+    # ...and runs through the square and the region the number is in, nowhere else, within reach. It can end
+    # on the square's own line: the number is then just across it.
+    path = _pixels_along(anchor, end)
+    assert set(ids[path].tolist()) <= {0, 1}
+    assert math.dist(anchor, end) <= SPACING.leader_reach_px + gap
+
+
+def test_numbers_written_beside_their_regions_keep_clear_of_each_other_and_of_every_leader():
+    ids = _small_squares(6, side=8, spacing=6)
+    regions, free = _page(ids)
+
+    labels = place_labels(regions, ids, free, SPACING)
+
+    with_leaders = [label for label in labels if label.leader is not None]
+    assert len(with_leaders) == 6 and labels[0].leader is None  # the background's own number goes first
+    for one, other in itertools.combinations(labels, 2):
+        a, b = one.box, other.box
+        apart = max(b[0] - a[2], a[0] - b[2], b[1] - a[3], a[1] - b[3])
+        assert apart >= math.ceil(SPACING.label_gap_px)  # in whole pixels
+    for label in with_leaders:
+        path = _pixels_along(label.leader[1], label.leader[0])
+        for other in labels:
+            if other is not label:
+                rows, columns = _pixels(other.box)
+                assert not ((path[0] >= rows.start) & (path[0] < rows.stop) & (path[1] >= columns.start) & (path[1] < columns.stop)).any()
+
+
+def test_a_leader_crosses_another_region_only_when_there_is_no_other_way_out():
+    ids = np.zeros((200, 200), dtype=np.int32)
+    ids[90:110, 90:110] = 2  # a ring too thin to hold a number...
+    ids[96:104, 96:104] = 1  # ...around a square too small to hold one
+    regions, free = _page(ids)
+
+    labels = {label.region_id: label for label in place_labels(regions, ids, free, SPACING)}
+
+    end, anchor = labels[1].leader
+    assert 2 in set(ids[_pixels_along(anchor, end)].tolist())
+    assert (ids[_pixels(labels[1].box)] == 0).all()
+
+
+def test_with_no_room_anywhere_a_number_still_goes_at_the_middle_of_its_region():
+    ids = _small_squares(1, side=30, spacing=0)
+    regions, free = _page(ids)
+    nowhere = np.zeros_like(free)
+
+    labels = place_labels(regions, ids, nowhere, SPACING)
+
+    assert [label.region_id for label in labels] == [0, 1]
+    assert all(label.leader is None and label.font_size == SPACING.min_font_size for label in labels)
+    x, y = regions[1].interior_point
+    x0, y0, x1, y1 = labels[1].box
+    assert x0 <= x < x1 and y0 <= y < y1
+
+
+def test_every_region_is_numbered_clear_of_the_lines_and_of_the_other_numbers():
+    # Patches of five colors, some of them roomy and some not, with squares too small for a number among them.
+    rng = np.random.default_rng(3)
+    colors = np.repeat(np.repeat(rng.integers(0, 5, size=(10, 12)), 20, axis=0), 20, axis=1)
+    for top, left in rng.integers(10, 180, size=(12, 2)):
+        colors[top : top + 6, left : left + 6] = 5
+    # One id per connected patch, as the region stage leaves them.
+    patches = np.zeros(colors.shape, dtype=np.int32)
+    next_id = 0
+    for color in range(6):
+        count, components = cv2.connectedComponents((colors == color).astype(np.uint8), connectivity=8)
+        patches[components > 0] = components[components > 0] + next_id - 1
+        next_id += count - 1
+    regions, free = _page(patches, colors=np.arange(next_id) % 12)
+
+    labels = place_labels(regions, patches, free, SPACING)
+
+    assert sorted(label.region_id for label in labels) == sorted(region.region_id for region in regions)
+    assert any(label.leader is not None for label in labels)
+    for label in labels:
+        assert free[_pixels(label.box)].all()
+        assert label.font_size >= SPACING.min_font_size
+    for one, other in itertools.combinations(labels, 2):
+        a, b = one.box, other.box
+        assert not (a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3])
+    assert place_labels(regions, patches, free, SPACING) == labels  # and the same page every time

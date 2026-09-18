@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import reference_impl as ref
+from tessellatum.core.labels import FONT_SIZE_RADIUS_RATIO, MAX_FONT_SIZE, _pixels_along, min_font_size, text_box_size
 from tessellatum.core.regions import build_regions, extract_regions
 from tessellatum.core.render import PageStyle, render_page
 
@@ -123,12 +124,77 @@ def test_the_line_layer_matches_the_reference_at_any_width(width_px):
     np.testing.assert_array_equal(np.asarray(rendered.outlines), ref.line_layer(size, region_id_map, style))
 
 
-def test_large_case_actually_draws_numbers():
-    # Guard for the render comparison above: make sure some regions are big
-    # enough to get a number, so text rendering is really being compared.
-    labels = _blobby_labels(6, (240, 320), 6, 8.0)
-    region_id_map, region_color = ref.build_regions(labels, 6, 400)
+# Pages that print at a few pixels per millimetre, as a real page does, so that a number's smallest size and a
+# leader's reach are what they are in the app. The pages above are so small that neither comes into play.
+LABEL_CASES = [
+    # seed, (h, w), num_colors, blur_sigma, min_area_px, min_width_px
+    pytest.param(2, (180, 240), 12, 3.0, 40, 6.0, id="leaders"),
+    pytest.param(6, (240, 320), 6, 8.0, 400, 9.0, id="roomy"),
+]
 
+
+@pytest.mark.parametrize("seed, shape, num_colors, blur_sigma, min_area_px, min_width_px", LABEL_CASES)
+def test_numbers_are_placed_as_the_reference_places_them(seed, shape, num_colors, blur_sigma, min_area_px, min_width_px):
+    labels = _blobby_labels(seed, shape, num_colors, blur_sigma)
+    region_id_map, region_color = ref.build_regions(labels, num_colors, min_area_px, min_width_px)
+    size = (shape[1], shape[0])
+
+    rendered = render_page(size, extract_regions(region_id_map, region_color), region_id_map)
+
+    expected = ref.render_page(size, ref.extract_regions(region_id_map, region_color), region_id_map)
+    np.testing.assert_array_equal(np.asarray(rendered.image), np.asarray(expected))
+
+
+def test_a_number_made_smaller_under_a_thick_line_is_placed_as_the_reference_places_it():
+    # A line thick enough to eat the middle of a square that would take a 12 px number there.
+    region_id_map = np.zeros((160, 160), dtype=np.int32)
+    region_id_map[60:90, 60:90] = 1
+    region_color = np.array([0, 1], dtype=np.int32)
+    style = PageStyle(line_width_mm=0.0, min_line_width_px=24.0)
     regions = extract_regions(region_id_map, region_color)
 
-    assert any(r.interior_radius >= 9.0 for r in regions)
+    rendered = render_page((160, 160), regions, region_id_map, style)
+
+    square = next(label for label in rendered.labels if label.region_id == 1)
+    assert square.font_size < _preferred_size(regions[1], (160, 160)) and square.leader is None
+    expected = ref.render_page((160, 160), ref.extract_regions(region_id_map, region_color), region_id_map, style)
+    np.testing.assert_array_equal(np.asarray(rendered.image), np.asarray(expected))
+
+
+def _preferred_size(region, size: tuple[int, int]) -> int:
+    return max(min_font_size(size), int(min(MAX_FONT_SIZE, region.interior_radius * FONT_SIZE_RADIUS_RATIO)))
+
+
+def test_the_label_cases_reach_every_way_a_number_can_be_placed():
+    # Guard for the comparison above: a way of placing a number that no case reaches would go untested.
+    ways = set()
+    for seed, shape, num_colors, blur_sigma, min_area_px, min_width_px in (case.values for case in LABEL_CASES):
+        region_id_map, region_color = ref.build_regions(
+            _blobby_labels(seed, shape, num_colors, blur_sigma), num_colors, min_area_px, min_width_px
+        )
+        size = (shape[1], shape[0])
+        regions = {region.region_id: region for region in extract_regions(region_id_map, region_color)}
+        rendered = render_page(size, list(regions.values()), region_id_map)
+        ink = np.asarray(rendered.outlines) < 255
+        for label in rendered.labels:
+            region = regions[label.region_id]
+            x0, y0, x1, y1 = (int(v) for v in label.box)
+            if label.leader is not None:
+                end, anchor = label.leader
+                crossed = set(region_id_map[_pixels_along(anchor, end)].tolist()) - {label.region_id, region_id_map[y0, x0]}
+                ways.add("a leader crossing another region" if crossed else "a leader")
+            elif ink[y0:y1, x0:x1].any():
+                ways.add("at its middle, with nowhere else to go")
+            else:
+                width, height = text_box_size(label.text, _preferred_size(region, size))
+                x, y = region.interior_point
+                centered = (min(max(x - width // 2, 0), size[0] - width), min(max(y - height // 2, 0), size[1] - height))
+                ways.add("at its middle" if (x0, y0) == centered else "moved off its middle")
+
+    assert ways == {
+        "at its middle",
+        "moved off its middle",
+        "a leader",
+        "a leader crossing another region",
+        "at its middle, with nowhere else to go",
+    }

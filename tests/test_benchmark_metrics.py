@@ -109,6 +109,59 @@ def test_label_sizes_are_judged_in_points_at_print_size():
     assert bm.label_sizes([], scale) == {"small_label_fraction": None, "min_label_pt": None}
 
 
+def _page_with_a_line(column: int, ink: int = 0) -> np.ndarray:
+    """A 20 x 40 line layer, bare paper but for a vertical line one pixel wide at ``column``, ``ink`` as dark."""
+    lines = np.full((20, 40), 255, dtype=np.uint8)
+    lines[:, column] = ink
+    return lines
+
+
+def test_a_number_with_any_line_ink_in_its_box_is_on_a_line():
+    lines = _page_with_a_line(20)
+    boxes = [
+        (10, 0, 20, 4),  # ends just short of the line: its last pixel is column 19
+        (15, 5, 25, 9),  # across it
+        (20, 10, 26, 14),  # starts on it
+        (21, 15, 30, 19),  # beside it
+    ]
+
+    assert bm.label_clearance(boxes, lines) == {"labels_on_lines": 2, "overlapping_labels": 0}
+
+
+def test_the_faint_edge_of_a_line_is_the_line_for_a_number_too():
+    # As for enclosure: an anti-aliased line's pale edge is the line, not bare paper.
+    assert bm.label_clearance([(15, 5, 25, 12)], _page_with_a_line(20, ink=254))["labels_on_lines"] == 1
+
+
+def test_a_box_covers_every_pixel_it_reaches_into():
+    # Versions before 0.1.25 centred their numbers on half pixels.
+    lines = _page_with_a_line(20)
+
+    assert bm.label_clearance([(10.5, 5, 20.5, 12)], lines)["labels_on_lines"] == 1
+    assert bm.label_clearance([(10.5, 5, 19.5, 12)], lines)["labels_on_lines"] == 0
+
+
+def test_a_leader_line_counts_as_a_line_on_a_number():
+    lines, leaders = _page_with_a_line(0, ink=255), _page_with_a_line(30)
+    boxes = [(25, 5, 35, 12), (5, 5, 15, 12)]
+
+    assert bm.label_clearance(boxes, lines)["labels_on_lines"] == 0
+    assert bm.label_clearance(boxes, lines, leaders)["labels_on_lines"] == 1
+
+
+def test_overlapping_labels_counts_each_number_overlapping_another():
+    boxes = [
+        (0, 0, 10, 8),
+        (9, 7, 19, 15),  # overlaps the first by one pixel
+        (19, 0, 29, 7),  # touches the second along an edge: no overlap
+        (40, 0, 50, 8),
+        (42, 2, 48, 6),  # inside the fourth
+    ]
+
+    assert bm.label_clearance(boxes, None) == {"labels_on_lines": None, "overlapping_labels": 4}
+    assert bm.label_clearance([], _page_with_a_line(20)) == {"labels_on_lines": 0, "overlapping_labels": 0}
+
+
 def _bands(middle_rows: int) -> np.ndarray:
     """A page 30 px wide: an 8-row band, a band of ``middle_rows`` rows, and another 8-row band."""
     return np.repeat([10] * 8 + [20] * middle_rows + [30] * 8, 30).reshape(-1, 30)

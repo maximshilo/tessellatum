@@ -103,6 +103,27 @@ METRICS = (
         sigma_export=0.022,
         target=Target(0),
     ),
+    Metric(
+        "labels_on_lines",
+        "labels on lines ↓",
+        "{:d}",
+        "paintable",
+        "lower",
+        sigma=0,  # a page that keeps its numbers clear of the lines has none, so any is a regression
+        sigma_export=0,
+        target=Target(0),
+    ),
+    Metric(
+        "overlapping_labels",
+        "overlapping labels ↓",
+        "{:d}",
+        "paintable",
+        "lower",
+        sigma=0,  # likewise
+        sigma_export=0,
+        target=Target(0),
+    ),
+    Metric("leader_labels", "leaders", "{:d}"),
     Metric("compactness_p10", "compactness p10 ↑", "{:.2f}", "paintable", "higher", sigma=0.023, sigma_export=0.020),
     Metric("compactness_median", "compactness median ↑", "{:.2f}", "paintable", "higher", sigma=0.036, sigma_export=0.029),
     Metric("lines_per_boundary", "lines per boundary", "{:.2f}", "clean drawing", ideal=1.0, sigma=0.10, sigma_export=0.048),

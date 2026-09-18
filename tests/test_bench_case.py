@@ -37,10 +37,12 @@ def test_probe_fallback_reads_the_same_page_data_as_the_analysis(speckled_image_
         bm.paint(from_probe.region_id_map, from_probe.region_color, from_probe.palette_bgr),
     )
     assert from_analysis.min_region_area_px == from_probe.min_region_area_px
-    assert from_analysis.labeled_region_ids == from_probe.labeled_region_ids != set()
-    assert from_analysis.label_font_sizes_px == from_probe.label_font_sizes_px
-    assert from_analysis.label_boxes == from_probe.label_boxes
     assert [r.region_id for r in from_analysis.regions] == [r.region_id for r in from_probe.regions]
+    # So are the numbers: the payload numbers every region, clear of the lines, while the rebuild numbers only the
+    # regions those versions did, where they put them (see test_probe_fallback_rebuilds_font_sizes_without_the_render_module).
+    assert from_analysis.labeled_region_ids == {r.region_id for r in from_analysis.regions}
+    assert from_probe.labeled_region_ids <= from_analysis.labeled_region_ids
+    assert (from_analysis.leaders.shape, from_probe.leaders) == (from_analysis.region_id_map.shape, None)
     # Lines are the exception: the payload reports one per boundary, while the
     # rebuild can only assume what the versions it is there for did, which is to
     # outline every region. The payload is what scoring uses when it has one.
@@ -170,7 +172,13 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
         "text_cer_page",
         "text_cer_painting",
         "labels_on_text",
+        "labels_on_lines",
+        "overlapping_labels",
+        "leader_labels",
     } <= case["quality"].keys()
+    # Every region is numbered, clear of the lines and of the other numbers.
+    assert case["quality"]["unlabeled_regions"] == case["quality"]["labels_on_lines"] == 0
+    assert case["quality"]["overlapping_labels"] == 0
     # Scored against the drawing's manifest entry: the outline is ink, and the legend has the fill's color.
     assert case["quality"]["ink_line_f1"] is not None and case["quality"]["tube_ink_fraction"] is not None
     assert case["quality"]["flat_color_de00_mean"] < 1.0

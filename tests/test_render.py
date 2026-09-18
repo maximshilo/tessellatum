@@ -156,19 +156,76 @@ def test_the_ink_prints_in_the_style_s_grays():
     assert number.min() == style.label_gray  # the number is drawn no darker than its gray
 
 
-def test_the_style_changes_the_ink_and_nothing_else():
+def test_the_grays_change_the_tone_and_nothing_else():
     size = (600, 800)
     ids = _split_page(size)
     regions = extract_regions(ids, np.array([0, 1], dtype=np.int32))
 
     plain = render_page(size, regions, ids, PageStyle())
-    bold = render_page(size, regions, ids, PageStyle(line_width_mm=1.0, line_gray=0, label_gray=0))
+    black = render_page(size, regions, ids, PageStyle(line_gray=0, label_gray=0))
 
-    assert plain.labels == bold.labels
+    assert plain.labels == black.labels
+    np.testing.assert_array_equal(np.asarray(plain.outlines), np.asarray(black.outlines))
+    assert np.asarray(black.image).mean() < np.asarray(plain.image).mean()
+
+
+def test_a_wider_line_draws_the_same_lines_with_more_ink_and_the_numbers_stay_clear_of_it():
+    size = (600, 800)
+    ids = _split_page(size)
+    regions = extract_regions(ids, np.array([0, 1], dtype=np.int32))
+
+    plain = render_page(size, regions, ids, PageStyle())
+    bold = render_page(size, regions, ids, PageStyle(line_width_mm=1.0))
+
     assert len(plain.strokes) == len(bold.strokes)
     for one, other in zip(plain.strokes, bold.strokes):
         np.testing.assert_array_equal(one, other)
-    assert np.asarray(bold.outlines).mean() < np.asarray(plain.outlines).mean()  # more ink, same lines
+    assert np.asarray(bold.outlines).mean() < np.asarray(plain.outlines).mean()
+    for label in bold.labels:
+        x0, y0, x1, y1 = (int(v) for v in label.box)
+        assert (np.asarray(bold.outlines)[y0:y1, x0:x1] == PAPER).all()
+
+
+def _square_too_small_for_its_number(size: tuple[int, int]) -> np.ndarray:
+    """A page of background with a square in its middle too small to hold a number."""
+    width, height = size
+    ids = np.zeros((height, width), dtype=np.int32)
+    ids[height // 2 : height // 2 + 6, width // 2 : width // 2 + 6] = 1
+    return ids
+
+
+def test_a_leader_is_drawn_in_the_numbers_gray_and_ends_in_a_dot_inside_the_region():
+    size = (300, 400)
+    ids = _square_too_small_for_its_number(size)
+    regions = extract_regions(ids, np.array([0, 1], dtype=np.int32))
+    style = PageStyle()
+
+    rendered = render_page(size, regions, ids, style)
+
+    square = next(label for label in rendered.labels if label.region_id == 1)
+    (_end, (x, y)) = square.leader
+    leaders = np.asarray(rendered.leaders)
+    page = np.asarray(rendered.image)[:, :, 0]
+    assert leaders[int(y), int(x)] == 0 and ids[int(y), int(x)] == 1  # the dot is solid, inside the square
+    assert page[int(y), int(x)] == style.label_gray  # and printed in the numbers' gray, not the lines'
+    # The dot is wider than the line: across it there is more solid ink than across the line anywhere else.
+    dot_width = (leaders[int(y)] == 0).sum()
+    assert dot_width >= 2 * style.line_width_px(size)
+    # It is the leader's layer, not the lines': the lines are what they would be without it.
+    bare = render_page(size, [], ids, style)
+    np.testing.assert_array_equal(np.asarray(rendered.outlines), np.asarray(bare.outlines))
+    assert (np.asarray(bare.leaders) == PAPER).all()
+
+
+def test_the_leader_layer_is_bare_paper_when_every_number_fits_in_its_region():
+    size = (600, 800)
+    ids = _split_page(size)
+    regions = extract_regions(ids, np.array([0, 1], dtype=np.int32))
+
+    rendered = render_page(size, regions, ids)
+
+    assert all(label.leader is None for label in rendered.labels)
+    assert (np.asarray(rendered.leaders) == PAPER).all()
 
 
 def test_the_default_grays_are_gray_and_the_default_width_is_the_print_model_s():

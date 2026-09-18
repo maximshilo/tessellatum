@@ -96,6 +96,8 @@ class PageData:
     label_boxes: list[tuple[float, float, float, float]]  # every number's (x0, y0, x1, y1) text box on the page
     strokes: list[np.ndarray]  # every line drawn: (x, y) polylines, pixel centers at integers; a closed one returns to its start
     outlines: np.ndarray | None  # HxW: the line layer alone, 0 where there is a line; None before 0.1.10
+    leaders: np.ndarray | None  # HxW: the ink of the numbers' leader lines, as outlines; None for versions that draw none
+    leader_labels: int  # numbers written outside their region, with a leader pointing in
 
 
 def page_data_from_analysis(analysis) -> PageData:
@@ -121,6 +123,8 @@ def page_data_from_analysis(analysis) -> PageData:
             else [outline_polyline(r.contour) for r in analysis.regions if len(r.contour)]
         ),
         outlines=analysis.outlines,
+        leaders=getattr(analysis, "leaders", None),  # before 0.1.25 no number had a leader
+        leader_labels=sum(getattr(label, "leader", None) is not None for label in analysis.labels),
     )
 
 
@@ -166,6 +170,8 @@ def page_data_from_probe(captured: dict, params, size: tuple[int, int], render_m
         ],
         strokes=[outline_polyline(r.contour) for r in regions if len(r.contour)],
         outlines=None,  # those versions report no layers; enclosure goes unscored for them
+        leaders=None,
+        leader_labels=0,  # those versions wrote every number inside its region
     )
 
 
@@ -304,6 +310,8 @@ def main() -> int:
         brush_px = print_scale.mm_to_px(bm.print_size.MIN_PAINTABLE_WIDTH_MM)
         quality["sliver_area_fraction"] = bm.sliver_share(page_data.region_id_map, brush_px)
         quality.update(bm.label_sizes(page_data.label_font_sizes_px, print_scale))
+        quality.update(bm.label_clearance(page_data.label_boxes, page_data.outlines, page_data.leaders))
+        quality["leader_labels"] = page_data.leader_labels
         quality.update(bm.compactness_stats(page_data.region_id_map))
         quality.update(bm.boundary_lines(page_data.region_id_map, page_data.strokes))
         quality.update(

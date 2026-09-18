@@ -8,16 +8,12 @@ from functools import lru_cache
 
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 from tessellatum.core.boundaries import trace_boundaries
+from tessellatum.core.labels import LEADER_REACH_MM, Label, LabelSpacing, font, min_font_size, place_labels, text_bbox
 from tessellatum.core.print_size import OUTLINE_WIDTH_MM, print_scale
 from tessellatum.core.regions import Region
-
-MIN_LABEL_RADIUS_PX = 9.0
-MIN_FONT_SIZE = 10
-MAX_FONT_SIZE = 40
-FONT_SIZE_RADIUS_RATIO = 0.85
 
 # The page's ink, as a tone on white paper: 0 is black, 255 is invisible.
 # Gray rather than black, so that a line disappears under the paint that is
@@ -45,6 +41,11 @@ _SUBPIXEL_BITS = 4
 
 PAPER = 255  # the line layer where no ink falls at all
 
+# A number written outside its region points into it with a leader: a line as
+# wide as the page's own, in the numbers' gray, ending in a dot this many line
+# widths across (see ``labels``).
+LEADER_DOT_RATIO = 3.0
+
 
 @dataclass(frozen=True)
 class PageStyle:
@@ -59,20 +60,11 @@ class PageStyle:
     min_line_width_px: float = MIN_LINE_WIDTH_PX
     line_gray: int = LINE_GRAY
     label_gray: int = LABEL_GRAY
+    leader_dot_ratio: float = LEADER_DOT_RATIO
 
     def line_width_px(self, size: tuple[int, int]) -> float:
         """How wide a line is on a page of ``size`` (width, height) pixels."""
         return max(self.min_line_width_px, print_scale(size).mm_to_px(self.line_width_mm))
-
-
-@dataclass
-class Label:
-    """A region's number as drawn on the page."""
-
-    region_id: int
-    text: str
-    font_size: int  # px: the font's em size
-    box: tuple[float, float, float, float]  # (x0, y0, x1, y1): the text's bounding box on the page
 
 
 @dataclass
@@ -81,6 +73,7 @@ class RenderedPage:
     outlines: Image.Image  # "L": the ink the lines alone put on the page, 0 = solid ink, 255 = bare paper
     labels: list[Label]  # every number on the page, in drawing order
     strokes: list[np.ndarray]  # every line drawn, in drawing order: Nx2 float64 (x, y); a closed one returns to its first point
+    leaders: Image.Image  # "L": the ink the numbers' leader lines put on the page, as in ``outlines``
 
 
 def render_page(
@@ -93,36 +86,74 @@ def render_page(
 
     Every boundary between two regions is drawn once, as the line its two
     regions share (see ``boundaries.trace_boundaries``), rather than as part
-    of an outline around each of them. ``style`` says how wide those lines
-    print and how dark they and the numbers are.
+    of an outline around each of them. Every region in ``regions`` gets its
+    number, printed at least as large as the paper needs and where no line
+    runs through it (see ``labels.place_labels``). ``style`` says how wide the
+    lines print and how dark they and the numbers are.
 
     Returns the page, plus what it was built from: the ink the lines put on it,
-    the geometry each was drawn from, and where each number went.
+    the geometry each was drawn from, where each number went, and the ink of
+    the leader lines that point a number written outside its region into it.
     """
     strokes = trace_boundaries(region_id_map)
-    coverage = ink_coverage(size, strokes, style.line_width_px(size))
+    line_width = style.line_width_px(size)
+    coverage = ink_coverage(size, strokes, line_width)
     outlines = Image.fromarray(PAPER - coverage, "L")
 
-    page = _paper_under(coverage, style.line_gray).convert("RGB")
+    spacing = LabelSpacing(
+        min_font_size=min_font_size(size),
+        label_gap_px=line_width,
+        leader_width_px=line_width,
+        leader_reach_px=print_scale(size).mm_to_px(LEADER_REACH_MM),
+    )
+    labels = place_labels(regions, region_id_map, coverage == 0, spacing)
+    leader_coverage = _leader_coverage(size, labels, line_width, line_width * style.leader_dot_ratio)
+
+    paper = _paper_under(coverage, style.line_gray)
+    if any(label.leader is not None for label in labels):  # most pages have none, and white paper changes nothing
+        np.minimum(paper, _paper_under(leader_coverage, style.label_gray), out=paper)
+    page = Image.fromarray(paper, "L").convert("RGB")
     draw = ImageDraw.Draw(page)
     label_fill = (style.label_gray,) * 3
-    labels: list[Label] = []
-    for region in regions:
-        if region.interior_radius < MIN_LABEL_RADIUS_PX:
-            continue
-        font_size = int(
-            max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, region.interior_radius * FONT_SIZE_RADIUS_RATIO))
-        )
-        text = str(region.color_index + 1)
-        bbox = _text_bbox(text, font_size)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        x, y = region.interior_point
-        left = min(max(x - tw / 2, 0), size[0] - tw)
-        top = min(max(y - th / 2, 0), size[1] - th)
-        draw.text((left - bbox[0], top - bbox[1]), text, fill=label_fill, font=_font(font_size))
-        labels.append(Label(region.region_id, text, font_size, (left, top, left + tw, top + th)))
+    for label in labels:
+        bbox = text_bbox(label.text, label.font_size)
+        left, top = label.box[0], label.box[1]
+        draw.text((left - bbox[0], top - bbox[1]), label.text, fill=label_fill, font=font(label.font_size))
 
-    return RenderedPage(image=page, outlines=outlines, labels=labels, strokes=strokes)
+    return RenderedPage(
+        image=page,
+        outlines=outlines,
+        labels=labels,
+        strokes=strokes,
+        leaders=Image.fromarray(PAPER - leader_coverage, "L"),
+    )
+
+
+def _leader_coverage(size: tuple[int, int], labels: list[Label], width_px: float, dot_px: float) -> np.ndarray:
+    """The ink the leader lines put on a ``size`` page: 0 = bare paper, 255 = solid.
+
+    Each leader is a line from its number to the point in the region it
+    numbers, drawn with the same round pen as the page's lines, with a dot
+    ``dot_px`` across at that point. Each is drawn in a window around it, since
+    a page has few of them if any.
+    """
+    width, height = size
+    coverage = np.zeros((height, width), dtype=np.uint8)
+    reach = int(math.ceil(max(width_px, dot_px) / 2)) + 2
+    for label in labels:
+        if label.leader is None:
+            continue
+        points = np.array(label.leader, dtype=np.float64)
+        x0 = max(0, int(math.floor(points[:, 0].min())) - reach)
+        y0 = max(0, int(math.floor(points[:, 1].min())) - reach)
+        x1 = min(width, int(math.ceil(points[:, 0].max())) + reach + 1)
+        y1 = min(height, int(math.ceil(points[:, 1].max())) + reach + 1)
+        local = points - (x0, y0)
+        window = (x1 - x0, y1 - y0)
+        line = ink_coverage(window, [local], width_px)
+        dot = ink_coverage(window, [local[1:].repeat(2, axis=0)], dot_px)
+        np.maximum(coverage[y0:y1, x0:x1], np.maximum(line, dot), out=coverage[y0:y1, x0:x1])
+    return coverage
 
 
 def ink_coverage(size: tuple[int, int], strokes: list[np.ndarray], width_px: float) -> np.ndarray:
@@ -201,20 +232,6 @@ def _pen(diameter: int) -> tuple[np.ndarray, tuple[int, int]]:
     return (dx * dx + dy * dy <= half * half).astype(np.uint8), (half - 1, half - 1)
 
 
-def _paper_under(coverage: np.ndarray, gray: int) -> Image.Image:
+def _paper_under(coverage: np.ndarray, gray: int) -> np.ndarray:
     """White paper with ``gray`` ink laid on it as thickly as ``coverage`` says."""
-    return Image.fromarray(np.rint(PAPER - coverage * ((PAPER - gray) / PAPER)).astype(np.uint8), "L")
-
-
-@lru_cache(maxsize=None)
-def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    return ImageFont.load_default(size=size)
-
-
-_MEASURING_DRAW = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-
-
-@lru_cache(maxsize=4096)
-def _text_bbox(text: str, font_size: int) -> tuple[int, int, int, int]:
-    """``textbbox`` of ``text`` at the origin, as measured on an RGB page."""
-    return _MEASURING_DRAW.textbbox((0, 0), text, font=_font(font_size))
+    return np.rint(PAPER - coverage * ((PAPER - gray) / PAPER)).astype(np.uint8)

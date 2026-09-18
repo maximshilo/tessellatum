@@ -52,13 +52,11 @@ run the binary from a terminal to see the error.
    region whose paint reaches it first, and a region thinner than that
    everywhere disappears into its neighbors, so the page asks for no stroke
    too fine to make.
-4. **Draw + number**: the boundaries between regions are traced from the
-   region map and each one is drawn once, as a single line its two regions
-   share, so no boundary is doubled or left out. Each line is then smoothed
-   along its length to take the pixel grid's staircase off it, but never by
-   more than a pixel, so it stays on the boundary it draws and the page still
-   closes. Every region then gets a number (matched to a legend swatch) at its
-   most interior point.
+4. **Draw**: the boundaries between regions are traced from the region map
+   and each one is drawn once, as a single line its two regions share, so no
+   boundary is doubled or left out. Each line is then smoothed along its
+   length to take the pixel grid's staircase off it, but never by more than a
+   pixel, so it stays on the boundary it draws and the page still closes.
 5. **Ink**: the lines go down as a round pen 0.3 mm across — a size on paper,
    so a preview and an export of one image print the same line — laid on a
    grid four times finer than the page and averaged back down, which
@@ -66,6 +64,14 @@ run the binary from a terminal to see the error.
    print gray rather than black, so they vanish under the paint meant to
    cover them and a number is not mistaken for writing in the picture. Width
    and tone are `PageStyle` in `src/tessellatum/core/render.py`.
+6. **Number**: every region gets its number (matched to a legend swatch),
+   never smaller than 6 pt on paper (nor than 10 px), and never where any of
+   a line's ink falls, however faint. It goes at the region's most interior
+   point if it fits there; otherwise wherever in the region it keeps farthest
+   from the lines, made smaller if it has to be. A region too small to hold
+   even that has its number written just outside it, with a leader line in
+   the numbers' gray running to a dot inside it. See
+   `src/tessellatum/core/labels.py`.
 
 Difficulty controls three things: how many colors k-means looks for, how
 small a region is allowed to get before being merged away, and how much
