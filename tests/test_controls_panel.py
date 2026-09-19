@@ -15,13 +15,17 @@ from tessellatum.gui import controls_panel  # noqa: E402
 from tessellatum.gui.controls_panel import ControlsPanel  # noqa: E402
 
 
+# One application for the whole module: letting it be collected between tests
+# and making another is how Qt test suites come to crash at random.
+_app = QApplication.instance() or QApplication([])
+
+
 @pytest.fixture
 def panel():
-    app = QApplication.instance() or QApplication([])
     widget = ControlsPanel()
     yield widget
     widget.deleteLater()
-    app.processEvents()
+    _app.processEvents()
 
 
 def test_the_region_slider_spans_the_custom_range_in_equal_ratios():

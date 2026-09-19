@@ -1,5 +1,6 @@
 """The benchmark case runner scores the pipeline's analysis payload, or what its stage probe captures for older versions."""
 
+import dataclasses
 import importlib.util
 import json
 import subprocess
@@ -203,6 +204,8 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
         "overlapping_labels",
         "leader_labels",
     } <= case["quality"].keys()
+    # The settings the case ran with, under the version's own field names.
+    assert case["params"] == dataclasses.asdict(difficulty.params_for_preset("Hard"))
     # Every region is numbered, clear of the lines and of the other numbers.
     assert case["quality"]["unlabeled_regions"] == case["quality"]["labels_on_lines"] == 0
     assert case["quality"]["overlapping_labels"] == 0

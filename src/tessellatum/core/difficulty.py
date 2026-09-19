@@ -59,7 +59,10 @@ CUSTOM_COLORS_RANGE = (4, 40)
 # many that more than 1% of an A4 page is paint the 3 mm brush can't put down
 # without crossing a line. Of 10, 15, 20, 25 and 30 mm², only 30 keeps every
 # benchmark page, preview or export, under 1% at the Custom sliders' finest
-# setting (25 leaves one at 1.01%).
+# setting (25 leaves one at 1.01%). That bounds the finest setting and the
+# presets, not every mix of the sliders: slivers don't simply fall as the
+# settings coarsen, and at 30 mm² a few other mixes (fewer colors, or a little
+# smoothing) leave the most textured photograph at 1.03-1.10%.
 CUSTOM_MIN_REGION_AREA_MM2_RANGE = (30.0, 500.0)
 CUSTOM_BLUR_RANGE = (0.0, 12.0)
 

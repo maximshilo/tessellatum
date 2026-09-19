@@ -35,6 +35,7 @@ def test_the_finest_custom_setting_keeps_regions_of_30_square_millimeters():
     finest = difficulty.finest_params()
 
     assert (finest.num_colors, finest.min_region_area_mm2, finest.blur_sigma) == (40, 30.0, 0.0)
+    assert difficulty.CUSTOM_MIN_REGION_AREA_MM2_RANGE == (30.0, 500.0)
     # It is the sliders' own extreme, and every preset lies within the sliders' range.
     assert finest == difficulty.custom_params(1000, 0.0, -1.0)
     lo, hi = difficulty.CUSTOM_MIN_REGION_AREA_MM2_RANGE
