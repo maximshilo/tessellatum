@@ -197,7 +197,8 @@ def test_scorecard_scores_each_job_per_category_and_over_all_cases(tmp_path):
     assert (
         "| category | cases | lines per boundary | lines per boundary (clear) (1 ± 0.05) | unenclosed ↓ (0) "
         "| same-color boundary ↓ (0) | jaggedness ↓ (≤ 1.02) | edge F1 ↑ "
-        "| ink line F1 ↑ (≥ 0.9) | tubes ↓ (0) | ink in shapes < 5 mm ↓ | labels on features ↓ "
+        "| ink line F1 ↑ | ink printed recall ↑ (≥ 0.95) | ink printed precision ↑ (≥ 0.95 on exact colors) "
+        "| tubes ↓ (0) | ink in shapes < 5 mm ↓ | labels on features ↓ "
         "| text CER page ↓ (≤ text CER source + 0.1) | labels on text ↓ (0) | targets met |"
     ) in drawing
     palette = _section(scorecard, "#### palette")
@@ -458,7 +459,8 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
         "| case | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | regions | labeled area ↑ | unlabeled ↓ | slivers ↓ | labels < 6 pt ↓ "
         "| labels on lines ↓ | overlapping labels ↓ | leaders | compactness p10 ↑ | compactness median ↑ | lines per boundary | lines per boundary (clear) "
         "| unenclosed ↓ | same-color boundary ↓ | jaggedness ↓ "
-        "| edge F1 ↑ | colors | palette min ΔE00 ↑ | color pairs < 10 ΔE00 ↓ | ink line F1 ↑ | tubes ↓ | ink in shapes < 5 mm ↓ "
+        "| edge F1 ↑ | colors | palette min ΔE00 ↑ | color pairs < 10 ΔE00 ↓ | ink line F1 ↑ "
+        "| ink printed recall ↑ | ink printed precision ↑ | tubes ↓ | ink in shapes < 5 mm ↓ "
         "| flat colors ΔE00 ↓ | ink found | ink found recall ↑ | ink found precision ↑ | stray ink ↓ "
         "| face ΔE00 ↓ | face SSIM ↑ | features lost ↓ | labels on features ↓ | text CER source "
         "| text CER page ↓ | text CER painting ↓ | labels on text ↓ | undersized ↓ | ink | targets missed |"
@@ -466,12 +468,12 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
     assert header in old_alone
     assert (
         "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
-        "| – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | 0 | 10.0% | – |"
+        "| – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | 0 | 10.0% | – |"
     ) in old_alone
     assert "| all | 1 | 1 | no targets | no targets | no targets | no targets |" in old_alone
     assert (
         "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | 3 | 10.0% | 0.0% | 0 | 0 | 0 | 0.10 | 0.40 | 2.00 | 1.90 "
-        "| 0.0% | 1.0% | 1.100 | 0.50 | 8 | 4.5 | 2 | 0.25 | 2 | 60.0% | 3.50 | 0.0% | – | – | 0.0% | 7.50 | 0.600 | 1 | 2 "
-        "| 0.10 | 0.95 | 0.98 | 1 | 0 | 10.0% | – → 11/16 | ok |"
+        "| 0.0% | 1.0% | 1.100 | 0.50 | 8 | 4.5 | 2 | 0.25 | – | – | 2 | 60.0% | 3.50 | 0.0% | – | – | 0.0% | 7.50 | 0.600 "
+        "| 1 | 2 | 0.10 | 0.95 | 0.98 | 1 | 0 | 10.0% | – → 10/15 | ok |"
     ) in old_vs_new
     assert "| all | 1 | 1 | 0/1 met | 0/1 met | 0/1 met | 0/1 met |" in old_vs_new

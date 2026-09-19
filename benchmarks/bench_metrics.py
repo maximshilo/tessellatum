@@ -106,10 +106,26 @@ def fit_to(image: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     return cv2.resize(image, size, interpolation=cv2.INTER_NEAREST)
 
 
-def paint(region_id_map: np.ndarray, region_color: np.ndarray, palette_bgr: np.ndarray) -> np.ndarray:
-    """Fill every region with its palette color: the "finished painting"."""
+def paint(
+    region_id_map: np.ndarray,
+    region_color: np.ndarray,
+    palette_bgr: np.ndarray,
+    printed_ink: np.ndarray | None = None,
+    ink_gray: int = 0,
+) -> np.ndarray:
+    """Fill every region with its palette color: the "finished painting".
+
+    What the page prints stays as it is: line art's ``printed_ink`` (HxW bool)
+    in its gray ``ink_gray``, and bare paper, white, wherever the page has no
+    region and no ink.
+    """
     lut = np.asarray(palette_bgr, dtype=np.uint8)[np.asarray(region_color, dtype=np.int64)]
-    return lut[np.clip(region_id_map, 0, None)]
+    ids = np.asarray(region_id_map)
+    painted = lut[np.clip(ids, 0, None)]
+    painted[ids < 0] = BARE_PAPER
+    if printed_ink is not None:
+        painted[np.asarray(printed_ink, dtype=bool)] = ink_gray
+    return painted
 
 
 def bgr_to_lab(image_bgr: np.ndarray) -> np.ndarray:
@@ -215,14 +231,24 @@ def fidelity(source_bgr: np.ndarray, painted_bgr: np.ndarray) -> dict[str, float
 
 
 def count_undersized(region_id_map: np.ndarray, min_area_px: int) -> int:
-    """Regions still smaller than the merge threshold (should be none)."""
-    areas = np.bincount(region_id_map[region_id_map >= 0].ravel())
-    areas = areas[areas > 0]
-    return int((areas < min_area_px).sum())
+    """Regions still smaller than the merge threshold (should be none) that another region touches.
+
+    A region no other region touches, diagonals included, has nothing to merge
+    into: on line art, a shape the ink encloses on its own, whose size is the
+    artwork's.
+    """
+    ids = np.asarray(region_id_map)
+    areas = np.bincount(ids[ids >= 0].ravel())
+    touched = np.zeros(areas.size, dtype=bool)
+    for a, b, _spacing in _neighbor_pairs(ids):
+        differ = (a != b) & (a >= 0) & (b >= 0)
+        touched[a[differ]] = True
+        touched[b[differ]] = True
+    return int(((areas > 0) & (areas < min_area_px) & touched).sum())
 
 
 def label_coverage(regions, labeled_region_ids, total_px: int) -> dict[str, float]:
-    """Share of drawn regions (and of page area) that carry a number."""
+    """Share of drawn regions, and of the area to paint (``total_px``: the page less what it prints), that carry a number."""
     labeled = [r for r in regions if r.region_id in labeled_region_ids]
     return {
         "labeled_region_fraction": len(labeled) / len(regions) if regions else 0.0,
@@ -594,13 +620,18 @@ def source_ink(
     ``max_width_px`` wide fits into (the opening of ``sliver_mask``) are fills
     drawn in an ink color, not lines.
     """
+    ink = source_ink_colored(image_bgr, flat_colors_bgr, ink_colors_bgr)
+    return ink & sliver_mask(ink.astype(np.int32), max_width_px)
+
+
+def source_ink_colored(image_bgr: np.ndarray, flat_colors_bgr: np.ndarray, ink_colors_bgr: np.ndarray) -> np.ndarray:
+    """The pixels in the artwork's ink colors, however wide: ``source_ink`` before it keeps only the lines."""
     image = np.asarray(image_bgr, dtype=np.uint8)
     flats = np.asarray(flat_colors_bgr, dtype=np.uint8).reshape(-1, 3)
     inks = np.asarray(ink_colors_bgr, dtype=np.uint8).reshape(-1, 3)
     if len(inks) == 0:
         return np.zeros(image.shape[:2], dtype=bool)
-    ink = _nearest_colors(image, np.concatenate([flats, inks, _ink_mixes(inks)])) >= len(flats)
-    return ink & sliver_mask(ink.astype(np.int32), max_width_px)
+    return _nearest_colors(image, np.concatenate([flats, inks, _ink_mixes(inks)])) >= len(flats)
 
 
 def centerlines(mask: np.ndarray) -> np.ndarray:
@@ -632,11 +663,12 @@ def centerlines(mask: np.ndarray) -> np.ndarray:
     return thinned
 
 
-def ink_line_match(strokes, ink: np.ndarray, tolerance_px: float) -> dict[str, float | None]:
+def ink_line_match(strokes, ink: np.ndarray, tolerance_px: float, printed: np.ndarray | None = None) -> dict[str, float | None]:
     """Do the drawn lines run along the artwork's ink lines, down their middle?
 
     ``ink`` is ``source_ink``'s mask; its ``centerlines`` are compared with the
-    pixels the drawn lines' centers pass through. ``ink_line_recall`` is the
+    pixels the drawn lines' centers pass through. Ink the page prints as it
+    is (``printed``, HxW bool) is drawn too, as its own centerlines. ``ink_line_recall`` is the
     share of centerline pixels within ``tolerance_px`` of a drawn line.
     ``ink_line_precision`` is the share of drawn-line pixels on or within
     ``tolerance_px`` of the ink that lie within ``tolerance_px`` of a
@@ -647,6 +679,8 @@ def ink_line_match(strokes, ink: np.ndarray, tolerance_px: float) -> dict[str, f
     """
     centers = centerlines(ink)
     lines = _drawn_lines(strokes, ink.shape)
+    if printed is not None and printed.any():
+        lines |= centerlines(printed)
     precision = _share_near(lines & _near(ink, tolerance_px), centers, tolerance_px)
     recall = _share_near(centers, lines, tolerance_px)
     return {"ink_line_precision": precision, "ink_line_recall": recall, "ink_line_f1": _f1(precision, recall)}
@@ -668,6 +702,27 @@ def found_ink_match(found: np.ndarray, ink: np.ndarray, tolerance_px: float) -> 
     precision = _share_near(found, ink, tolerance_px)
     recall = _share_near(ink, found, tolerance_px)
     return {"ink_found_precision": precision, "ink_found_recall": recall, "ink_found_f1": _f1(precision, recall)}
+
+
+def printed_ink_match(
+    printed: np.ndarray, ink: np.ndarray, tolerance_px: float, ink_colored: np.ndarray | None = None
+) -> dict[str, float | None]:
+    """How closely the ink a page prints matches the artwork's ink, pixel by pixel.
+
+    ``printed`` is the page's printed ink (HxW bool), ``ink`` is
+    ``source_ink``'s mask of the artwork's ink lines, and ``ink_colored``
+    ``source_ink_colored``'s of everything in its ink colors, however wide
+    (``ink`` itself without it). ``ink_print_recall`` is the share of the
+    artwork's ink-line pixels within ``tolerance_px`` of a pixel printed: are
+    its lines printed? ``ink_print_precision`` is the share of the pixels
+    printed within ``tolerance_px`` of the artwork's ink: is what the page
+    prints the artwork's ink, a line or where it runs wider? Both as
+    ``found_ink_match`` scores the ink found; ``ink_print_f1`` is their harmonic
+    mean. A page that prints no ink has no precision, and recall 0 on line art.
+    """
+    precision = _share_near(printed, ink if ink_colored is None else ink_colored, tolerance_px)
+    recall = _share_near(ink, printed, tolerance_px)
+    return {"ink_print_precision": precision, "ink_print_recall": recall, "ink_print_f1": _f1(precision, recall)}
 
 
 def tube_regions(region_id_map: np.ndarray, ink: np.ndarray, max_width_px: float) -> dict[str, float | int | None]:
@@ -737,6 +792,7 @@ def feature_survival(
     tolerance_px: float,
     min_edge_recall: float = FEATURE_MIN_EDGE_RECALL,
     min_region_share: float = FEATURE_MIN_REGION_SHARE,
+    printed: np.ndarray | None = None,
 ) -> list[dict[str, float | bool | None]]:
     """Whether each face feature, such as an eye, is still on the page: as lines along its edges, or as a shape of its own.
 
@@ -744,7 +800,8 @@ def feature_survival(
 
     * ``edge_recall`` is the share of the source's ``edges`` (``source_edges``)
       inside the box that lie within ``tolerance_px`` of a drawn line (the
-      centers of ``strokes``); None if the box holds no edges;
+      centers of ``strokes``, or the ink the page prints, ``printed``); None
+      if the box holds no edges;
     * ``region_share`` is the largest share of the box that one drawn region
       (``drawn_region_ids``) lying at least half inside the box covers; 0 if
       there is none;
@@ -752,7 +809,10 @@ def feature_survival(
       ``region_share`` at least ``min_region_share``.
     """
     ids = np.asarray(region_id_map)
-    near_lines = _near(_drawn_lines(strokes, ids.shape), tolerance_px)
+    drawn_lines = _drawn_lines(strokes, ids.shape)
+    if printed is not None:
+        drawn_lines |= np.asarray(printed, dtype=bool)
+    near_lines = _near(drawn_lines, tolerance_px)
     areas = np.bincount(ids[ids >= 0].ravel())
     drawn = np.zeros(areas.size, dtype=bool)
     drawn[[r for r in drawn_region_ids if 0 <= r < areas.size]] = True

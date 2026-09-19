@@ -3,8 +3,9 @@
 Pixel-level work NumPy can't vectorize -- union-find labeling, the sequential
 small-region merge, the same-color union that follows it, the greedy coloring
 that groups regions for the width measurement, the walk that turns the
-boundaries between regions into one path each, and the bilateral filter's
-per-pixel weighting -- runs here as compiled code. Arrays are passed
+boundaries between regions into one path each, the search for the nearest
+core a thin part can reach without crossing line art's ink, and the bilateral
+filter's per-pixel weighting -- runs here as compiled code. Arrays are passed
 flattened (row-major) with explicit ``height``/``width``.
 
 Kernels compile on first call and are cached on disk (``cache=True``), so only
@@ -596,6 +597,73 @@ def bilateral_rows(padded, out, y_start, y_stop, width, radius, offsets, space_w
             dst += 3
 
 
+@njit(cache=True, nogil=True)
+def nearest_seed_within(seeds, passable, height, width):
+    """For every pixel, the label of the seed nearest to it along a path through ``passable`` pixels.
+
+    ``seeds`` holds a label (>= 0) at each seed pixel and -1 elsewhere; a seed
+    on a pixel that isn't passable is ignored. A path steps between
+    8-neighbors, a straight step counting 5 and a diagonal one 7: a chamfer
+    distance within a few percent of the straight-line one, measured around
+    whatever isn't passable rather than through it (Dijkstra's algorithm).
+    Ties go to the wave that reaches a pixel first, in order of distance and
+    then raster position, so the result is deterministic. Returns -1 where no
+    seed can be reached, and on pixels that aren't passable.
+    """
+    n = height * width
+    unreached = np.int64(1) << 60
+    dist = np.full(n, unreached, np.int64)
+    out = np.full(n, -1, np.int32)
+    # Min-heap of (distance << 32 | pixel); a pixel is pushed again whenever it gets nearer, and stale entries are
+    # skipped when popped. It grows as needed.
+    heap = np.empty(max(64, n), np.int64)
+    size = 0
+    for p in range(n):
+        if seeds[p] >= 0 and passable[p]:
+            dist[p] = 0
+            out[p] = seeds[p]
+            heap[size] = p
+            size += 1
+    for i in range(size // 2 - 1, -1, -1):
+        _sift_down(heap, i, size)
+
+    while size > 0:
+        key = heap[0]
+        size -= 1
+        if size > 0:
+            heap[0] = heap[size]
+            _sift_down(heap, 0, size)
+        d = key >> 32
+        p = key & 0xFFFFFFFF
+        if d != dist[p]:
+            continue
+        y = p // width
+        x = p - y * width
+        for dy in range(-1, 2):
+            yy = y + dy
+            if yy < 0 or yy >= height:
+                continue
+            for dx in range(-1, 2):
+                xx = x + dx
+                if (dy == 0 and dx == 0) or xx < 0 or xx >= width:
+                    continue
+                q = yy * width + xx
+                if not passable[q]:
+                    continue
+                nd = d + (7 if dy != 0 and dx != 0 else 5)
+                if nd < dist[q]:
+                    dist[q] = nd
+                    out[q] = out[p]
+                    if size == heap.size:
+                        grown = np.empty(2 * heap.size, np.int64)
+                        grown[:size] = heap[:size]
+                        heap = grown
+                    heap[size] = (nd << 32) | q
+                    _sift_up(heap, size)
+                    size += 1
+    return out
+
+
 def warm_up() -> None:
     """Compile (or load from cache) every kernel using tiny inputs.
 
@@ -608,6 +676,7 @@ def warm_up() -> None:
     merge_same_color_neighbors(ids, 3, 3, region_color, areas)
     edge_adjacency_classes(ids, 3, 3, int(ids.max()) + 1, np.empty(9, dtype=np.int8))
     region_bounds(ids, 3, 3, int(ids.max()) + 1)
+    nearest_seed_within(labels - 1, labels >= 0, 3, 3)
 
     from tessellatum.core.boundaries import crack_edges  # imported here: boundaries imports this module
 

@@ -38,6 +38,10 @@ MAX_SHIFT_PX = 1.0
 SMOOTHING_MIN_PX = 2.0
 SMOOTHING_MM = 0.5
 
+# What the printed ink counts as while boundaries are traced: a region apart from every real one (ids >= 0) and from
+# the pixels in no region (-1), such as bare paper the ink encloses.
+_INK_ID = -2
+
 # The smallest area a closed line may be left enclosing. A region a pixel or two
 # across is smaller than the corridor, so smoothing its outline would pull it shut
 # into a stroke with nothing inside to paint; such a line is kept as it was traced.
@@ -101,7 +105,10 @@ def smoothing_length_px(size: tuple[int, int]) -> float:
 
 
 def trace_boundaries(
-    region_id_map: np.ndarray, smoothing_px: float | None = None, max_shift_px: float = MAX_SHIFT_PX
+    region_id_map: np.ndarray,
+    smoothing_px: float | None = None,
+    max_shift_px: float = MAX_SHIFT_PX,
+    ink: np.ndarray | None = None,
 ) -> list[np.ndarray]:
     """The page's lines: one smooth polyline per boundary between two regions.
 
@@ -110,6 +117,10 @@ def trace_boundaries(
     the two regions share exactly the same geometry and no boundary is drawn
     twice or left out. A boundary that meets no junction comes back as a
     closed line, repeating its first point at the end.
+
+    ``ink`` (HxW bool) is line art's printed ink, which is a line already: no
+    line is drawn along it, and a boundary between two regions ends where it
+    meets it, as at any junction.
 
     The crack itself is a staircase of single pixel steps, which
     ``smooth_boundaries`` takes out without letting a line move further than
@@ -123,6 +134,8 @@ def trace_boundaries(
         return []
     height, width = ids.shape
     stride = width + 1
+    if ink is not None:
+        ids = np.where(ink, _INK_ID, ids)  # a region of its own, so that the boundaries along it are paths of their own
     right, down, degree, num_edges = crack_edges(ids)
     if num_edges == 0:
         return []
@@ -135,9 +148,32 @@ def trace_boundaries(
     points[:, 1] = rows - 0.5
 
     paths = [points[begin:end] for begin, end in zip(starts[:-1], starts[1:])]
+    if ink is not None:
+        along_ink = _along_ink(corners[starts[:-1]], corners[starts[:-1] + 1], stride, ink)
+        paths = [path for path, skip in zip(paths, along_ink) if not skip]
     if smoothing_px is None:
         smoothing_px = smoothing_length_px((width, height))
     return smooth_boundaries(paths, smoothing_px, max_shift_px, size=(width, height))
+
+
+def _along_ink(first: np.ndarray, second: np.ndarray, stride: int, ink: np.ndarray) -> np.ndarray:
+    """For each path, given its first two corners, whether it runs along the ink.
+
+    A path separates the same two regions all the way from one junction to
+    the next, so its first crack edge says which two they are. The edge
+    between corners ``(i, j)`` and ``(i, j + 1)`` separates the pixels
+    ``(i - 1, j)`` and ``(i, j)``; the one between ``(i, j)`` and ``(i + 1, j)``
+    the pixels ``(i, j - 1)`` and ``(i, j)``. Off the page is not ink.
+    """
+    padded = np.pad(np.asarray(ink, dtype=bool), 1)  # padded[i + 1, j + 1] is pixel (i, j)
+    row0, column0 = np.divmod(first, stride)
+    row1, column1 = np.divmod(second, stride)
+    across_rows = row0 == row1  # the edge runs along a row of corners, between two rows of pixels
+    row = np.minimum(row0, row1)
+    column = np.minimum(column0, column1)
+    one = np.where(across_rows, padded[row, column + 1], padded[row + 1, column])  # above, or left of, the edge
+    other = padded[row + 1, column + 1]
+    return one | other
 
 
 def smooth_boundaries(
