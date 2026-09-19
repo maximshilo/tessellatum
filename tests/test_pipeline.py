@@ -60,7 +60,7 @@ def test_generate_reuses_quantization_across_region_size_changes(sample_image_bg
     monkeypatch.setattr(pipeline, "quantize", counting_quantize)
     pipeline.clear_cache()
     medium = difficulty.params_for_preset("Medium")
-    finer = difficulty.DifficultyParams(medium.num_colors, medium.min_region_fraction / 4, medium.blur_sigma)
+    finer = difficulty.DifficultyParams(medium.num_colors, medium.min_region_area_mm2 / 4, medium.blur_sigma)
 
     first = generate(sample_image_bgr, medium, long_edge=200)
     generate(sample_image_bgr, finer, long_edge=200)
@@ -175,7 +175,7 @@ def test_the_line_layer_says_where_the_ink_is_whatever_tone_it_is_printed_in(sam
 
 
 def test_analysis_lists_legend_colors_first(speckled_image_bgr):
-    params = difficulty.DifficultyParams(num_colors=3, min_region_fraction=0.01, blur_sigma=0.0)
+    params = difficulty.DifficultyParams(num_colors=3, min_region_area_mm2=480.0, blur_sigma=0.0)
 
     result = generate(speckled_image_bgr, params, long_edge=80, collect_analysis=True)
     analysis = result.analysis
@@ -206,7 +206,7 @@ def test_every_two_colors_on_the_legend_stand_clearly_apart():
     # legend of near-identical swatches.
     ramp = np.linspace(0, 1, 200)[None, :, None]
     gradient = (np.array([40, 60, 80]) + ramp * np.array([50, 50, 50])).repeat(200, axis=0).astype(np.uint8)
-    params = difficulty.DifficultyParams(num_colors=20, min_region_fraction=0.001, blur_sigma=1.0)
+    params = difficulty.DifficultyParams(num_colors=20, min_region_area_mm2=36.0, blur_sigma=1.0)
 
     result = generate(gradient, params, long_edge=200, collect_analysis=True)
 
@@ -239,7 +239,7 @@ def test_a_line_too_thin_to_paint_is_not_a_region_on_the_page():
     image[:, :100] = (200, 60, 60)
     image[:, 100:] = (60, 180, 60)
     image[:, 99:101] = (20, 20, 20)
-    params = difficulty.DifficultyParams(num_colors=3, min_region_fraction=0.0001, blur_sigma=0.0)
+    params = difficulty.DifficultyParams(num_colors=3, min_region_area_mm2=print_size.MIN_REGION_AREA_MM2, blur_sigma=0.0)
 
     result = generate(image, params, long_edge=200, collect_analysis=True)
 
@@ -250,11 +250,32 @@ def test_a_line_too_thin_to_paint_is_not_a_region_on_the_page():
 
 
 def test_the_region_limits_come_from_the_printed_page():
-    params = difficulty.DifficultyParams(num_colors=4, min_region_fraction=0.0001, blur_sigma=0.0)
+    params = difficulty.DifficultyParams(num_colors=4, min_region_area_mm2=40.0, blur_sigma=0.0, min_width_mm=4.0)
     scale = print_size.print_scale((200, 200))
 
     min_area_px, min_width_px = pipeline._paintable_limits(params, (200, 200))
 
+    assert min_area_px == round(scale.mm2_to_px(40.0))
+    assert min_width_px == scale.mm_to_px(4.0)
+
+    # Below the brush and its footprint, the printed page's own limits hold.
+    finer = difficulty.DifficultyParams(num_colors=4, min_region_area_mm2=1.0, blur_sigma=0.0, min_width_mm=1.0)
+    min_area_px, min_width_px = pipeline._paintable_limits(finer, (200, 200))
+
     assert min_width_px == scale.mm_to_px(print_size.MIN_PAINTABLE_WIDTH_MM)
-    # 0.0001 of the image is 4 px, less than the brush's own footprint.
     assert min_area_px == round(scale.mm2_to_px(print_size.MIN_REGION_AREA_MM2)) > 4
+
+
+def test_a_preview_and_an_export_are_held_to_the_same_sizes_on_paper():
+    params = difficulty.params_for_preset("Hard")
+    preview_area, preview_width = pipeline._paintable_limits(params, (1100, 825))
+    export_area, export_width = pipeline._paintable_limits(params, (2200, 1650))
+
+    assert export_width == 2 * preview_width
+    assert abs(export_area - 4 * preview_area) <= 4  # each rounded to a whole pixel
+
+    # A panorama prints smaller than a picture of ordinary proportions, so its
+    # smallest region is a larger share of it: it gets fewer regions, not
+    # smaller ones.
+    panorama_area, _ = pipeline._paintable_limits(params, (1100, 275))
+    assert panorama_area / (1100 * 275) > 2 * preview_area / (1100 * 825)

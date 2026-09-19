@@ -66,6 +66,14 @@ preview size (1100 px). `--presets Max` adds the most granular Custom setting
 `--threads N` caps worker threads to test scaling; `--category face text` runs
 only the images in those categories (see the image manifest below).
 
+`Max` is the finest setting of the version being measured, as its own
+`difficulty.finest_params()` gives it: from 0.1.26, 40 colors, regions of at
+least 30 mm² on paper, no smoothing. Older versions don't have that function,
+and their sliders stopped at 40 colors, 0.0002 of the image and no smoothing,
+which is what they get. So a comparison at `Max` compares each version's own
+finest page. `case.json` records the settings a case ran with under `params`,
+with the version's own field names.
+
 ## Image manifest
 
 `tests/sample_images/manifest.json` records what each benchmark image is and

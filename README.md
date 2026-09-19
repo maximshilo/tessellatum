@@ -74,9 +74,15 @@ run the binary from a terminal to see the error.
    `src/tessellatum/core/labels.py`.
 
 Difficulty controls three things: how many colors k-means looks for, how
-small a region is allowed to get before being merged away, and how much
-smoothing is applied before quantizing — see
-`src/tessellatum/core/difficulty.py`.
+small a region may be on the printed page before it is merged away, and how
+much smoothing is applied before quantizing — see
+`src/tessellatum/core/difficulty.py`. Region sizes are areas on paper:
+300 mm² at Easy, 125 mm² at Medium, 40 mm² at Hard, and 30–500 mm² in
+Custom. So a preview and an export of one image get regions of the same
+size, and a long, narrow picture, which prints smaller, gets fewer regions
+rather than smaller ones. Custom stops at 30 mm² because smaller regions
+mean so many that a 3 mm brush could no longer reach into their corners on
+an A4 page.
 The brush width comes from the printed page instead, along with the smallest
 region any setting can keep and how wide a line prints — see
 `src/tessellatum/core/print_size.py`.
