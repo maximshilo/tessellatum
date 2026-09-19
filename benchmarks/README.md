@@ -47,7 +47,8 @@ images x presets x output sizes:
     outside its region the leader line pointing into it;
   - the ink the lines alone put on the page, 0 solid and 255 bare paper, and
     the ink of the leader lines, the same way;
-  - every line drawn, as a polyline.
+  - every line drawn, as a polyline;
+  - whether the picture is line art, and the ink lines it was drawn with.
 
   The timed runs don't collect it, as in the app. One more run after them
   does, and its page must match theirs for the case to count as
@@ -114,6 +115,7 @@ with `x, y` its top-left corner.
       "text": [{"box": [10, 10, 200, 40], "string": "FIRST LINE\nSECOND LINE", "rotation": 0}],
       "flat_colors": ["#ffffff", "#ffdfc9"],
       "ink_colors": ["#000000"],
+      "exact_colors": true,
       "areas": [{"kind": "gradient", "box": [0, 0, 997, 200]}],
       "notes": "free text"
     }
@@ -150,6 +152,10 @@ primary one: the report's per-case tables list the image under it.
 - **`flat_colors`** are the artwork's fill colors and **`ink_colors`** its line
   colors, as `#rrggbb`; a color can't be both. For scans they are cluster
   centers of the printed colors, not exact values.
+- **`exact_colors`** is `true` where the flat and ink colors are the file's own
+  pixel values, as in digital artwork (the two bold-line PNGs and `scene.png`:
+  81–100% of their pixels are exactly one of them). Scans leave it out, which
+  means `false`.
 - **`areas`** are boxes lying inside a gradient or a textured part of the
   image.
 
@@ -227,6 +233,9 @@ and whether their features survive, and on whether OCR still reads the text:
 | tubes | regions at least half made of the artwork's ink lines | lower (0) |
 | ink in shapes < 5 mm | share of the ink lines lying in parts of regions narrower than 5 mm: ink to paint instead of print | lower (0) |
 | flat colors ΔE00 | mean CIEDE2000 from each of the artwork's flat colors to the nearest legend color; `case.json` also records the largest, as `flat_color_de00_max` | lower |
+| ink found | share of the page the pipeline takes for the artwork's ink lines (from 0.1.27; nothing on the page uses them yet) | informational |
+| ink found recall / precision | on line art, how much of the artwork's ink lines the pipeline found, and how much of what it found is on them, each within 0.5 mm; `case.json` also records `ink_found_f1`, and whether the manifest's colors are exact as `ink_reference_exact` | higher |
+| stray ink | the share of the page found to be ink lines on a picture that isn't line art | lower (0) |
 | face ΔE00, face SSIM | ΔE00 mean and SSIM inside the image's face boxes | lower, higher |
 | features lost | annotated eyes, noses and mouths the page no longer shows, as lines along their edges or as a region of their own; `case.json` also records the mean share of their edges drawn, as `feature_edge_recall`, and each feature's scores under `face_features` | lower (0) |
 | labels on features | numbers overlapping a feature box | lower (0) |
@@ -413,6 +422,28 @@ How the line-art metrics are defined:
   can have fewer colors than the artwork, so some flat colors have no close
   match.
 
+How the found-ink metrics are defined:
+
+- From 0.1.27 the pipeline decides whether a picture is line art and, if it is,
+  finds its ink lines without the manifest (`src/tessellatum/core/ink.py`), and
+  reports both in its analysis payload (`PageAnalysis.line_art`, `.ink_lines`).
+  `case.json` records the decision and the two measures behind it under
+  `line_art`. Older versions get no value.
+- **Ink found recall** and **precision** compare the pipeline's mask with the
+  line-art metrics' own ink lines (`source_ink`), pixel by pixel: recall is the
+  share of the artwork's ink-line pixels within 0.5 mm of a pixel found,
+  precision the share of the pixels found within 0.5 mm of the artwork's. The
+  tolerance forgives a line found a pixel wider or narrower, where an
+  anti-aliased edge could go either way.
+- Precision is only a target where the manifest's colors are exact
+  (`exact_colors`). On a scan they are cluster centers of printed colors, and
+  `source_ink` misses much of the line work: on the postcard at preview size it
+  finds 4.3% of the page to be ink lines, the pipeline 18%, and the difference
+  is wing ribs, hands and outlines drawn in ink the manifest's colors don't
+  reach.
+- **Stray ink** is ink found on an image whose manifest has no ink colors,
+  where every pixel found is a mistake.
+
 How the face metrics are defined:
 
 - They read the image's manifest entry: its `faces`, each with a box and the boxes
@@ -543,6 +574,20 @@ page of 1100 px, and **export**, a page at the image's own size (see
 
 Colors, regions, ink and text CER source only inform. The per-case tables add the
 number of targets each case misses.
+
+Three more metrics score the ink lines the pipeline finds (from 0.1.27; ink found itself
+only informs). They are not a job of the page -- nothing on it uses those lines yet -- so
+they sit outside the scorecard, and their targets count in the verdict's target misses:
+
+| metric | σ preview | σ export | target |
+|---|---|---|---|
+| ink found recall | 0.00042 | 0.0046 | ≥ 0.95 |
+| ink found precision | 0.0023 | 0.0047 | ≥ 0.95 on exact colors |
+| stray ink | 0 | 0 | 0 |
+
+Finding them doesn't depend on the difficulty, so their tolerances come from 12 pairs at
+each size, the four line-art images at Easy. Stray ink measured 0 over 21 and 24 pairs: a
+picture that isn't line art is decided once, so it has none at any size.
 
 ### Targets
 

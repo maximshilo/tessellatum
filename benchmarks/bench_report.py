@@ -80,8 +80,6 @@ class Metric:
         return self.sigma_export if size == "export" and self.sigma_export is not None else self.sigma
 
 
-SIGMA_PLACEHOLDER = 0.01  # T3.1 scratch: stands in until `bench.py noise` measures the found-ink tolerances
-
 # Every quality column, in the report's order. A tolerance is the root mean square change of one case between two sizes
 # of the same image and preset (`bench.py noise`), measured on `main` at 36d75ed (T1.8):
 # - `sigma`, at 1099, 1100 and 1101 px: 132 pairs over the 12 benchmark images at Easy / Medium / Hard / Max, fewer for
@@ -198,14 +196,16 @@ METRICS = (
     ),
     Metric("flat_color_de00_mean", "flat colors ΔE00 ↓", "{:.2f}", "palette", "lower", sigma=1.2, sigma_export=0.81),
     # How closely the pipeline finds the artwork's ink lines. Not a job of the page: nothing on it uses them yet (T3.1).
+    # Finding them doesn't depend on the difficulty, so their tolerances come from 12 pairs at each size (the four line
+    # art images at Easy), measured on 0.1.27.
     Metric("ink_found_fraction", "ink found", "{:.1%}"),
     Metric(
         "ink_found_recall",
         "ink found recall ↑",
         "{:.3f}",
         better="higher",
-        sigma=SIGMA_PLACEHOLDER,
-        sigma_export=SIGMA_PLACEHOLDER,
+        sigma=0.00042,
+        sigma_export=0.0046,
         target=Target(0.95),
     ),
     Metric(
@@ -213,8 +213,8 @@ METRICS = (
         "ink found precision ↑",
         "{:.3f}",
         better="higher",
-        sigma=SIGMA_PLACEHOLDER,
-        sigma_export=SIGMA_PLACEHOLDER,
+        sigma=0.0023,
+        sigma_export=0.0047,
         # A scan's manifest colors are cluster centers of printed colors, which miss much of its line work.
         target=Target(0.95, where="ink_reference_exact", where_text="exact colors"),
     ),
