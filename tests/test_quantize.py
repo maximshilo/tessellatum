@@ -146,3 +146,42 @@ def test_bilateral_filter_stays_close_to_exact_filter(sample_image_bgr):
 
     assert actual.shape == expected.shape and actual.dtype == np.uint8
     assert np.abs(actual.astype(np.int16) - expected.astype(np.int16)).mean() < 1.0
+
+
+def _two_fills_and_a_line() -> tuple[np.ndarray, np.ndarray]:
+    """Two flat fills either side of a black line 4 px wide, whose edges are anti-aliased: a column half ink either side."""
+    green, blue = np.array((60, 160, 60)), np.array((200, 120, 40))
+    image = np.zeros((40, 100, 3), dtype=np.uint8)
+    image[:, :47] = green
+    image[:, 53:] = blue
+    image[:, 47] = green // 2  # half ink, half fill
+    image[:, 52] = blue // 2
+    line = np.zeros((40, 100), dtype=bool)
+    line[:, 48:52] = True
+    return image, line
+
+
+def test_the_ink_takes_no_color_and_its_edge_takes_the_color_of_the_fill_it_edges():
+    image, line = _two_fills_and_a_line()
+
+    labels, palette = quantize(image, 6, 0.0, ink=line, halo_px=1.0)
+
+    assert (labels[line] == len(palette)).all() and (labels[~line] < len(palette)).all()
+    # The fills' colors (to the rounding of 8-bit Lab), and nothing in between: the half-ink columns were never fitted.
+    fills = np.array([(60, 160, 60), (200, 120, 40)])
+    assert len(palette) == 2
+    assert all(np.abs(fills - color).max(axis=1).min() <= 3 for color in palette.astype(int))
+    left = labels[:, 0][0]
+    right = labels[:, -1][0]
+    assert left != right
+    assert (labels[:, 47] == left).all() and (labels[:, 52] == right).all()
+    # Given no ink, k-means spends colors on the line and its edges.
+    _labels, all_colors = quantize(image, 6, 0.0)
+    assert len(all_colors) > 2
+
+
+def test_without_ink_the_colors_are_found_as_before(sample_image_bgr):
+    plain = quantize(sample_image_bgr, 5, 1.0)
+    no_ink = quantize(sample_image_bgr, 5, 1.0, ink=np.zeros(sample_image_bgr.shape[:2], dtype=bool), halo_px=2.0)
+
+    assert (plain[0] == no_ink[0]).all() and (plain[1] == no_ink[1]).all()

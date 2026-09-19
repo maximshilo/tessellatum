@@ -136,12 +136,21 @@ def _keep_to_own_side(widened, nearest, fits, outside, region_id_map, region_col
     across = ~outside & (compartment_of_label[nearest] != compartment)
     if not across.any():
         return
-    # Only the compartments holding such pixels need searching.
-    searched = np.isin(compartment, np.unique(compartment[across])) & ~outside
-    seeds = np.full((h, w), -1, dtype=np.int32)
-    seeded = fits & searched
-    seeds[seeded] = region_color[region_id_map[seeded]]
-    reached = kernels.nearest_seed_within(seeds.reshape(-1), searched.reshape(-1), h, w).reshape(h, w)
+    # Only the compartments holding such pixels need searching, and only as far as they reach.
+    wanted = np.zeros(int(compartment.max()) + 1, dtype=bool)
+    wanted[compartment[across]] = True
+    # A shortest path from the cores leaves them at their edge, so their insides need no searching.
+    core_edge = fits & ~cv2.erode(fits.view(np.uint8), np.ones((3, 3), np.uint8)).view(bool)
+    searched = wanted[compartment] & ~outside & (~fits | core_edge)
+    rows, columns = np.flatnonzero(searched.any(axis=1)), np.flatnonzero(searched.any(axis=0))
+    box = (slice(rows[0], rows[-1] + 1), slice(columns[0], columns[-1] + 1))
+    passable = np.ascontiguousarray(searched[box])
+    seeds = np.full(passable.shape, -1, dtype=np.int32)
+    seeded = fits[box] & passable
+    seeds[seeded] = region_color[region_id_map[box][seeded]]
+    bh, bw = passable.shape
+    reached = np.full((h, w), -1, dtype=np.int32)
+    reached[box] = kernels.nearest_seed_within(seeds.reshape(-1), passable.reshape(-1), bh, bw).reshape(bh, bw)
     widened[across] = np.where(reached[across] >= 0, reached[across], labels[across])
 
 
@@ -181,7 +190,8 @@ def join_ink(
         return labels
     inside = ids >= 0
     joining = np.zeros(areas.size, dtype=bool)
-    joining[candidates] = _de00_to(_mean_colors(ids, image_bgr, areas.size, own)[candidates], ink_bgr) < MIN_PALETTE_DE00
+    colors = _mean_colors(ids, image_bgr, candidates, own)
+    joining[candidates] = _de00_to(colors[candidates], ink_bgr) < MIN_PALETTE_DE00
     joining &= _ink_is_main_neighbor(ids, joining)
     if not joining.any():
         return labels
@@ -196,17 +206,22 @@ def _ink_is_main_neighbor(ids: np.ndarray, asked: np.ndarray) -> np.ndarray:
     the ink.
     """
     h, w = ids.shape
-    padded = np.pad(ids, 1, constant_values=np.iinfo(np.int32).min)  # off the page: nobody's
-    index = np.pad(np.arange(h * w, dtype=np.int64).reshape(h, w), 1, constant_values=-1)
+    if not asked.any():
+        return asked
+    y, x = np.nonzero((ids >= 0) & asked[np.where(ids >= 0, ids, 0)])
+    own = ids[y, x].astype(np.int64)
     keys = []
     for dy in (-1, 0, 1):
         for dx in (-1, 0, 1):
             if dy == 0 and dx == 0:
                 continue
-            other = padded[1 + dy : h + 1 + dy, 1 + dx : w + 1 + dx]
-            where = asked[np.where(ids >= 0, ids, 0)] & (ids >= 0) & (other != ids) & (other != np.iinfo(np.int32).min)
-            keys.append(ids[where].astype(np.int64) * (h * w) + index[1 + dy : h + 1 + dy, 1 + dx : w + 1 + dx][where])
-    ring = np.unique(np.concatenate(keys)) if keys else np.zeros(0, dtype=np.int64)
+            yy, xx = y + dy, x + dx
+            on_page = (yy >= 0) & (yy < h) & (xx >= 0) & (xx < w)  # off the page is nobody's
+            yy, xx = yy[on_page], xx[on_page]
+            other = ids[yy, xx]
+            differs = other != own[on_page]
+            keys.append(own[on_page][differs] * (h * w) + (yy[differs].astype(np.int64) * w + xx[differs]))
+    ring = np.unique(np.concatenate(keys))
     patch, pixel = np.divmod(ring, h * w)
     owner = ids.reshape(-1)[pixel]
     by_ink = np.bincount(patch[owner < 0], minlength=asked.size)
@@ -256,35 +271,34 @@ def settle_enclosed(
     alone = (areas > 0) & ~_has_neighbor(ids, count)
     if not alone.any():
         return ids, inked
-    fits = _brush_fits(ids, count, min_width_px / 2)
+    region_of = np.where(inside, ids, 0)
+    enclosed = inside & alone[region_of]
+    # No two of them touch, so a brush fits in one where the nearest pixel outside all of them is far enough.
+    distance = cv2.distanceTransform(np.pad(enclosed, 1).view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)[1:-1, 1:-1]
+    fits = enclosed & (distance > min_width_px / 2)
     cored = np.bincount(ids[fits].ravel(), minlength=count) > 0
     like_ink = np.zeros(count, dtype=bool)
-    like_ink[alone] = _de00_to(_mean_colors(ids, image_bgr, count, own)[alone], ink_bgr) < MIN_PALETTE_DE00
+    like_ink[alone] = _de00_to(_mean_colors(ids, image_bgr, alone, own)[alone], ink_bgr) < MIN_PALETTE_DE00
     to_ink = alone & like_ink
     to_paper = alone & ~to_ink & ~cored
-    region_of = np.where(inside, ids, 0)
     inked = inside & to_ink[region_of]
     gone = inked | (inside & to_paper[region_of])
     return np.where(gone, -1, ids).astype(np.int32), inked
 
 
-def _mean_colors(ids: np.ndarray, image_bgr: np.ndarray, count: int, own: np.ndarray | None) -> np.ndarray:
-    """The mean BGR color of each region id below ``count`` in ``image_bgr``: of its pixels in ``own`` where it has any."""
-    inside = ids >= 0
-    pixels = np.asarray(image_bgr, dtype=np.float64).reshape(-1, 3)
+def _mean_colors(ids: np.ndarray, image_bgr: np.ndarray, asked: np.ndarray, own: np.ndarray | None) -> np.ndarray:
+    """The mean BGR color in ``image_bgr`` of each region id ``asked`` about: of its pixels in ``own`` where it has any.
 
-    def sums(where: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        region_of = ids[where]
-        picked = pixels[where.reshape(-1)]
-        total = np.stack([np.bincount(region_of, picked[:, c], minlength=count) for c in range(3)], axis=1)
-        return total, np.bincount(region_of, minlength=count).astype(np.float64)
-
-    total, n = sums(inside)
-    if own is not None:
-        own_total, own_n = sums(inside & own)
-        has_own = own_n > 0
-        total[has_own], n[has_own] = own_total[has_own], own_n[has_own]
-    return total / np.maximum(n, 1)[:, None]
+    One row per region id; the rows of the others are 0.
+    """
+    h, w = ids.shape
+    own = np.zeros(h * w, dtype=bool) if own is None else np.ascontiguousarray(own).reshape(-1)
+    sums, counts, own_sums, own_counts = kernels.region_color_sums(
+        np.ascontiguousarray(ids).reshape(-1), np.ascontiguousarray(image_bgr).reshape(-1, 3), asked, own
+    )
+    has_own = own_counts > 0
+    sums[has_own], counts[has_own] = own_sums[has_own], own_counts[has_own]
+    return sums / np.maximum(counts, 1)[:, None]
 
 
 def _de00_to(colors_bgr: np.ndarray, target_bgr) -> np.ndarray:

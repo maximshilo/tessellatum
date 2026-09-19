@@ -664,7 +664,8 @@ def test_tube_regions_are_ink_lines_turned_into_shapes_to_paint():
     assert tubes(own, np.zeros_like(ink)) == {"tube_regions": 0, "tube_ink_fraction": None}
 
 
-def test_todays_renderer_turns_a_bold_ink_outline_into_a_tube():
+def test_an_outline_too_wide_to_be_a_line_on_paper_becomes_a_tube():
+    # At 160 px on A4 the outline, 8 px, prints 14 mm wide: a black fill to the pipeline, whose widest line is 5 mm.
     image = np.full((120, 160, 3), WHITE, dtype=np.uint8)
     image[20:100, 30:130] = BLACK
     image[28:92, 38:122] = FILL  # a flat fill inside a black outline 8 px wide
@@ -940,3 +941,111 @@ def test_text_reader_names_onnxruntime_by_its_module_whatever_package_installed_
     monkeypatch.setattr(importlib.metadata, "version", version)
 
     assert bm.text_reader().name == f"rapidocr {real_version('rapidocr')}, onnxruntime {onnxruntime.__version__}"
+
+
+def test_the_painting_keeps_what_the_page_prints():
+    region_id_map = np.array([[0, -1, 1], [0, -1, -1]])
+    region_color = np.array([1, 0])
+    palette_bgr = np.array([[10, 20, 30], [200, 100, 50]], dtype=np.uint8)
+    printed = np.array([[False, True, False], [False, True, False]])
+
+    painted = bm.paint(region_id_map, region_color, palette_bgr, printed, ink_gray=40)
+
+    assert painted[0, 0].tolist() == [200, 100, 50] and painted[0, 2].tolist() == [10, 20, 30]
+    assert painted[0, 1].tolist() == painted[1, 1].tolist() == [40, 40, 40]  # the ink, in its gray
+    assert painted[1, 2].tolist() == [255, 255, 255]  # no region and no ink: bare paper
+    assert bm.paint(region_id_map, region_color, palette_bgr)[0, 1].tolist() == [255, 255, 255]
+
+
+def test_undersized_regions_are_those_with_a_neighbor_to_merge_into():
+    ids = np.full((10, 20), -1)  # ink
+    ids[:, :8] = 0
+    ids[2:4, 8:10] = 1  # 4 px, beside region 0
+    ids[6:8, 14:16] = 2  # 4 px, the ink all round it: nothing to merge into
+
+    assert bm.count_undersized(ids, 10) == 1
+    assert bm.count_undersized(np.where(ids == 2, 0, ids), 10) == 1
+
+
+def test_printed_ink_is_matched_to_the_artworks_lines_for_recall_and_to_all_its_ink_for_precision():
+    lines = np.zeros((60, 80), dtype=bool)
+    lines[20:26, 10:70] = True  # an ink line 6 px wide and 60 long
+    colored = lines.copy()
+    colored[40:52, 10:70] = True  # and an area in the ink's color too wide to be a line
+    printed = colored.copy()
+
+    assert bm.printed_ink_match(printed, lines, 2.0, colored) == {
+        "ink_print_precision": 1.0,
+        "ink_print_recall": 1.0,
+        "ink_print_f1": 1.0,
+    }
+    # Without the colors, the wide area printed would count as printing what isn't ink.
+    assert bm.printed_ink_match(printed, lines, 2.0)["ink_print_precision"] == pytest.approx(1 / 3)
+    half = np.zeros_like(lines)
+    half[20:26, 10:40] = True
+    assert bm.printed_ink_match(half, lines, 2.0, colored)["ink_print_recall"] == pytest.approx(32 / 60)
+    assert bm.printed_ink_match(np.zeros_like(lines), lines, 2.0, colored) == {
+        "ink_print_precision": None,
+        "ink_print_recall": 0.0,
+        "ink_print_f1": 0.0,
+    }
+
+
+def test_source_ink_colored_is_source_ink_before_it_keeps_only_the_lines():
+    image = np.full((60, 90, 3), WHITE, dtype=np.uint8)
+    image[10:50, 10:50] = BLACK
+    image[16:44, 16:44] = FILL
+    image[10:50, 60:84] = BLACK  # 24 px wide: not a line at 15 px
+    flats, inks = np.array([WHITE, FILL], dtype=np.uint8), np.array([BLACK], dtype=np.uint8)
+
+    colored = bm.source_ink_colored(image, flats, inks)
+
+    assert (colored == (image == 0).all(axis=2)).all()
+    assert (bm.source_ink(image, flats, inks, 15.0) == colored & bm.sliver_mask(colored.astype(np.int32), 15.0)).all()
+
+
+def test_ink_the_page_prints_counts_as_a_line_down_its_own_middle():
+    ink = np.zeros((60, 80), dtype=bool)
+    ink[20:31, 10:70] = True  # an ink line 11 px wide
+    printed = ink.copy()
+
+    assert bm.ink_line_match([], ink, 2.0, printed) == {"ink_line_precision": 1.0, "ink_line_recall": 1.0, "ink_line_f1": 1.0}
+    assert bm.ink_line_match([], ink, 2.0) == {"ink_line_precision": None, "ink_line_recall": 0.0, "ink_line_f1": 0.0}
+
+
+def test_a_feature_drawn_in_printed_ink_is_still_on_the_page():
+    edges = np.zeros((40, 40), dtype=bool)
+    edges[10, 10:30] = edges[30, 10:30] = True  # the top and bottom edges of an eye drawn in ink
+    ids = np.zeros((40, 40), dtype=np.int32)
+    printed = np.zeros((40, 40), dtype=bool)
+    printed[9:12, 10:30] = printed[29:32, 10:30] = True
+    ids[printed] = -1
+
+    def survived(printed=None):
+        return bm.feature_survival([(8, 8, 24, 26)], ids, {0}, [], edges, 1.0, printed=printed)[0]
+
+    assert survived(printed)["edge_recall"] == 1.0 and survived(printed)["survived"]
+    assert survived()["edge_recall"] == 0.0 and not survived()["survived"]
+
+
+def test_a_bold_outline_that_prints_as_a_line_is_printed_and_is_no_tube():
+    # The same drawing at 800 px: the outline, 8 px, prints 2.6 mm wide, a line to print rather than a shape to paint.
+    image = np.full((600, 800, 3), WHITE, dtype=np.uint8)
+    image[100:500, 150:650] = BLACK
+    image[108:492, 158:642] = FILL
+    image[200:400, 300:500] = (40, 200, 120)  # a second fill, so that the picture's lines are deep against both
+    params = difficulty.DifficultyParams(num_colors=4, min_region_area_mm2=50.0, blur_sigma=0.0)
+    analysis = pipeline.generate(image, params, long_edge=800, collect_analysis=True).analysis
+    scale = bm.print_size.print_scale((800, 600))
+    flats, inks = np.array([WHITE, FILL, (40, 200, 120)], dtype=np.uint8), np.array([BLACK], dtype=np.uint8)
+    ink = bm.source_ink(image, flats, inks, scale.mm_to_px(5.0))
+
+    assert analysis.line_art.is_line_art
+    assert bm.tube_regions(analysis.region_id_map, ink, scale.mm_to_px(5.0)) == {"tube_regions": 0, "tube_ink_fraction": 0.0}
+    assert bm.printed_ink_match(analysis.printed_ink, ink, 1.0, bm.source_ink_colored(image, flats, inks)) == {
+        "ink_print_precision": 1.0,
+        "ink_print_recall": 1.0,
+        "ink_print_f1": 1.0,
+    }
+    line_match = bm.ink_line_match(analysis.strokes, ink, scale.mm_to_px(0.5), analysis.printed_ink)
+    assert line_match["ink_line_f1"] == pytest.approx(1.0)
