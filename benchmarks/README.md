@@ -43,8 +43,10 @@ images x presets x output sizes:
   (`PageAnalysis` in `pipeline.py`):
   - the region map, each region's color and the palette, legend colors first;
   - the drawn regions, with their outlines and label points;
-  - every number, with its font size and bounding box;
-  - the ink the lines alone put on the page, 0 solid and 255 bare paper;
+  - every number, with its font size and bounding box, and for a number written
+    outside its region the leader line pointing into it;
+  - the ink the lines alone put on the page, 0 solid and 255 bare paper, and
+    the ink of the leader lines, the same way;
   - every line drawn, as a polyline.
 
   The timed runs don't collect it, as in the app. One more run after them
@@ -201,6 +203,9 @@ and whether their features survive, and on whether OCR still reads the text:
 | unlabeled | regions without a number | lower (0) |
 | slivers | share of the page a round brush 3 mm wide can't paint without crossing into another region | lower |
 | labels < 6 pt | share of numbers printing smaller than 6 pt; `case.json` also records the smallest, as `min_label_pt` | lower (0) |
+| labels on lines | numbers with any ink of a line in their box: of the page's lines, or of the leader lines that point a number into its region | lower (0) |
+| overlapping labels | numbers whose box overlaps another number's | lower (0) |
+| leaders | numbers written outside their region, with a leader pointing in | informational |
 | compactness p10 / median | 4πA/P² over the regions: 1 for a disk, lower for stretched or ragged ones | higher |
 | lines per boundary | lines drawn along each boundary between two regions; `case.json` also records the shares with two or more (`doubled_boundary_fraction`) and with none (`undrawn_boundary_fraction`) | 1 |
 | lines per boundary (clear) | the same, over the boundary clear of junctions, where the count means what it says; `case.json` also records how much of the boundary that is, as `clear_boundary_fraction` | 1 |
@@ -237,6 +242,15 @@ How the paintability metrics are defined:
 - **Label size** is each number's em size in points. Versions before 0.1.10
   don't report their numbers, so the harness rebuilds the sizes from the
   renderer's formula, which all of those versions share.
+- **Labels on lines** reads the line layer (`PageAnalysis.outlines`) and, from
+  0.1.25, the leaders' layer (`PageAnalysis.leaders`), as `unenclosed` reads
+  them: any ink at all is a line, since the pale edge of an anti-aliased line
+  is the line. A box covers every pixel it reaches into, so a number centred
+  on a half pixel, as before 0.1.25, is judged by all the pixels its ink can
+  touch. A number's own leader counts too: it should end short of the number.
+  Versions before 0.1.10 report no line layer, and get no value.
+- **Overlapping labels** compares the numbers' boxes pairwise; boxes that only
+  touch don't overlap.
 - **Compactness.** A is the region's pixel count. P, the boundary length
   including holes and the page edge, is estimated with the Cauchy–Crofton
   formula: from how often rows, columns and both diagonals of pixel centers
@@ -498,6 +512,8 @@ page of 1100 px, and **export**, a page at the image's own size (see
 | unlabeled | paintable | 69 | 18 | 0 |
 | slivers | paintable | 1.5 points | 1.4 points | ≤ 1% |
 | labels < 6 pt | paintable | 2.1 points | 2.2 points | 0 |
+| labels on lines | paintable | 0 | 0 | 0 |
+| overlapping labels | paintable | 0 | 0 | 0 |
 | compactness p10 | paintable | 0.023 | 0.020 | – |
 | compactness median | paintable | 0.036 | 0.029 | – |
 | undersized | paintable | 0 | 0 | – |
@@ -526,7 +542,7 @@ A target applies to a case where its metric has a value: ink line F1 and tubes o
 line art, features lost on faces, and the text targets on images with text. They
 spell out the four jobs:
 - **paintable:** no slivers, a number on every region, and every number legible
-  at print size;
+  at print size, with no line and no other number drawn through it;
 - **clean drawing:**
   - one smooth line per boundary, and no line between neighbors of the same color;
   - every region enclosed, so no two regions' paint can run together;
@@ -597,7 +613,8 @@ aren't failures: region count is a difficulty trait, not a quality score.
 Lines per boundary (clear) has not been through `noise` yet: it takes the plain
 count's tolerances until the next run measures its own (D-028). Unenclosed area
 takes 0, as undersized regions do — a page whose lines close has none of it, so
-any at all is a regression.
+any at all is a regression — and so do labels on lines and overlapping labels,
+for the same reason: a page that keeps its numbers clear has none.
 
 `compare --tol METRIC=SIGMA` replaces a metric's tolerance at both sizes, by its
 `case.json` key (repeatable), e.g. for a change that trades one metric for another

@@ -37,10 +37,12 @@ def test_probe_fallback_reads_the_same_page_data_as_the_analysis(speckled_image_
         bm.paint(from_probe.region_id_map, from_probe.region_color, from_probe.palette_bgr),
     )
     assert from_analysis.min_region_area_px == from_probe.min_region_area_px
-    assert from_analysis.labeled_region_ids == from_probe.labeled_region_ids != set()
-    assert from_analysis.label_font_sizes_px == from_probe.label_font_sizes_px
-    assert from_analysis.label_boxes == from_probe.label_boxes
     assert [r.region_id for r in from_analysis.regions] == [r.region_id for r in from_probe.regions]
+    # So are the numbers: the payload numbers every region, clear of the lines, while the rebuild numbers only the
+    # regions those versions did, where they put them (see test_probe_fallback_rebuilds_font_sizes_without_the_render_module).
+    assert from_analysis.labeled_region_ids == {r.region_id for r in from_analysis.regions}
+    assert from_probe.labeled_region_ids <= from_analysis.labeled_region_ids
+    assert (from_analysis.leaders.shape, from_probe.leaders) == (from_analysis.region_id_map.shape, None)
     # Lines are the exception: the payload reports one per boundary, while the
     # rebuild can only assume what the versions it is there for did, which is to
     # outline every region. The payload is what scoring uses when it has one.
@@ -51,6 +53,32 @@ def test_probe_fallback_reads_the_same_page_data_as_the_analysis(speckled_image_
     np.testing.assert_array_equal(from_analysis.legend_bgr, from_probe.legend_bgr)
     assert len(from_probe.legend_bgr) == result.num_colors_used < len(from_probe.palette_bgr)
     assert [tuple(color) for color in from_probe.legend_bgr[:, ::-1].tolist()] == result.palette_rgb
+
+
+def test_label_scores_read_the_leaders_ink_and_count_the_numbers_with_a_leader():
+    lines = np.full((40, 60), 255, dtype=np.uint8)
+    leaders = lines.copy()
+    leaders[12:16, 15] = 100  # another number's leader, drawn through the first number
+    labels = [
+        SimpleNamespace(region_id=0, text="1", font_size=20, box=(10, 10, 20, 18), leader=None),
+        SimpleNamespace(region_id=1, text="2", font_size=20, box=(30, 10, 40, 18), leader=((29.0, 14.0), (25.0, 14.0))),
+    ]
+    analysis = SimpleNamespace(
+        region_id_map=np.zeros((40, 60), dtype=np.int32),
+        region_color=np.zeros(2, dtype=np.int32),
+        palette_bgr=np.zeros((2, 3), dtype=np.uint8),
+        legend_size=2,
+        min_region_area_px=4,
+        regions=[],
+        labels=labels,
+        strokes=[],
+        outlines=lines,
+        leaders=leaders,
+    )
+
+    scores = bench_case.label_scores(bench_case.page_data_from_analysis(analysis), bm.print_size.print_scale((60, 40)))
+
+    assert (scores["labels_on_lines"], scores["overlapping_labels"], scores["leader_labels"]) == (1, 0, 1)
 
 
 def test_probe_fallback_rebuilds_font_sizes_without_the_render_module():
@@ -170,7 +198,13 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
         "text_cer_page",
         "text_cer_painting",
         "labels_on_text",
+        "labels_on_lines",
+        "overlapping_labels",
+        "leader_labels",
     } <= case["quality"].keys()
+    # Every region is numbered, clear of the lines and of the other numbers.
+    assert case["quality"]["unlabeled_regions"] == case["quality"]["labels_on_lines"] == 0
+    assert case["quality"]["overlapping_labels"] == 0
     # Scored against the drawing's manifest entry: the outline is ink, and the legend has the fill's color.
     assert case["quality"]["ink_line_f1"] is not None and case["quality"]["tube_ink_fraction"] is not None
     assert case["quality"]["flat_color_de00_mean"] < 1.0

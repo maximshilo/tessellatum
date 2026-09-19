@@ -12,8 +12,10 @@ the rewrite: ``_merge_same_color_neighbors``, then ``_absorb_thin_parts``
 with the rebuild that follows it, then ``trace_boundaries`` and the
 ``render_page`` that draws its lines instead of outlining every region, and
 now ``_smooth`` in place of the Douglas-Peucker pass those lines used to get,
-and ``line_layer``, which lays those lines down with a round pen of the width
-the paper asks for instead of a two-pixel band.
+``line_layer``, which lays those lines down with a round pen of the width the
+paper asks for instead of a two-pixel band, and ``_place_labels``, which gives
+every region a number no line runs through, at least as large as the paper
+needs, instead of numbering only the regions roomy enough at their middle.
 """
 
 from __future__ import annotations
@@ -25,17 +27,10 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from tessellatum.core.boundaries import MAX_SHIFT_PX, SMOOTHING_MIN_PX, SMOOTHING_MM, _MIN_LOOP_AREA_PX, _SMOOTHING_STEP
-from tessellatum.core.print_size import print_scale
+from tessellatum.core.labels import FONT_SIZE_RADIUS_RATIO, LEADER_REACH_MM, MAX_FONT_SIZE, MIN_FONT_SIZE
+from tessellatum.core.print_size import MIN_LABEL_SIZE_PT, print_scale
 from tessellatum.core.regions import Region
-from tessellatum.core.render import (
-    FONT_SIZE_RADIUS_RATIO,
-    MAX_FONT_SIZE,
-    MIN_FONT_SIZE,
-    MIN_LABEL_RADIUS_PX,
-    PAPER,
-    PageStyle,
-    _SUPERSAMPLE,
-)
+from tessellatum.core.render import PAPER, PageStyle, _SUPERSAMPLE
 
 _OUTSIDE = -2  # the label of everything off the page: its edge is a boundary like any other
 
@@ -320,18 +315,22 @@ def _enclosed_area(loop: list[tuple[float, float]]) -> float:
 
 
 def line_layer(size: tuple[int, int], region_id_map: np.ndarray, style: PageStyle) -> np.ndarray:
-    """The ink the page's lines put on it, 0 solid and 255 bare paper: ``RenderedPage.outlines``.
+    """The ink the page's lines put on it, 0 solid and 255 bare paper: ``RenderedPage.outlines``."""
+    return PAPER - _ink(size, trace_boundaries(region_id_map), style.line_width_px(size))
 
-    A round pen as wide as the paper asks for, dragged along every line on a
-    grid ``_SUPERSAMPLE`` times finer than the page, and averaged back down. A
+
+def _ink(size: tuple[int, int], strokes: list[np.ndarray], width_px: float) -> np.ndarray:
+    """The ink ``strokes`` put on a ``size`` page, 0 bare paper and 255 solid.
+
+    A round pen ``width_px`` wide, dragged along every stroke on a grid
+    ``_SUPERSAMPLE`` times finer than the page, and averaged back down. A
     width between two whole grid pixels is a blend of the two pens around it.
     """
     width, height = size
-    width_px = style.line_width_px(size)
     margin = int(math.ceil(width_px / 2)) + 1
     grid = _SUPERSAMPLE
     canvas = np.zeros(((height + 2 * margin) * grid, (width + 2 * margin) * grid), dtype=np.uint8)
-    for stroke in trace_boundaries(region_id_map):
+    for stroke in strokes:
         # 1/16 of a grid pixel, as the renderer draws; the half pixel is the
         # step from a page pixel's middle to the grid pixel that starts it.
         points = np.rint(((stroke + (margin + 0.5)) * grid - 0.5) * 16).astype(np.int32)
@@ -344,7 +343,7 @@ def line_layer(size: tuple[int, int], region_id_map: np.ndarray, style: PageStyl
     if wider_share > 0:
         wider = _pen_coverage(canvas, thinner + 2, size, margin).astype(np.float64)
         covered = (1 - wider_share) * covered + wider_share * wider
-    return PAPER - np.rint(covered).astype(np.uint8)
+    return np.rint(covered).astype(np.uint8)
 
 
 def _pen_coverage(canvas: np.ndarray, diameter: int, size: tuple[int, int], margin: int) -> np.ndarray:
@@ -371,22 +370,205 @@ def _pen_coverage(canvas: np.ndarray, diameter: int, size: tuple[int, int], marg
 def render_page(
     size: tuple[int, int], regions: list[Region], region_id_map: np.ndarray, style: PageStyle = PageStyle()
 ) -> Image.Image:
-    ink = PAPER - line_layer(size, region_id_map, style).astype(np.float64)
-    paper = np.rint(PAPER - ink * ((PAPER - style.line_gray) / PAPER)).astype(np.uint8)
-    page = Image.fromarray(paper, "L").convert("RGB")
+    width, height = size
+    lines = PAPER - line_layer(size, region_id_map, style)
+    labels = _place_labels(size, regions, region_id_map, lines == 0, style)
+
+    # Each leader and its dot, drawn over the whole page; where two overlap, the darker ink.
+    line_width = style.line_width_px(size)
+    leaders = np.zeros((height, width), dtype=np.uint8)
+    for _region_id, _text, _font_size, _box, leader in labels:
+        if leader is not None:
+            end, anchor = (np.array(point, dtype=np.float64) for point in leader)
+            stroke = np.array([end, anchor])
+            leaders = np.maximum(leaders, _ink(size, [stroke], line_width))
+            leaders = np.maximum(leaders, _ink(size, [np.array([anchor, anchor])], line_width * style.leader_dot_ratio))
+
+    def paper(ink: np.ndarray, gray: int) -> np.ndarray:
+        return np.rint(PAPER - ink.astype(np.float64) * ((PAPER - gray) / PAPER)).astype(np.uint8)
+
+    page = Image.fromarray(np.minimum(paper(lines, style.line_gray), paper(leaders, style.label_gray)), "L").convert("RGB")
     draw = ImageDraw.Draw(page)
-
-    for region in regions:
-        if region.interior_radius < MIN_LABEL_RADIUS_PX:
-            continue
-        font_size = int(max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, region.interior_radius * FONT_SIZE_RADIUS_RATIO)))
+    for _region_id, text, font_size, (left, top, _right, _bottom), _leader in labels:
         font = ImageFont.load_default(size=font_size)
-        text = str(region.color_index + 1)
         bbox = draw.textbbox((0, 0), text, font=font)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        x, y = region.interior_point
-        draw_x = min(max(x - tw / 2, 0), size[0] - tw) - bbox[0]
-        draw_y = min(max(y - th / 2, 0), size[1] - th) - bbox[1]
-        draw.text((draw_x, draw_y), text, fill=(style.label_gray,) * 3, font=font)
-
+        draw.text((left - bbox[0], top - bbox[1]), text, fill=(style.label_gray,) * 3, font=font)
     return page
+
+
+def _place_labels(size, regions, region_id_map, free, style):
+    """(region id, text, font size, box, leader) for every region, in drawing order, as ``labels.place_labels``."""
+    width, height = size
+    scale = print_scale(size)
+    smallest = MIN_FONT_SIZE
+    while scale.px_to_pt(smallest) < MIN_LABEL_SIZE_PT:
+        smallest += 1
+
+    placed, without_room = [], []
+    for region in regions:
+        text = str(region.color_index + 1)
+        room = free & (region_id_map == region.region_id)
+        preferred = max(smallest, int(min(MAX_FONT_SIZE, region.interior_radius * FONT_SIZE_RADIUS_RATIO)))
+        box_width, box_height = _box_size(text, preferred)
+        x, y = region.interior_point
+        left = min(max(x - box_width // 2, 0), width - box_width)
+        top = min(max(y - box_height // 2, 0), height - box_height)
+        if left >= 0 and top >= 0 and room[top : top + box_height, left : left + box_width].all():
+            placed.append((region.region_id, text, preferred, (left, top, left + box_width, top + box_height), None))
+            continue
+        # Every box's clearance: the least, over its pixels, of their distance to the nearest pixel outside the room.
+        clearance = cv2.distanceTransform(np.pad(room, 1).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)[1:-1, 1:-1]
+        for font_size in range(preferred, smallest - 1, -1):
+            box_width, box_height = _box_size(text, font_size)
+            if box_width > width or box_height > height:
+                continue
+            windows = np.lib.stride_tricks.sliding_window_view(clearance, (box_height, box_width)).min(axis=(2, 3))
+            top, left = np.unravel_index(np.argmax(windows), windows.shape)  # the first of the best in reading order
+            if windows[top, left] > 0:
+                top, left = int(top), int(left)
+                placed.append((region.region_id, text, font_size, (left, top, left + box_width, top + box_height), None))
+                break
+        else:
+            without_room.append(region)
+
+    line_width = style.line_width_px(size)
+    gap = int(math.ceil(line_width))
+    line_reach = line_width / 2 + 1  # how far a line's ink reaches from its middle
+    line_clear = line_reach + 1  # and a pixel more, for what is checked at the pixels its middle passes through
+    dot_px = line_width * style.leader_dot_ratio
+    reach_px = scale.mm_to_px(LEADER_REACH_MM)
+    boxes = np.zeros((height, width), dtype=bool)  # every number's box
+    spaced = np.zeros((height, width), dtype=bool)  # and the gap around it
+    leaders = np.zeros((height, width), dtype=bool)  # every leader's ink, dots aside
+    for *_rest, box, _leader in placed:
+        _take(boxes, box, 0)
+        _take(spaced, box, gap)
+    anchors = [region.interior_point for region in without_room]
+    dots = _disk_mask((height, width), anchors, dot_px / 2 + 1)  # every dot's ink, all known before any leader
+    for index, region in enumerate(without_room):
+        others = anchors[:index] + anchors[index + 1 :]
+        placed.append(
+            _with_leader(
+                region, region_id_map, free, boxes, spaced, leaders, dots, others, smallest, line_reach, line_clear, dot_px, reach_px, gap
+            )
+        )
+    return placed
+
+
+def _with_leader(region, ids, free, boxes, spaced, leaders, dots, others, font_size, line_reach, line_clear, dot_px, reach_px, gap):
+    height, width = ids.shape
+    text = str(region.color_index + 1)
+    box_width, box_height = _box_size(text, font_size)
+    x, y = region.interior_point
+    anchor = (float(x), float(y))
+
+    room = free & ~spaced & ~leaders & ~dots & (ids != region.region_id)
+    candidates = _boxes_within(room, box_width, box_height, (x, y), reach_px)
+    # Other dots block a leader beyond its own dot: two points that close have dots that touch whatever their leaders do.
+    own_dot = _disk_mask(ids.shape, [(x, y)], dot_px / 2 + 1)
+    blocked = _grow(boxes | leaders, line_clear) | (_disk_mask(ids.shape, others, dot_px / 2 + 1 + line_clear) & ~own_dot)
+    for crossing_others in (False, True):
+        for _distance, top, left in candidates:
+            box = (left, top, left + box_width, top + box_height)
+            end = _stop_short(anchor, box, line_reach)
+            if end is None:
+                continue
+            path = _straight_path(anchor, end)
+            if any(blocked[row, column] for row, column in path):
+                continue
+            allowed = {region.region_id, int(ids[top, left])}
+            if not crossing_others and any(int(ids[row, column]) not in allowed for row, column in path):
+                continue
+            _take(boxes, box, 0)
+            _take(spaced, box, gap)
+            along = np.zeros_like(leaders)
+            for row, column in path:
+                along[row, column] = True
+            leaders |= _grow(along, line_clear)
+            return (region.region_id, text, font_size, box, (end, anchor))
+
+    # No room: the nearest spot within reach clear of every number, leader and other dot, lines or not.
+    clear = ~spaced & ~leaders & ~_disk_mask(ids.shape, others, dot_px / 2 + 1)
+    candidates = _boxes_within(clear, box_width, box_height, (x, y), reach_px)
+    if candidates:
+        _distance, top, left = candidates[0]
+    else:
+        left = max(0, min(x - box_width // 2, width - box_width))
+        top = max(0, min(y - box_height // 2, height - box_height))
+    box = (left, top, left + box_width, top + box_height)
+    _take(boxes, box, 0)
+    _take(spaced, box, gap)
+    return (region.region_id, text, font_size, box, None)
+
+
+def _boxes_within(mask, box_width: int, box_height: int, point, reach_px: float) -> list[tuple[float, int, int]]:
+    """(distance, top, left) of every box inside ``mask`` no farther than ``reach_px`` from ``point``, nearest first."""
+    height, width = mask.shape
+    x, y = point
+    tops, lefts = np.mgrid[: height - box_height + 1, : width - box_width + 1]
+    dx = np.maximum(np.maximum(lefts - x, x - (lefts + box_width - 1)), 0)
+    dy = np.maximum(np.maximum(tops - y, y - (tops + box_height - 1)), 0)
+    distances = np.hypot(dx, dy)
+    found = []
+    for top, left in zip(*np.nonzero(distances <= reach_px)):
+        if mask[top : top + box_height, left : left + box_width].all():
+            found.append((float(distances[top, left]), int(top), int(left)))
+    return sorted(found)
+
+
+def _disk_mask(shape: tuple[int, int], centers, radius_px: float) -> np.ndarray:
+    """Every pixel within ``radius_px`` of any of ``centers`` (x, y)."""
+    rows, columns = np.mgrid[: shape[0], : shape[1]]
+    mask = np.zeros(shape, dtype=bool)
+    for x, y in centers:
+        mask |= (columns - x) ** 2 + (rows - y) ** 2 <= radius_px * radius_px
+    return mask
+
+
+def _box_size(text: str, font_size: int) -> tuple[int, int]:
+    left, top, right, bottom = ImageDraw.Draw(Image.new("RGB", (1, 1))).textbbox(
+        (0, 0), text, font=ImageFont.load_default(size=font_size)
+    )
+    return right - left, bottom - top
+
+
+def _take(taken: np.ndarray, box, gap: int) -> None:
+    left, top, right, bottom = box
+    taken[max(0, top - gap) : bottom + gap, max(0, left - gap) : right + gap] = True
+
+
+def _grow(mask: np.ndarray, reach_px: float) -> np.ndarray:
+    """Every pixel within ``reach_px`` of ``mask``, counting whole pixel steps."""
+    reach = int(math.ceil(reach_px))
+    grown = mask.copy()
+    height, width = mask.shape
+    for dy in range(-reach, reach + 1):
+        for dx in range(-reach, reach + 1):
+            if dx * dx + dy * dy > reach_px * reach_px:
+                continue
+            shifted = np.zeros_like(mask)
+            shifted[max(0, dy) : height + min(0, dy), max(0, dx) : width + min(0, dx)] = mask[
+                max(0, -dy) : height + min(0, -dy), max(0, -dx) : width + min(0, -dx)
+            ]
+            grown |= shifted
+    return grown
+
+
+def _stop_short(anchor, box, clear_px: float) -> tuple[float, float] | None:
+    """The point ``clear_px`` short of ``box``'s nearest point, on the way from ``anchor``; pixel centers at integers."""
+    x, y = anchor
+    near_x = min(max(x, box[0] - 0.5), box[2] - 0.5)
+    near_y = min(max(y, box[1] - 0.5), box[3] - 0.5)
+    length = math.hypot(x - near_x, y - near_y)
+    if length <= clear_px:
+        return None  # too near: no leader to draw
+    return (near_x + (x - near_x) * clear_px / length, near_y + (y - near_y) * clear_px / length)
+
+
+def _straight_path(start, end) -> list[tuple[int, int]]:
+    """(row, column) of each pixel nearest a point on the line, sampled at most half a pixel apart."""
+    steps = int(math.ceil(2 * max(abs(end[0] - start[0]), abs(end[1] - start[1])))) + 1
+    path = []
+    for t in np.linspace(0.0, 1.0, steps):
+        path.append((int(np.rint(start[1] + t * (end[1] - start[1]))), int(np.rint(start[0] + t * (end[0] - start[0])))))
+    return path

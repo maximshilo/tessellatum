@@ -261,17 +261,21 @@ def test_pixels_in_no_region_are_fenced_off_from_the_regions():
     assert pieces == 2 and sorted(ids.tolist() for ids in ids_per_piece) == [[-1], [0]]
 
 
-def test_the_numbers_do_not_depend_on_the_lines():
-    # Acceptance for one line per boundary: the change is to the lines alone.
+def test_the_lines_do_not_depend_on_the_numbers():
+    # The lines come from the region map alone. The numbers are placed around
+    # them since T2.6, so it is only this way round that nothing depends.
     labels = _blobby_labels(5, (120, 120), 4, 8.0)
     region_id_map, region_color = build_regions(labels, 4, 400, 9.0)
     regions = extract_regions(region_id_map, region_color)
-    plain = np.zeros_like(region_id_map)
 
-    labels_drawn = render_page((120, 120), regions, region_id_map).labels
-    with_other_lines = render_page((120, 120), regions, plain).labels
+    numbered = render_page((120, 120), regions, region_id_map)
+    bare = render_page((120, 120), [], region_id_map)
 
-    assert labels_drawn and labels_drawn == with_other_lines
+    assert numbered.labels and not bare.labels
+    np.testing.assert_array_equal(np.asarray(numbered.outlines), np.asarray(bare.outlines))
+    assert len(numbered.strokes) == len(bare.strokes)
+    for one, other in zip(numbered.strokes, bare.strokes):
+        np.testing.assert_array_equal(one, other)
 
 
 def _distance_to_line(point: np.ndarray, line: np.ndarray) -> float:

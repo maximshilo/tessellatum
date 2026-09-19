@@ -11,7 +11,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
 
 import bench_report  # noqa: E402
 
-PAINTABILITY_KEYS = ("unlabeled_regions", "sliver_area_fraction", "small_label_fraction", "compactness_p10", "compactness_median")
+PAINTABILITY_KEYS = (
+    "unlabeled_regions",
+    "sliver_area_fraction",
+    "small_label_fraction",
+    "labels_on_lines",
+    "overlapping_labels",
+    "leader_labels",
+    "compactness_p10",
+    "compactness_median",
+)
 LINE_KEYS = (
     "lines_per_boundary",
     "lines_per_boundary_clear",
@@ -50,6 +59,9 @@ def _case(image: str, categories: list[str], de00: float, preset: str = "Easy", 
             "unlabeled_regions": 3,
             "sliver_area_fraction": 0.1,
             "small_label_fraction": 0.0,
+            "labels_on_lines": 0,
+            "overlapping_labels": 0,
+            "leader_labels": 0,
             "compactness_p10": 0.1,
             "compactness_median": 0.4,
             "lines_per_boundary": 2.0,
@@ -173,10 +185,11 @@ def test_scorecard_scores_each_job_per_category_and_over_all_cases(tmp_path):
     assert "| all | 3 | **4.00 → 5.00** | 10.0 | 0.800 | 7.50 | 0.600 | 0.7 → 1.0 | 0.98 | 1/3 → 0/3 |" in resembles
     paintable = _section(scorecard, "#### paintable", "#### clean drawing")
     assert (
-        "| category | cases | labeled area ↑ | unlabeled ↓ (0) | slivers ↓ (≤ 1%) | labels < 6 pt ↓ (0) | compactness p10 ↑ "
-        "| compactness median ↑ | undersized ↓ | targets met |"
+        "| category | cases | labeled area ↑ | unlabeled ↓ (0) | slivers ↓ (≤ 1%) | labels < 6 pt ↓ (0) "
+        "| labels on lines ↓ (0) | overlapping labels ↓ (0) | compactness p10 ↑ | compactness median ↑ | undersized ↓ "
+        "| targets met |"
     ) in paintable
-    assert "| cartoon | 1 | 50.0% | 3.0 | 10.0% → 0.5% | 0.0% | 0.10 | 0.40 | 0.0 | 0/1 |" in paintable
+    assert "| cartoon | 1 | 50.0% | 3.0 | 10.0% → 0.5% | 0.0% | 0.0 | 0.0 | 0.10 | 0.40 | 0.0 | 0/1 |" in paintable
     drawing = _section(scorecard, "#### clean drawing", "#### palette")
     assert (
         "| category | cases | lines per boundary | lines per boundary (clear) (1 ± 0.05) | unenclosed ↓ (0) "
@@ -186,6 +199,16 @@ def test_scorecard_scores_each_job_per_category_and_over_all_cases(tmp_path):
     ) in drawing
     palette = _section(scorecard, "#### palette")
     assert "| category | cases | palette min ΔE00 ↑ (≥ 10) | color pairs < 10 ΔE00 ↓ | flat colors ΔE00 ↓ | targets met |" in palette
+
+
+def test_a_single_number_on_a_line_or_on_another_number_is_a_regression(tmp_path):
+    # A page that keeps its numbers clear has none of either, so neither is given any tolerance.
+    ref = _write_set(tmp_path / "ref", [_case("lion.jpg", ["photo"], 5.0)])
+    cand = _write_set(tmp_path / "cand", [_case("lion.jpg", ["photo"], 5.0, labels_on_lines=1, overlapping_labels=1)])
+
+    verdict = _section(bench_report.build_report([ref, cand], bench_report.Tolerances()), "## Verdict")
+
+    assert "labels on lines worse in photo" in verdict and "overlapping labels worse in photo" in verdict
 
 
 def test_verdict_lists_regressions_target_misses_and_cases_to_look_at_separately(tmp_path):
@@ -415,7 +438,7 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
 
     header = (
         "| case | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | regions | labeled area ↑ | unlabeled ↓ | slivers ↓ | labels < 6 pt ↓ "
-        "| compactness p10 ↑ | compactness median ↑ | lines per boundary | lines per boundary (clear) "
+        "| labels on lines ↓ | overlapping labels ↓ | leaders | compactness p10 ↑ | compactness median ↑ | lines per boundary | lines per boundary (clear) "
         "| unenclosed ↓ | same-color boundary ↓ | jaggedness ↓ "
         "| edge F1 ↑ | colors | palette min ΔE00 ↑ | color pairs < 10 ΔE00 ↓ | ink line F1 ↑ | tubes ↓ | ink in shapes < 5 mm ↓ "
         "| flat colors ΔE00 ↓ | face ΔE00 ↓ | face SSIM ↑ | features lost ↓ | labels on features ↓ | text CER source "
@@ -424,12 +447,12 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
     assert header in old_alone
     assert (
         "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
-        "| – | – | – | – | – | – | – | – | – | – | – | – | 0 | 10.0% | – |"
+        "| – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | 0 | 10.0% | – |"
     ) in old_alone
     assert "| all | 1 | 1 | no targets | no targets | no targets | no targets |" in old_alone
     assert (
-        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | 3 | 10.0% | 0.0% | 0.10 | 0.40 | 2.00 | 1.90 | 0.0% "
-        "| 1.0% | 1.100 | 0.50 | 8 | 4.5 | 2 | 0.25 | 2 | 60.0% | 3.50 | 7.50 | 0.600 | 1 | 2 | 0.10 | 0.95 | 0.98 | 1 | 0 "
-        "| 10.0% | – → 11/13 | ok |"
+        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | 3 | 10.0% | 0.0% | 0 | 0 | 0 | 0.10 | 0.40 | 2.00 | 1.90 "
+        "| 0.0% | 1.0% | 1.100 | 0.50 | 8 | 4.5 | 2 | 0.25 | 2 | 60.0% | 3.50 | 7.50 | 0.600 | 1 | 2 | 0.10 | 0.95 | 0.98 | 1 "
+        "| 0 | 10.0% | – → 11/15 | ok |"
     ) in old_vs_new
     assert "| all | 1 | 1 | 0/1 met | 0/1 met | 0/1 met | 0/1 met |" in old_vs_new

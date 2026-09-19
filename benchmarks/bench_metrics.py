@@ -256,6 +256,44 @@ def label_sizes(font_sizes_px, scale) -> dict[str, float | None]:
     }
 
 
+def label_clearance(label_boxes, lines: np.ndarray | None, leaders: np.ndarray | None = None) -> dict[str, int | None]:
+    """Numbers something else is drawn through: a line, or another number.
+
+    ``label_boxes`` are the numbers' (x0, y0, x1, y1) text boxes; a box covers
+    every pixel it reaches into. ``labels_on_lines`` counts the numbers whose
+    box holds any ink of the page's lines (``lines``) or of the leader lines
+    that point a number into its region (``leaders``), each 255 where the paper
+    is bare; None without a line layer. Any ink at all counts, as in
+    ``enclosure``: the pale edge of an anti-aliased line is the line. A
+    number's own leader counts too, since it should end short of the number.
+
+    ``overlapping_labels`` counts the numbers whose box overlaps another
+    number's. Boxes that only touch don't overlap.
+    """
+    boxes = np.asarray(label_boxes, dtype=np.float64).reshape(-1, 4)
+    overlaps = (
+        (boxes[:, None, 0] < boxes[None, :, 2])
+        & (boxes[None, :, 0] < boxes[:, None, 2])
+        & (boxes[:, None, 1] < boxes[None, :, 3])
+        & (boxes[None, :, 1] < boxes[:, None, 3])
+    )
+    np.fill_diagonal(overlaps, False)
+    result: dict[str, int | None] = {"labels_on_lines": None, "overlapping_labels": int(overlaps.any(axis=1).sum())}
+    if lines is None:
+        return result
+    ink = np.asarray(lines) != BARE_PAPER
+    if leaders is not None:
+        ink = ink | (np.asarray(leaders) != BARE_PAPER)
+    height, width = ink.shape
+    on_lines = 0
+    for x0, y0, x1, y1 in boxes:
+        rows = slice(max(0, int(np.floor(y0))), min(height, int(np.ceil(y1))))
+        columns = slice(max(0, int(np.floor(x0))), min(width, int(np.ceil(x1))))
+        on_lines += bool(ink[rows, columns].any())
+    result["labels_on_lines"] = on_lines
+    return result
+
+
 def sliver_mask(region_id_map: np.ndarray, min_width_px: float) -> np.ndarray:
     """Region pixels a round brush ``min_width_px`` wide can't paint without crossing into another region.
 

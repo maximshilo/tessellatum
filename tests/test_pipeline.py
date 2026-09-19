@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from tessellatum.core import boundaries, difficulty, pipeline, print_size, render
+from tessellatum.core import boundaries, difficulty, labels, pipeline, print_size, render
 from tessellatum.core.color import MIN_PALETTE_DE00, pairwise_de00
 from tessellatum.core.pipeline import PipelineCancelled, generate
 
@@ -110,14 +110,31 @@ def test_analysis_regions_colors_and_labels_match_the_page(sample_image_bgr):
         assert np.hypot(*off_the_cracks.T).max() <= boundaries.MAX_SHIFT_PX + 1e-9
         assert stroke.min() >= -0.5 and stroke.max() <= 199.5
 
-    labeled = {r.region_id: r for r in analysis.regions if r.interior_radius >= render.MIN_LABEL_RADIUS_PX}
-    assert labeled
-    assert [label.region_id for label in analysis.labels] == list(labeled)
+    # Every drawn region carries its number, on the page, at least as large as the paper needs.
+    drawn = {r.region_id: r for r in analysis.regions}
+    assert sorted(label.region_id for label in analysis.labels) == sorted(drawn)
+    smallest = labels.min_font_size((200, 200))
     for label in analysis.labels:
-        assert label.text == str(labeled[label.region_id].color_index + 1)
-        assert render.MIN_FONT_SIZE <= label.font_size <= render.MAX_FONT_SIZE
+        assert label.text == str(drawn[label.region_id].color_index + 1)
+        assert smallest <= label.font_size <= max(smallest, labels.MAX_FONT_SIZE)
         x0, y0, x1, y1 = label.box
         assert 0 <= x0 < x1 <= 200 and 0 <= y0 < y1 <= 200
+    assert analysis.leaders.shape == (200, 200) and analysis.leaders.dtype == np.uint8
+
+
+def test_every_region_carries_a_number_clear_of_the_lines(sample_image_bgr):
+    for preset in ("Easy", "Hard"):
+        result = generate(sample_image_bgr, difficulty.params_for_preset(preset), long_edge=400, collect_analysis=True)
+        analysis = result.analysis
+        ink = (analysis.outlines != render.PAPER) | (analysis.leaders != render.PAPER)
+        scale = print_size.print_scale((400, 400))
+
+        regions = set(np.unique(analysis.region_id_map[analysis.region_id_map >= 0]).tolist())
+        assert {label.region_id for label in analysis.labels} == regions
+        for label in analysis.labels:
+            x0, y0, x1, y1 = (int(v) for v in label.box)
+            assert not ink[y0:y1, x0:x1].any()
+            assert scale.px_to_pt(label.font_size) >= print_size.MIN_LABEL_SIZE_PT
 
 
 def test_page_is_the_line_layer_inked_in_gray_plus_the_numbers(sample_image_bgr):
@@ -130,14 +147,17 @@ def test_page_is_the_line_layer_inked_in_gray_plus_the_numbers(sample_image_bgr)
 
     near_numbers = np.zeros(outlines.shape, dtype=bool)
     for label in result.analysis.labels:
-        x0, y0, x1, y1 = label.box
-        # A number drawn at a fractional position can shade the pixel just past its box.
-        near_numbers[max(int(y0) - 1, 0) : int(y1) + 2, max(int(x0) - 1, 0) : int(x1) + 2] = True
+        x0, y0, x1, y1 = (int(v) for v in label.box)
+        near_numbers[y0:y1, x0:x1] = True  # a number sits on whole pixels, and its ink stays inside its box
 
     # Away from the numbers the page is white paper with the line gray laid on
-    # it as thickly as the line layer says.
-    ink = render.PAPER - outlines.astype(np.float64)
-    inked = np.rint(render.PAPER - ink * ((render.PAPER - style.line_gray) / render.PAPER)).astype(np.uint8)
+    # it as thickly as the line layer says, and the numbers' gray as thickly as
+    # the leaders' layer does, the darker of the two where they meet.
+    def inked(layer: np.ndarray, gray: int) -> np.ndarray:
+        ink = render.PAPER - layer.astype(np.float64)
+        return np.rint(render.PAPER - ink * ((render.PAPER - gray) / render.PAPER)).astype(np.uint8)
+
+    inked = np.minimum(inked(outlines, style.line_gray), inked(result.analysis.leaders, style.label_gray))
     assert near_numbers.any()
     np.testing.assert_array_equal(page[~near_numbers], np.repeat(inked[~near_numbers][:, None], 3, axis=1))
     assert (page[near_numbers] != inked[near_numbers][:, None]).any()  # the numbers are really there

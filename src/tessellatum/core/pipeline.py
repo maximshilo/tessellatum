@@ -69,6 +69,8 @@ class PageAnalysis:
     # by at most boundaries.MAX_SHIFT_PX.
     # A closed line repeats its first point at the end.
     strokes: list[np.ndarray]
+    # HxW uint8: the ink the leader lines of numbers written outside their regions put on the page, as in outlines.
+    leaders: np.ndarray
 
 
 @dataclass
@@ -280,6 +282,7 @@ def generate(
             labels=rendered.labels,
             outlines=np.asarray(rendered.outlines),
             strokes=rendered.strokes,
+            leaders=np.asarray(rendered.leaders),
         )
 
     return GeneratedPage(
