@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import math
+from typing import Callable
+
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
@@ -23,6 +26,11 @@ from tessellatum.core import difficulty
 
 THUMBNAIL_SIZE = 220
 
+# The region-size slider moves in equal ratios rather than equal steps: its
+# largest region is about 17 times its smallest, and 30 -> 60 mm² is as big a change
+# on the page as 250 -> 500 mm².
+REGION_SLIDER_STEPS = 100
+
 
 class ControlsPanel(QWidget):
     open_image_requested = Signal()
@@ -41,17 +49,39 @@ class ControlsPanel(QWidget):
 
         self.preset_combo = QComboBox()
         self.preset_combo.addItems(difficulty.preset_names())
+        for index, name in enumerate(difficulty.PRESETS):
+            self.preset_combo.setItemData(index, difficulty.describe(difficulty.params_for_preset(name)), Qt.ToolTipRole)
+        self.preset_combo.setItemData(
+            self.preset_combo.findText("Custom"), "Set the colors, the smallest region and the smoothing yourself.", Qt.ToolTipRole
+        )
         self.preset_combo.setCurrentText(difficulty.DEFAULT_PRESET)
 
         self.custom_group = QGroupBox("Custom settings")
-        self.colors_slider, colors_row = _slider_row(*difficulty.CUSTOM_COLORS_RANGE, default=12)
-        self.min_region_slider, min_region_row = _slider_row(0, 1000, default=250)
+        medium = difficulty.params_for_preset("Medium")
+        self.colors_slider, colors_row = _slider_row(
+            *difficulty.CUSTOM_COLORS_RANGE, default=medium.num_colors, text=lambda v: f"up to {v}"
+        )
+        self.min_region_slider, min_region_row = _slider_row(
+            0,
+            REGION_SLIDER_STEPS,
+            default=region_slider_position(medium.min_region_area_mm2),
+            text=lambda v: f"{region_slider_area_mm2(v):.0f} mm²",
+        )
         self.blur_slider, blur_row = _slider_row(
-            int(difficulty.CUSTOM_BLUR_RANGE[0] * 10), int(difficulty.CUSTOM_BLUR_RANGE[1] * 10), default=50
+            int(difficulty.CUSTOM_BLUR_RANGE[0] * 10),
+            int(difficulty.CUSTOM_BLUR_RANGE[1] * 10),
+            default=int(medium.blur_sigma * 10),
+            text=lambda v: f"{v / 10:.1f}",
+        )
+        self.colors_slider.setToolTip(
+            "How many colors to look for. Colors too alike to tell apart are merged, so a page can keep fewer."
+        )
+        self.min_region_slider.setToolTip(
+            "The smallest area a region may have on the printed A4 page. Smaller ones merge into a neighbor."
         )
         custom_form = QFormLayout()
         custom_form.addRow("Colors", colors_row)
-        custom_form.addRow("Region size", min_region_row)
+        custom_form.addRow("Smallest region", min_region_row)
         custom_form.addRow("Smoothing", blur_row)
         self.custom_group.setLayout(custom_form)
         self.custom_group.setVisible(False)
@@ -124,11 +154,9 @@ class ControlsPanel(QWidget):
         if preset != "Custom":
             return difficulty.params_for_preset(preset)
 
-        min_lo, min_hi = difficulty.CUSTOM_MIN_REGION_RANGE
-        min_fraction = min_lo + (self.min_region_slider.value() / 1000.0) * (min_hi - min_lo)
         return difficulty.custom_params(
             num_colors=self.colors_slider.value(),
-            min_region_fraction=min_fraction,
+            min_region_area_mm2=region_slider_area_mm2(self.min_region_slider.value()),
             blur_sigma=self.blur_slider.value() / 10.0,
         )
 
@@ -152,13 +180,28 @@ class ControlsPanel(QWidget):
         self.export_button.setEnabled(enabled)
 
 
-def _slider_row(minimum: int, maximum: int, default: int) -> tuple[QSlider, QWidget]:
+def region_slider_area_mm2(position: int) -> float:
+    """The smallest region's area, in mm², at a position of the region-size slider."""
+    lo, hi = difficulty.CUSTOM_MIN_REGION_AREA_MM2_RANGE
+    return lo * (hi / lo) ** (position / REGION_SLIDER_STEPS)
+
+
+def region_slider_position(area_mm2: float) -> int:
+    """The region-size slider's position nearest to ``area_mm2``."""
+    lo, hi = difficulty.CUSTOM_MIN_REGION_AREA_MM2_RANGE
+    area_mm2 = min(max(area_mm2, lo), hi)
+    return round(REGION_SLIDER_STEPS * math.log(area_mm2 / lo) / math.log(hi / lo))
+
+
+def _slider_row(
+    minimum: int, maximum: int, default: int, text: Callable[[int], str] = str
+) -> tuple[QSlider, QWidget]:
     slider = QSlider(Qt.Horizontal)
     slider.setRange(minimum, maximum)
     slider.setValue(default)
-    value_label = QLabel(str(default))
-    value_label.setFixedWidth(40)
-    slider.valueChanged.connect(lambda v: value_label.setText(str(v)))
+    value_label = QLabel(text(default))
+    value_label.setFixedWidth(64)
+    slider.valueChanged.connect(lambda v: value_label.setText(text(v)))
 
     row = QWidget()
     row_layout = QHBoxLayout(row)

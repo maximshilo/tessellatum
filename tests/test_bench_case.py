@@ -1,5 +1,6 @@
 """The benchmark case runner scores the pipeline's analysis payload, or what its stage probe captures for older versions."""
 
+import dataclasses
 import importlib.util
 import json
 import subprocess
@@ -22,11 +23,11 @@ def test_probe_fallback_reads_the_same_page_data_as_the_analysis(speckled_image_
     for name in bench_case.PROBED_STAGES:
         monkeypatch.setattr(pipeline, name, getattr(pipeline, name))  # undoes the probe's wrapping afterwards
     probe = bench_case.Probe(pipeline)
-    params = difficulty.DifficultyParams(num_colors=3, min_region_fraction=0.01, blur_sigma=0.0)
+    params = difficulty.DifficultyParams(num_colors=3, min_region_area_mm2=480.0, blur_sigma=0.0)
 
     result = pipeline.generate(speckled_image_bgr, params, long_edge=80, collect_analysis=True)
     from_analysis = bench_case.page_data_from_analysis(result.analysis)
-    from_probe = bench_case.page_data_from_probe(probe.captured, params, result.page.size, render)
+    from_probe = bench_case.page_data_from_probe(probe.captured, result.page.size, render)
 
     assert (from_analysis.source, from_probe.source) == ("analysis", "probe")
     # The analysis numbers colors legend first, the probe sees quantizer order; the painting is the same.
@@ -89,13 +90,14 @@ def test_probe_fallback_rebuilds_font_sizes_without_the_render_module():
     ]
     captured = {
         "quantize": ((), {}, (None, np.zeros((2, 3), dtype=np.uint8))),
-        "build_regions": ((), {}, (np.zeros((4, 4), dtype=np.int32), np.zeros(4, dtype=np.int32))),
+        "build_regions": ((None, 2, 20_000), {}, (np.zeros((4, 4), dtype=np.int32), np.zeros(4, dtype=np.int32))),
         "render_page": (((4, 4), regions), {}, None),
     }
-    params = difficulty.DifficultyParams(num_colors=2, min_region_fraction=0.5, blur_sigma=0.0)
 
-    page_data = bench_case.page_data_from_probe(captured, params, (200, 200), render_module=None)
+    page_data = bench_case.page_data_from_probe(captured, (200, 200), render_module=None)
 
+    # The merge threshold is the one generate passed to build_regions.
+    assert page_data.min_region_area_px == 20_000
     # Clearance of at least 9 px gets a number, at 0.85 x the clearance, between 10 and 40 px.
     assert page_data.labeled_region_ids == {1, 2, 3}
     assert page_data.label_font_sizes_px == [10, 25, 40]
@@ -202,6 +204,8 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
         "overlapping_labels",
         "leader_labels",
     } <= case["quality"].keys()
+    # The settings the case ran with, under the version's own field names.
+    assert case["params"] == dataclasses.asdict(difficulty.params_for_preset("Hard"))
     # Every region is numbered, clear of the lines and of the other numbers.
     assert case["quality"]["unlabeled_regions"] == case["quality"]["labels_on_lines"] == 0
     assert case["quality"]["overlapping_labels"] == 0

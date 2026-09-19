@@ -136,21 +136,16 @@ def clear_cache() -> None:
 def _paintable_limits(params: DifficultyParams, size: tuple[int, int]) -> tuple[int, float]:
     """The region stage's limits for a page of ``size`` (width, height) in pixels.
 
-    The difficulty sets the smallest region as a share of the image; the
-    printed page sets the smallest one a brush can paint at all, and how
-    narrow any part of a region may get (see ``print_size``). Both of the
-    printed page's limits follow the image's shape rather than its pixel
+    The difficulty sets the smallest region and the narrowest part of one on
+    the printed page, and the printed page sets how small either may get at
+    any difficulty: the brush, and its footprint (see ``print_size``). The
+    printed page's size follows the image's shape rather than its pixel
     count, so a preview and an export of one image are held to the same
     physical sizes.
     """
     scale = print_scale(size)
-    width, height = size
-    min_area_px = max(
-        4,
-        int(round(params.min_region_fraction * width * height)),
-        int(round(scale.mm2_to_px(MIN_REGION_AREA_MM2))),
-    )
-    return min_area_px, scale.mm_to_px(MIN_PAINTABLE_WIDTH_MM)
+    min_area_px = max(4, int(round(scale.mm2_to_px(max(params.min_region_area_mm2, MIN_REGION_AREA_MM2)))))
+    return min_area_px, scale.mm_to_px(max(params.min_width_mm, MIN_PAINTABLE_WIDTH_MM))
 
 
 def load_image_bgr(path: Path) -> np.ndarray:
@@ -181,7 +176,7 @@ def warm_up() -> None:
     tiny = np.zeros((48, 64, 3), dtype=np.uint8)
     tiny[:, 32:] = (40, 160, 220)
     tiny[12:36, 8:24] = (200, 60, 60)
-    generate(tiny, DifficultyParams(num_colors=4, min_region_fraction=0.01, blur_sigma=1.0), long_edge=64)
+    generate(tiny, DifficultyParams(num_colors=4, min_region_area_mm2=500.0, blur_sigma=1.0), long_edge=64)
 
 
 def generate(

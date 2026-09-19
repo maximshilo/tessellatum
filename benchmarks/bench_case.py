@@ -9,6 +9,7 @@ plus the rendered outputs into ``--out``.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import inspect
 import json
@@ -37,7 +38,9 @@ PROBED_STAGES = (
 )
 
 # Benchmark-only presets on top of the app's own. "Max" is the most granular
-# setting the Custom sliders allow -- the worst case for region handling.
+# setting the Custom sliders allow -- the worst case for region handling. From
+# 0.1.26 the version says which that is (``difficulty.finest_params``); before,
+# its sliders stopped here.
 EXTRA_PRESETS = {"Max": dict(num_colors=40, min_region_fraction=0.0002, blur_sigma=0.0)}
 
 # Line-art fields, None unless the image's manifest entry has both flat and ink colors.
@@ -128,11 +131,11 @@ def page_data_from_analysis(analysis) -> PageData:
     )
 
 
-def page_data_from_probe(captured: dict, params, size: tuple[int, int], render_module) -> PageData | None:
+def page_data_from_probe(captured: dict, size: tuple[int, int], render_module) -> PageData | None:
     """Rebuild page data from the stage calls of a version without the analysis payload.
 
-    Relies on how those versions worked: ``generate`` derived the merge
-    threshold from the difficulty as below, and ``render_page`` outlined every
+    Relies on how those versions worked: ``generate`` passed the merge
+    threshold to ``build_regions`` as its third argument, and ``render_page`` outlined every
     region it was given by drawing its contour as a polygon, and numbered
     exactly the regions with at least ``MIN_LABEL_RADIUS_PX`` of clearance, at
     a font size of that clearance times ``FONT_SIZE_RADIUS_RATIO``, clamped to
@@ -143,7 +146,7 @@ def page_data_from_probe(captured: dict, params, size: tuple[int, int], render_m
     if not all(stage in captured for stage in ("quantize", "build_regions", "render_page")):
         return None
     w, h = size
-    region_id_map, region_color = captured["build_regions"][2]
+    build_args, _build_kwargs, (region_id_map, region_color) = captured["build_regions"]
     regions = captured["render_page"][0][1]
     palette_bgr = captured["quantize"][2][1]
 
@@ -160,7 +163,7 @@ def page_data_from_probe(captured: dict, params, size: tuple[int, int], render_m
         palette_bgr=palette_bgr,
         # Regions' own color_index is renumbered to legend order before rendering, so read their colors from the map's.
         legend_bgr=palette_bgr[sorted({int(region_color[r.region_id]) for r in regions})],
-        min_region_area_px=max(4, int(round(params.min_region_fraction * h * w))),
+        min_region_area_px=int(build_args[2]),
         regions=regions,
         labeled_region_ids={r.region_id for r in labeled},
         label_font_sizes_px=font_sizes,
@@ -201,6 +204,15 @@ def label_box(text: str, font_size: int, point, page_size: tuple[int, int]) -> t
     return (x0, y0, x0 + tw, y0 + th)
 
 
+def preset_params(difficulty, name: str):
+    """The difficulty parameters of preset ``name`` in the version whose ``difficulty`` module is given."""
+    if name == "Max" and hasattr(difficulty, "finest_params"):
+        return difficulty.finest_params()
+    if name in EXTRA_PRESETS:
+        return difficulty.DifficultyParams(**EXTRA_PRESETS[name])
+    return difficulty.params_for_preset(name)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--src", type=Path, required=True)
@@ -236,10 +248,7 @@ def main() -> int:
     if args.threads:
         cv2.setNumThreads(args.threads)
 
-    if args.preset in EXTRA_PRESETS:
-        params = difficulty.DifficultyParams(**EXTRA_PRESETS[args.preset])
-    else:
-        params = difficulty.params_for_preset(args.preset)
+    params = preset_params(difficulty, args.preset)
 
     image_bgr = pipeline.load_image_bgr(args.image)
     image_info = bench_manifest.find_image(args.image)
@@ -284,7 +293,7 @@ def main() -> int:
         page_data = page_data_from_analysis(result.analysis)
     else:  # from the stage calls of the last measured run
         render_module = sys.modules.get("tessellatum.core.render")
-        page_data = page_data_from_probe(probe.captured, params, (w, h), render_module)
+        page_data = page_data_from_probe(probe.captured, (w, h), render_module)
 
     print_scale = bm.print_size.print_scale(result.page.size)
     page_rgb = np.asarray(result.page.convert("RGB"))
@@ -372,11 +381,7 @@ def main() -> int:
         "case": args.out.name,
         "image": args.image.name,
         "preset": args.preset,
-        "params": {
-            "num_colors": params.num_colors,
-            "min_region_fraction": params.min_region_fraction,
-            "blur_sigma": params.blur_sigma,
-        },
+        "params": dataclasses.asdict(params),
         "long_edge": args.long_edge,
         "status": "ok",
         "version": getattr(tessellatum, "__version__", "unknown"),

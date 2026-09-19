@@ -1,6 +1,6 @@
 [project]
 name = "tessellatum"
-version = "0.1.25"
+version = "0.1.26"
 description = "Generate paint-by-numbers style coloring pages from any image."
 readme = "README.md"
 requires-python = ">=3.10"

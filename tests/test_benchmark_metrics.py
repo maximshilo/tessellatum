@@ -288,7 +288,7 @@ def _outlines_of_every_region(region_id_map: np.ndarray) -> list[np.ndarray]:
 def test_two_outlines_along_a_boundary_count_double_and_one_shared_line_counts_once():
     image = np.full((40, 60, 3), 230, dtype=np.uint8)
     image[:, 30:] = 20
-    params = difficulty.DifficultyParams(num_colors=2, min_region_fraction=0.01, blur_sigma=0.0)
+    params = difficulty.DifficultyParams(num_colors=2, min_region_area_mm2=500.0, blur_sigma=0.0)
     analysis = pipeline.generate(image, params, long_edge=60, collect_analysis=True).analysis
 
     lone_line = bm.boundary_lines(analysis.region_id_map, [np.array([[29.5, 0.0], [29.5, 39.0]])])
@@ -646,7 +646,7 @@ def test_todays_renderer_turns_a_bold_ink_outline_into_a_tube():
     image = np.full((120, 160, 3), WHITE, dtype=np.uint8)
     image[20:100, 30:130] = BLACK
     image[28:92, 38:122] = FILL  # a flat fill inside a black outline 8 px wide
-    params = difficulty.DifficultyParams(num_colors=3, min_region_fraction=0.001, blur_sigma=0.0)
+    params = difficulty.DifficultyParams(num_colors=3, min_region_area_mm2=50.0, blur_sigma=0.0)
     analysis = pipeline.generate(image, params, long_edge=160, collect_analysis=True).analysis
     ink = bm.source_ink(image, np.array([WHITE, FILL], dtype=np.uint8), np.array([BLACK], dtype=np.uint8), 15.0)
     one_line = np.array([[33.5, 23.5], [125.5, 23.5], [125.5, 95.5], [33.5, 95.5], [33.5, 23.5]])
@@ -753,8 +753,10 @@ def test_todays_pipeline_loses_small_face_features_at_a_coarse_setting():
     face, features = (25, 30, 190, 190), [(65, 92, 40, 26), (135, 92, 40, 26), (110, 126, 20, 18), (88, 158, 64, 24)]
     edges = bm.source_edges(image, 2.0)
 
-    def score(min_region_fraction):
-        params = difficulty.DifficultyParams(num_colors=5, min_region_fraction=min_region_fraction, blur_sigma=0.0)
+    px_per_mm2 = bm.print_size.print_scale((240, 240)).px_per_mm ** 2
+
+    def score(min_region_px):
+        params = difficulty.DifficultyParams(num_colors=5, min_region_area_mm2=min_region_px / px_per_mm2, blur_sigma=0.0)
         analysis = pipeline.generate(image, params, long_edge=240, collect_analysis=True).analysis
         drawn = {region.region_id for region in analysis.regions}
         painted = bm.paint(analysis.region_id_map, analysis.region_color, analysis.palette_bgr)
@@ -762,8 +764,8 @@ def test_todays_pipeline_loses_small_face_features_at_a_coarse_setting():
         return [feature["survived"] for feature in survival], bm.face_fidelity(image, painted, [face])["face_de00_mean"]
 
     # Regions under 576 px merge into a neighbor: the eyes and the nose melt into the skin. Under 58 px, they keep their shapes.
-    coarse, coarse_de00 = score(0.01)
-    fine, fine_de00 = score(0.001)
+    coarse, coarse_de00 = score(576)
+    fine, fine_de00 = score(58)
     assert coarse == [False, False, False, True]
     assert fine == [True, True, True, True]
     assert coarse_de00 > fine_de00
