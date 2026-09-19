@@ -30,7 +30,7 @@ AREA_KINDS = ("gradient", "texture")
 TEXT_ROTATIONS = (0, 90, 180, 270)  # quarter turns: slanted lettering isn't annotated
 
 _TOP_KEYS = {"schema", "images"}
-_IMAGE_KEYS = {"size", "categories", "notes", "faces", "text", "flat_colors", "ink_colors", "areas"}
+_IMAGE_KEYS = {"size", "categories", "notes", "faces", "text", "flat_colors", "ink_colors", "exact_colors", "areas"}
 _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
@@ -108,6 +108,8 @@ class ImageInfo:
     text: tuple[TextBlock, ...] = ()
     flat_colors: tuple[tuple[int, int, int], ...] = ()  # sRGB fill colors
     ink_colors: tuple[tuple[int, int, int], ...] = ()  # sRGB line-art ink, not among flat_colors
+    # The flat and ink colors are the file's own pixel values, as in digital artwork, not cluster centers of printed colors.
+    exact_colors: bool = False
     areas: tuple[Area, ...] = ()
     notes: str = ""
 
@@ -154,6 +156,7 @@ class ImageInfo:
             text=tuple(TextBlock(box(t.box), t.string, t.rotation) for t in self.text),
             flat_colors=self.flat_colors,
             ink_colors=self.ink_colors,
+            exact_colors=self.exact_colors,
             areas=tuple(Area(a.kind, box(a.box)) for a in self.areas),
             notes=self.notes,
         )
@@ -306,6 +309,11 @@ def _parse_image(name: str, entry: object, where: str) -> ImageInfo:
     ink_colors = _parse_colors(entry.get("ink_colors", []), f"{where}: ink_colors")
     if set(flat_colors) & set(ink_colors):
         raise ManifestError(f"{where}: a color can't be both a flat color and an ink color")
+    exact_colors = entry.get("exact_colors", False)
+    if not isinstance(exact_colors, bool):
+        raise ManifestError(f"{where}: exact_colors must be true or false")
+    if exact_colors and not (flat_colors or ink_colors):
+        raise ManifestError(f"{where}: exact_colors says the colors are exact, but there are none")
 
     areas = []
     for i, raw in enumerate(_list(entry.get("areas", []), f"{where}: areas")):
@@ -325,6 +333,7 @@ def _parse_image(name: str, entry: object, where: str) -> ImageInfo:
         text=tuple(text),
         flat_colors=flat_colors,
         ink_colors=ink_colors,
+        exact_colors=exact_colors,
         areas=tuple(areas),
         notes=notes,
     )

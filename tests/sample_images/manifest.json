@@ -111,7 +111,8 @@
         "#ffffff", "#d8637d", "#8c4555", "#ffdfc9", "#c64c5b", "#6e6c9d", "#f26b68", "#903038",
         "#4d4d4d", "#800000", "#24140a", "#323667", "#f7ad7d", "#ff6f90", "#f2b3be"
       ],
-      "ink_colors": ["#000000", "#2b1100"]
+      "ink_colors": ["#000000", "#2b1100"],
+      "exact_colors": true
     },
     "m-cartoon-bold-lines-reaper.png": {
       "size": [1280, 1515],
@@ -120,7 +121,8 @@
         "#ffffff", "#525252", "#dddddd", "#999999", "#171717", "#2d2d2d", "#fff6db", "#845130",
         "#fffaeb", "#482c1a", "#bb9f8d", "#b6b09f", "#a7a08c", "#2a7fff"
       ],
-      "ink_colors": ["#000000"]
+      "ink_colors": ["#000000"],
+      "exact_colors": true
     },
     "m-cartoon-complex.jpg": {
       "size": [1218, 806],
@@ -174,7 +176,8 @@
     "scene.png": {
       "size": [600, 450],
       "categories": ["flat"],
-      "flat_colors": ["#87ceeb", "#5aaa5a", "#3c783c", "#ffdc3c", "#b43c3c", "#225a22", "#5a3c1e"]
+      "flat_colors": ["#87ceeb", "#5aaa5a", "#3c783c", "#ffdc3c", "#b43c3c", "#225a22", "#5a3c1e"],
+      "exact_colors": true
     }
   }
 }

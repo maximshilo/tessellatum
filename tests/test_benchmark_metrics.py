@@ -616,6 +616,28 @@ def test_ink_line_match_wants_lines_down_the_middle_of_the_ink_and_ignores_lines
     assert match([middle], np.zeros_like(ink)) == {"ink_line_precision": None, "ink_line_recall": None, "ink_line_f1": None}
 
 
+def test_found_ink_is_matched_to_the_artworks_pixel_by_pixel_within_the_tolerance():
+    ink = np.zeros((60, 80), dtype=bool)
+    ink[20:26, 10:70] = True  # an ink line 6 px wide and 60 long: 360 px
+    wider = np.zeros_like(ink)
+    wider[19:27, 10:70] = True  # found a pixel wider on each side, where an anti-aliased edge could go either way
+    stray = ink.copy()
+    stray[40:52, 10:70] = True  # and 720 px of something else, far from any ink line
+    half = np.zeros_like(ink)
+    half[20:26, 10:40] = True  # only the line's left half
+
+    def match(found, ink=ink):
+        return bm.found_ink_match(found, ink, 2.0)
+
+    assert match(ink) == {"ink_found_precision": 1.0, "ink_found_recall": 1.0, "ink_found_f1": 1.0}
+    assert match(wider) == {"ink_found_precision": 1.0, "ink_found_recall": 1.0, "ink_found_f1": 1.0}
+    assert match(stray) == pytest.approx({"ink_found_precision": 1 / 3, "ink_found_recall": 1.0, "ink_found_f1": 0.5})
+    # The right half's first two columns lie within 2 px of the left half.
+    assert match(half) == pytest.approx({"ink_found_precision": 1.0, "ink_found_recall": 32 / 60, "ink_found_f1": 64 / 92})
+    assert match(np.zeros_like(ink)) == {"ink_found_precision": None, "ink_found_recall": 0.0, "ink_found_f1": 0.0}
+    assert match(ink, np.zeros_like(ink)) == {"ink_found_precision": 0.0, "ink_found_recall": None, "ink_found_f1": 0.0}
+
+
 def test_tube_regions_are_ink_lines_turned_into_shapes_to_paint():
     ink = np.zeros((60, 80), dtype=bool)
     ink[20:31, 20:60] = True  # an ink line 11 px wide and 40 px long

@@ -87,6 +87,15 @@ The brush width comes from the printed page instead, along with the smallest
 region any setting can keep and how wide a line prints — see
 `src/tessellatum/core/print_size.py`.
 
+Line art — a cartoon, a comic — is flat fills with dark ink lines between
+them, and those lines should be printed, not painted. The pipeline can
+already tell such a picture from a photograph and find its ink lines without
+being told its colors: a line is dark against what lies beside it and at most
+5 mm wide on paper, and a picture is line art when its fills are flat and deep
+lines cover enough of it. For now it only reports them to the benchmarks;
+printing them as the page's lines comes next. See
+`src/tessellatum/core/ink.py`.
+
 ### Performance
 
 Previews are meant to be quick enough to tweak difficulty interactively:

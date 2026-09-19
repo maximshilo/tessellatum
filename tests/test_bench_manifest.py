@@ -57,6 +57,14 @@ def test_parses_every_kind_of_annotation():
     assert info.ink_colors == ((0, 0, 0),)
     assert info.areas_of("gradient") == (manifest.Area("gradient", manifest.Box(0, 70, 200, 30)),)
     assert info.missing_annotations() == []
+    assert not info.exact_colors  # unless the entry says so, colors are cluster centers of printed colors
+
+
+def test_exact_colors_are_the_files_own_and_stay_exact_at_any_size():
+    info = _parse({"a.png": _entry(flat_colors=["#ffffff", "#ff0000"], ink_colors=["#000000"], exact_colors=True)})["a.png"]
+
+    assert info.exact_colors
+    assert info.scaled_to((100, 50)).exact_colors
 
 
 @pytest.mark.parametrize(
@@ -83,6 +91,8 @@ def test_parses_every_kind_of_annotation():
         (_entry(flat_colors=["#fff"]), "expected '#rrggbb'"),
         (_entry(flat_colors=["#000000", "#000000"]), "colors must not repeat"),
         (_entry(flat_colors=["#000000"], ink_colors=["#000000"]), "both a flat color and an ink color"),
+        (_entry(flat_colors=["#000000"], exact_colors="yes"), "exact_colors must be true or false"),
+        (_entry(exact_colors=True), "exact_colors says the colors are exact, but there are none"),
     ],
 )
 def test_rejects_entries_that_break_the_schema(entry, message):

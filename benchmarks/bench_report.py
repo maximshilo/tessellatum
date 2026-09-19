@@ -45,11 +45,15 @@ class Target:
     ``limit`` is the worst value that still meets the target: the most for a
     metric where lower is better, the least where higher is, and the farthest
     from the ideal for a metric that has one. With ``relative_to``, the limit is
-    counted from that quality field of the same case.
+    counted from that quality field of the same case. With ``where``, the target
+    applies only to cases whose quality field of that name is true, described
+    in the report as ``where_text``.
     """
 
     limit: float
     relative_to: str | None = None
+    where: str | None = None
+    where_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -191,6 +195,38 @@ METRICS = (
         sigma_export=0.028,
     ),
     Metric("flat_color_de00_mean", "flat colors ΔE00 ↓", "{:.2f}", "palette", "lower", sigma=1.2, sigma_export=0.81),
+    # How closely the pipeline finds the artwork's ink lines. Not a job of the page: nothing on it uses them yet (T3.1).
+    # Finding them doesn't depend on the difficulty, so their tolerances come from 12 pairs at each size (the four line
+    # art images at Easy), measured on 0.1.27.
+    Metric("ink_found_fraction", "ink found", "{:.1%}"),
+    Metric(
+        "ink_found_recall",
+        "ink found recall ↑",
+        "{:.3f}",
+        better="higher",
+        sigma=0.00042,
+        sigma_export=0.0046,
+        target=Target(0.95),
+    ),
+    Metric(
+        "ink_found_precision",
+        "ink found precision ↑",
+        "{:.3f}",
+        better="higher",
+        sigma=0.0023,
+        sigma_export=0.0047,
+        # A scan's manifest colors are cluster centers of printed colors, which miss much of its line work.
+        target=Target(0.95, where="ink_reference_exact", where_text="exact colors"),
+    ),
+    Metric(
+        "stray_ink_fraction",
+        "stray ink ↓",
+        "{:.1%}",
+        better="lower",
+        sigma=0,  # a picture that isn't line art has no ink lines at any size, so any found is a regression
+        sigma_export=0,
+        target=Target(0),
+    ),
     Metric("face_de00_mean", "face ΔE00 ↓", "{:.2f}", "resembles", "lower", sigma=0.078, sigma_export=0.082, relative=True),
     Metric("face_ssim", "face SSIM ↑", "{:.3f}", "resembles", "higher", sigma=0.016, sigma_export=0.038),
     Metric("features_lost", "features lost ↓", "{:d}", "resembles", "lower", sigma=0.35, sigma_export=0.29, target=Target(0)),
@@ -288,6 +324,8 @@ def misses_target(metric: Metric, quality: dict) -> bool | None:
     target = metric.target
     value = quality.get(metric.key)
     if target is None or value is None:
+        return None
+    if target.where is not None and not quality.get(target.where):
         return None
     limit = target.limit
     if target.relative_to is not None:
@@ -606,6 +644,10 @@ def _quality_section(
         f"**ink in shapes < {bm.INK_MAX_WIDTH_MM:g} mm**: share of the ink lines lying in parts of regions that narrow, "
         "to be painted instead of printed. "
         "**flat colors ΔE00**: mean CIEDE2000 from each of the artwork's flat colors to the nearest legend color. "
+        "**ink found**: share of the page the pipeline takes for the artwork's ink lines, which nothing on the page uses "
+        f"yet; on line art, its **recall** and **precision** against the artwork's own ink lines, within "
+        f"{bm.INK_LINE_TOLERANCE_MM:g} mm, with precision judged only where the manifest's colors are exact; **stray "
+        "ink**: the same share on a picture that isn't line art. "
         "**face ΔE00** and **face SSIM**: ΔE00 mean and SSIM inside the image's face boxes. "
         f"**features lost**: annotated eyes, noses and mouths with neither drawn lines along at least "
         f"{bm.FEATURE_MIN_EDGE_RECALL:.0%} of their edges nor a region of their own covering at least "
@@ -729,9 +771,10 @@ def _target_text(metric: Metric) -> str:
     if metric.ideal is not None:
         return f"{metric.ideal:g} ± {limit}"
     sign = "≥" if metric.better == "higher" else "≤"
+    where = f" on {target.where_text}" if target.where is not None else ""
     if target.relative_to is not None:
-        return f"{sign} {METRICS_BY_KEY[target.relative_to].name} + {limit}"
-    return "0" if target.limit == 0 and metric.better == "lower" else f"{sign} {limit}"
+        return f"{sign} {METRICS_BY_KEY[target.relative_to].name} + {limit}{where}"
+    return ("0" if target.limit == 0 and metric.better == "lower" else f"{sign} {limit}") + where
 
 
 def _mean_fmt(fmt: str) -> str:
