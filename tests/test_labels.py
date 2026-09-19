@@ -1,5 +1,6 @@
 """Where each region's number goes: inside it and clear of the lines, smaller if it must, or outside it with a leader."""
 
+import dataclasses
 import itertools
 import math
 
@@ -13,6 +14,7 @@ from tessellatum.core.labels import (
     MAX_FONT_SIZE,
     MIN_FONT_SIZE,
     LabelSpacing,
+    _LeaderRoom,
     _pixels_along,
     min_font_size,
     place_labels,
@@ -20,10 +22,12 @@ from tessellatum.core.labels import (
 )
 from tessellatum.core.print_size import MIN_LABEL_SIZE_PT, print_scale
 from tessellatum.core.regions import extract_regions
-from tessellatum.core.render import ink_coverage
+from tessellatum.core.render import PAPER, ink_coverage, render_page
 
 LINE_PX = 1.3  # a 0.3 mm line on a 3:4 preview
-SPACING = LabelSpacing(min_font_size=10, label_gap_px=LINE_PX, leader_width_px=LINE_PX, leader_reach_px=35.0)
+SPACING = LabelSpacing(
+    min_font_size=10, label_gap_px=LINE_PX, leader_width_px=LINE_PX, leader_dot_px=3 * LINE_PX, leader_reach_px=35.0
+)
 
 
 def _page(ids: np.ndarray, colors=None):
@@ -215,3 +219,182 @@ def test_every_region_is_numbered_clear_of_the_lines_and_of_the_other_numbers():
         a, b = one.box, other.box
         assert not (a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3])
     assert place_labels(regions, patches, free, SPACING) == labels  # and the same page every time
+
+
+def test_a_number_stays_inside_its_own_region_whatever_the_ink_leaves_free():
+    # On a real page a line inks both pixels beside every crack, so a box free
+    # of ink is inside one region anyway; place_labels promises it regardless.
+    ids = _small_squares(1, side=6, spacing=0)
+    regions, _free = _page(ids)
+    no_lines = np.ones(ids.shape, dtype=bool)
+
+    square = next(label for label in place_labels(regions, ids, no_lines, SPACING) if label.region_id == 1)
+
+    # A 10 px number is 8 px tall: its box centred on the 6 px square would reach into the background.
+    assert square.leader is not None
+    assert (ids[_pixels(square.box)] == 0).all()
+
+
+def test_a_leader_takes_the_long_way_round_rather_than_cross_another_region():
+    ids = np.full((200, 300), 2, dtype=np.int32)
+    ids[128:, :] = 0  # open room below
+    ids[94:128, 140:158] = 3  # a wall too thin to hold a number, down to the open room...
+    ids[106:128, 146:152] = 0  # ...with a corridor through it
+    ids[100:106, 146:152] = 1  # a square too small for its number, walled in but for the corridor
+    regions, free = _page(ids)
+
+    square = next(label for label in place_labels(regions, ids, free, SPACING) if label.region_id == 1)
+
+    # Across the wall is nearer, but the leader would cross it; down the corridor it stays in two regions.
+    end, anchor = square.leader
+    assert set(ids[_pixels_along(anchor, end)].tolist()) == {0, 1}
+    assert (ids[_pixels(square.box)] == 0).all()
+    assert math.dist(anchor, end) > 20
+
+
+def _slivers(seed: int) -> np.ndarray:
+    """A page of eight small squares dropped on top of each other, leaving slivers with no room for a number."""
+    rng = np.random.default_rng(seed)
+    ids = np.zeros((120, 160), dtype=np.int32)
+    for i, (top, left) in enumerate(rng.integers(30, 90, size=(8, 2))):
+        ids[top : top + 6, left : left + 6] = i + 1
+    return ids
+
+
+def _leader_ink(size: tuple[int, int], labels) -> np.ndarray:
+    """Where the leaders' lines and dots put any ink, drawn as the renderer draws them."""
+    ink = np.zeros(size[::-1], dtype=bool)
+    for label in labels:
+        if label.leader is not None:
+            points = np.array(label.leader, dtype=np.float64)
+            ink |= ink_coverage(size, [points], SPACING.leader_width_px) > 0
+            ink |= ink_coverage(size, [points[1:].repeat(2, axis=0)], SPACING.leader_dot_px) > 0
+    return ink
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_no_leader_s_line_or_dot_reaches_a_number_its_own_included(seed):
+    ids = _slivers(seed)
+    regions, free = _page(ids)
+
+    labels = place_labels(regions, ids, free, SPACING)
+
+    leader_ink = _leader_ink(ids.shape[::-1], labels)
+    for label in labels:
+        rows, columns = _pixels(label.box)
+        if free[rows, columns].all():  # a number with no room anywhere goes on the lines regardless
+            assert not leader_ink[rows, columns].any()
+
+
+def test_a_leader_once_placed_holds_its_path_against_the_numbers_after_it():
+    ids = _small_squares(1, side=6, spacing=0)
+    regions, free = _page(ids)
+    square = next(region for region in regions if region.region_id == 1)
+    room = _LeaderRoom(ids, free, [], [square.interior_point], SPACING)
+
+    label = room.place(square)
+
+    end, anchor = label.leader
+    assert room.leaders[_pixels_along(anchor, end)].all() and room.boxes[_pixels(label.box)].all()
+
+
+def _clear_of_everything(rendered) -> None:
+    """Every number's box holds no ink of a line or a leader, and overlaps no other number."""
+    lines, leaders = np.asarray(rendered.outlines), np.asarray(rendered.leaders)
+    for label in rendered.labels:
+        rows, columns = _pixels(label.box)
+        assert (lines[rows, columns] == PAPER).all() and (leaders[rows, columns] == PAPER).all(), label
+    for one, other in itertools.combinations(rendered.labels, 2):
+        a, b = one.box, other.box
+        assert not (a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]), (one, other)
+
+
+@pytest.mark.parametrize("size", [(1100, 825), (2400, 1800)])
+def test_a_ring_and_the_square_it_walls_in_both_get_their_numbers_clear_of_everything(size):
+    # Neither has room for its number, and the square's leader has to cross the ring: at print scale, where a
+    # leader reaches 8 mm, the ring's number must not be crowded out by the square's.
+    width, height = size
+    ids = np.zeros((height, width), dtype=np.int32)
+    ids[height // 2 - 7 : height // 2 + 7, width // 2 - 7 : width // 2 + 7] = 2
+    ids[height // 2 - 4 : height // 2 + 4, width // 2 - 4 : width // 2 + 4] = 1
+    regions = extract_regions(ids, np.array([0, 1, 11], dtype=np.int32))  # the ring's number has two digits
+
+    rendered = render_page(size, regions, ids)
+
+    numbers = {label.region_id: label for label in rendered.labels}
+    assert numbers[1].leader is not None and numbers[2].leader is not None
+    _clear_of_everything(rendered)
+
+
+@pytest.mark.parametrize("size", [(1100, 825), (2400, 1800)])
+def test_a_region_two_pixels_wide_gets_a_leader_that_stops_short_of_its_number(size):
+    # Its middle is on its edge, so the nearest room is under a pixel away: too near for a leader, let alone a dot.
+    width, height = size
+    ids = np.zeros((height, width), dtype=np.int32)
+    ids[height // 2 : height // 2 + 2, width // 2 - 40 : width // 2 + 40] = 1
+    regions = extract_regions(ids, np.array([0, 1], dtype=np.int32))
+
+    rendered = render_page(size, regions, ids)
+
+    strip = next(label for label in rendered.labels if label.region_id == 1)
+    end, anchor = strip.leader
+    assert math.dist(end, anchor) > 0
+    _clear_of_everything(rendered)
+
+
+def _scattered(seed: int) -> np.ndarray:
+    """A page of 6-13 rectangles 3-9 px across dropped on top of each other: regions too small for a number, touching."""
+    rng = np.random.default_rng(seed)
+    ids = np.zeros((120, 160), dtype=np.int32)
+    for i in range(int(rng.integers(6, 14))):
+        top, left = rng.integers(30, 90, size=2)
+        height, width = rng.integers(3, 10, size=2)
+        ids[top : top + height, left : left + width] = i + 1
+    return ids
+
+
+@pytest.mark.parametrize("seed", [2, 3, 4])
+def test_a_number_written_outside_its_region_stays_wholly_outside_it_whatever_the_ink_leaves_free(seed):
+    # With lines drawn, a box free of ink cannot reach into its own region anyway; place_labels promises it regardless.
+    ids = _scattered(seed)
+    regions, _free = _page(ids)
+
+    labels = place_labels(regions, ids, np.ones(ids.shape, dtype=bool), SPACING)
+
+    for label in labels:
+        if label.leader is not None:
+            assert not (ids[_pixels(label.box)] == label.region_id).any()
+
+
+@pytest.mark.parametrize("seed", [12, 15, 18])
+def test_no_leader_s_line_runs_through_another_number(seed):
+    ids = _scattered(seed)
+    regions, free = _page(ids)
+
+    labels = place_labels(regions, ids, free, SPACING)
+
+    for label in labels:
+        if label.leader is None:
+            continue
+        line = ink_coverage(ids.shape[::-1], [np.array(label.leader, dtype=np.float64)], SPACING.leader_width_px) > 0
+        for other in labels:
+            if other is not label:
+                assert not line[_pixels(other.box)].any()
+
+
+@pytest.mark.parametrize("seed", [0, 3, 5])
+def test_with_a_dot_smaller_than_its_line_no_number_goes_too_near_for_a_leader_to_reach_it(seed):
+    # The dot keeps every number farther from the point a leader starts from than the leader stops short of it; a
+    # style with a small dot does not, and a number that near is passed over, not given a leader running backwards.
+    ids = _scattered(seed)
+    regions, free = _page(ids)
+    small_dot = dataclasses.replace(SPACING, leader_dot_px=0.5)
+
+    labels = place_labels(regions, ids, free, small_dot)
+
+    for label in labels:
+        if label.leader is not None:
+            (x, y) = label.leader[1]
+            x0, y0, x1, y1 = label.box
+            near = (min(max(x, x0 - 0.5), x1 - 0.5), min(max(y, y0 - 0.5), y1 - 0.5))
+            assert math.dist((x, y), near) > small_dot.leader_width_px / 2 + 1

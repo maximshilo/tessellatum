@@ -104,10 +104,11 @@ def render_page(
         min_font_size=min_font_size(size),
         label_gap_px=line_width,
         leader_width_px=line_width,
+        leader_dot_px=line_width * style.leader_dot_ratio,
         leader_reach_px=print_scale(size).mm_to_px(LEADER_REACH_MM),
     )
     labels = place_labels(regions, region_id_map, coverage == 0, spacing)
-    leader_coverage = _leader_coverage(size, labels, line_width, line_width * style.leader_dot_ratio)
+    leader_coverage = _leader_coverage(size, labels, line_width, spacing.leader_dot_px)
 
     paper = _paper_under(coverage, style.line_gray)
     if any(label.leader is not None for label in labels):  # most pages have none, and white paper changes nothing

@@ -201,6 +201,16 @@ def test_scorecard_scores_each_job_per_category_and_over_all_cases(tmp_path):
     assert "| category | cases | palette min ΔE00 ↑ (≥ 10) | color pairs < 10 ΔE00 ↓ | flat colors ΔE00 ↓ | targets met |" in palette
 
 
+def test_a_single_number_on_a_line_or_on_another_number_is_a_regression(tmp_path):
+    # A page that keeps its numbers clear has none of either, so neither is given any tolerance.
+    ref = _write_set(tmp_path / "ref", [_case("lion.jpg", ["photo"], 5.0)])
+    cand = _write_set(tmp_path / "cand", [_case("lion.jpg", ["photo"], 5.0, labels_on_lines=1, overlapping_labels=1)])
+
+    verdict = _section(bench_report.build_report([ref, cand], bench_report.Tolerances()), "## Verdict")
+
+    assert "labels on lines worse in photo" in verdict and "overlapping labels worse in photo" in verdict
+
+
 def test_verdict_lists_regressions_target_misses_and_cases_to_look_at_separately(tmp_path):
     report = bench_report.build_report(_sets(tmp_path), bench_report.Tolerances(sigma={"de00_mean": 0.05}))
     verdict = _section(report, "## Verdict")

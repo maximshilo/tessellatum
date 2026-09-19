@@ -309,9 +309,7 @@ def main() -> int:
         quality.update(bm.unlabeled_regions(page_data.region_id_map, page_data.labeled_region_ids))
         brush_px = print_scale.mm_to_px(bm.print_size.MIN_PAINTABLE_WIDTH_MM)
         quality["sliver_area_fraction"] = bm.sliver_share(page_data.region_id_map, brush_px)
-        quality.update(bm.label_sizes(page_data.label_font_sizes_px, print_scale))
-        quality.update(bm.label_clearance(page_data.label_boxes, page_data.outlines, page_data.leaders))
-        quality["leader_labels"] = page_data.leader_labels
+        quality.update(label_scores(page_data, print_scale))
         quality.update(bm.compactness_stats(page_data.region_id_map))
         quality.update(bm.boundary_lines(page_data.region_id_map, page_data.strokes))
         quality.update(
@@ -408,6 +406,19 @@ def main() -> int:
     }
     (args.out / "case.json").write_text(json.dumps(case, indent=2), encoding="utf-8")
     return 0
+
+
+def label_scores(page_data: PageData, scale) -> dict:
+    """The quality fields about the numbers: how large they print, what is drawn through them, and how many have a leader.
+
+    ``scale`` is the page's ``print_size.PrintScale``.
+    """
+    import bench_metrics as bm  # imported late in this module, after the measured version's package
+
+    quality = bm.label_sizes(page_data.label_font_sizes_px, scale)
+    quality.update(bm.label_clearance(page_data.label_boxes, page_data.outlines, page_data.leaders))
+    quality["leader_labels"] = page_data.leader_labels
+    return quality
 
 
 def text_scores(blocks, layers: dict, label_boxes, reader) -> tuple[dict, list | None]:

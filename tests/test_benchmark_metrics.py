@@ -153,7 +153,7 @@ def test_overlapping_labels_counts_each_number_overlapping_another():
     boxes = [
         (0, 0, 10, 8),
         (9, 7, 19, 15),  # overlaps the first by one pixel
-        (19, 0, 29, 7),  # touches the second along an edge: no overlap
+        (19, 8, 29, 15),  # beside the second, sharing the edge down its right side: no overlap
         (40, 0, 50, 8),
         (42, 2, 48, 6),  # inside the fourth
     ]

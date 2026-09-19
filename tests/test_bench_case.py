@@ -55,6 +55,32 @@ def test_probe_fallback_reads_the_same_page_data_as_the_analysis(speckled_image_
     assert [tuple(color) for color in from_probe.legend_bgr[:, ::-1].tolist()] == result.palette_rgb
 
 
+def test_label_scores_read_the_leaders_ink_and_count_the_numbers_with_a_leader():
+    lines = np.full((40, 60), 255, dtype=np.uint8)
+    leaders = lines.copy()
+    leaders[12:16, 15] = 100  # another number's leader, drawn through the first number
+    labels = [
+        SimpleNamespace(region_id=0, text="1", font_size=20, box=(10, 10, 20, 18), leader=None),
+        SimpleNamespace(region_id=1, text="2", font_size=20, box=(30, 10, 40, 18), leader=((29.0, 14.0), (25.0, 14.0))),
+    ]
+    analysis = SimpleNamespace(
+        region_id_map=np.zeros((40, 60), dtype=np.int32),
+        region_color=np.zeros(2, dtype=np.int32),
+        palette_bgr=np.zeros((2, 3), dtype=np.uint8),
+        legend_size=2,
+        min_region_area_px=4,
+        regions=[],
+        labels=labels,
+        strokes=[],
+        outlines=lines,
+        leaders=leaders,
+    )
+
+    scores = bench_case.label_scores(bench_case.page_data_from_analysis(analysis), bm.print_size.print_scale((60, 40)))
+
+    assert (scores["labels_on_lines"], scores["overlapping_labels"], scores["leader_labels"]) == (1, 0, 1)
+
+
 def test_probe_fallback_rebuilds_font_sizes_without_the_render_module():
     dot = np.array([[[2, 3]]], dtype=np.int32)
     regions = [

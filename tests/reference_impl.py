@@ -433,57 +433,96 @@ def _place_labels(size, regions, region_id_map, free, style):
 
     line_width = style.line_width_px(size)
     gap = int(math.ceil(line_width))
-    taken = np.zeros((height, width), dtype=bool)
-    for *_rest, box, _leader in placed:
-        _take(taken, box, gap)
-    clear_px = line_width / 2 + 1
+    line_reach = line_width / 2 + 1  # how far a line's ink reaches from its middle
+    line_clear = line_reach + 1  # and a pixel more, for what is checked at the pixels its middle passes through
+    dot_px = line_width * style.leader_dot_ratio
     reach_px = scale.mm_to_px(LEADER_REACH_MM)
-    for region in without_room:
-        placed.append(_with_leader(region, region_id_map, free, taken, smallest, clear_px, reach_px, gap))
+    boxes = np.zeros((height, width), dtype=bool)  # every number's box
+    spaced = np.zeros((height, width), dtype=bool)  # and the gap around it
+    leaders = np.zeros((height, width), dtype=bool)  # every leader's ink, dots aside
+    for *_rest, box, _leader in placed:
+        _take(boxes, box, 0)
+        _take(spaced, box, gap)
+    anchors = [region.interior_point for region in without_room]
+    dots = _disk_mask((height, width), anchors, dot_px / 2 + 1)  # every dot's ink, all known before any leader
+    for index, region in enumerate(without_room):
+        others = anchors[:index] + anchors[index + 1 :]
+        placed.append(
+            _with_leader(
+                region, region_id_map, free, boxes, spaced, leaders, dots, others, smallest, line_reach, line_clear, dot_px, reach_px, gap
+            )
+        )
     return placed
 
 
-def _with_leader(region, region_id_map, free, taken, font_size, clear_px, reach_px, gap):
-    height, width = region_id_map.shape
+def _with_leader(region, ids, free, boxes, spaced, leaders, dots, others, font_size, line_reach, line_clear, dot_px, reach_px, gap):
+    height, width = ids.shape
     text = str(region.color_index + 1)
     box_width, box_height = _box_size(text, font_size)
     x, y = region.interior_point
-    room = free & ~taken & (region_id_map != region.region_id)
+    anchor = (float(x), float(y))
 
-    # How far every box on the page would be from the point, then the ones near enough that fit.
+    room = free & ~spaced & ~leaders & ~dots & (ids != region.region_id)
+    candidates = _boxes_within(room, box_width, box_height, (x, y), reach_px)
+    # Other dots block a leader beyond its own dot: two points that close have dots that touch whatever their leaders do.
+    own_dot = _disk_mask(ids.shape, [(x, y)], dot_px / 2 + 1)
+    blocked = _grow(boxes | leaders, line_clear) | (_disk_mask(ids.shape, others, dot_px / 2 + 1 + line_clear) & ~own_dot)
+    for crossing_others in (False, True):
+        for _distance, top, left in candidates:
+            box = (left, top, left + box_width, top + box_height)
+            end = _stop_short(anchor, box, line_reach)
+            if end is None:
+                continue
+            path = _straight_path(anchor, end)
+            if any(blocked[row, column] for row, column in path):
+                continue
+            allowed = {region.region_id, int(ids[top, left])}
+            if not crossing_others and any(int(ids[row, column]) not in allowed for row, column in path):
+                continue
+            _take(boxes, box, 0)
+            _take(spaced, box, gap)
+            along = np.zeros_like(leaders)
+            for row, column in path:
+                along[row, column] = True
+            leaders |= _grow(along, line_clear)
+            return (region.region_id, text, font_size, box, (end, anchor))
+
+    # No room: the nearest spot within reach clear of every number, leader and other dot, lines or not.
+    clear = ~spaced & ~leaders & ~_disk_mask(ids.shape, others, dot_px / 2 + 1)
+    candidates = _boxes_within(clear, box_width, box_height, (x, y), reach_px)
+    if candidates:
+        _distance, top, left = candidates[0]
+    else:
+        left = max(0, min(x - box_width // 2, width - box_width))
+        top = max(0, min(y - box_height // 2, height - box_height))
+    box = (left, top, left + box_width, top + box_height)
+    _take(boxes, box, 0)
+    _take(spaced, box, gap)
+    return (region.region_id, text, font_size, box, None)
+
+
+def _boxes_within(mask, box_width: int, box_height: int, point, reach_px: float) -> list[tuple[float, int, int]]:
+    """(distance, top, left) of every box inside ``mask`` no farther than ``reach_px`` from ``point``, nearest first."""
+    height, width = mask.shape
+    x, y = point
     tops, lefts = np.mgrid[: height - box_height + 1, : width - box_width + 1]
     dx = np.maximum(np.maximum(lefts - x, x - (lefts + box_width - 1)), 0)
     dy = np.maximum(np.maximum(tops - y, y - (tops + box_height - 1)), 0)
     distances = np.hypot(dx, dy)
-    candidates = []
+    found = []
     for top, left in zip(*np.nonzero(distances <= reach_px)):
-        if room[top : top + box_height, left : left + box_width].all():
-            candidates.append((float(distances[top, left]), int(top), int(left)))
-    candidates.sort()
+        if mask[top : top + box_height, left : left + box_width].all():
+            found.append((float(distances[top, left]), int(top), int(left)))
+    return sorted(found)
 
-    blocked = _grow(taken, clear_px)
-    for crossing_others in (False, True):
-        for _distance, top, left in candidates:
-            box = (left, top, left + box_width, top + box_height)
-            end = _stop_short((float(x), float(y)), box, clear_px)
-            path = _straight_path((float(x), float(y)), end)
-            if any(blocked[row, column] for row, column in path):
-                continue
-            allowed = {region.region_id, int(region_id_map[top, left])}
-            if not crossing_others and any(int(region_id_map[row, column]) not in allowed for row, column in path):
-                continue
-            _take(taken, box, gap)
-            along = np.zeros_like(taken)
-            for row, column in path:
-                along[row, column] = True
-            taken |= _grow(along, clear_px)
-            return (region.region_id, text, font_size, box, (end, (float(x), float(y))))
 
-    left = min(max(x - box_width // 2, 0), width - box_width)
-    top = min(max(y - box_height // 2, 0), height - box_height)
-    box = (left, top, left + box_width, top + box_height)
-    _take(taken, box, gap)
-    return (region.region_id, text, font_size, box, None)
+def _disk_mask(shape: tuple[int, int], centers, radius_px: float) -> np.ndarray:
+    """Every pixel within ``radius_px`` of any of ``centers`` (x, y)."""
+    rows, columns = np.mgrid[: shape[0], : shape[1]]
+    mask = np.zeros(shape, dtype=bool)
+    for x, y in centers:
+        mask |= (columns - x) ** 2 + (rows - y) ** 2 <= radius_px * radius_px
+    return mask
 
 
 def _box_size(text: str, font_size: int) -> tuple[int, int]:
@@ -515,14 +554,14 @@ def _grow(mask: np.ndarray, reach_px: float) -> np.ndarray:
     return grown
 
 
-def _stop_short(anchor, box, clear_px: float) -> tuple[float, float]:
+def _stop_short(anchor, box, clear_px: float) -> tuple[float, float] | None:
     """The point ``clear_px`` short of ``box``'s nearest point, on the way from ``anchor``; pixel centers at integers."""
     x, y = anchor
     near_x = min(max(x, box[0] - 0.5), box[2] - 0.5)
     near_y = min(max(y, box[1] - 0.5), box[3] - 0.5)
     length = math.hypot(x - near_x, y - near_y)
     if length <= clear_px:
-        return (near_x, near_y)
+        return None  # too near: no leader to draw
     return (near_x + (x - near_x) * clear_px / length, near_y + (y - near_y) * clear_px / length)
 
 

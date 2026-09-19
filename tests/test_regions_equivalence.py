@@ -161,6 +161,38 @@ def test_a_number_made_smaller_under_a_thick_line_is_placed_as_the_reference_pla
     np.testing.assert_array_equal(np.asarray(rendered.image), np.asarray(expected))
 
 
+def _ring_around_a_square(size: tuple[int, int]) -> np.ndarray:
+    """A square too small for its number, inside a ring too thin for its own: both need leaders, one across the other."""
+    width, height = size
+    ids = np.zeros((height, width), dtype=np.int32)
+    ids[height // 2 - 7 : height // 2 + 7, width // 2 - 7 : width // 2 + 7] = 2
+    ids[height // 2 - 4 : height // 2 + 4, width // 2 - 4 : width // 2 + 4] = 1
+    return ids
+
+
+def _strip_two_pixels_wide(size: tuple[int, int]) -> np.ndarray:
+    """A region whose middle is on its edge, so the nearest room is under a pixel from the point a leader starts at."""
+    width, height = size
+    ids = np.zeros((height, width), dtype=np.int32)
+    ids[height // 2 : height // 2 + 2, width // 2 - 40 : width // 2 + 40] = 1
+    return ids
+
+
+@pytest.mark.parametrize("layout", [_ring_around_a_square, _strip_two_pixels_wide])
+def test_leaders_on_a_page_of_real_size_are_placed_as_the_reference_places_them(layout):
+    # At 1100 px a leader reaches 8 mm, 35 px, and its dot is 3.9 px across: the room the dots take and the reach
+    # both come into play, which they do not on the small pages above.
+    size = (1100, 825)
+    region_id_map = layout(size)
+    region_color = np.array([0, 1, 11][: int(region_id_map.max()) + 1], dtype=np.int32)
+
+    rendered = render_page(size, extract_regions(region_id_map, region_color), region_id_map)
+
+    assert sum(label.leader is not None for label in rendered.labels) == int(region_id_map.max())
+    expected = ref.render_page(size, ref.extract_regions(region_id_map, region_color), region_id_map)
+    np.testing.assert_array_equal(np.asarray(rendered.image), np.asarray(expected))
+
+
 def _preferred_size(region, size: tuple[int, int]) -> int:
     return max(min_font_size(size), int(min(MAX_FONT_SIZE, region.interior_radius * FONT_SIZE_RADIUS_RATIO)))
 

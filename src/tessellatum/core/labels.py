@@ -59,6 +59,7 @@ class LabelSpacing:
     min_font_size: int  # the smallest em size a number is drawn at (see ``min_font_size``)
     label_gap_px: float  # the least space between a number written outside its region and any other number
     leader_width_px: float  # how wide a leader line is inked
+    leader_dot_px: float  # how wide the dot a leader ends in, at the point of its region it points at, is inked
     leader_reach_px: float  # how far from its region a number with a leader may go
 
 
@@ -84,34 +85,32 @@ def place_labels(regions, region_id_map: np.ndarray, free: np.ndarray, spacing: 
     box is kept inside one region's free pixels, so two numbers written inside
     their own regions can never touch: a line lies between them. The numbers
     that need a leader are placed after all the others, in whatever room those
-    leave.
+    leave (see ``_LeaderRoom``).
 
     Returns the labels in drawing order: the numbers inside their regions, in
-    the order of ``regions``, then those with a leader.
+    the order of ``regions``, then the others.
     """
     ids = np.ascontiguousarray(region_id_map, dtype=np.int32)
     height, width = ids.shape
-    if not regions:
-        return []
-    # Sized for every region asked about, in case one is not on the map: it then has no room of its own.
-    num_ids = max(int(ids.max()), max(region.region_id for region in regions)) + 1
-    bounds = kernels.region_bounds(ids.reshape(-1), height, width, num_ids)[0]
-
     labels: list[Label] = []
     homeless = []
+    bounds = None  # every region's bounding box, found the first time a number does not fit at its region's middle
     for region in regions:
-        label = _label_inside(region, ids, free, bounds, spacing.min_font_size)
+        label = _label_at_middle(region, ids, free, spacing.min_font_size)
+        if label is None:
+            if bounds is None:
+                # Sized for every region asked about, in case one is not on the map: it then has no room of its own.
+                num_ids = max(int(ids.max()), max(r.region_id for r in regions)) + 1
+                bounds = kernels.region_bounds(ids.reshape(-1), height, width, num_ids)[0]
+            label = _label_inside(region, ids, free, bounds, spacing.min_font_size)
         if label is None:
             homeless.append(region)
         else:
             labels.append(label)
 
     if homeless:
-        taken = np.zeros((height, width), dtype=bool)
-        for label in labels:
-            _mark_box(taken, label.box, spacing.label_gap_px)
-        for region in homeless:
-            labels.append(_label_with_leader(region, ids, free, taken, spacing))
+        room = _LeaderRoom(ids, free, labels, [region.interior_point for region in homeless], spacing)
+        labels.extend(room.place(region) for region in homeless)
     return labels
 
 
@@ -121,27 +120,43 @@ def text_box_size(text: str, font_size: int) -> tuple[int, int]:
     return right - left, bottom - top
 
 
-def _label_inside(region, ids: np.ndarray, free: np.ndarray, bounds, min_size: int) -> Label | None:
-    """``region``'s number inside the region, as large as it can be up to its preferred size; None if none fits."""
+def _preferred_size(region, min_size: int) -> int:
+    """The size a region's number is drawn at if it fits: larger the farther its middle is from its edge."""
+    return max(min_size, int(min(MAX_FONT_SIZE, region.interior_radius * FONT_SIZE_RADIUS_RATIO)))
+
+
+def _centered_box(point, box_width: int, box_height: int, page_size: tuple[int, int]) -> tuple[int, int]:
+    """(left, top) of a ``box_width`` x ``box_height`` box centered on ``point``, kept on a ``page_size`` page if it fits."""
+    x, y = point
+    width, height = page_size
+    return max(0, min(x - box_width // 2, width - box_width)), max(0, min(y - box_height // 2, height - box_height))
+
+
+def _label_at_middle(region, ids: np.ndarray, free: np.ndarray, min_size: int) -> Label | None:
+    """``region``'s number where it always went, if it fits there: at its preferred size, on the region's middle."""
     text = str(region.color_index + 1)
-    preferred = max(min_size, int(min(MAX_FONT_SIZE, region.interior_radius * FONT_SIZE_RADIUS_RATIO)))
+    font_size = _preferred_size(region, min_size)
+    box_width, box_height = text_box_size(text, font_size)
     height, width = ids.shape
+    if box_width > width or box_height > height:
+        return None
+    left, top = _centered_box(region.interior_point, box_width, box_height, (width, height))
+    window = (slice(top, top + box_height), slice(left, left + box_width))
+    if free[window].all() and (ids[window] == region.region_id).all():
+        return Label(region.region_id, text, font_size, (left, top, left + box_width, top + box_height))
+    return None
 
-    # Where it always went, if it fits there: centered on the point farthest from the region's edge.
-    box_width, box_height = text_box_size(text, preferred)
-    x, y = region.interior_point
-    left = min(max(x - box_width // 2, 0), width - box_width)
-    top = min(max(y - box_height // 2, 0), height - box_height)
-    if left >= 0 and top >= 0:
-        window = (slice(top, top + box_height), slice(left, left + box_width))
-        if free[window].all() and (ids[window] == region.region_id).all():
-            return Label(region.region_id, text, preferred, (left, top, left + box_width, top + box_height))
 
-    # Otherwise wherever in the region it keeps farthest from the lines, shrinking it if it has to.
+def _label_inside(region, ids: np.ndarray, free: np.ndarray, bounds, min_size: int) -> Label | None:
+    """``region``'s number wherever in the region it keeps farthest from the lines, shrinking it if it has to.
+
+    None if it does not fit anywhere in the region even at ``min_size``.
+    """
+    text = str(region.color_index + 1)
     x0, y0, x1, y1 = (int(v) for v in bounds[region.region_id])
     room = free[y0 : y1 + 1, x0 : x1 + 1] & (ids[y0 : y1 + 1, x0 : x1 + 1] == region.region_id)
     clearance = _clearance(room)
-    for font_size in range(preferred, min_size - 1, -1):
+    for font_size in range(_preferred_size(region, min_size), min_size - 1, -1):
         box_width, box_height = text_box_size(text, font_size)
         spot = _roomiest_box(clearance, box_width, box_height)
         if spot is not None:
@@ -150,64 +165,146 @@ def _label_inside(region, ids: np.ndarray, free: np.ndarray, bounds, min_size: i
     return None
 
 
-def _label_with_leader(region, ids: np.ndarray, free: np.ndarray, taken: np.ndarray, spacing: LabelSpacing) -> Label:
-    """``region``'s number written just outside it, with a leader line pointing in.
+class _LeaderRoom:
+    """The page's room for numbers written outside their regions, and what each one placed takes of it.
 
-    The number goes in the nearest room outside the region, within
-    ``spacing.leader_reach_px``, whose leader runs from the region into the
-    number's own region and nowhere else, clear of every other number. If no
-    such room exists, the leader may cross other regions too; if there is no
-    room at all, the number goes inside the region regardless of the lines,
-    which the benchmark reports.
+    Every leader ends in a dot at its region's most interior point, so all the
+    dots are known before any of these numbers is placed. A number goes:
 
-    ``taken`` marks the room other numbers and leaders hold; it is updated
-    with this one.
+    * in the nearest room outside its region, within the leader's reach, out
+      of reach of every dot -- its own too -- and clear of every other number
+      and leader, whose leader runs from the region into the number's region
+      and nowhere else, keeping clear of every other number, leader and dot;
+    * failing that, the same with a leader that may cross other regions;
+    * failing that -- there is no room at all -- as near the region's middle as
+      it can be without landing on another number or leader, lines or not,
+      which the benchmark reports.
     """
-    text = str(region.color_index + 1)
-    font_size = spacing.min_font_size
-    box_width, box_height = text_box_size(text, font_size)
-    height, width = ids.shape
-    x, y = region.interior_point
-    anchor = (float(x), float(y))
 
-    reach = int(math.ceil(spacing.leader_reach_px))
-    wx0, wy0 = max(0, x - reach - box_width), max(0, y - reach - box_height)
-    wx1, wy1 = min(width, x + reach + box_width + 1), min(height, y + reach + box_height + 1)
-    room = free[wy0:wy1, wx0:wx1] & ~taken[wy0:wy1, wx0:wx1] & (ids[wy0:wy1, wx0:wx1] != region.region_id)
-    fits = _box_fits(room, box_width, box_height)
-    tops, lefts = np.nonzero(fits)
-    lefts, tops = lefts + wx0, tops + wy0
-    # How far each box is from the point the leader points at, nearest first; ties in reading order.
+    def __init__(self, ids: np.ndarray, free: np.ndarray, labels: list[Label], anchors, spacing: LabelSpacing) -> None:
+        self.ids, self.free, self.spacing = ids, free, spacing
+        self.anchors = list(anchors)
+        # A line's ink reaches half its width and a pixel of anti-aliasing from its middle, and a dot's likewise.
+        self.line_reach = spacing.leader_width_px / 2 + 1
+        self.dot_reach = spacing.leader_dot_px / 2 + 1
+        # A leader is checked at the pixels its middle passes through, which can lie most of a pixel off it, so what
+        # it must keep clear of is kept a pixel farther away than its ink reaches.
+        self.line_clear = self.line_reach + 1
+        shape = ids.shape
+        self.boxes = np.zeros(shape, dtype=bool)  # every number's box
+        self.spaced = np.zeros(shape, dtype=bool)  # every number's box and the gap kept around it
+        self.leaders = np.zeros(shape, dtype=bool)  # where the leaders placed so far can put ink, dots aside
+        for label in labels:
+            self._take_box(label.box)
+        self.dots = _disks(shape, self.anchors, self.dot_reach)  # where every dot puts ink
+        self.placed = 0
+
+    def place(self, region) -> Label:
+        index, self.placed = self.placed, self.placed + 1
+        others = self.anchors[:index] + self.anchors[index + 1 :]
+        ids, spacing = self.ids, self.spacing
+        text = str(region.color_index + 1)
+        font_size = spacing.min_font_size
+        box_width, box_height = text_box_size(text, font_size)
+        height, width = ids.shape
+        x, y = region.interior_point
+        anchor = (float(x), float(y))
+
+        # Every box and every leader that could be chosen lies in this window around the point the leader points at.
+        reach = int(math.ceil(spacing.leader_reach_px))
+        wx0, wy0 = max(0, x - reach - box_width), max(0, y - reach - box_height)
+        wx1, wy1 = min(width, x + reach + box_width + 1), min(height, y + reach + box_height + 1)
+        window = (slice(wy0, wy1), slice(wx0, wx1))
+        local_ids = ids[window]
+        busy = self.spaced[window] | self.leaders[window]
+
+        room = self.free[window] & ~busy & ~self.dots[window] & (local_ids != region.region_id)
+        tops, lefts, distance = _nearest_boxes(room, box_width, box_height, (x - wx0, y - wy0))
+        within = distance <= spacing.leader_reach_px
+        tops, lefts, distance = tops[within], lefts[within], distance[within]
+
+        # A leader keeps its ink off every number, every leader placed so far and every other dot -- those just
+        # outside the window too, so they are grown from a margin around it.
+        margin = int(math.ceil(self.line_clear))
+        mx0, my0 = max(0, wx0 - margin), max(0, wy0 - margin)
+        around = (slice(my0, wy1 + margin), slice(mx0, wx1 + margin))
+        grown = _grown(self.boxes[around] | self.leaders[around], self.line_clear)
+        blocked = grown[wy0 - my0 : wy1 - my0, wx0 - mx0 : wx1 - mx0]
+        # Beyond its own dot, that is: two points close enough have dots that touch whatever their leaders do.
+        other_dots = _disks(blocked.shape, [(ox - wx0, oy - wy0) for ox, oy in others], self.dot_reach + self.line_clear)
+        blocked |= other_dots & ~_disks(blocked.shape, [(x - wx0, y - wy0)], self.dot_reach)
+        # A leader that runs from the region straight into the number's region, and nowhere else, can only end in a
+        # region touching this one: it steps from pixel to pixel, diagonals included.
+        own = (local_ids == region.region_id).astype(np.uint8)
+        neighbors = np.unique(local_ids[cv2.dilate(own, np.ones((3, 3), np.uint8)).astype(bool) & ~own.astype(bool)])
+        region_of = local_ids[tops, lefts]
+        next_door = np.isin(region_of, neighbors)
+
+        known_blocked = np.zeros(len(tops), dtype=bool)
+        for crossing_others in (False, True):
+            for k in range(len(tops)):
+                if known_blocked[k] or not (crossing_others or next_door[k]):
+                    continue
+                left, top = int(lefts[k]) + wx0, int(tops[k]) + wy0
+                box = (left, top, left + box_width, top + box_height)
+                end = _leader_end(anchor, box, self.line_reach)
+                if end is None:  # too near to leave room for a leader: only a dot smaller than its line allows it
+                    continue
+                rows, columns = _pixels_along(anchor, end)
+                rows, columns = rows - wy0, columns - wx0
+                if blocked[rows, columns].any():
+                    known_blocked[k] = True
+                    continue
+                if not crossing_others:
+                    along = local_ids[rows, columns]
+                    if not ((along == region.region_id) | (along == region_of[k])).all():
+                        continue
+                self._take_box(box)
+                self._take_leader((rows + wy0, columns + wx0))
+                return Label(region.region_id, text, font_size, box, leader=(end, anchor))
+
+        # No room anywhere near: at the region's middle, or as near it as the number can be without landing on
+        # another number, a leader or a dot.
+        clear = ~busy & ~_disks(busy.shape, [(ox - wx0, oy - wy0) for ox, oy in others], self.dot_reach)
+        tops, lefts, distance = _nearest_boxes(clear, box_width, box_height, (x - wx0, y - wy0))
+        if len(tops) and distance[0] <= spacing.leader_reach_px:
+            left, top = int(lefts[0]) + wx0, int(tops[0]) + wy0
+        else:
+            left, top = _centered_box((x, y), box_width, box_height, (width, height))
+        box = (left, top, left + box_width, top + box_height)
+        self._take_box(box)
+        return Label(region.region_id, text, font_size, box)
+
+    def _take_box(self, box) -> None:
+        x0, y0, x1, y1 = (int(math.floor(box[0])), int(math.floor(box[1])), int(math.ceil(box[2])), int(math.ceil(box[3])))
+        self.boxes[max(0, y0) : y1, max(0, x0) : x1] = True
+        gap = int(math.ceil(self.spacing.label_gap_px))
+        self.spaced[max(0, y0 - gap) : y1 + gap, max(0, x0 - gap) : x1 + gap] = True
+
+    def _take_leader(self, path: tuple[np.ndarray, np.ndarray]) -> None:
+        """Mark where a leader along ``path``, (rows, columns) of its middle, puts ink."""
+        rows, columns = path
+        reach = int(math.ceil(self.line_clear))
+        height, width = self.ids.shape
+        y0, x0 = max(0, int(rows.min()) - reach), max(0, int(columns.min()) - reach)
+        y1, x1 = min(height, int(rows.max()) + reach + 1), min(width, int(columns.max()) + reach + 1)
+        along = np.zeros((y1 - y0, x1 - x0), dtype=bool)
+        along[rows - y0, columns - x0] = True
+        self.leaders[y0:y1, x0:x1] |= _grown(along, self.line_clear)
+
+
+def _nearest_boxes(room: np.ndarray, box_width: int, box_height: int, point) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(tops, lefts, distances) of every box that fits inside ``room``, nearest ``point`` first; ties in reading order.
+
+    A box's distance is from ``point``, (x, y), to the nearest of its pixels, in whole pixel steps.
+    """
+    tops, lefts = np.nonzero(_box_fits(room, box_width, box_height))
+    x, y = point
     dx = np.maximum(np.maximum(lefts - x, x - (lefts + box_width - 1)), 0)
     dy = np.maximum(np.maximum(tops - y, y - (tops + box_height - 1)), 0)
     distance = np.hypot(dx, dy)
     order = np.lexsort((lefts, tops, distance))
-    order = order[distance[order] <= spacing.leader_reach_px]
-
-    # A leader keeps a pen's half width and a pixel of anti-aliasing clear of every number.
-    clear_px = spacing.leader_width_px / 2 + 1
-    blocked = _grown(taken, clear_px)
-    for crossing_others in (False, True):
-        for index in order:
-            left, top = int(lefts[index]), int(tops[index])
-            box = (left, top, left + box_width, top + box_height)
-            end = _leader_end(anchor, box, clear_px)
-            path = _pixels_along(anchor, end)
-            if blocked[path].any():
-                continue
-            if not crossing_others:
-                along = ids[path]
-                if not np.isin(along, (region.region_id, ids[top, left])).all():
-                    continue
-            _mark_box(taken, box, spacing.label_gap_px)
-            _mark_path(taken, path, clear_px)
-            return Label(region.region_id, text, font_size, box, leader=(end, anchor))
-
-    left = min(max(x - box_width // 2, 0), width - box_width)
-    top = min(max(y - box_height // 2, 0), height - box_height)
-    box = (left, top, left + box_width, top + box_height)
-    _mark_box(taken, box, spacing.label_gap_px)
-    return Label(region.region_id, text, font_size, box)
+    return tops[order], lefts[order], distance[order]
 
 
 def _clearance(room: np.ndarray) -> np.ndarray:
@@ -251,12 +348,16 @@ def _box_fits(room: np.ndarray, box_width: int, box_height: int) -> np.ndarray:
     return inside.astype(bool)
 
 
-def _leader_end(anchor: tuple[float, float], box: tuple[int, int, int, int], clear_px: float) -> tuple[float, float]:
+def _leader_end(
+    anchor: tuple[float, float], box: tuple[int, int, int, int], clear_px: float
+) -> tuple[float, float] | None:
     """Where a leader from ``anchor`` to the number in ``box`` stops: ``clear_px`` short of the nearest point of the box.
 
     ``anchor`` has pixel centers at integer coordinates; ``box`` is (x0, y0,
     x1, y1) in the page's own coordinates, where a pixel spans a unit square
-    from its corner, so the box's pixels run from x0 - 0.5 to x1 - 0.5.
+    from its corner, so the box's pixels run from x0 - 0.5 to x1 - 0.5. None
+    if the box is no farther than ``clear_px`` from the anchor, which leaves no
+    leader to draw.
     """
     x, y = anchor
     left, top, right, bottom = box[0] - 0.5, box[1] - 0.5, box[2] - 0.5, box[3] - 0.5
@@ -264,7 +365,7 @@ def _leader_end(anchor: tuple[float, float], box: tuple[int, int, int, int], cle
     dx, dy = x - near[0], y - near[1]
     length = math.hypot(dx, dy)
     if length <= clear_px:
-        return near
+        return None
     return (near[0] + dx * clear_px / length, near[1] + dy * clear_px / length)
 
 
@@ -277,18 +378,20 @@ def _pixels_along(start: tuple[float, float], end: tuple[float, float]) -> tuple
     return rows, columns
 
 
-def _mark_box(taken: np.ndarray, box, gap_px: float) -> None:
-    """Mark ``box`` in ``taken``, grown by ``gap_px`` on every side."""
-    gap = int(math.ceil(gap_px))
-    x0, y0, x1, y1 = (int(math.floor(box[0])), int(math.floor(box[1])), int(math.ceil(box[2])), int(math.ceil(box[3])))
-    taken[max(0, y0 - gap) : y1 + gap, max(0, x0 - gap) : x1 + gap] = True
-
-
-def _mark_path(taken: np.ndarray, path: tuple[np.ndarray, np.ndarray], reach_px: float) -> None:
-    """Mark the pixels within ``reach_px`` of ``path`` in ``taken``."""
-    along = np.zeros(taken.shape, dtype=bool)
-    along[path] = True
-    taken |= _grown(along, reach_px)
+def _disks(shape: tuple[int, int], centers, radius_px: float) -> np.ndarray:
+    """The pixels of a ``shape`` page within ``radius_px`` of any of ``centers``, (x, y) pixels, which may lie off it."""
+    disks = np.zeros(shape, dtype=bool)
+    reach = int(math.ceil(radius_px))
+    offsets = np.arange(-reach, reach + 1)
+    disk = offsets[:, None] ** 2 + offsets[None, :] ** 2 <= radius_px * radius_px
+    height, width = shape
+    for x, y in centers:
+        y0, x0 = y - reach, x - reach
+        rows = slice(max(0, y0), max(0, min(height, y + reach + 1)))
+        columns = slice(max(0, x0), max(0, min(width, x + reach + 1)))
+        if rows.stop > rows.start and columns.stop > columns.start:
+            disks[rows, columns] |= disk[rows.start - y0 : rows.stop - y0, columns.start - x0 : columns.stop - x0]
+    return disks
 
 
 def _grown(mask: np.ndarray, reach_px: float) -> np.ndarray:
