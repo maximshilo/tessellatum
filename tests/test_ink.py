@@ -65,6 +65,21 @@ def test_the_agreed_values():
     assert ink.MAX_LINE_WIDTH_MM == bm.INK_MAX_WIDTH_MM == 5.0
     assert ink.GAP_MM == 0.5
     assert (ink.MAX_FLATNESS, ink.DEEP_LINE_DEPTH, ink.MIN_DEEP_LINE_SHARE) == (3.4, 40.0, 0.016)
+    # D-035: flatness is the best of three k-means runs, which holds a textured picture's within 0.3 of itself over seeds.
+    assert ink._KMEANS_ATTEMPTS == 3
+
+
+def test_lightness_and_depth_are_in_cie_lstar():
+    gray = _gray_with_lightness(40)
+    lstar = float(cv2.cvtColor(np.full((1, 1, 3), gray, np.uint8), cv2.COLOR_BGR2Lab)[0, 0, 0]) * 100 / 255
+    image = _page()
+    image[100:400, 200:204] = gray  # a gray line 1 mm wide on white paper
+
+    lightness, depth = ink._lightness_and_depth(image, PX_PER_MM * ink.MAX_LINE_WIDTH_MM)
+
+    assert lightness[200, 202] == pytest.approx(lstar, abs=1e-4)
+    assert depth[200, 202] == pytest.approx(100 - lstar, abs=1e-4)
+    assert lightness[200, 100] == pytest.approx(100) and depth[200, 100] == 0
 
 
 def test_line_art_is_flat_fills_and_deep_lines():
@@ -76,6 +91,27 @@ def test_line_art_is_flat_fills_and_deep_lines():
     lightness = cv2.cvtColor(np.array([FILLS], np.uint8), cv2.COLOR_BGR2Lab)[0, :, 0].astype(float) * 100 / 255
     assert lightness.min() > ink.DEEP_LINE_DEPTH
     assert decision.deep_line_share == pytest.approx((_drawing() == 0).all(axis=2).mean())
+
+
+def test_lines_on_dark_fills_are_not_deep():
+    # Black lines between fills no lighter than L* 35: lines, but not dark against light, so the picture isn't line art
+    # however flat it is. A line is only as deep as the lighter of what lies on its two sides.
+    dark = [(70, 40, 40), (40, 70, 40), (40, 40, 90), (60, 60, 60), (80, 50, 70), (50, 80, 80)]
+    lightness = cv2.cvtColor(np.array([dark], np.uint8), cv2.COLOR_BGR2Lab)[0, :, 0].astype(float) * 100 / 255
+    assert lightness.max() < 35
+    image = _page(dark[0])
+    for i, color in enumerate(dark):
+        x, y = 60 + (i % 3) * 340, 60 + (i // 3) * 340
+        image[y : y + 280, x : x + 300] = color
+        cv2.rectangle(image, (x, y), (x + 299, y + 279), BLACK, 8)
+
+    decision = ink.line_art(image)
+
+    assert decision.flatness < 0.1
+    # Only the page's corners are deep: off the page counts as white paper, and no 5 mm disk reaches into a corner.
+    assert decision.deep_line_share < ink.MIN_DEEP_LINE_SHARE / 100
+    assert not decision.is_line_art
+    assert ink.ink_lines(image).any()  # still lines: black is well over 15 L* darker than these fills
 
 
 def test_flat_fills_without_lines_are_not_line_art():
@@ -93,6 +129,63 @@ def test_lines_on_textured_fills_are_not_line_art():
     assert not decision.is_line_art
     assert decision.deep_line_share > 3 * ink.MIN_DEEP_LINE_SHARE
     assert decision.flatness > 2 * ink.MAX_FLATNESS
+
+
+def test_print_texture_is_evened_out_before_flatness_is_measured():
+    # Grain a pixel across, as a printed page's dots and a scan's noise are, blurred away by 0.25 mm; the photograph's
+    # texture of the test above is a few millimeters across, and stays.
+    rng = np.random.default_rng(1)
+    grainy = np.clip(_drawing() + rng.normal(0, 12, _drawing().shape), 0, 255).astype(np.uint8)
+
+    decision = ink.line_art(grainy)
+
+    assert decision.is_line_art
+    assert decision.flatness < ink.MAX_FLATNESS / 2
+
+
+def test_flatness_is_the_median_so_a_textured_patch_does_not_make_a_picture_unflat():
+    # One of the six fills photograph-textured, as a comic's photo panel would be.
+    image = _drawing().astype(np.float32)
+    rng = np.random.default_rng(0)
+    field = np.stack([cv2.GaussianBlur(rng.normal(0, 1, image.shape[:2]).astype(np.float32), (0, 0), 6) for _ in range(3)], -1)
+    image[60:340, 60:360] += field[60:340, 60:360] * (30 / field.std())
+    image = np.clip(image, 0, 255).astype(np.uint8)
+
+    decision = ink.line_art(image)
+
+    assert decision.is_line_art
+    assert decision.flatness < 0.1
+
+
+def test_flatness_leaves_out_the_pixels_within_half_a_millimeter_of_a_line(monkeypatch):
+    seen = {}
+    measure = ink._flatness
+
+    def spy(image, off_lines, blur_px):
+        seen.update(off_lines=off_lines, blur_px=blur_px)
+        return measure(image, off_lines, blur_px)
+
+    monkeypatch.setattr(ink, "_flatness", spy)
+    image = _drawing()
+
+    ink.line_art(image)
+
+    black = (image == 0).all(axis=2)
+    distance = cv2.distanceTransform((~black).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+    assert (seen["off_lines"] == (distance > PX_PER_MM * ink.LINE_MARGIN_MM)).all()
+    assert seen["blur_px"] == PX_PER_MM * ink.FLAT_BLUR_MM
+
+
+def test_flatness_samples_the_pixels_off_the_lines_whatever_pattern_they_make():
+    # Off the lines only every sixth column, as between the strokes of a hatching; those columns are textured. A regular
+    # grid of samples in step with them would see only the lines' columns, and nothing.
+    image = _page((200, 200, 200))
+    rng = np.random.default_rng(0)
+    image[:, 3::6] = rng.integers(0, 256, size=image[:, 3::6].shape)
+    off_lines = np.zeros(image.shape[:2], bool)
+    off_lines[:, 3::6] = True
+
+    assert ink._flatness(image, off_lines, 0.0) > 10
 
 
 def test_ink_is_found_only_on_line_art():
@@ -137,6 +230,19 @@ def test_on_a_black_and_white_drawing_the_ink_lines_are_what_the_harness_calls_i
     assert (ink._ink(lightness, depth) == reference).all()
     assert (ink.ink_lines(image) == reference).all()  # no breaks to close
     assert reference[100:108, 50:600].all() and not reference[215, 100:550].any()
+
+
+def test_a_slight_darkening_in_a_dark_area_is_not_a_line():
+    # Near black, a stroke can be darker than halfway to black without being 15 L* darker than what lies around it.
+    very_dark, darker = _gray_with_lightness(12), _gray_with_lightness(4)
+    image = _page()
+    image[100:400, 100:500] = very_dark
+    image[246:250, 150:450] = darker  # 1 mm wide, 8 L* darker than the fill around it
+
+    lightness, depth = ink._lightness_and_depth(image, PX_PER_MM * ink.MAX_LINE_WIDTH_MM)
+    assert 2 * lightness[248, 300] < lightness[248, 300] + depth[248, 300]  # darker than halfway
+    assert depth[248, 300] < ink.MIN_LINE_DEPTH
+    assert not ink.ink_lines(image)[200:300, 150:450].any()
 
 
 def test_a_line_along_a_dark_fill_is_held_to_the_fill():

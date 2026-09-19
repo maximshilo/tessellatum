@@ -65,7 +65,7 @@ FLAT_BLUR_MM = 0.25
 FLAT_COLORS = 16
 MAX_FLATNESS = 3.4
 LINE_MARGIN_MM = 0.5
-# Flatness is measured on at most this many pixels, spread evenly over the picture.
+# Flatness is measured on at most this many of the pixels off the lines, picked at random (with a fixed seed).
 FLATNESS_SAMPLES = 20_000
 
 # CIE L* runs 0-100; OpenCV's 8-bit Lab stores it as 0-255.
@@ -73,8 +73,9 @@ _L_UNITS_PER_LSTAR = 255 / 100
 _WHITE = 255
 _KMEANS_ITERATIONS = 20
 _KMEANS_EPSILON = 0.5
-# One k-means++ run leaves a textured picture's flatness varying by up to 0.9 with the seed (the postcard 2.55-3.48
-# over five seeds); keeping the best of three holds it within 0.3.
+# One k-means++ run leaves flatness varying with the seed by up to 0.5 on the photographs with deep lines (Oberhofen
+# 4.31-4.80 over six seeds); the best of three holds them within 0.25 (Palermo 4.16-4.26), and keeps the postcard, the
+# line art nearest the threshold, at 2.68-2.96.
 _KMEANS_ATTEMPTS = 3
 
 
@@ -151,14 +152,18 @@ def _ink(lightness: np.ndarray, depth: np.ndarray) -> np.ndarray:
 def _flatness(image_bgr: np.ndarray, off_lines: np.ndarray, blur_px: float) -> float:
     """Median CIE Lab distance from the ``off_lines`` pixels, blurred, to the nearest of FLAT_COLORS k-means colors.
 
-    Measured on a grid of about FLATNESS_SAMPLES pixels.
+    Measured on FLATNESS_SAMPLES of those pixels at most, picked at random with
+    a fixed seed. A regular grid of them would not do: it can fall in step with
+    a hatching or a halftone screen and see only one of its colors.
     """
-    blurred = cv2.GaussianBlur(image_bgr, (0, 0), max(blur_px, 0.5))
-    step = max(1, int(math.sqrt(off_lines.size / FLATNESS_SAMPLES)))
-    grid = np.ascontiguousarray(blurred[::step, ::step])
-    samples = cv2.cvtColor(grid.astype(np.float32) / 255, cv2.COLOR_BGR2Lab)[off_lines[::step, ::step]]
-    if len(samples) == 0:
+    where = np.flatnonzero(off_lines)
+    if len(where) == 0:
         return 0.0
+    if len(where) > FLATNESS_SAMPLES:
+        where = np.random.default_rng(0).choice(where, FLATNESS_SAMPLES, replace=False)
+    blurred = cv2.GaussianBlur(image_bgr, (0, 0), max(blur_px, 0.5))
+    pixels = blurred.reshape(-1, 3)[where].reshape(-1, 1, 3)
+    samples = cv2.cvtColor(pixels.astype(np.float32) / 255, cv2.COLOR_BGR2Lab).reshape(-1, 3)
     colors = min(FLAT_COLORS, len(samples))
     cv2.setRNGSeed(0)
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, _KMEANS_ITERATIONS, _KMEANS_EPSILON)
