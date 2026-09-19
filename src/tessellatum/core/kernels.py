@@ -3,8 +3,9 @@
 Pixel-level work NumPy can't vectorize -- union-find labeling, the sequential
 small-region merge, the same-color union that follows it, the greedy coloring
 that groups regions for the width measurement, the walk that turns the
-boundaries between regions into one path each, and the bilateral filter's
-per-pixel weighting -- runs here as compiled code. Arrays are passed
+boundaries between regions into one path each, the search for the nearest
+core a thin part can reach without crossing line art's ink, and the bilateral
+filter's per-pixel weighting -- runs here as compiled code. Arrays are passed
 flattened (row-major) with explicit ``height``/``width``.
 
 Kernels compile on first call and are cached on disk (``cache=True``), so only
@@ -596,6 +597,118 @@ def bilateral_rows(padded, out, y_start, y_stop, width, radius, offsets, space_w
             dst += 3
 
 
+@njit(cache=True, nogil=True)
+def nearest_seed_within(seeds, passable, height, width):
+    """For every pixel, the label of the seed nearest to it along a path through ``passable`` pixels.
+
+    ``seeds`` holds a label (>= 0) at each seed pixel and -1 elsewhere; a seed
+    on a pixel that isn't passable is ignored. A path steps between
+    8-neighbors, a straight step counting 5 and a diagonal one 7: a chamfer
+    distance within a few percent of the straight-line one, measured around
+    whatever isn't passable rather than through it. Returns -1 where no seed
+    can be reached, and on pixels that aren't passable.
+
+    The distances are propagated in raster passes, forward and back, until a
+    pass changes nothing: each pass carries them along every path that runs
+    its way, and a path that doubles back takes another pair. A pixel keeps
+    the first label that reaches it at its shortest distance, so the result is
+    deterministic.
+    """
+    n = height * width
+    unreached = np.int64(1) << 60
+    dist = np.full(n, unreached, np.int64)
+    out = np.full(n, -1, np.int32)
+    for p in range(n):
+        if seeds[p] >= 0 and passable[p]:
+            dist[p] = 0
+            out[p] = seeds[p]
+
+    changed = True
+    while changed:
+        changed = False
+        for y in range(height):  # forward: from the pixels above and to the left
+            row = y * width
+            for x in range(width):
+                p = row + x
+                if not passable[p]:
+                    continue
+                best = dist[p]
+                label = out[p]
+                if y > 0:
+                    q = p - width
+                    if x > 0 and passable[q - 1] and dist[q - 1] + 7 < best:
+                        best = dist[q - 1] + 7
+                        label = out[q - 1]
+                    if passable[q] and dist[q] + 5 < best:
+                        best = dist[q] + 5
+                        label = out[q]
+                    if x + 1 < width and passable[q + 1] and dist[q + 1] + 7 < best:
+                        best = dist[q + 1] + 7
+                        label = out[q + 1]
+                if x > 0 and passable[p - 1] and dist[p - 1] + 5 < best:
+                    best = dist[p - 1] + 5
+                    label = out[p - 1]
+                if best < dist[p]:
+                    dist[p] = best
+                    out[p] = label
+                    changed = True
+        for y in range(height - 1, -1, -1):  # back: from the pixels below and to the right
+            row = y * width
+            for x in range(width - 1, -1, -1):
+                p = row + x
+                if not passable[p]:
+                    continue
+                best = dist[p]
+                label = out[p]
+                if y + 1 < height:
+                    q = p + width
+                    if x + 1 < width and passable[q + 1] and dist[q + 1] + 7 < best:
+                        best = dist[q + 1] + 7
+                        label = out[q + 1]
+                    if passable[q] and dist[q] + 5 < best:
+                        best = dist[q] + 5
+                        label = out[q]
+                    if x > 0 and passable[q - 1] and dist[q - 1] + 7 < best:
+                        best = dist[q - 1] + 7
+                        label = out[q - 1]
+                if x + 1 < width and passable[p + 1] and dist[p + 1] + 5 < best:
+                    best = dist[p + 1] + 5
+                    label = out[p + 1]
+                if best < dist[p]:
+                    dist[p] = best
+                    out[p] = label
+                    changed = True
+    return out
+
+
+@njit(cache=True, nogil=True)
+def region_color_sums(ids, pixels, asked, own):
+    """Per region id ``asked`` about, the sums of its pixels' colors and their count: of its pixels in ``own`` too.
+
+    ``ids`` is the flat region map (-1 for no region), ``pixels`` the flat
+    Nx3 image, ``asked`` a bool per region id and ``own`` a bool per pixel.
+    Returns ``(sums, counts, own_sums, own_counts)``, float64, a row per
+    region id; the rows of the regions not asked about are 0.
+    """
+    count = asked.shape[0]
+    sums = np.zeros((count, 3), np.float64)
+    counts = np.zeros(count, np.float64)
+    own_sums = np.zeros((count, 3), np.float64)
+    own_counts = np.zeros(count, np.float64)
+    for p in range(ids.shape[0]):
+        r = ids[p]
+        if r < 0 or not asked[r]:
+            continue
+        counts[r] += 1
+        for c in range(3):
+            sums[r, c] += pixels[p, c]
+        if own[p]:
+            own_counts[r] += 1
+            for c in range(3):
+                own_sums[r, c] += pixels[p, c]
+    return sums, counts, own_sums, own_counts
+
+
 def warm_up() -> None:
     """Compile (or load from cache) every kernel using tiny inputs.
 
@@ -608,6 +721,8 @@ def warm_up() -> None:
     merge_same_color_neighbors(ids, 3, 3, region_color, areas)
     edge_adjacency_classes(ids, 3, 3, int(ids.max()) + 1, np.empty(9, dtype=np.int8))
     region_bounds(ids, 3, 3, int(ids.max()) + 1)
+    nearest_seed_within(labels - 1, labels >= 0, 3, 3)
+    region_color_sums(ids, np.zeros((9, 3), dtype=np.uint8), np.ones(int(ids.max()) + 1, dtype=np.bool_), labels >= 0)
 
     from tessellatum.core.boundaries import crack_edges  # imported here: boundaries imports this module
 

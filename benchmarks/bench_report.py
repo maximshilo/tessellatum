@@ -17,6 +17,7 @@ import bench_metrics as bm
 
 STAGE_ORDER = (
     "resize_to_long_edge",
+    "detect_ink",
     "quantize",
     "build_regions",
     "extract_regions",
@@ -183,7 +184,33 @@ METRICS = (
         sigma=3.2,
         sigma_export=3.1,
     ),
-    Metric("ink_line_f1", "ink line F1 ↑", "{:.2f}", "clean drawing", "higher", sigma=0.021, sigma_export=0.023, target=Target(0.9)),
+    # Its target went to the printed ink's match (D-036): once a page prints the ink itself, two nearly equal wide masks
+    # thin to different centerlines, and the reference's own specks and pinholes put loops in its centerlines.
+    Metric("ink_line_f1", "ink line F1 ↑", "{:.2f}", "clean drawing", "higher", sigma=0.021, sigma_export=0.023),
+    # How closely the ink the page prints matches the artwork's ink, pixel by pixel (from 0.1.28): the plan's boundary
+    # match, with the targets T3.1's found ink has (D-035, D-036). Tolerances from 48 pairs at each size, the four line
+    # art images at every preset, measured on 0.1.28.
+    Metric(
+        "ink_print_recall",
+        "ink printed recall ↑",
+        "{:.3f}",
+        "clean drawing",
+        "higher",
+        sigma=0.0015,
+        sigma_export=0.0034,
+        target=Target(0.95),
+    ),
+    Metric(
+        "ink_print_precision",
+        "ink printed precision ↑",
+        "{:.3f}",
+        "clean drawing",
+        "higher",
+        sigma=0.0021,
+        sigma_export=0.0038,
+        # A scan's manifest colors are cluster centers of printed colors, which miss much of its line work.
+        target=Target(0.95, where="ink_reference_exact", where_text="exact colors"),
+    ),
     Metric("tube_regions", "tubes ↓", "{:d}", "clean drawing", "lower", sigma=2.6, sigma_export=1.9, target=Target(0)),
     Metric(
         "tube_ink_fraction",
@@ -195,7 +222,8 @@ METRICS = (
         sigma_export=0.028,
     ),
     Metric("flat_color_de00_mean", "flat colors ΔE00 ↓", "{:.2f}", "palette", "lower", sigma=1.2, sigma_export=0.81),
-    # How closely the pipeline finds the artwork's ink lines. Not a job of the page: nothing on it uses them yet (T3.1).
+    # How closely the pipeline finds the artwork's ink lines (T3.1), which the page prints from 0.1.28 (T3.2). Scored as
+    # the finding itself, apart from the page's jobs: the printed ink's own match is in the clean drawing job.
     # Finding them doesn't depend on the difficulty, so their tolerances come from 12 pairs at each size (the four line
     # art images at Easy), measured on 0.1.27.
     Metric("ink_found_fraction", "ink found", "{:.1%}"),
@@ -620,7 +648,7 @@ def _quality_section(
         "metrics score the page's regions, lines, numbers and legend colors, on line art how they keep the "
         "artwork's ink lines and flat colors, on faces whether their features survive, and on text whether OCR still "
         "reads it, as the image manifest gives them. "
-        "**labeled area**: share of the page inside regions that carry a number. **unlabeled**: regions without a "
+        "**labeled area**: share of the area to paint inside regions that carry a number. **unlabeled**: regions without a "
         f"number. **slivers**: share of the page a round brush {bm.print_size.MIN_PAINTABLE_WIDTH_MM:g} mm wide can't "
         "paint without crossing into another region. "
         f"**labels < {bm.print_size.MIN_LABEL_SIZE_PT:g} pt**: share of numbers printing smaller than that. "
@@ -638,14 +666,17 @@ def _quality_section(
         "**colors**: how many colors the legend lists, which can be fewer than the difficulty asked for. "
         "**palette min ΔE00**: smallest CIEDE2000 difference between two legend colors. "
         f"**color pairs < {bm.PALETTE_MIN_DE00:g} ΔE00**: pairs of legend colors closer than that. "
-        f"**ink line F1**: how well drawn lines run down the middle of the artwork's ink lines, within "
-        f"{bm.INK_LINE_TOLERANCE_MM:g} mm (lines away from the ink don't count). "
+        f"**ink line F1**: how well drawn lines, and the centerlines of the ink the page prints, run down the middle of "
+        f"the artwork's ink lines, within {bm.INK_LINE_TOLERANCE_MM:g} mm (lines away from the ink don't count). "
+        f"**ink printed recall** and **precision**: how much of the artwork's ink lines the page prints, and how much of "
+        f"what it prints is on them, pixel by pixel within {bm.INK_LINE_TOLERANCE_MM:g} mm, with precision judged only "
+        "where the manifest's colors are exact. "
         "**tubes**: regions at least half made of ink lines. "
         f"**ink in shapes < {bm.INK_MAX_WIDTH_MM:g} mm**: share of the ink lines lying in parts of regions that narrow, "
         "to be painted instead of printed. "
         "**flat colors ΔE00**: mean CIEDE2000 from each of the artwork's flat colors to the nearest legend color. "
-        "**ink found**: share of the page the pipeline takes for the artwork's ink lines, which nothing on the page uses "
-        f"yet; on line art, its **recall** and **precision** against the artwork's own ink lines, within "
+        "**ink found**: share of the page the pipeline takes for the artwork's ink lines; on line art, its **recall** "
+        f"and **precision** against the artwork's own ink lines, within "
         f"{bm.INK_LINE_TOLERANCE_MM:g} mm, with precision judged only where the manifest's colors are exact; **stray "
         "ink**: the same share on a picture that isn't line art. "
         "**face ΔE00** and **face SSIM**: ΔE00 mean and SSIM inside the image's face boxes. "
@@ -656,7 +687,8 @@ def _quality_section(
         "**text CER**: character error rate of OCR inside the image's text boxes against their annotated text, on the "
         "source (how much OCR reads there at all), the page and the painting (0 = read exactly, 1 = nothing read). "
         "**labels on text**: numbers overlapping a text box. "
-        "**undersized**: regions left below the merge threshold. **ink**: share of dark outline/number pixels.",
+        "**undersized**: regions left below the merge threshold that had a neighbor to merge into. **ink**: share of "
+        "the page in ink, lines, numbers and printed ink alike.",
         "",
         "Millimeters and points are at print size on A4 (see `benchmarks/README.md`). **targets missed**: the scorecard's "
         "targets a case misses, out of those that apply to it. **flags**: metrics on which the case alone got worse "

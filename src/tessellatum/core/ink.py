@@ -51,6 +51,10 @@ MIN_LINE_DEPTH = 15.0
 GAP_MM = 0.5
 GAP_MIN_DEPTH = 5.0
 
+# How far the ink's anti-aliased edge reaches into the fills beside it: those pixels are a mix of the two, so the
+# fills' colors are found without them (see ``quantize``).
+HALO_MM = 0.25
+
 # Deciding whether a picture is line art. Its lines are deep where at least
 # DEEP_LINE_DEPTH darker than the paper around them, as ink on a light fill
 # is; line art has them over at least MIN_DEEP_LINE_SHARE of the picture. Its
@@ -93,11 +97,15 @@ def find_ink(image_bgr: np.ndarray, picture_bgr: np.ndarray | None = None) -> tu
 
     ``picture_bgr`` is the picture the decision is made on, at preview size,
     so that every size of one picture gets the same answer; without it, the
-    decision is made on ``image_bgr`` itself. Returns the decision and an HxW
-    bool mask of ``image_bgr``'s ink lines, all False unless the picture is
-    line art.
+    decision is made on ``image_bgr`` itself, which is then measured once for
+    both. Returns the decision and an HxW bool mask of ``image_bgr``'s ink
+    lines, all False unless the picture is line art.
     """
-    decision = line_art(image_bgr if picture_bgr is None else picture_bgr)
+    if picture_bgr is None or picture_bgr is image_bgr:
+        measured = _Measured(image_bgr)
+        decision = measured.line_art()
+        return decision, measured.ink_lines() if decision.is_line_art else np.zeros(image_bgr.shape[:2], dtype=bool)
+    decision = line_art(picture_bgr)
     if not decision.is_line_art:
         return decision, np.zeros(image_bgr.shape[:2], dtype=bool)
     return decision, ink_lines(image_bgr)
@@ -109,22 +117,53 @@ def ink_lines(image_bgr: np.ndarray) -> np.ndarray:
     Finds lines whether or not the picture is line art; ``find_ink`` decides
     whether to use them.
     """
-    scale = print_scale((image_bgr.shape[1], image_bgr.shape[0]))
-    lightness, depth = _lightness_and_depth(image_bgr, scale.mm_to_px(MAX_LINE_WIDTH_MM))
-    ink = _ink(lightness, depth)
-    return ink | (_close_breaks(ink, scale.mm_to_px(GAP_MM)) & (depth > GAP_MIN_DEPTH))
+    return _Measured(image_bgr).ink_lines()
 
 
 def line_art(image_bgr: np.ndarray) -> LineArt:
     """Whether ``image_bgr`` is line art: flat fills and deep lines (see the module's docstring)."""
-    scale = print_scale((image_bgr.shape[1], image_bgr.shape[0]))
-    lightness, depth = _lightness_and_depth(image_bgr, scale.mm_to_px(MAX_LINE_WIDTH_MM))
-    ink = _ink(lightness, depth)
-    deep_line_share = float(np.count_nonzero(ink & (depth >= DEEP_LINE_DEPTH))) / ink.size
-    near_lines = cv2.dilate(ink.view(np.uint8), _disk(max(1.0, scale.mm_to_px(LINE_MARGIN_MM)))).view(bool)
-    flatness = _flatness(image_bgr, ~near_lines, scale.mm_to_px(FLAT_BLUR_MM))
-    is_line_art = flatness <= MAX_FLATNESS and deep_line_share >= MIN_DEEP_LINE_SHARE
-    return LineArt(is_line_art=is_line_art, flatness=flatness, deep_line_share=deep_line_share)
+    return _Measured(image_bgr).line_art()
+
+
+def ink_gray(image_bgr: np.ndarray, ink: np.ndarray) -> int:
+    """The tone the artwork's ink is printed in: the median gray of its ``ink`` pixels, 0 black to 255 white.
+
+    One flat tone per picture, as dark as the artwork's own ink: black for
+    digital line art, the dark gray of the printed ink for a scan. Black
+    without any ink.
+    """
+    if not ink.any():
+        return 0
+    gray = cv2.cvtColor(np.ascontiguousarray(image_bgr, dtype=np.uint8), cv2.COLOR_BGR2GRAY)
+    return int(np.median(gray[ink]))
+
+
+def near(mask: np.ndarray, radius_px: float) -> np.ndarray:
+    """``mask`` and every pixel within ``radius_px`` of it: with ``HALO_MM`` on paper, the ink and its anti-aliased edge."""
+    if radius_px <= 0:
+        return mask.copy()
+    return cv2.dilate(mask.view(np.uint8), _disk(radius_px)).view(bool)
+
+
+class _Measured:
+    """A picture's lightness and line depth on paper, measured once for both the decision and the mask."""
+
+    def __init__(self, image_bgr: np.ndarray) -> None:
+        self.image = image_bgr
+        self.scale = print_scale((image_bgr.shape[1], image_bgr.shape[0]))
+        self.lightness, self.depth = _lightness_and_depth(image_bgr, self.scale.mm_to_px(MAX_LINE_WIDTH_MM))
+        self.ink = _ink(self.lightness, self.depth)
+
+    def ink_lines(self) -> np.ndarray:
+        return self.ink | (_close_breaks(self.ink, self.scale.mm_to_px(GAP_MM)) & (self.depth > GAP_MIN_DEPTH))
+
+    def line_art(self) -> LineArt:
+        ink, scale = self.ink, self.scale
+        deep_line_share = float(np.count_nonzero(ink & (self.depth >= DEEP_LINE_DEPTH))) / ink.size
+        near_lines = cv2.dilate(ink.view(np.uint8), _disk(max(1.0, scale.mm_to_px(LINE_MARGIN_MM)))).view(bool)
+        flatness = _flatness(self.image, ~near_lines, scale.mm_to_px(FLAT_BLUR_MM))
+        is_line_art = flatness <= MAX_FLATNESS and deep_line_share >= MIN_DEEP_LINE_SHARE
+        return LineArt(is_line_art=is_line_art, flatness=flatness, deep_line_share=deep_line_share)
 
 
 def _lightness_and_depth(image_bgr: np.ndarray, max_width_px: float) -> tuple[np.ndarray, np.ndarray]:

@@ -324,3 +324,111 @@ def test_line_art_is_decided_on_the_picture_at_preview_size(monkeypatch):
     assert preview.line_art == export.line_art == smaller.line_art == at_preview_size
     assert export.ink_lines.shape == (330, 450) and smaller.ink_lines.shape == (147, 200)
     assert (export.ink_lines == ink.ink_lines(drawing)).all()
+
+
+def _outlined_shapes() -> tuple[np.ndarray, dict]:
+    """A 600 x 800 drawing (3.16 px/mm on paper): four flat fills outlined in black 4 px (1.3 mm) wide, and two small
+    shapes the ink encloses on white: a "finger" 22 px (7 mm) across, and a speck 6 px (1.9 mm) across."""
+    image = np.full((800, 600, 3), 255, dtype=np.uint8)
+    for i, color in enumerate([(90, 150, 230), (60, 160, 60), (200, 120, 40), (180, 180, 250)]):
+        x0, y0 = 40 + (i % 2) * 270, 40 + (i // 2) * 300
+        image[y0 : y0 + 250, x0 : x0 + 250] = 0
+        image[y0 + 4 : y0 + 246, x0 + 4 : x0 + 246] = color
+    shapes = {"finger": (slice(660, 682), slice(100, 122)), "speck": (slice(660, 666), slice(300, 306))}
+    for rows, columns in shapes.values():
+        image[rows.start - 4 : rows.stop + 4, columns.start - 4 : columns.stop + 4] = 0
+        image[rows, columns] = (90, 150, 230)
+    return image, shapes
+
+
+def test_line_art_prints_its_ink_and_paints_the_areas_it_encloses():
+    drawing, shapes = _outlined_shapes()
+
+    result = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True)
+
+    analysis = result.analysis
+    assert analysis.line_art.is_line_art
+    printed = analysis.printed_ink
+    # Every outline, as found: the found ink is all of it here (the speck's inner corners too, where 0.5 mm of gap
+    # closing bridges the outline's diagonal).
+    assert (printed == analysis.ink_lines).all() and printed[(drawing == 0).all(axis=2)].all()
+    assert analysis.ink_gray == 0  # the drawing's own ink is black
+    assert (analysis.region_id_map[printed] == -1).all()  # the ink is in no region: it is printed, not painted
+    page = np.asarray(result.page.convert("L"))
+    assert (page[printed] == 0).all()
+    # Each fill is one region, and so is the finger, though it is far below Easy's 300 mm²: the ink encloses it alone.
+    finger = analysis.region_id_map[shapes["finger"]]
+    assert (finger >= 0).all() and len(np.unique(finger)) == 1
+    labeled = {label.region_id for label in analysis.labels}
+    assert int(finger[0, 0]) in labeled
+    assert result.num_regions == 6  # the four fills, the finger, the white around them
+    # No brush fits in the speck: it is left as bare paper, neither a region nor ink.
+    speck = shapes["speck"]
+    assert (analysis.region_id_map[speck] == -1).all()
+    assert not printed[speck][1:-1, :].any() and not printed[speck][:, 1:-1].any()
+    assert (page[speck][~printed[speck]] == 255).all()
+    # No number is on the ink, and no line runs beside it: the ink is the line.
+    for label in analysis.labels:
+        x0, y0, x1, y1 = (int(v) for v in label.box)
+        assert (analysis.outlines[y0:y1, x0:x1] == 255).all()
+    assert (analysis.outlines[printed] == 0).all()
+
+
+def test_a_picture_that_is_not_line_art_prints_no_ink(sample_image_bgr):
+    analysis = generate(sample_image_bgr, difficulty.params_for_preset("Hard"), long_edge=200, collect_analysis=True).analysis
+
+    assert not analysis.printed_ink.any() and analysis.ink_gray == 0
+    assert (analysis.region_id_map >= 0).all()
+
+
+def test_the_ink_is_found_once_per_picture_and_size(monkeypatch):
+    drawing, _shapes = _outlined_shapes()
+    calls = []
+    find = ink.find_ink
+    monkeypatch.setattr(ink, "find_ink", lambda *args: calls.append(1) or find(*args))
+
+    for preset in ("Easy", "Medium", "Hard"):
+        generate(drawing, difficulty.params_for_preset(preset), long_edge=800)
+
+    assert len(calls) == 1
+
+
+def test_the_ink_prints_in_the_drawing_s_own_tone():
+    drawing, _shapes = _outlined_shapes()
+    drawing[(drawing == 0).all(axis=2)] = 60  # outlines in dark gray instead of black
+
+    result = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True)
+
+    analysis = result.analysis
+    assert analysis.ink_gray == 60
+    assert (np.asarray(result.page.convert("L"))[analysis.printed_ink] == 60).all()
+
+
+def test_the_ink_s_edge_is_left_out_by_at_least_a_pixel_and_the_enclosed_shapes_are_printed(monkeypatch):
+    drawing, _shapes = _outlined_shapes()  # 3.16 px/mm on paper: 0.25 mm of edge is less than a pixel
+    seen = {}
+    real_quantize, real_join = pipeline.quantize, pipeline.join_ink
+
+    def quantize_spy(*args, **kwargs):
+        seen["halo_px"] = kwargs["halo_px"]
+        return real_quantize(*args, **kwargs)
+
+    def join_spy(labels, num_colors, image, ink_bgr, min_area_px, own=None):
+        seen["own"] = own
+        return real_join(labels, num_colors, image, ink_bgr, min_area_px, own)
+
+    settled = np.zeros((800, 600), dtype=bool)
+    settled[5:10, 5:10] = True  # what settle_enclosed says to print, made up here
+
+    def settle_spy(ids, *args, **kwargs):
+        return np.where(settled, -1, ids).astype(np.int32), settled
+
+    monkeypatch.setattr(pipeline, "quantize", quantize_spy)
+    monkeypatch.setattr(pipeline, "join_ink", join_spy)
+    monkeypatch.setattr(pipeline, "settle_enclosed", settle_spy)
+    result = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True)
+
+    assert seen["halo_px"] == 1.0
+    assert (seen["own"] == ~ink.near(result.analysis.ink_lines, 1.0)).all()  # colors judged off the ink's edge
+    assert result.analysis.printed_ink[settled].all()
+    assert (np.asarray(result.page.convert("L"))[settled] == result.analysis.ink_gray).all()

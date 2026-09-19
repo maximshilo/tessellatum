@@ -18,7 +18,7 @@ from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import render_legend
 from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, MIN_REGION_AREA_MM2, print_scale
 from tessellatum.core.quantize import quantize
-from tessellatum.core.regions import Region, build_regions, extract_regions
+from tessellatum.core.regions import Region, build_regions, extract_regions, join_ink, settle_enclosed
 from tessellatum.core.render import Label, PageStyle, render_page
 
 PREVIEW_LONG_EDGE = 1100
@@ -28,6 +28,7 @@ EXPORT_LONG_EDGE = 2400
 # (if coarse-grained) percentage progress rather than a fake animation.
 _STAGE_PROGRESS = {
     "resize": 2,
+    "ink": 10,
     "quantize": 60,
     "regions": 80,
     "contours": 90,
@@ -53,6 +54,9 @@ class PageAnalysis:
     that encloses no area (e.g. it is one pixel wide), so it gets no number.
     Its boundaries are still drawn: the lines come from the region map, not
     from the regions.
+
+    On line art, the pixels in no region (-1) are the printed ink, and the
+    bits of bare paper it encloses that are too small to paint.
     """
 
     region_id_map: np.ndarray  # HxW int32: each pixel's region id, -1 for none
@@ -63,7 +67,8 @@ class PageAnalysis:
     min_paintable_width_px: float  # brush width: narrower parts of a region are given to a neighbor
     regions: list[Region]  # regions drawn on the page, in region-id order
     labels: list[Label]  # numbers drawn on the page
-    outlines: np.ndarray  # HxW uint8: the ink the lines alone put on the page, 0 = solid ink, 255 = bare paper
+    # HxW uint8: the ink the lines and line art's printed ink put on the page, 0 = solid ink, 255 = bare paper.
+    outlines: np.ndarray
     # Every line drawn, in drawing order: Nx2 float64 (x, y) points with pixel centers at integer coordinates.
     # One line per boundary between two regions, traced along the pixel cracks and smoothed off them
     # by at most boundaries.MAX_SHIFT_PX.
@@ -72,9 +77,15 @@ class PageAnalysis:
     # HxW uint8: the ink the leader lines of numbers written outside their regions put on the page, as in outlines.
     leaders: np.ndarray
     # Whether the picture is line art, decided on it at preview size (see ``ink``), and HxW bool: the pixels on its
-    # ink lines, all False unless it is. Found for measuring only: nothing on the page uses them yet.
+    # ink lines, all False unless it is.
     line_art: ink.LineArt
     ink_lines: np.ndarray
+    # HxW bool: the ink printed on the page, solid, in the gray ``ink_gray`` (0 black, 255 white): line art's ink lines,
+    # and the patches in the ink's own color taken for it where it runs wider than a line (see ``regions.join_ink`` and
+    # ``regions.settle_enclosed``). All False unless the picture is line art. Printed ink is in no region; nor is bare
+    # paper the ink encloses too small to paint.
+    printed_ink: np.ndarray
+    ink_gray: int
 
 
 @dataclass
@@ -129,7 +140,7 @@ class _StageCache:
             self._entries.clear()
 
 
-_cache = _StageCache(max_entries=6)
+_cache = _StageCache(max_entries=8)
 
 
 def clear_cache() -> None:
@@ -169,6 +180,28 @@ def resize_to_long_edge(image_bgr: np.ndarray, long_edge: int) -> np.ndarray:
     return cv2.resize(image_bgr, new_size, interpolation=cv2.INTER_AREA)
 
 
+def detect_ink(image_bgr: np.ndarray, resized: np.ndarray, long_edge: int) -> tuple[ink.LineArt, np.ndarray]:
+    """Whether the picture is line art, and the ink lines of ``resized``, its page at ``long_edge``.
+
+    The decision is made once per picture, on it at preview size, so a
+    preview and an export always agree; at preview size the picture is
+    measured once for both. Both are cached per image object, as the other
+    stages are.
+    """
+
+    def find() -> tuple[ink.LineArt, np.ndarray]:
+        picture = _cache.get_or_compute(
+            image_bgr, ("resize", PREVIEW_LONG_EDGE), lambda: resize_to_long_edge(image_bgr, PREVIEW_LONG_EDGE)
+        )
+        if picture is resized:
+            decision, lines = ink.find_ink(resized)
+            return _cache.get_or_compute(image_bgr, ("line art",), lambda: decision), lines
+        decision = _cache.get_or_compute(image_bgr, ("line art",), lambda: ink.line_art(picture))
+        return decision, ink.ink_lines(resized) if decision.is_line_art else np.zeros(resized.shape[:2], dtype=bool)
+
+    return _cache.get_or_compute(image_bgr, ("ink", long_edge), find)
+
+
 def warm_up() -> None:
     """Pay one-time start-up costs before the first real generation.
 
@@ -204,9 +237,15 @@ def generate(
     is drawn -- line width and the tone of the ink (see ``PageStyle``); it
     changes nothing about which regions the page has.
 
-    Resizing and quantization results are cached per image object, so
-    regenerating the same image with a different minimum region size, or
-    going back to earlier settings, skips straight to the region stages.
+    Line art (see ``ink``) is drawn from its own ink: the ink is printed, in
+    the artwork's own tone, and the regions are the areas it encloses, colored
+    from the fills without the ink or its anti-aliased edge. Every other
+    picture is drawn from its colors alone.
+
+    Resizing, finding the ink and quantization results are cached per image
+    object, so regenerating the same image with a different minimum region
+    size, or going back to earlier settings, skips straight to the region
+    stages.
     """
 
     def report(stage: str) -> None:
@@ -225,21 +264,39 @@ def generate(
     report("resize")
 
     check_cancelled()
+    line_art, ink_lines = detect_ink(image_bgr, resized, long_edge)
+    ink_mask = ink_lines if line_art.is_line_art and ink_lines.any() else None
+    # An anti-aliased edge is at least the pixels right beside the ink, however fine the page.
+    halo_px = max(1.0, print_scale((w, h)).mm_to_px(ink.HALO_MM))
+    report("ink")
+
+    check_cancelled()
     labels, palette_bgr = _cache.get_or_compute(
         image_bgr,
         ("quantize", long_edge, params.num_colors, params.blur_sigma),
-        lambda: quantize(resized, params.num_colors, params.blur_sigma),
+        lambda: quantize(resized, params.num_colors, params.blur_sigma, ink=ink_mask, halo_px=halo_px),
     )
     report("quantize")
 
     check_cancelled()
     min_area_px, min_width_px = _paintable_limits(params, (w, h))
+    ink_gray = 0
+    if ink_mask is not None:
+        ink_gray = ink.ink_gray(resized, labels >= len(palette_bgr))
+        off_edge = ~ink.near(ink_mask, halo_px)  # a fill's own colors, away from the ink's anti-aliased edge
+        labels = join_ink(labels, len(palette_bgr), resized, (ink_gray,) * 3, min_area_px, off_edge)  # a new map
     # The palette can be shorter than the difficulty asked for: colors too
     # close to tell apart are merged (see ``quantize``). Passing the count the
     # difficulty asked for gives the same regions -- the labeling only needs an
     # upper bound -- but not the same meaning, and it sizes its arrays for
     # colors that do not exist.
     region_id_map, region_color = build_regions(labels, len(palette_bgr), min_area_px, min_width_px)
+    printed_ink = labels >= len(palette_bgr)  # the ink quantize gave no color: all False unless the picture is line art
+    if ink_mask is not None:
+        region_id_map, inked = settle_enclosed(
+            region_id_map, region_color, resized, (ink_gray,) * 3, min_width_px, off_edge
+        )
+        printed_ink |= inked
     report("regions")
 
     check_cancelled()
@@ -257,7 +314,7 @@ def generate(
         region.color_index = remap[region.color_index]
     used_palette_bgr = palette_bgr[used_color_indices]
 
-    rendered = render_page((w, h), regions, region_id_map, style)
+    rendered = render_page((w, h), regions, region_id_map, style, ink=printed_ink, ink_gray=ink_gray)
     legend = render_legend(used_palette_bgr, width=w)
     report("render")
 
@@ -270,9 +327,6 @@ def generate(
         order = used_color_indices + [i for i in range(len(palette_bgr)) if i not in remap]
         new_index = np.empty(len(order), dtype=np.int32)
         new_index[order] = np.arange(len(order), dtype=np.int32)
-        # Line art is decided on the picture at preview size, so every size of it gets the same answer.
-        picture = resized if long_edge == PREVIEW_LONG_EDGE else resize_to_long_edge(image_bgr, PREVIEW_LONG_EDGE)
-        line_art, ink_lines = ink.find_ink(resized, picture)
         analysis = PageAnalysis(
             region_id_map=region_id_map,
             region_color=new_index[region_color],
@@ -286,7 +340,9 @@ def generate(
             strokes=rendered.strokes,
             leaders=np.asarray(rendered.leaders),
             line_art=line_art,
-            ink_lines=ink_lines,
+            ink_lines=ink_lines.copy(),  # a copy: the mask belongs to the stage cache
+            printed_ink=printed_ink,
+            ink_gray=ink_gray,
         )
 
     return GeneratedPage(

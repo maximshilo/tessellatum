@@ -379,3 +379,25 @@ def _island(lines: list[np.ndarray], width: int, height: int) -> np.ndarray:
         and line[:, 1].max() < height - 0.5
     ]
     return island
+
+
+def test_no_line_is_drawn_along_the_ink_and_a_boundary_ends_where_it_meets_it():
+    # Two fills side by side, crossed by a band of ink two rows high: four regions, and the ink.
+    ids = np.zeros((20, 30), dtype=np.int32)
+    ids[:, 15:] = 1
+    ids[10:, :15] = 2
+    ids[10:, 15:] = 3
+    ink = np.zeros(ids.shape, dtype=bool)
+    ink[9:11, :] = True
+    ids[ink] = -1
+
+    lines = trace_boundaries(ids, smoothing_px=0, ink=ink)
+
+    for line in lines:
+        along = (line[:-1, 1] == line[1:, 1]) & np.isin(line[:-1, 1], (8.5, 10.5))
+        assert not along.any()  # no step of a line runs along the band's edges
+    # The boundary between the two fills above the band runs from the page's top edge to the band, and no further.
+    assert any(np.array_equal(line, [[14.5, y - 0.5] for y in range(10)]) for line in lines)
+    assert any(np.array_equal(line, [[14.5, y - 0.5] for y in range(11, 21)]) for line in lines)
+    # Without the ink given, the band is a region like any other, outlined along both edges.
+    assert any(((line[:-1, 1] == line[1:, 1]) & (line[:-1, 1] == 8.5)).any() for line in trace_boundaries(ids, smoothing_px=0))

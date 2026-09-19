@@ -12,6 +12,7 @@ import numpy as np
 
 from tessellatum.core import kernels, parallel
 from tessellatum.core.color import MIN_PALETTE_DE00, pairwise_de00
+from tessellatum.core.ink import near
 
 # The sparse bilateral filter samples its window every sigma_space /
 # _TAPS_PER_SIGMA pixels along each axis.
@@ -33,6 +34,8 @@ def quantize(
     blur_sigma: float,
     seed: int = 0,
     min_de00: float = MIN_PALETTE_DE00,
+    ink: np.ndarray | None = None,
+    halo_px: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Reduce ``image_bgr`` to at most ``num_colors`` flat, clearly different colors.
 
@@ -42,6 +45,14 @@ def quantize(
     CIEDE2000 are merged afterwards (``_merge_close_colors``), which is why
     the palette can come back shorter than asked for.
 
+    Line art's ink is printed, not painted (see ``ink``), so with ``ink`` given
+    its pixels take no color at all, and the colors are found without them.
+    Nor are they found from the pixels within ``halo_px`` of the ink: those are
+    the ink's anti-aliased edge, a mix of the ink and the fill beside it, whose
+    in-between colors would otherwise become colors of their own. Each of them
+    takes the color of the nearest pixel k-means did see, which is the fill it
+    edges.
+
     Args:
         image_bgr: HxWx3 uint8 image in BGR order (OpenCV convention).
         num_colors: how many clusters k-means looks for.
@@ -49,10 +60,13 @@ def quantize(
         seed: RNG seed so results are reproducible for the same inputs.
         min_de00: the clear margin every two palette colors keep, in CIEDE2000.
             0 leaves k-means' colors as they are.
+        ink: HxW bool, the pixels printed as ink, or None.
+        halo_px: how far from the ink its anti-aliased edge reaches.
 
     Returns:
         (label_map, palette_bgr):
-            label_map: HxW int32 array, each pixel's color index.
+            label_map: HxW int32 array, each pixel's color index; ``K``, one
+                past the palette, on the ink.
             palette_bgr: Kx3 uint8 array of BGR colors, K <= num_colors,
                 ordered from darkest to lightest (by perceptual lightness)
                 so numbering reads naturally.
@@ -60,16 +74,23 @@ def quantize(
     smoothed = _smooth(image_bgr, blur_sigma)
 
     lab = cv2.cvtColor(smoothed, cv2.COLOR_BGR2LAB)
+    fitted = None  # the pixels k-means sees: all of them, unless there is ink and something besides it
+    if ink is not None and ink.any() and not ink.all():
+        fitted = ~near(ink, halo_px)
+        if not fitted.any():  # nothing but ink and its edge: fit what there is off the ink
+            fitted = ~ink
     samples = lab.reshape(-1, 3).astype(np.float32)
+    if fitted is not None:
+        samples = np.ascontiguousarray(samples[fitted.reshape(-1)])
 
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, _KMEANS_MAX_ITERATIONS, _KMEANS_EPSILON)
     cv2.setRNGSeed(seed)
     _compactness, labels, centers_lab = cv2.kmeans(
-        samples, num_colors, None, criteria, attempts=_KMEANS_ATTEMPTS, flags=cv2.KMEANS_PP_CENTERS
+        samples, min(num_colors, len(samples)), None, criteria, attempts=_KMEANS_ATTEMPTS, flags=cv2.KMEANS_PP_CENTERS
     )
 
-    labels = labels.reshape(lab.shape[:2]).astype(np.int32)
-    pixels_per_color = np.bincount(labels.reshape(-1), minlength=len(centers_lab))
+    labels = labels.reshape(-1).astype(np.int32)
+    pixels_per_color = np.bincount(labels, minlength=len(centers_lab))
     centers_lab, group = _merge_close_colors(centers_lab, pixels_per_color, min_de00)
 
     kept = np.unique(group)  # the colors that survived the merge, in cluster order
@@ -83,7 +104,22 @@ def quantize(
     labels = final_index[group][labels].astype(np.int32)
     palette_bgr = _lab_centers_to_bgr(kept_centers)[order]
 
-    return labels, palette_bgr
+    if fitted is None:
+        return labels.reshape(lab.shape[:2]), palette_bgr
+    label_map = np.full(lab.shape[:2], len(palette_bgr), dtype=np.int32)
+    label_map[fitted] = labels
+    label_map[~fitted & ~ink] = _nearest_fitted(label_map, fitted)[~fitted & ~ink]
+    return label_map, palette_bgr
+
+
+def _nearest_fitted(label_map: np.ndarray, fitted: np.ndarray) -> np.ndarray:
+    """For every pixel, the label of the nearest ``fitted`` pixel."""
+    _distance, nearest = cv2.distanceTransformWithLabels(
+        (~fitted).view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE, labelType=cv2.DIST_LABEL_PIXEL
+    )
+    label_of = np.zeros(int(nearest.max()) + 1, dtype=np.int32)
+    label_of[nearest[fitted]] = label_map[fitted]
+    return label_of[nearest]
 
 
 def _lab_centers_to_bgr(centers_lab: np.ndarray) -> np.ndarray:

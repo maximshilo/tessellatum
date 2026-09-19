@@ -234,3 +234,60 @@ def test_the_default_grays_are_gray_and_the_default_width_is_the_print_model_s()
     assert style.line_width_mm == OUTLINE_WIDTH_MM
     assert 0 < style.line_gray < PAPER and style.line_gray == LINE_GRAY
     assert style.line_gray < style.label_gray < PAPER  # a number is lighter than a line, never darker
+
+
+def test_line_art_s_ink_prints_solid_in_its_own_tone_and_carries_no_line_and_no_number():
+    size = (160, 120)
+    ids = np.zeros((120, 160), dtype=np.int32)
+    ids[:, 80:] = 1
+    ink = np.zeros(ids.shape, dtype=bool)
+    ink[55:65, :] = True  # a band of ink across both fills, 10 px high
+    ids[ink] = -1
+    ids[65:, :80], ids[65:, 80:] = 2, 3
+    regions = extract_regions(ids, np.array([0, 1, 2, 3], dtype=np.int32))
+
+    rendered = render_page(size, regions, ids, ink=ink, ink_gray=30)
+
+    page = np.asarray(rendered.image.convert("L"))
+    outlines = np.asarray(rendered.outlines)
+    assert (page[ink] == 30).all()  # solid, in the tone asked for
+    assert (outlines[ink] == 0).all()  # and in the line layer, solid ink
+    for line in rendered.strokes:  # no line runs along it: the one between the fills stops at it
+        points = np.asarray(line)
+        assert not (((points[:-1, 1] == points[1:, 1]) & np.isin(points[:-1, 1], (54.5, 64.5))).any())
+    for label in rendered.labels:  # and no number goes on it
+        x0, y0, x1, y1 = (int(v) for v in label.box)
+        assert not ink[y0:y1, x0:x1].any()
+    assert len(rendered.labels) == 4
+    # The fills' own boundary is still drawn, down the page's middle above and below the band.
+    assert any(np.allclose(np.asarray(line)[:, 0], 79.5) for line in rendered.strokes)
+
+
+def test_without_ink_the_page_is_drawn_as_before():
+    size = (60, 40)
+    ids = _split_page(size)
+    plain = render_page(size, [], ids)
+    no_ink = render_page(size, [], ids, ink=np.zeros(ids.shape, dtype=bool), ink_gray=0)
+
+    assert np.array_equal(np.asarray(plain.image), np.asarray(no_ink.image))
+    assert np.array_equal(np.asarray(plain.outlines), np.asarray(no_ink.outlines))
+
+
+def test_a_number_written_outside_its_region_goes_beside_the_ink_not_on_it():
+    # A region too small for its number, ringed by ink 6 px thick, inside a wide white one: the nearest room outside
+    # it is on the ring, and the number must go past it, onto the paper.
+    size = (400, 300)
+    ids = np.zeros((300, 400), dtype=np.int32)
+    ink = np.zeros(ids.shape, dtype=bool)
+    ink[142:158, 192:208] = True
+    ids[ink] = -1
+    ids[148:152, 198:202] = 1  # 4 x 4: no number fits in it
+    ink[148:152, 198:202] = False
+    regions = extract_regions(ids, np.array([0, 1], dtype=np.int32))
+
+    rendered = render_page(size, regions, ids, ink=ink, ink_gray=0)
+
+    small = next(label for label in rendered.labels if label.region_id == 1)
+    assert small.leader is not None
+    x0, y0, x1, y1 = (int(v) for v in small.box)
+    assert not ink[y0:y1, x0:x1].any()

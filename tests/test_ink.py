@@ -346,3 +346,38 @@ def test_finding_ink_is_deterministic():
     first, second = ink.find_ink(picture), ink.find_ink(picture.copy())
     assert first[0] == second[0]
     assert (first[1] == second[1]).all()
+
+
+def test_deciding_on_the_picture_itself_measures_it_once(monkeypatch):
+    drawing = _drawing()
+    calls = []
+    measure = ink._lightness_and_depth
+    monkeypatch.setattr(ink, "_lightness_and_depth", lambda *args: calls.append(1) or measure(*args))
+
+    decision, lines = ink.find_ink(drawing)
+
+    assert len(calls) == 1
+    monkeypatch.setattr(ink, "_lightness_and_depth", measure)
+    assert decision == ink.line_art(drawing) and (lines == ink.ink_lines(drawing)).all()
+
+
+def test_the_ink_prints_in_the_median_gray_of_its_own_pixels():
+    image = _page()
+    image[100:110, :] = (30, 30, 30)
+    image[200:204, :] = (90, 90, 90)
+    image[300:302, :] = (0, 0, 0)
+    lines = np.zeros(image.shape[:2], dtype=bool)
+    lines[100:110, :] = lines[200:204, :] = lines[300:302, :] = True
+
+    assert ink.ink_gray(image, lines) == 30  # ten rows of 30 against four of 90 and two of 0
+    assert ink.ink_gray(image, np.zeros_like(lines)) == 0  # no ink: black
+
+
+def test_near_grows_a_mask_by_the_disk_of_pixels_within_its_radius():
+    mask = np.zeros((9, 9), dtype=bool)
+    mask[4, 4] = True
+
+    assert ink.near(mask, 0.0).sum() == 1
+    assert ink.near(mask, 1.0).sum() == 5  # the pixel and its four neighbors
+    assert ink.near(mask, 1.5).sum() == 9  # and the diagonals, sqrt(2) away
+    assert ink.near(mask, 2.0).sum() == 13

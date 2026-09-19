@@ -70,7 +70,7 @@ class PageStyle:
 @dataclass
 class RenderedPage:
     image: Image.Image  # RGB: outlines + numbers
-    outlines: Image.Image  # "L": the ink the lines alone put on the page, 0 = solid ink, 255 = bare paper
+    outlines: Image.Image  # "L": the ink the lines and line art's printed ink put on the page, 0 = solid, 255 = bare paper
     labels: list[Label]  # every number on the page, in drawing order
     strokes: list[np.ndarray]  # every line drawn, in drawing order: Nx2 float64 (x, y); a closed one returns to its first point
     leaders: Image.Image  # "L": the ink the numbers' leader lines put on the page, as in ``outlines``
@@ -81,6 +81,8 @@ def render_page(
     regions: list[Region],
     region_id_map: np.ndarray,
     style: PageStyle = PageStyle(),
+    ink: np.ndarray | None = None,
+    ink_gray: int = 0,
 ) -> RenderedPage:
     """Draw the boundaries of ``region_id_map`` + numbers for ``regions`` onto a white ``size`` canvas.
 
@@ -91,13 +93,23 @@ def render_page(
     runs through it (see ``labels.place_labels``). ``style`` says how wide the
     lines print and how dark they and the numbers are.
 
-    Returns the page, plus what it was built from: the ink the lines put on it,
-    the geometry each was drawn from, where each number went, and the ink of
-    the leader lines that point a number written outside its region into it.
+    ``ink`` (HxW bool) is line art's own ink, printed solid in ``ink_gray``,
+    the artwork's own tone (see ``ink.ink_gray``): part of the drawing, not
+    something to paint. It is the line wherever it runs, so no line is drawn
+    along it, and no number goes on it.
+
+    Returns the page, plus what it was built from: the ink the lines and the
+    printed ink put on it, the geometry each line was drawn from, where each
+    number went, and the ink of the leader lines that point a number written
+    outside its region into it.
     """
-    strokes = trace_boundaries(region_id_map)
+    inked = ink is not None and bool(ink.any())
+    strokes = trace_boundaries(region_id_map, ink=ink if inked else None)
     line_width = style.line_width_px(size)
     coverage = ink_coverage(size, strokes, line_width)
+    lines_only = coverage
+    if inked:
+        coverage = np.where(ink, np.uint8(PAPER), coverage)
     outlines = Image.fromarray(PAPER - coverage, "L")
 
     spacing = LabelSpacing(
@@ -110,7 +122,9 @@ def render_page(
     labels = place_labels(regions, region_id_map, coverage == 0, spacing)
     leader_coverage = _leader_coverage(size, labels, line_width, spacing.leader_dot_px)
 
-    paper = _paper_under(coverage, style.line_gray)
+    paper = _paper_under(lines_only, style.line_gray)
+    if inked:
+        paper[ink] = min(int(ink_gray), PAPER)
     if any(label.leader is not None for label in labels):  # most pages have none, and white paper changes nothing
         np.minimum(paper, _paper_under(leader_coverage, style.label_gray), out=paper)
     page = Image.fromarray(paper, "L").convert("RGB")

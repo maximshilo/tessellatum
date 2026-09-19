@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 # extend this list.
 PROBED_STAGES = (
     "resize_to_long_edge",
+    "detect_ink",
     "quantize",
     "build_regions",
     "extract_regions",
@@ -45,6 +46,9 @@ EXTRA_PRESETS = {"Max": dict(num_colors=40, min_region_fraction=0.0002, blur_sig
 
 # Line-art fields, None unless the image's manifest entry has both flat and ink colors.
 LINE_ART_KEYS = ("ink_line_precision", "ink_line_recall", "ink_line_f1", "tube_regions", "tube_ink_fraction")
+# How closely the ink the page prints matches the artwork's: None unless the image is line art, as for LINE_ART_KEYS, and
+# the version prints ink (from 0.1.28).
+PRINTED_INK_KEYS = ("ink_print_precision", "ink_print_recall", "ink_print_f1")
 # How closely the pipeline found the artwork's ink lines: None unless the image is line art, as for LINE_ART_KEYS, and
 # the version finds ink lines (from 0.1.27). ``ink_reference_exact`` says whether the manifest's colors are the file's own.
 FOUND_INK_KEYS = ("ink_found_precision", "ink_found_recall", "ink_found_f1", "ink_reference_exact")
@@ -106,6 +110,8 @@ class PageData:
     leader_labels: int  # numbers written outside their region, with a leader pointing in
     ink_lines: np.ndarray | None = None  # HxW bool: the ink lines the pipeline found; None before 0.1.27
     line_art: object | None = None  # the pipeline's ``ink.LineArt`` decision; None before 0.1.27
+    printed_ink: np.ndarray | None = None  # HxW bool: the ink the page prints, in no region; None before 0.1.28
+    ink_gray: int = 0  # the gray the printed ink is in, 0 black to 255 white
 
 
 def page_data_from_analysis(analysis) -> PageData:
@@ -135,6 +141,8 @@ def page_data_from_analysis(analysis) -> PageData:
         leader_labels=sum(getattr(label, "leader", None) is not None for label in analysis.labels),
         ink_lines=getattr(analysis, "ink_lines", None),  # before 0.1.27 no version looked for ink lines
         line_art=getattr(analysis, "line_art", None),
+        printed_ink=getattr(analysis, "printed_ink", None),  # before 0.1.28 no version printed ink
+        ink_gray=int(getattr(analysis, "ink_gray", 0)),
     )
 
 
@@ -316,11 +324,14 @@ def main() -> int:
     ocr = text_blocks = None
 
     if page_data is not None:
-        painted = bm.paint(page_data.region_id_map, page_data.region_color, page_data.palette_bgr)
+        painted = bm.paint(
+            page_data.region_id_map, page_data.region_color, page_data.palette_bgr, page_data.printed_ink, page_data.ink_gray
+        )
         quality.update(bm.fidelity(reference, bm.fit_to(painted, (w, h))))
         quality["undersized_regions"] = bm.count_undersized(page_data.region_id_map, page_data.min_region_area_px)
+        # The share of the area to paint: what the page prints, line art's ink, carries no number.
         quality.update(
-            bm.label_coverage(page_data.regions, page_data.labeled_region_ids, page_rgb.shape[0] * page_rgb.shape[1])
+            bm.label_coverage(page_data.regions, page_data.labeled_region_ids, int((page_data.region_id_map >= 0).sum()))
         )
         quality.update(bm.unlabeled_regions(page_data.region_id_map, page_data.labeled_region_ids))
         brush_px = print_scale.mm_to_px(bm.print_size.MIN_PAINTABLE_WIDTH_MM)
@@ -349,13 +360,17 @@ def main() -> int:
             for name in ("flat_colors", "ink_colors")
         )
         quality.update(bm.flat_color_match(flat_colors, page_data.legend_bgr))
-        quality.update(dict.fromkeys(LINE_ART_KEYS))
+        quality.update(dict.fromkeys(LINE_ART_KEYS + PRINTED_INK_KEYS))
         ink = None
         if len(flat_colors) and len(ink_colors):
             ink_width_px = print_scale.mm_to_px(bm.INK_MAX_WIDTH_MM)
-            ink = bm.source_ink(source, flat_colors, ink_colors, ink_width_px)
-            quality.update(bm.ink_line_match(page_data.strokes, ink, print_scale.mm_to_px(bm.INK_LINE_TOLERANCE_MM)))
+            ink_tolerance_px = print_scale.mm_to_px(bm.INK_LINE_TOLERANCE_MM)
+            ink_colored = bm.source_ink_colored(source, flat_colors, ink_colors)
+            ink = ink_colored & bm.sliver_mask(ink_colored.astype(np.int32), ink_width_px)  # bm.source_ink
+            quality.update(bm.ink_line_match(page_data.strokes, ink, ink_tolerance_px, page_data.printed_ink))
             quality.update(bm.tube_regions(page_data.region_id_map, ink, ink_width_px))
+            if page_data.printed_ink is not None:
+                quality.update(bm.printed_ink_match(page_data.printed_ink, ink, ink_tolerance_px, ink_colored))
         quality.update(found_ink_scores(page_data, ink, image_info, print_scale))
         # Faces are scored inside the manifest's face boxes, and on whether their features survive on the page.
         quality.update(dict.fromkeys(FACE_KEYS))
@@ -372,6 +387,7 @@ def main() -> int:
                 page_data.strokes,
                 edges,
                 print_scale.mm_to_px(bm.EDGE_TOLERANCE_MM),
+                printed=page_data.printed_ink,
             )
             quality.update(bm.lost_features(scores))
             quality["labels_on_features"] = bm.labels_on_boxes(page_data.label_boxes, feature_boxes) if features else None
