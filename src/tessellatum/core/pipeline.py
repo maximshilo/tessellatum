@@ -81,8 +81,9 @@ class PageAnalysis:
     line_art: ink.LineArt
     ink_lines: np.ndarray
     # HxW bool: the ink printed on the page, solid, in the gray ``ink_gray`` (0 black, 255 white): line art's ink lines,
-    # and the regions they enclose in the ink's own color (see ``regions.settle_enclosed``). All False unless the
-    # picture is line art. Printed ink is in no region; nor is bare paper the ink encloses too small to paint.
+    # and the patches in the ink's own color taken for it where it runs wider than a line (see ``regions.join_ink`` and
+    # ``regions.settle_enclosed``). All False unless the picture is line art. Printed ink is in no region; nor is bare
+    # paper the ink encloses too small to paint.
     printed_ink: np.ndarray
     ink_gray: int
 

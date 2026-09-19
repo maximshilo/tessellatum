@@ -88,13 +88,26 @@ region any setting can keep and how wide a line prints — see
 `src/tessellatum/core/print_size.py`.
 
 Line art — a cartoon, a comic — is flat fills with dark ink lines between
-them, and those lines should be printed, not painted. The pipeline can
-already tell such a picture from a photograph and find its ink lines without
-being told its colors: a line is dark against what lies beside it and at most
-5 mm wide on paper, and a picture is line art when its fills are flat and deep
-lines cover enough of it. For now it only reports them to the benchmarks;
-printing them as the page's lines comes next. See
-`src/tessellatum/core/ink.py`.
+them, and those lines are printed, not painted. The pipeline tells such a
+picture from a photograph and finds its ink lines without being told its
+colors: a line is dark against what lies beside it and at most 5 mm wide on
+paper, and a picture is line art when its fills are flat and deep lines cover
+enough of it (`src/tessellatum/core/ink.py`). Its page is then drawn from its
+ink:
+
+- the ink is printed solid, in the artwork's own tone — black for digital
+  line art, the dark gray of the printed ink for a scan — and it is the line
+  wherever it runs: no line is drawn beside it and no number goes on it;
+- the colors come from the fills alone, without the ink or the anti-aliased
+  pixels at its edge, and the regions are the areas the ink encloses; a
+  boundary between two fills that no ink divides is drawn as on any page;
+- a shape the ink encloses on its own, a finger or a button, keeps its number
+  whatever the difficulty's smallest region, as long as a 3 mm brush fits in
+  it; one too small for the brush is left as bare paper, and a small patch in
+  the ink's own color, edged mostly by the ink, is printed with it.
+
+The ink's hatching and shading strokes are printed as they are for now, so a
+densely hatched scan leaves many gaps between strokes too narrow to paint.
 
 ### Performance
 
@@ -102,8 +115,9 @@ Previews are meant to be quick enough to tweak difficulty interactively:
 
 - Smoothing samples the bilateral filter's window on a sparse lattice (a few
   hundred taps per pixel instead of thousands) and filters rows in parallel.
-- Region labeling, small-region merging and the walk that turns the region
-  map into one line per boundary run as compiled
+- Region labeling, small-region merging, the walk that turns the region
+  map into one line per boundary and, on line art, the search that keeps a
+  thin part to its own side of the ink run as compiled
   [Numba](https://numba.pydata.org/) kernels whose cost grows roughly
   linearly with image size, and contour extraction works on each region's
   bounding box rather than the whole image. Their output is pixel-identical

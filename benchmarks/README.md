@@ -35,8 +35,8 @@ images x presets x output sizes:
   image, so caching inside the pipeline can't turn repeats into cache hits.
 - Per-stage timings come from wrapping the stage functions that
   `tessellatum.core.pipeline.generate` calls: `resize_to_long_edge`,
-  `quantize`, `build_regions`, `extract_regions`, `render_page`,
-  `render_legend`. Keep those names if you restructure the pipeline, or
+  `detect_ink` (from 0.1.28), `quantize`, `build_regions`, `extract_regions`,
+  `render_page`, `render_legend`. Keep those names if you restructure the pipeline, or
   update `PROBED_STAGES` in `bench_case.py`.
 - Quality metrics read what the page is made of from the pipeline itself.
   `generate(..., collect_analysis=True)` returns it as `GeneratedPage.analysis`
@@ -45,10 +45,12 @@ images x presets x output sizes:
   - the drawn regions, with their outlines and label points;
   - every number, with its font size and bounding box, and for a number written
     outside its region the leader line pointing into it;
-  - the ink the lines alone put on the page, 0 solid and 255 bare paper, and
-    the ink of the leader lines, the same way;
+  - the ink the lines (and, from 0.1.28, the printed ink) put on the page, 0
+    solid and 255 bare paper, and the ink of the leader lines, the same way;
   - every line drawn, as a polyline;
-  - whether the picture is line art, and the ink lines it was drawn with.
+  - whether the picture is line art, and the ink lines it was drawn with;
+  - the ink the page prints (from 0.1.28: line art's own ink, printed solid,
+    in no region) and the gray it prints in.
 
   The timed runs don't collect it, as in the app. One more run after them
   does, and its page must match theirs for the case to count as
@@ -201,8 +203,9 @@ than a pixel wide.
 ## Quality metrics
 
 Absolute metrics, per result. Fidelity is scored on the *finished painting*
-(every region filled with its legend color) against the source image at output
-size. Paintability is scored on the region map and the numbers, at print size
+(every region filled with its legend color, and what the page prints kept as it
+is: line art's printed ink in its gray, bare paper white) against the source
+image at output size. Paintability is scored on the region map and the numbers, at print size
 (see "Print scale" above). Line quality is scored on the lines drawn, the region
 map and the source image, and the palette on the legend's colors. Line art, faces
 and text are also scored against the image's manifest entry: on how the page keeps
@@ -213,7 +216,7 @@ and whether their features survive, and on whether OCR still reads the text:
 |---|---|---|
 | ΔE00 mean / p95 | CIEDE2000 color error between painting and source | lower |
 | SSIM | structural similarity of luma between painting and source | higher |
-| labeled area | share of the page inside regions that carry a number | higher |
+| labeled area | share of the area to paint (the page less what it prints) inside regions that carry a number | higher |
 | unlabeled | regions without a number | lower (0) |
 | slivers | share of the page a round brush 3 mm wide can't paint without crossing into another region | lower |
 | labels < 6 pt | share of numbers printing smaller than 6 pt; `case.json` also records the smallest, as `min_label_pt` | lower (0) |
@@ -229,11 +232,12 @@ and whether their features survive, and on whether OCR still reads the text:
 | edge F1 | how well region boundaries and the source's edges line up, within 0.5 mm; `case.json` also records `edge_precision` and `edge_recall` | higher |
 | palette min ΔE00 | smallest CIEDE2000 color difference between two colors on the legend | higher |
 | color pairs < 10 ΔE00 | pairs of legend colors that differ by less than 10 ΔE00 | lower (0) |
-| ink line F1 | how well drawn lines run down the middle of the artwork's ink lines, within 0.5 mm; `case.json` also records `ink_line_precision` and `ink_line_recall` | higher |
+| ink line F1 | how well drawn lines, and the centerlines of the ink the page prints, run down the middle of the artwork's ink lines, within 0.5 mm; `case.json` also records `ink_line_precision` and `ink_line_recall` | higher |
+| ink printed recall / precision | on line art, how much of the artwork's ink lines the page prints, and how much of what it prints is the artwork's ink, each pixel within 0.5 mm (from 0.1.28); `case.json` also records `ink_print_f1` | higher |
 | tubes | regions at least half made of the artwork's ink lines | lower (0) |
 | ink in shapes < 5 mm | share of the ink lines lying in parts of regions narrower than 5 mm: ink to paint instead of print | lower (0) |
 | flat colors ΔE00 | mean CIEDE2000 from each of the artwork's flat colors to the nearest legend color; `case.json` also records the largest, as `flat_color_de00_max` | lower |
-| ink found | share of the page the pipeline takes for the artwork's ink lines (from 0.1.27; nothing on the page uses them yet) | informational |
+| ink found | share of the page the pipeline takes for the artwork's ink lines (from 0.1.27; printed from 0.1.28) | informational |
 | ink found recall / precision | on line art, how much of the artwork's ink lines the pipeline found, and how much of what it found is on them, each within 0.5 mm; `case.json` also records `ink_found_f1`, and whether the manifest's colors are exact as `ink_reference_exact` | higher |
 | stray ink | the share of the page found to be ink lines on a picture that isn't line art | lower (0) |
 | face ΔE00, face SSIM | ΔE00 mean and SSIM inside the image's face boxes | lower, higher |
@@ -241,7 +245,7 @@ and whether their features survive, and on whether OCR still reads the text:
 | labels on features | numbers overlapping a feature box | lower (0) |
 | text CER source / page / painting | character error rate of OCR inside the image's text boxes, against their annotated text: on the source (how much OCR reads there at all), the page and the painting; `case.json` records the OCR engine under `ocr`, and what it read in each block under `text_blocks` | lower (0) |
 | labels on text | numbers overlapping a text box | lower (0) |
-| undersized | regions still below the difficulty's minimum size | lower (0) |
+| undersized | regions still below the difficulty's minimum size that another region touches, so that they had a neighbor to merge into | lower (0) |
 | colors, regions, ink | how many colors the legend lists, which is fewer than the difficulty asked for wherever colors had to be merged to keep the palette apart; the region count; and how much of the page the lines and numbers cover in ink (a pixel counts by how far it is from bare paper) | informational |
 
 How the paintability metrics are defined:
@@ -401,16 +405,23 @@ How the line-art metrics are defined:
     centers of printed colors, so print texture and hatching turn into specks
     and short strokes of ink.
 - **Ink line F1** compares the ink lines' centerlines (Zhang–Suen thinning) with
-  the centers of the lines drawn.
+  the centers of the lines drawn, and with the centerlines of the ink the page
+  prints (from 0.1.28), which is a line of its own.
   - Recall is the share of centerline pixels within 0.5 mm of a drawn line.
   - Precision is the share of drawn-line pixels on or within 0.5 mm of the ink
     lines that lie within 0.5 mm of a centerline. Lines away from the ink, such
     as those between two fills, don't count: a good page draws those too, and
     edge F1 judges them.
-  - A page that prints its ink lines where they are scores 1. Today's renderer
-    makes a bold ink line a region of its own, a tube, and outlines it along both
-    edges, which lie more than 0.5 mm from its middle once it is wider than about
-    1 mm.
+  - A page that draws its ink lines where they are scores 1. Before 0.1.28 the
+    renderer made a bold ink line a region of its own, a tube, and outlined it
+    along both edges, which lie more than 0.5 mm from its middle once it is wider
+    than about 1 mm.
+  - It no longer carries the plan's target (D-036). Once a page prints the ink
+    itself, it compares two skeletons of wide shapes, which branch differently for
+    masks that agree pixel for pixel, and the reference's own specks, pinholes
+    and pleats put branches and loops into its skeleton: a page printing the ink
+    it finds, 97% of the artwork's by pixel, scores 0.58–0.84 on the bold-line
+    girl. The printed-ink metrics below carry the target instead.
 - **Tubes** are regions at least half of whose pixels lie on ink lines.
 - **Ink in shapes** also counts ink lines that became thin parts of bigger
   regions, as when they merge with a fill of the same color: the share of
@@ -421,6 +432,21 @@ How the line-art metrics are defined:
   the nearest legend color (exact Lab), and averages them. At Easy the legend
   can have fewer colors than the artwork, so some flat colors have no close
   match.
+
+How the printed-ink metrics are defined:
+
+- From 0.1.28 a line-art page prints its ink (`PageAnalysis.printed_ink`, in the
+  gray `.ink_gray`): the ink lines it finds, and patches in the ink's own color
+  it takes to be the ink running wider. None of it is in a region. Older
+  versions get no value.
+- **Ink printed recall** is the share of the artwork's ink-line pixels
+  (`source_ink`) within 0.5 mm of a pixel printed: are its lines printed?
+- **Ink printed precision** is the share of the pixels printed within 0.5 mm of
+  the artwork's ink, in its ink colors however wide (`source_ink_colored`): is
+  what the page prints the artwork's ink? A black blob where a bold outline runs
+  wider than 5 mm is ink, not a line, and printing it is right.
+- As for found ink, precision is only a target where the manifest's colors are
+  exact; on the scans the manifest's colors miss much of the line work.
 
 How the found-ink metrics are defined:
 
@@ -562,7 +588,9 @@ page of 1100 px, and **export**, a page at the image's own size (see
 | same-color boundary | clean drawing | 2.8 points | 1.4 points | 0 |
 | jaggedness | clean drawing | 0.0085 | 0.011 | ≤ 1.02 |
 | edge F1 | clean drawing | 0.023 | 0.020 | – |
-| ink line F1 | clean drawing | 0.021 | 0.023 | ≥ 0.9 |
+| ink line F1 | clean drawing | 0.021 | 0.023 | – |
+| ink printed recall | clean drawing | 0.0015 | 0.0034 | ≥ 0.95 |
+| ink printed precision | clean drawing | 0.0021 | 0.0038 | ≥ 0.95 on exact colors |
 | tubes | clean drawing | 2.6 | 1.9 | 0 |
 | ink in shapes < 5 mm | clean drawing | 3.1 points | 2.8 points | – |
 | labels on features | clean drawing | 1.6 | 3.6 | – |
@@ -575,9 +603,14 @@ page of 1100 px, and **export**, a page at the image's own size (see
 Colors, regions, ink and text CER source only inform. The per-case tables add the
 number of targets each case misses.
 
+The printed-ink metrics' tolerances come from 48 pairs at each size, the four line-art
+images at every preset, measured on 0.1.28. On the same pages ink line F1 moved by 0.0051
+and 0.019, under the 0.021 and 0.023 it was given on stroke pages, which it keeps.
+
 Three more metrics score the ink lines the pipeline finds (from 0.1.27; ink found itself
-only informs). They are not a job of the page -- nothing on it uses those lines yet -- so
-they sit outside the scorecard, and their targets count in the verdict's target misses:
+only informs). They score the finding itself rather than a job of the page -- the page's
+printed ink has its own two metrics in the clean drawing job -- so they sit outside the
+scorecard, and their targets count in the verdict's target misses:
 
 | metric | σ preview | σ export | target |
 |---|---|---|---|
@@ -591,7 +624,7 @@ picture that isn't line art is decided once, so it has none at any size.
 
 ### Targets
 
-A target applies to a case where its metric has a value: ink line F1 and tubes on
+A target applies to a case where its metric has a value: the printed ink and tubes on
 line art, features lost on faces, and the text targets on images with text. They
 spell out the four jobs:
 - **paintable:** no slivers, a number on every region, and every number legible
@@ -599,7 +632,9 @@ spell out the four jobs:
 - **clean drawing:**
   - one smooth line per boundary, and no line between neighbors of the same color;
   - every region enclosed, so no two regions' paint can run together;
-  - line art's ink lines printed as the page's lines, with no tubes;
+  - line art's ink lines printed as the page's lines, with no tubes: at least 95% of
+    them printed, and at least 95% of what is printed the artwork's ink where the
+    manifest's colors are exact;
   - text still readable, with no numbers on it;
 - **resembles:** faces keep their eyes, noses and mouths;
 - **palette:** every two colors at least 10 ΔE00 apart.

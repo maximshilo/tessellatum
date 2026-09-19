@@ -88,7 +88,6 @@ class Metric:
 # - `sigma_export`, at 1, 2 and 3 px below each image's own long edge, where a page keeps the source's detail: 144 pairs.
 #   A case rendered at an image's own size is judged with it (`_sigma_size`).
 # Targets are the plan's definition of done.
-SIGMA_PLACEHOLDER = 0.01  # PLACEHOLDER until bench.py noise measures the printed-ink tolerances
 METRICS = (
     Metric("de00_mean", "ΔE00 mean ↓", "{:.2f}", "resembles", "lower", sigma=0.069, sigma_export=0.073, relative=True),
     Metric("de00_p95", "ΔE00 p95 ↓", "{:.1f}", "resembles", "lower", sigma=0.073, sigma_export=0.12, relative=True),
@@ -188,16 +187,17 @@ METRICS = (
     # Its target went to the printed ink's match (D-036): once a page prints the ink itself, two nearly equal wide masks
     # thin to different centerlines, and the reference's own specks and pinholes put loops in its centerlines.
     Metric("ink_line_f1", "ink line F1 ↑", "{:.2f}", "clean drawing", "higher", sigma=0.021, sigma_export=0.023),
-    # How closely the ink the page prints matches the artwork's ink lines, pixel by pixel (from 0.1.28): the plan's
-    # boundary match, with the targets T3.1's found ink has (D-035, D-036).
+    # How closely the ink the page prints matches the artwork's ink, pixel by pixel (from 0.1.28): the plan's boundary
+    # match, with the targets T3.1's found ink has (D-035, D-036). Tolerances from 48 pairs at each size, the four line
+    # art images at every preset, measured on 0.1.28.
     Metric(
         "ink_print_recall",
         "ink printed recall ↑",
         "{:.3f}",
         "clean drawing",
         "higher",
-        sigma=SIGMA_PLACEHOLDER,
-        sigma_export=SIGMA_PLACEHOLDER,
+        sigma=0.0015,
+        sigma_export=0.0034,
         target=Target(0.95),
     ),
     Metric(
@@ -206,8 +206,8 @@ METRICS = (
         "{:.3f}",
         "clean drawing",
         "higher",
-        sigma=SIGMA_PLACEHOLDER,
-        sigma_export=SIGMA_PLACEHOLDER,
+        sigma=0.0021,
+        sigma_export=0.0038,
         # A scan's manifest colors are cluster centers of printed colors, which miss much of its line work.
         target=Target(0.95, where="ink_reference_exact", where_text="exact colors"),
     ),
