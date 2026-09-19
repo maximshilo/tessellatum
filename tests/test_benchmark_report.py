@@ -33,6 +33,7 @@ PALETTE_KEYS = ("colors_used", "palette_min_de00", "palette_close_pairs")
 LINE_ART_KEYS = ("ink_line_f1", "tube_regions", "tube_ink_fraction", "flat_color_de00_mean")
 FACE_KEYS = ("face_de00_mean", "face_ssim", "features_lost", "labels_on_features")
 TEXT_KEYS = ("text_cer_source", "text_cer_page", "text_cer_painting", "labels_on_text")
+FOUND_INK_KEYS = ("ink_found_fraction", "stray_ink_fraction")
 METRICS = bench_report.METRICS_BY_KEY
 
 
@@ -77,6 +78,8 @@ def _case(image: str, categories: list[str], de00: float, preset: str = "Easy", 
             "tube_regions": 2,
             "tube_ink_fraction": 0.6,
             "flat_color_de00_mean": 3.5,
+            "ink_found_fraction": 0.0,
+            "stray_ink_fraction": 0.0,
             "face_de00_mean": 7.5,
             "face_ssim": 0.6,
             "features_lost": 1,
@@ -364,6 +367,21 @@ def test_a_case_misses_a_target_on_its_worse_side_where_it_has_a_value():
     assert miss("tube_regions", tube_regions=None) is None
     assert miss("tube_regions") is None
     assert miss("edge_f1", edge_f1=0.1) is None
+    # Found ink is held to the artwork's ink everywhere for recall, and for precision only where the manifest's colors
+    # are the file's own, since a scan's cluster centers miss much of its line work.
+    assert miss("ink_found_recall", ink_found_recall=0.94) is True
+    assert miss("ink_found_precision", ink_found_precision=0.94, ink_reference_exact=True) is True
+    assert miss("ink_found_precision", ink_found_precision=0.95, ink_reference_exact=True) is False
+    assert miss("ink_found_precision", ink_found_precision=0.5, ink_reference_exact=False) is None
+    assert miss("ink_found_precision", ink_found_precision=0.5) is None
+    assert miss("stray_ink_fraction", stray_ink_fraction=0.0) is False
+    assert miss("stray_ink_fraction", stray_ink_fraction=0.0001) is True
+
+
+def test_a_target_that_applies_only_to_some_cases_says_so():
+    assert bench_report._target_text(METRICS["ink_found_precision"]) == "≥ 0.95 on exact colors"
+    assert bench_report._target_text(METRICS["ink_found_recall"]) == "≥ 0.95"
+    assert bench_report._target_text(METRICS["stray_ink_fraction"]) == "0"
 
 
 def test_tolerance_overrides_take_judged_metrics_by_key():
@@ -428,7 +446,7 @@ def test_noise_pairs_resized_pages_by_their_own_size_and_leaves_out_pages_at_the
 
 def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path):
     before = _case("lion.jpg", ["photo"], 5.0)
-    for key in PAINTABILITY_KEYS + LINE_KEYS + PALETTE_KEYS + LINE_ART_KEYS + FACE_KEYS + TEXT_KEYS:
+    for key in PAINTABILITY_KEYS + LINE_KEYS + PALETTE_KEYS + LINE_ART_KEYS + FOUND_INK_KEYS + FACE_KEYS + TEXT_KEYS:
         del before["quality"][key]
     old = _write_set(tmp_path / "old", [before])
     new = _write_set(tmp_path / "new", [_case("lion.jpg", ["photo"], 5.0)])
@@ -441,18 +459,19 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
         "| labels on lines ↓ | overlapping labels ↓ | leaders | compactness p10 ↑ | compactness median ↑ | lines per boundary | lines per boundary (clear) "
         "| unenclosed ↓ | same-color boundary ↓ | jaggedness ↓ "
         "| edge F1 ↑ | colors | palette min ΔE00 ↑ | color pairs < 10 ΔE00 ↓ | ink line F1 ↑ | tubes ↓ | ink in shapes < 5 mm ↓ "
-        "| flat colors ΔE00 ↓ | face ΔE00 ↓ | face SSIM ↑ | features lost ↓ | labels on features ↓ | text CER source "
+        "| flat colors ΔE00 ↓ | ink found | ink found recall ↑ | ink found precision ↑ | stray ink ↓ "
+        "| face ΔE00 ↓ | face SSIM ↑ | features lost ↓ | labels on features ↓ | text CER source "
         "| text CER page ↓ | text CER painting ↓ | labels on text ↓ | undersized ↓ | ink | targets missed |"
     )
     assert header in old_alone
     assert (
         "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
-        "| – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | 0 | 10.0% | – |"
+        "| – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | 0 | 10.0% | – |"
     ) in old_alone
     assert "| all | 1 | 1 | no targets | no targets | no targets | no targets |" in old_alone
     assert (
         "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | 3 | 10.0% | 0.0% | 0 | 0 | 0 | 0.10 | 0.40 | 2.00 | 1.90 "
-        "| 0.0% | 1.0% | 1.100 | 0.50 | 8 | 4.5 | 2 | 0.25 | 2 | 60.0% | 3.50 | 7.50 | 0.600 | 1 | 2 | 0.10 | 0.95 | 0.98 | 1 "
-        "| 0 | 10.0% | – → 11/15 | ok |"
+        "| 0.0% | 1.0% | 1.100 | 0.50 | 8 | 4.5 | 2 | 0.25 | 2 | 60.0% | 3.50 | 0.0% | – | – | 0.0% | 7.50 | 0.600 | 1 | 2 "
+        "| 0.10 | 0.95 | 0.98 | 1 | 0 | 10.0% | – → 11/16 | ok |"
     ) in old_vs_new
     assert "| all | 1 | 1 | 0/1 met | 0/1 met | 0/1 met | 0/1 met |" in old_vs_new

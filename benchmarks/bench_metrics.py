@@ -9,7 +9,8 @@ Two kinds:
   regions, outline clutter), how cleanly its lines are drawn (lines per
   boundary, boundaries between same-colored regions, jaggedness, lines on the
   source's edges), how clearly its legend colors differ from each other, on
-  line art whether it keeps the artwork's ink lines and flat colors, on faces
+  line art whether it keeps the artwork's ink lines and flat colors and how
+  closely the pipeline found those lines, on faces
   how closely the painting matches inside them and whether their features
   survive, and on text whether OCR still reads it.
 * **Agreement** metrics score a result against a reference result (usually the
@@ -649,6 +650,24 @@ def ink_line_match(strokes, ink: np.ndarray, tolerance_px: float) -> dict[str, f
     precision = _share_near(lines & _near(ink, tolerance_px), centers, tolerance_px)
     recall = _share_near(centers, lines, tolerance_px)
     return {"ink_line_precision": precision, "ink_line_recall": recall, "ink_line_f1": _f1(precision, recall)}
+
+
+def found_ink_match(found: np.ndarray, ink: np.ndarray, tolerance_px: float) -> dict[str, float | None]:
+    """How closely the ink lines the pipeline found match the artwork's, pixel by pixel.
+
+    ``found`` is the pipeline's HxW bool mask, ``ink`` is ``source_ink``'s.
+    ``ink_found_precision`` is the share of the pixels found that lie within
+    ``tolerance_px`` of the artwork's ink lines, ``ink_found_recall`` the share
+    of the artwork's ink-line pixels within ``tolerance_px`` of a pixel found,
+    and ``ink_found_f1`` their harmonic mean. The tolerance forgives a line
+    found a pixel wider or narrower than the manifest's colors draw it, where
+    its anti-aliased edge could go either way. A share of nothing is None:
+    precision where nothing was found, recall where the artwork has no ink
+    lines.
+    """
+    precision = _share_near(found, ink, tolerance_px)
+    recall = _share_near(ink, found, tolerance_px)
+    return {"ink_found_precision": precision, "ink_found_recall": recall, "ink_found_f1": _f1(precision, recall)}
 
 
 def tube_regions(region_id_map: np.ndarray, ink: np.ndarray, max_width_px: float) -> dict[str, float | int | None]:

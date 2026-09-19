@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from tessellatum.core import kernels
+from tessellatum.core import ink, kernels
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import render_legend
 from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, MIN_REGION_AREA_MM2, print_scale
@@ -71,6 +71,10 @@ class PageAnalysis:
     strokes: list[np.ndarray]
     # HxW uint8: the ink the leader lines of numbers written outside their regions put on the page, as in outlines.
     leaders: np.ndarray
+    # Whether the picture is line art, decided on it at preview size (see ``ink``), and HxW bool: the pixels on its
+    # ink lines, all False unless it is. Found for measuring only: nothing on the page uses them yet.
+    line_art: ink.LineArt
+    ink_lines: np.ndarray
 
 
 @dataclass
@@ -266,6 +270,9 @@ def generate(
         order = used_color_indices + [i for i in range(len(palette_bgr)) if i not in remap]
         new_index = np.empty(len(order), dtype=np.int32)
         new_index[order] = np.arange(len(order), dtype=np.int32)
+        # Line art is decided on the picture at preview size, so every size of it gets the same answer.
+        picture = resized if long_edge == PREVIEW_LONG_EDGE else resize_to_long_edge(image_bgr, PREVIEW_LONG_EDGE)
+        line_art, ink_lines = ink.find_ink(resized, picture)
         analysis = PageAnalysis(
             region_id_map=region_id_map,
             region_color=new_index[region_color],
@@ -278,6 +285,8 @@ def generate(
             outlines=np.asarray(rendered.outlines),
             strokes=rendered.strokes,
             leaders=np.asarray(rendered.leaders),
+            line_art=line_art,
+            ink_lines=ink_lines,
         )
 
     return GeneratedPage(

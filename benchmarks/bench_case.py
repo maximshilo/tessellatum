@@ -45,6 +45,9 @@ EXTRA_PRESETS = {"Max": dict(num_colors=40, min_region_fraction=0.0002, blur_sig
 
 # Line-art fields, None unless the image's manifest entry has both flat and ink colors.
 LINE_ART_KEYS = ("ink_line_precision", "ink_line_recall", "ink_line_f1", "tube_regions", "tube_ink_fraction")
+# How closely the pipeline found the artwork's ink lines: None unless the image is line art, as for LINE_ART_KEYS, and
+# the version finds ink lines (from 0.1.27). ``ink_reference_exact`` says whether the manifest's colors are the file's own.
+FOUND_INK_KEYS = ("ink_found_precision", "ink_found_recall", "ink_found_f1", "ink_reference_exact")
 # Face fields, None unless the image's manifest entry has faces.
 FACE_KEYS = ("face_de00_mean", "face_ssim", "features_lost", "feature_edge_recall", "labels_on_features")
 # Text fields, None unless the image's manifest entry has text; the character error rates also without the OCR engine.
@@ -101,6 +104,8 @@ class PageData:
     outlines: np.ndarray | None  # HxW: the line layer alone, 0 where there is a line; None before 0.1.10
     leaders: np.ndarray | None  # HxW: the ink of the numbers' leader lines, as outlines; None for versions that draw none
     leader_labels: int  # numbers written outside their region, with a leader pointing in
+    ink_lines: np.ndarray | None = None  # HxW bool: the ink lines the pipeline found; None before 0.1.27
+    line_art: object | None = None  # the pipeline's ``ink.LineArt`` decision; None before 0.1.27
 
 
 def page_data_from_analysis(analysis) -> PageData:
@@ -128,6 +133,8 @@ def page_data_from_analysis(analysis) -> PageData:
         outlines=analysis.outlines,
         leaders=getattr(analysis, "leaders", None),  # before 0.1.25 no number had a leader
         leader_labels=sum(getattr(label, "leader", None) is not None for label in analysis.labels),
+        ink_lines=getattr(analysis, "ink_lines", None),  # before 0.1.27 no version looked for ink lines
+        line_art=getattr(analysis, "line_art", None),
     )
 
 
@@ -343,11 +350,13 @@ def main() -> int:
         )
         quality.update(bm.flat_color_match(flat_colors, page_data.legend_bgr))
         quality.update(dict.fromkeys(LINE_ART_KEYS))
+        ink = None
         if len(flat_colors) and len(ink_colors):
             ink_width_px = print_scale.mm_to_px(bm.INK_MAX_WIDTH_MM)
             ink = bm.source_ink(source, flat_colors, ink_colors, ink_width_px)
             quality.update(bm.ink_line_match(page_data.strokes, ink, print_scale.mm_to_px(bm.INK_LINE_TOLERANCE_MM)))
             quality.update(bm.tube_regions(page_data.region_id_map, ink, ink_width_px))
+        quality.update(found_ink_scores(page_data, ink, image_info, print_scale))
         # Faces are scored inside the manifest's face boxes, and on whether their features survive on the page.
         quality.update(dict.fromkeys(FACE_KEYS))
         annotations = image_info.scaled_to(source.shape[1::-1]) if image_info else None
@@ -405,6 +414,8 @@ def main() -> int:
         "peak_rss_mb": peak_rss_mb,
         "scored_from": page_data.source if page_data else None,
         "quality": quality,
+        # Whether the pipeline took the picture for line art, and the measures that decided it; None before 0.1.27.
+        "line_art": dataclasses.asdict(page_data.line_art) if page_data and page_data.line_art is not None else None,
         "face_features": face_features,  # each annotated feature's part and feature_survival score
         "ocr": ocr,  # the OCR engine and version that read the text, None without text or without the engine
         "text_blocks": text_blocks,  # each annotated text block's string, and what OCR read on each layer
@@ -423,6 +434,35 @@ def label_scores(page_data: PageData, scale) -> dict:
     quality = bm.label_sizes(page_data.label_font_sizes_px, scale)
     quality.update(bm.label_clearance(page_data.label_boxes, page_data.outlines, page_data.leaders))
     quality["leader_labels"] = page_data.leader_labels
+    return quality
+
+
+def found_ink_scores(page_data: PageData, ink, image_info, scale) -> dict:
+    """The quality fields about the ink lines the pipeline found, against the artwork's own.
+
+    ``ink`` is ``bench_metrics.source_ink``'s mask where the image is line art
+    (its manifest entry has flat and ink colors), else None; ``scale`` is the
+    page's ``print_size.PrintScale``. ``ink_found_fraction`` is the share of
+    the page found to be ink lines, and ``stray_ink_fraction`` the same share on
+    a picture that isn't line art, where every pixel found is a mistake. On line
+    art, ``ink_found_*`` are ``bench_metrics.found_ink_match``, and
+    ``ink_reference_exact`` whether the manifest's colors are the file's own, so
+    that ``source_ink`` finds every ink line (for scans they are cluster centers,
+    and it misses much of the line work). Versions that don't look for ink lines
+    get None throughout.
+    """
+    import bench_metrics as bm  # imported late in this module, after the measured version's package
+
+    quality = {"ink_found_fraction": None, "stray_ink_fraction": None, **dict.fromkeys(FOUND_INK_KEYS)}
+    found = page_data.ink_lines
+    if found is None:
+        return quality
+    quality["ink_found_fraction"] = int(found.sum()) / found.size
+    if ink is None:
+        quality["stray_ink_fraction"] = quality["ink_found_fraction"]
+        return quality
+    quality.update(bm.found_ink_match(found, ink, scale.mm_to_px(bm.INK_LINE_TOLERANCE_MM)))
+    quality["ink_reference_exact"] = bool(image_info.exact_colors)
     return quality
 
 

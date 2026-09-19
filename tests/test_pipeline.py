@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from tessellatum.core import boundaries, difficulty, labels, pipeline, print_size, render
+from tessellatum.core import boundaries, difficulty, ink, labels, pipeline, print_size, render
 from tessellatum.core.color import MIN_PALETTE_DE00, pairwise_de00
 from tessellatum.core.pipeline import PipelineCancelled, generate
 
@@ -279,3 +279,48 @@ def test_a_preview_and_an_export_are_held_to_the_same_sizes_on_paper():
     # smaller ones.
     panorama_area, _ = pipeline._paintable_limits(params, (1100, 275))
     assert panorama_area / (1100 * 275) > 2 * preview_area / (1100 * 825)
+
+
+def _line_drawing(width: int, height: int) -> np.ndarray:
+    """Flat fills outlined in black, the outline about 1 mm wide on paper at this size."""
+    image = np.full((height, width, 3), 255, dtype=np.uint8)
+    line = max(2, round(print_size.print_scale((width, height)).mm_to_px(1.0)))
+    for i, color in enumerate([(90, 150, 230), (60, 160, 60), (200, 120, 40), (180, 180, 250)]):
+        x0, y0 = (i % 2) * width // 2, (i // 2) * height // 2
+        image[y0 : y0 + height // 2, x0 : x0 + width // 2] = 0
+        image[y0 + line : y0 + height // 2 - line, x0 + line : x0 + width // 2 - line] = color
+    return image
+
+
+def test_analysis_says_whether_the_picture_is_line_art_and_where_its_ink_lines_are():
+    drawing = _line_drawing(300, 220)
+
+    result = generate(drawing, difficulty.params_for_preset("Hard"), long_edge=300, collect_analysis=True)
+
+    analysis = result.analysis
+    assert analysis.line_art == ink.line_art(drawing)
+    assert analysis.line_art.is_line_art
+    assert analysis.ink_lines.shape == (220, 300) and analysis.ink_lines.dtype == bool
+    assert (analysis.ink_lines == (drawing == 0).all(axis=2)).all()  # every outline, and nothing else
+
+
+def test_a_picture_that_is_not_line_art_has_no_ink_lines(sample_image_bgr):
+    result = generate(sample_image_bgr, difficulty.params_for_preset("Hard"), long_edge=200, collect_analysis=True)
+
+    assert not result.analysis.line_art.is_line_art
+    assert result.analysis.ink_lines.shape == (200, 200) and not result.analysis.ink_lines.any()
+
+
+def test_line_art_is_decided_on_the_picture_at_preview_size(monkeypatch):
+    monkeypatch.setattr(pipeline, "PREVIEW_LONG_EDGE", 300)
+    drawing = _line_drawing(450, 330)
+    params = difficulty.params_for_preset("Hard")
+
+    preview = generate(drawing, params, long_edge=300, collect_analysis=True).analysis
+    export = generate(drawing, params, long_edge=450, collect_analysis=True).analysis
+    smaller = generate(drawing, params, long_edge=200, collect_analysis=True).analysis
+
+    at_preview_size = ink.line_art(pipeline.resize_to_long_edge(drawing, 300))
+    assert preview.line_art == export.line_art == smaller.line_art == at_preview_size
+    assert export.ink_lines.shape == (330, 450) and smaller.ink_lines.shape == (147, 200)
+    assert (export.ink_lines == ink.ink_lines(drawing)).all()

@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -212,6 +213,12 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
     # Scored against the drawing's manifest entry: the outline is ink, and the legend has the fill's color.
     assert case["quality"]["ink_line_f1"] is not None and case["quality"]["tube_ink_fraction"] is not None
     assert case["quality"]["flat_color_de00_mean"] < 1.0
+    # The pipeline takes it for line art, and the ink lines it finds are exactly those of the manifest's colors: in black
+    # on flat colors, the two find the same pixels. The manifest doesn't say its colors are the file's own.
+    assert case["line_art"]["is_line_art"] and set(case["line_art"]) == {"is_line_art", "flatness", "deep_line_share"}
+    assert case["quality"]["ink_found_precision"] == case["quality"]["ink_found_recall"] == 1.0
+    assert case["quality"]["ink_found_fraction"] > 0 and case["quality"]["stray_ink_fraction"] is None
+    assert case["quality"]["ink_reference_exact"] is False
     # The "eye" is the black square, which fills enough of its box to count as still on the page.
     assert case["quality"]["face_de00_mean"] is not None and case["quality"]["labels_on_features"] is not None
     assert case["quality"]["features_lost"] == 0
@@ -255,3 +262,34 @@ def test_text_scores_without_text_blocks_are_blank():
     quality, blocks = bench_case.text_scores((), {}, [(0, 0, 10, 10)], reader=None)
 
     assert quality == dict.fromkeys(bench_case.TEXT_KEYS) and blocks is None
+
+
+def test_found_ink_is_scored_against_the_artworks_ink_on_line_art_and_as_stray_ink_elsewhere():
+    found = np.zeros((20, 40), dtype=bool)
+    found[5:8, 5:35] = True  # 90 of 800 px
+    artwork = found.copy()
+    artwork[15:18, 5:35] = True  # the artwork has a second line the pipeline missed
+    scale = bm.print_size.print_scale((40, 20))
+
+    def scores(ink_lines, ink, exact=False):
+        page_data = SimpleNamespace(ink_lines=ink_lines)
+        return bench_case.found_ink_scores(page_data, ink, SimpleNamespace(exact_colors=exact), scale)
+
+    # Line art: matched against the artwork's own ink lines.
+    assert scores(found, artwork, exact=True) == {
+        "ink_found_fraction": 90 / 800,
+        "stray_ink_fraction": None,
+        "ink_found_precision": 1.0,
+        "ink_found_recall": 0.5,
+        "ink_found_f1": pytest.approx(2 / 3),
+        "ink_reference_exact": True,
+    }
+    assert scores(found, artwork)["ink_reference_exact"] is False
+    # Not line art: everything found is stray.
+    assert scores(found, None) == {
+        "ink_found_fraction": 90 / 800,
+        "stray_ink_fraction": 90 / 800,
+        **dict.fromkeys(bench_case.FOUND_INK_KEYS),
+    }
+    # A version that doesn't look for ink lines.
+    assert scores(None, artwork) == {"ink_found_fraction": None, "stray_ink_fraction": None, **dict.fromkeys(bench_case.FOUND_INK_KEYS)}
