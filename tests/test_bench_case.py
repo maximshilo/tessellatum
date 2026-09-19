@@ -225,6 +225,11 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
     # And the page prints it: the outline is the page's line, printed as found, and no region to paint.
     assert case["quality"]["ink_print_precision"] == case["quality"]["ink_print_recall"] == 1.0
     assert case["quality"]["tube_regions"] == 0
+    assert case["quality"]["ink_line_f1"] == 1.0  # the printed outline is a line down the outline's middle
+    assert case["quality"]["labeled_area_fraction"] == 1.0  # of the area to paint, which the printed outline is not
+    painted = np.asarray(Image.open(out / "painted.png").convert("RGB"))
+    assert (painted[40:42, 40:160] == 0).all()  # the finished painting keeps the printed outline, black
+    assert "detect_ink" in case["median_stages_s"]  # finding the ink is timed as a stage of its own
     # The "eye" is the black square, which fills enough of its box to count as still on the page.
     assert case["quality"]["face_de00_mean"] is not None and case["quality"]["labels_on_features"] is not None
     assert case["quality"]["features_lost"] == 0

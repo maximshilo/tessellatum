@@ -363,9 +363,12 @@ def test_a_shape_the_ink_encloses_alone_keeps_its_number_if_a_brush_fits_whateve
     ids[35:45, 10:20] = 2  # enclosed alone, 10 x 10: a brush 8 px wide fits
     ids[35:39, 40:60] = 3  # enclosed alone, 4 px wide: no brush fits
     ids[35:45, 80:90] = 4  # enclosed alone, 10 x 10, black
+    ids[25:28, 30:40] = 5  # black and 3 px wide, but beside region 0: not enclosed alone
+    ids[40:50, 100:110] = 6  # black, and touching a pixel of region 1 only at a corner, diagonally: not alone either
+    ids[39, 99] = 1
     image = np.full((60, 120, 3), FILL_BGR, dtype=np.uint8)
-    image[ids == -1] = image[ids == 4] = BLACK_BGR
-    colors = np.array([0, 1, 0, 0, 1], dtype=np.int32)
+    image[ids == -1] = image[ids == 4] = image[ids == 5] = image[ids == 6] = BLACK_BGR
+    colors = np.array([0, 1, 0, 0, 1, 1, 1], dtype=np.int32)
 
     settled, inked = regions_module.settle_enclosed(ids, colors, image, BLACK_BGR, 8.0)
 
@@ -374,4 +377,31 @@ def test_a_shape_the_ink_encloses_alone_keeps_its_number_if_a_brush_fits_whateve
     assert (settled[ids == 4] == -1).all() and inked[ids == 4].all()  # the ink's own color: printed with it
     assert inked.sum() == 100
     assert (settled[ids <= 1] == ids[ids <= 1]).all()  # the regions with a neighbor are left as they are
+    assert (settled[ids == 5] == 5).all() and not inked[ids == 5].any()  # however thin or dark
+    assert (settled[ids == 6] == 6).all() and not inked[ids == 6].any()
     assert (ids[ids == 3] == 3).all()  # a new map
+
+
+def test_a_patch_edged_by_the_ink_and_a_fill_alike_joins_the_ink():
+    # A black patch 3 x 3 under a band of ink, with a stub of ink along its left side: its ring of 16 pixels is 8 ink
+    # (the 5 above, the 3 on the left) and 8 fill (the 4 on the right, the 4 below).
+    labels = np.zeros((20, 20), dtype=np.int32)
+    image = np.full((20, 20, 3), FILL_BGR, dtype=np.uint8)
+    labels[:4, :] = labels[4:7, 7] = 2
+    labels[4:7, 8:11] = 1
+    image[labels > 0] = BLACK_BGR
+    ring = [labels[y, x] for y in range(3, 8) for x in range(7, 12) if not (4 <= y < 7 and 8 <= x < 11)]
+    assert ring.count(2) == ring.count(0) == 8  # a tie
+
+    assert (regions_module.join_ink(labels, 2, image, BLACK_BGR, 60)[4:7, 8:11] == 2).all()
+
+
+def test_the_search_weighs_a_diagonal_step_as_the_longer_one():
+    # From (4, 0), seed 1 lies 4 straight steps away (20) and seed 2 three diagonal ones (21): 4 against 4.24 px.
+    seeds = np.full((8, 8), -1, dtype=np.int32)
+    seeds[0, 0], seeds[1, 3] = 1, 2
+    passable = np.ones((8, 8), dtype=bool)
+
+    nearest = kernels.nearest_seed_within(seeds.reshape(-1), passable.reshape(-1), 8, 8).reshape(8, 8)
+
+    assert nearest[4, 0] == 1

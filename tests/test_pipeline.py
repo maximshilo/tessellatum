@@ -391,3 +391,44 @@ def test_the_ink_is_found_once_per_picture_and_size(monkeypatch):
         generate(drawing, difficulty.params_for_preset(preset), long_edge=800)
 
     assert len(calls) == 1
+
+
+def test_the_ink_prints_in_the_drawing_s_own_tone():
+    drawing, _shapes = _outlined_shapes()
+    drawing[(drawing == 0).all(axis=2)] = 60  # outlines in dark gray instead of black
+
+    result = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True)
+
+    analysis = result.analysis
+    assert analysis.ink_gray == 60
+    assert (np.asarray(result.page.convert("L"))[analysis.printed_ink] == 60).all()
+
+
+def test_the_ink_s_edge_is_left_out_by_at_least_a_pixel_and_the_enclosed_shapes_are_printed(monkeypatch):
+    drawing, _shapes = _outlined_shapes()  # 3.16 px/mm on paper: 0.25 mm of edge is less than a pixel
+    seen = {}
+    real_quantize, real_join = pipeline.quantize, pipeline.join_ink
+
+    def quantize_spy(*args, **kwargs):
+        seen["halo_px"] = kwargs["halo_px"]
+        return real_quantize(*args, **kwargs)
+
+    def join_spy(labels, num_colors, image, ink_bgr, min_area_px, own=None):
+        seen["own"] = own
+        return real_join(labels, num_colors, image, ink_bgr, min_area_px, own)
+
+    settled = np.zeros((800, 600), dtype=bool)
+    settled[5:10, 5:10] = True  # what settle_enclosed says to print, made up here
+
+    def settle_spy(ids, *args, **kwargs):
+        return np.where(settled, -1, ids).astype(np.int32), settled
+
+    monkeypatch.setattr(pipeline, "quantize", quantize_spy)
+    monkeypatch.setattr(pipeline, "join_ink", join_spy)
+    monkeypatch.setattr(pipeline, "settle_enclosed", settle_spy)
+    result = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True)
+
+    assert seen["halo_px"] == 1.0
+    assert (seen["own"] == ~ink.near(result.analysis.ink_lines, 1.0)).all()  # colors judged off the ink's edge
+    assert result.analysis.printed_ink[settled].all()
+    assert (np.asarray(result.page.convert("L"))[settled] == result.analysis.ink_gray).all()

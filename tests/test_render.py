@@ -271,3 +271,23 @@ def test_without_ink_the_page_is_drawn_as_before():
 
     assert np.array_equal(np.asarray(plain.image), np.asarray(no_ink.image))
     assert np.array_equal(np.asarray(plain.outlines), np.asarray(no_ink.outlines))
+
+
+def test_a_number_written_outside_its_region_goes_beside_the_ink_not_on_it():
+    # A region too small for its number, ringed by ink 6 px thick, inside a wide white one: the nearest room outside
+    # it is on the ring, and the number must go past it, onto the paper.
+    size = (400, 300)
+    ids = np.zeros((300, 400), dtype=np.int32)
+    ink = np.zeros(ids.shape, dtype=bool)
+    ink[142:158, 192:208] = True
+    ids[ink] = -1
+    ids[148:152, 198:202] = 1  # 4 x 4: no number fits in it
+    ink[148:152, 198:202] = False
+    regions = extract_regions(ids, np.array([0, 1], dtype=np.int32))
+
+    rendered = render_page(size, regions, ids, ink=ink, ink_gray=0)
+
+    small = next(label for label in rendered.labels if label.region_id == 1)
+    assert small.leader is not None
+    x0, y0, x1, y1 = (int(v) for v in small.box)
+    assert not ink[y0:y1, x0:x1].any()
