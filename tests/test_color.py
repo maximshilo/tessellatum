@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
 
 import bench_metrics as bm  # noqa: E402
-from tessellatum.core import color  # noqa: E402
+from tessellatum.core import color, quantize  # noqa: E402
 
 # Reference pairs from Sharma, Wu & Dalal (2005), "The CIEDE2000 color-difference formula".
 SHARMA_PAIRS = [
@@ -83,3 +83,23 @@ def test_pairwise_de00_puts_infinity_down_the_diagonal():
     assert distance[0, 2] == pytest.approx(distance[2, 0])
     assert np.argmin(distance) == 2  # the near-identical pair (0, 2) is the closest
     assert distance[0, 2] < distance[0, 1]
+
+
+def test_ciede2000_never_exceeds_the_bound_the_palette_search_relies_on():
+    # quantize._clear_of skips CIEDE2000 for colors more than _SURELY_APART times the margin apart in plain Lab,
+    # so a color pair closer than the margin can only be missed if the ratio ever went above that bound.
+    rng = np.random.default_rng(0)
+    worst = 0.0
+    for _ in range(20):
+        first = rng.integers(0, 256, size=(20_000, 3), dtype=np.uint8)
+        # Both far-apart colors and near neighbors: the ratio is largest between colors a few units apart.
+        for second in (
+            rng.integers(0, 256, size=(20_000, 3), dtype=np.uint8),
+            np.clip(first.astype(int) + rng.integers(-12, 13, size=(20_000, 3)), 0, 255).astype(np.uint8),
+        ):
+            lab_first, lab_second = color.bgr_to_lab(first), color.bgr_to_lab(second)
+            distance = np.sqrt(((lab_first - lab_second) ** 2).sum(axis=1))
+            apart = distance > 1e-9
+            worst = max(worst, float((color.ciede2000(lab_first, lab_second)[apart] / distance[apart]).max()))
+
+    assert worst < quantize._SURELY_APART  # 1.47 over 800,000 pairs, against a bound of 3
