@@ -359,7 +359,7 @@ def main() -> int:
             np.array(getattr(image_info, name, ()), dtype=np.uint8).reshape(-1, 3)[:, ::-1]  # the manifest's are RGB
             for name in ("flat_colors", "ink_colors")
         )
-        quality.update(bm.flat_color_match(flat_colors, page_data.legend_bgr))
+        quality.update(bm.flat_color_match(flat_colors, page_data.legend_bgr, getattr(params, "num_colors", None)))
         quality.update(dict.fromkeys(LINE_ART_KEYS + PRINTED_INK_KEYS))
         ink = None
         if len(flat_colors) and len(ink_colors):

@@ -221,7 +221,18 @@ METRICS = (
         sigma=0.031,
         sigma_export=0.028,
     ),
-    Metric("flat_color_de00_mean", "flat colors ΔE00 ↓", "{:.2f}", "palette", "lower", sigma=1.2, sigma_export=0.81),
+    Metric(
+        "flat_color_de00_mean",
+        "flat colors ΔE00 ↓",
+        "{:.2f}",
+        "palette",
+        "lower",
+        sigma=1.2,
+        sigma_export=0.81,
+        # Counted from the floor the difficulty and the artwork set, because a legend of 6 colors cannot serve 15.
+        target=Target(2.5, relative_to="flat_color_de00_best"),
+    ),
+    Metric("flat_color_de00_best", "flat colors ΔE00 best", "{:.2f}"),
     # How closely the pipeline finds the artwork's ink lines (T3.1), which the page prints from 0.1.28 (T3.2). Scored as
     # the finding itself, apart from the page's jobs: the printed ink's own match is in the clean drawing job.
     # Finding them doesn't depend on the difficulty, so their tolerances come from 12 pairs at each size (the four line

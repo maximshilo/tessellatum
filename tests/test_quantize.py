@@ -185,3 +185,93 @@ def test_without_ink_the_colors_are_found_as_before(sample_image_bgr):
     no_ink = quantize(sample_image_bgr, 5, 1.0, ink=np.zeros(sample_image_bgr.shape[:2], dtype=bool), halo_px=2.0)
 
     assert (plain[0] == no_ink[0]).all() and (plain[1] == no_ink[1]).all()
+
+
+def _nearest_fill(color, fills) -> tuple[int, ...]:
+    """Which of ``fills`` a palette color is, to the rounding of 8-bit Lab (at most 3 per channel)."""
+    difference = np.abs(np.asarray(fills, dtype=int) - np.asarray(color, dtype=int)).max(axis=1)
+    assert difference.min() <= 3, f"{color} is none of the artwork's colors"
+    return tuple(int(v) for v in np.asarray(fills)[int(difference.argmin())])
+
+
+def _three_fills_and_ink(second: tuple[int, int, int] = (200, 120, 40)) -> tuple[np.ndarray, np.ndarray]:
+    """Three flat fills separated by black lines 4 px wide, every edge anti-aliased half way."""
+    image = np.zeros((60, 150, 3), dtype=np.uint8)
+    fills = [(60, 160, 60), second, (240, 240, 240)]
+    for index, fill in enumerate(fills):
+        image[:, index * 50 : (index + 1) * 50] = fill
+    line = np.zeros((60, 150), dtype=bool)
+    for cut in (50, 100):
+        line[:, cut - 2 : cut + 2] = True
+        image[:, cut - 3] = np.array(fills[cut // 50 - 1]) // 2  # half ink, half the fill on its left
+        image[:, cut + 2] = np.array(fills[cut // 50]) // 2
+    return image, line
+
+
+def test_line_art_takes_the_fills_own_colors_and_none_of_the_blends_between_them():
+    image, line = _three_fills_and_ink()
+
+    labels, palette = quantize(image, 12, 0.0, ink=line, halo_px=1.0)
+
+    # Every fill is on the legend as the artwork painted it, and nothing else is: no mean of two fills, no
+    # half-ink edge. K-means, which minimizes distance rather than picking the colors out, spends colors on those.
+    assert len(palette) == 3
+    fills = [(60, 160, 60), (200, 120, 40), (240, 240, 240)]
+    assert sorted(_nearest_fill(color, fills) for color in palette) == sorted(fills)
+    assert (labels[line] == len(palette)).all() and (labels[~line] < len(palette)).all()
+    assert labels[30, 10] != labels[30, 60] != labels[30, 120]
+
+
+def test_line_art_colors_do_not_depend_on_a_seed():
+    image, line = _three_fills_and_ink()
+
+    first = quantize(image, 12, 0.0, seed=0, ink=line, halo_px=1.0)
+    again = quantize(image, 12, 0.0, seed=17, ink=line, halo_px=1.0)
+
+    assert (first[0] == again[0]).all() and (first[1] == again[1]).all()
+
+
+def test_line_art_keeps_the_margin_by_leaving_a_color_out_rather_than_by_mixing_two():
+    # The second fill is a shade of the third, 5.8 ΔE00 from it: they cannot both be on the legend.
+    image, line = _three_fills_and_ink(second=(228, 228, 228))
+    assert pairwise_de00(np.array([(228, 228, 228), (240, 240, 240)], dtype=np.uint8)).min() < MIN_PALETTE_DE00
+
+    _labels, palette = quantize(image, 12, 0.0, ink=line, halo_px=1.0)
+
+    assert len(palette) == 2
+    assert pairwise_de00(palette).min() >= MIN_PALETTE_DE00
+    # The color kept is one of the two, not the gray between them, and it is the one the fills hold more of:
+    # both cover 50 columns, but the lighter one keeps the column its neighbor's anti-aliased edge takes away.
+    fills = [(60, 160, 60), (228, 228, 228), (240, 240, 240)]
+    assert {_nearest_fill(color, fills) for color in palette} == {(60, 160, 60), (240, 240, 240)}
+
+
+def test_line_art_colors_at_the_ends_of_the_scale_stay_apart():
+    # Black and white sit in opposite corners of the histogram. A neighborhood that wrapped round would make
+    # them one color, and the black would be gone from the legend.
+    image, line = _three_fills_and_ink(second=(0, 0, 0))
+    image[:, 100:] = 255
+
+    _labels, palette = quantize(image, 12, 0.0, ink=line, halo_px=1.0)
+
+    fills = [(0, 0, 0), (60, 160, 60), (255, 255, 255)]
+    assert sorted(_nearest_fill(color, fills) for color in palette) == fills
+
+
+def test_line_art_palette_is_at_most_the_colors_asked_for_and_sorted_by_lightness():
+    image, line = _three_fills_and_ink()
+
+    for num_colors in (1, 2, 3, 12):
+        _labels, palette = quantize(image, num_colors, 0.0, ink=line, halo_px=1.0)
+        assert len(palette) == min(num_colors, 3)
+        lightness = list(cv2.cvtColor(palette.reshape(-1, 1, 3), cv2.COLOR_BGR2LAB).reshape(-1, 3)[:, 0])
+        assert lightness == sorted(lightness)
+
+
+def test_flat_color_palette_without_a_margin_keeps_colors_the_picture_puts_close_together():
+    image, line = _three_fills_and_ink(second=(228, 228, 228))
+
+    _labels, palette = quantize(image, 12, 0.0, min_de00=0.0, ink=line, halo_px=1.0)
+
+    assert len(palette) == 3
+    assert pairwise_de00(palette).min() < MIN_PALETTE_DE00

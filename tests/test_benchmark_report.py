@@ -202,7 +202,10 @@ def test_scorecard_scores_each_job_per_category_and_over_all_cases(tmp_path):
         "| text CER page ↓ (≤ text CER source + 0.1) | labels on text ↓ (0) | targets met |"
     ) in drawing
     palette = _section(scorecard, "#### palette")
-    assert "| category | cases | palette min ΔE00 ↑ (≥ 10) | color pairs < 10 ΔE00 ↓ | flat colors ΔE00 ↓ | targets met |" in palette
+    assert (
+        "| category | cases | palette min ΔE00 ↑ (≥ 10) | color pairs < 10 ΔE00 ↓ "
+        "| flat colors ΔE00 ↓ (≤ flat colors ΔE00 best + 2.5) | targets met |"
+    ) in palette
 
 
 def test_a_single_number_on_a_line_or_on_another_number_is_a_regression(tmp_path):
@@ -461,19 +464,20 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
         "| unenclosed ↓ | same-color boundary ↓ | jaggedness ↓ "
         "| edge F1 ↑ | colors | palette min ΔE00 ↑ | color pairs < 10 ΔE00 ↓ | ink line F1 ↑ "
         "| ink printed recall ↑ | ink printed precision ↑ | tubes ↓ | ink in shapes < 5 mm ↓ "
-        "| flat colors ΔE00 ↓ | ink found | ink found recall ↑ | ink found precision ↑ | stray ink ↓ "
+        "| flat colors ΔE00 ↓ | flat colors ΔE00 best | ink found | ink found recall ↑ | ink found precision ↑ "
+        "| stray ink ↓ "
         "| face ΔE00 ↓ | face SSIM ↑ | features lost ↓ | labels on features ↓ | text CER source "
         "| text CER page ↓ | text CER painting ↓ | labels on text ↓ | undersized ↓ | ink | targets missed |"
     )
     assert header in old_alone
     assert (
         "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
-        "| – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | 0 | 10.0% | – |"
+        "| – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | 0 | 10.0% | – |"
     ) in old_alone
     assert "| all | 1 | 1 | no targets | no targets | no targets | no targets |" in old_alone
     assert (
         "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | 3 | 10.0% | 0.0% | 0 | 0 | 0 | 0.10 | 0.40 | 2.00 | 1.90 "
-        "| 0.0% | 1.0% | 1.100 | 0.50 | 8 | 4.5 | 2 | 0.25 | – | – | 2 | 60.0% | 3.50 | 0.0% | – | – | 0.0% | 7.50 | 0.600 "
+        "| 0.0% | 1.0% | 1.100 | 0.50 | 8 | 4.5 | 2 | 0.25 | – | – | 2 | 60.0% | 3.50 | – | 0.0% | – | – | 0.0% | 7.50 | 0.600 "
         "| 1 | 2 | 0.10 | 0.95 | 0.98 | 1 | 0 | 10.0% | – → 10/15 | ok |"
     ) in old_vs_new
     assert "| all | 1 | 1 | 0/1 met | 0/1 met | 0/1 met | 0/1 met |" in old_vs_new

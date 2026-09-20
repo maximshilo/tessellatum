@@ -98,9 +98,15 @@ ink:
 - the ink is printed solid, in the artwork's own tone — black for digital
   line art, the dark gray of the printed ink for a scan — and it is the line
   wherever it runs: no line is drawn beside it and no number goes on it;
-- the colors come from the fills alone, without the ink or the anti-aliased
-  pixels at its edge, and the regions are the areas the ink encloses; a
-  boundary between two fills that no ink divides is drawn as on any page;
+- the colors are the fills' own. A cartoon is painted in the colors the
+  artist chose, so the page offers those rather than the means k-means lands
+  on, which carry the blends along every fill's edge: the fills' colors are
+  counted into a histogram, and the color the most pixels crowd around, the
+  farthest from every color taken so far, is taken over and over, never within
+  10 CIEDE2000 of one already taken. Nothing is merged afterwards and nothing
+  is random, so a drawing keeps colors a merge would have spent;
+- the regions are the areas the ink encloses; a boundary between two fills
+  that no ink divides is drawn as on any page;
 - a shape the ink encloses on its own, a finger or a button, keeps its number
   whatever the difficulty's smallest region, as long as a 3 mm brush fits in
   it; one too small for the brush is left as bare paper, and a small patch in
