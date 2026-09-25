@@ -195,6 +195,8 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
         "ink_print_f1",
         "flat_color_de00_mean",
         "flat_color_de00_max",
+        "flat_color_de00_best",
+        "flat_color_reference_exact",
         "face_de00_mean",
         "face_ssim",
         "features_lost",
@@ -216,6 +218,7 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
     # Scored against the drawing's manifest entry: the outline is ink, and the legend has the fill's color.
     assert case["quality"]["ink_line_f1"] is not None and case["quality"]["tube_ink_fraction"] is not None
     assert case["quality"]["flat_color_de00_mean"] < 1.0
+    assert case["quality"]["flat_color_reference_exact"] is False  # the manifest doesn't say its colors are the file's own
     # The pipeline takes it for line art, and the ink lines it finds are exactly those of the manifest's colors: in black
     # on flat colors, the two find the same pixels. The manifest doesn't say its colors are the file's own.
     assert case["line_art"]["is_line_art"] and set(case["line_art"]) == {"is_line_art", "flatness", "deep_line_share"}

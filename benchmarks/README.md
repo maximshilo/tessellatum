@@ -236,7 +236,7 @@ and whether their features survive, and on whether OCR still reads the text:
 | ink printed recall / precision | on line art, how much of the artwork's ink lines the page prints, and how much of what it prints is the artwork's ink, each pixel within 0.5 mm (from 0.1.28); `case.json` also records `ink_print_f1` | higher |
 | tubes | regions at least half made of the artwork's ink lines | lower (0) |
 | ink in shapes < 5 mm | share of the ink lines lying in parts of regions narrower than 5 mm: ink to paint instead of print | lower (0) |
-| flat colors ΔE00 | mean CIEDE2000 from each of the artwork's flat colors to the nearest legend color; `case.json` also records the largest, as `flat_color_de00_max`, and the lowest a legend of the difficulty's color count could reach, as `flat_color_de00_best` | lower |
+| flat colors ΔE00 | mean CIEDE2000 from each of the artwork's flat colors to the nearest legend color; `case.json` also records the largest, as `flat_color_de00_max`, the lowest a legend of the difficulty's color count could reach, as `flat_color_de00_best`, and whether the manifest's colors are exact, as `flat_color_reference_exact` | lower |
 | ink found | share of the page the pipeline takes for the artwork's ink lines (from 0.1.27; printed from 0.1.28) | informational |
 | ink found recall / precision | on line art, how much of the artwork's ink lines the pipeline found, and how much of what it found is on them, each within 0.5 mm; `case.json` also records `ink_found_f1`, and whether the manifest's colors are exact as `ink_reference_exact` | higher |
 | stray ink | the share of the page found to be ink lines on a picture that isn't line art | lower (0) |
@@ -613,7 +613,7 @@ page of 1100 px, and **export**, a page at the image's own size (see
 | labels on text | clean drawing | 1.3 | 2.7 | 0 |
 | palette min ΔE00 | palette | 1.3 | 0.93 | ≥ 10 |
 | color pairs < 10 ΔE00 | palette | 3.2 | 3.1 | – |
-| flat colors ΔE00 | palette | 1.2 | 0.81 | ≤ flat colors ΔE00 best + 2.5 |
+| flat colors ΔE00 | palette | 1.2 | 0.81 | ≤ flat colors ΔE00 best + 2.5 on exact colors |
 
 Colors, regions, ink, text CER source and flat colors ΔE00 best only inform. The per-case tables add the
 number of targets each case misses.
@@ -653,7 +653,8 @@ spell out the four jobs:
   - text still readable, with no numbers on it;
 - **resembles:** faces keep their eyes, noses and mouths;
 - **palette:** every two colors at least 10 ΔE00 apart, and the artwork's own
-  flat colors offered as closely as a legend of that many colors can.
+  flat colors offered as closely as a legend of that many colors can, where the
+  manifest's colors are exact.
 
 Four of the targets need explaining:
 
@@ -673,16 +674,17 @@ Four of the targets need explaining:
   source either (0.04–0.26 at preview size, see the text metrics).
 - **Flat colors ΔE00** counts from the floor its own difficulty and artwork set,
   because that floor alone runs from 0 to 7.64 over the benchmark set before a
-  page is drawn at all. The 2.5 is the margin every page whose palette can be
-  the artwork's colors keeps today: over the 40 cases of the five images with
-  flat colors, the two digital drawings and `scene.png` sit 0.34–2.42 above
-  their floor at v0.1.29, and the two scans 3.13–10.12. The scans miss it on
-  their whole palette too (2.73–6.62 above), not only on their legend: some
-  colors their manifest lists are hardly in the fills at all -- at Hard, no
+  page is drawn at all, and holds only where the manifest's colors are exact,
+  as the ink precision targets do. The 2.5 is the margin every page whose
+  palette can be the artwork's colors keeps today: the two digital drawings and
+  `scene.png` sit 0.34–2.42 above their floor at v0.1.29. The two scans sit
+  3.13–10.12 above theirs, and are reported rather than targeted: they miss on
+  their whole palette too (2.73–6.62 above), not only on their legend, because
+  some colors their manifest lists are hardly in the fills at all -- at Hard, no
   pixel of the comics' fills is within 5 ΔE00 of its two blues or its red, and
-  a quarter of the postcard's is within 5 of no listed color -- and their
-  legends lose more of their colors in the gaps between hatching strokes (T3.4
-  in the plan).
+  a quarter of the postcard's is within 5 of no listed color. Their legends
+  also lose colors in the gaps between hatching strokes (T3.4 in the plan),
+  which the report still shows, and the regression check still judges.
 
 The baseline confirmed all three (T1.8): line art scores 1.007–1.017 on jaggedness
 at both sizes, a renderer drawing each boundary once scores 1.017–1.047 on the

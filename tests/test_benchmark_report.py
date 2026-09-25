@@ -204,7 +204,7 @@ def test_scorecard_scores_each_job_per_category_and_over_all_cases(tmp_path):
     palette = _section(scorecard, "#### palette")
     assert (
         "| category | cases | palette min ΔE00 ↑ (≥ 10) | color pairs < 10 ΔE00 ↓ "
-        "| flat colors ΔE00 ↓ (≤ flat colors ΔE00 best + 2.5) | targets met |"
+        "| flat colors ΔE00 ↓ (≤ flat colors ΔE00 best + 2.5 on exact colors) | targets met |"
     ) in palette
 
 
@@ -380,12 +380,21 @@ def test_a_case_misses_a_target_on_its_worse_side_where_it_has_a_value():
     assert miss("ink_found_precision", ink_found_precision=0.5) is None
     assert miss("stray_ink_fraction", stray_ink_fraction=0.0) is False
     assert miss("stray_ink_fraction", stray_ink_fraction=0.0001) is True
+    # Flat colors count from their floor, and only where the manifest's colors are the file's own: a scan's are
+    # cluster centers, some of them colors its fills hardly hold.
+    exact = {"flat_color_de00_best": 1.0, "flat_color_reference_exact": True}
+    assert miss("flat_color_de00_mean", flat_color_de00_mean=3.5, **exact) is False
+    assert miss("flat_color_de00_mean", flat_color_de00_mean=3.51, **exact) is True
+    assert miss("flat_color_de00_mean", flat_color_de00_mean=9.0, **exact | {"flat_color_reference_exact": False}) is None
+    assert miss("flat_color_de00_mean", flat_color_de00_mean=9.0, flat_color_de00_best=1.0) is None
+    assert miss("flat_color_de00_mean", flat_color_de00_mean=3.0, flat_color_reference_exact=True) is None  # no floor
 
 
 def test_a_target_that_applies_only_to_some_cases_says_so():
     assert bench_report._target_text(METRICS["ink_found_precision"]) == "≥ 0.95 on exact colors"
     assert bench_report._target_text(METRICS["ink_found_recall"]) == "≥ 0.95"
     assert bench_report._target_text(METRICS["stray_ink_fraction"]) == "0"
+    assert bench_report._target_text(METRICS["flat_color_de00_mean"]) == "≤ flat colors ΔE00 best + 2.5 on exact colors"
 
 
 def test_tolerance_overrides_take_judged_metrics_by_key():

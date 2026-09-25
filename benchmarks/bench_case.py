@@ -360,6 +360,10 @@ def main() -> int:
             for name in ("flat_colors", "ink_colors")
         )
         quality.update(bm.flat_color_match(flat_colors, page_data.legend_bgr, getattr(params, "num_colors", None)))
+        # Whether those colors are the file's own: a scan's are cluster centers, some of them colors its fills hardly
+        # hold, so its flat colors are reported but not held to their target (see bench_report).
+        exact_colors = bool(getattr(image_info, "exact_colors", False))
+        quality["flat_color_reference_exact"] = exact_colors if len(flat_colors) else None
         quality.update(dict.fromkeys(LINE_ART_KEYS + PRINTED_INK_KEYS))
         ink = None
         if len(flat_colors) and len(ink_colors):

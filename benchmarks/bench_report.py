@@ -229,8 +229,12 @@ METRICS = (
         "lower",
         sigma=1.2,
         sigma_export=0.81,
-        # Counted from the floor the difficulty and the artwork set, because a legend of 6 colors cannot serve 15.
-        target=Target(2.5, relative_to="flat_color_de00_best"),
+        # Counted from the floor the difficulty and the artwork set, because a legend of 6 colors cannot serve 15; and
+        # only where the manifest's colors are the file's own. A scan's are cluster centers, some of them colors its
+        # fills hardly hold (the comics' blues and red), which no legend of its fills can offer.
+        target=Target(
+            2.5, relative_to="flat_color_de00_best", where="flat_color_reference_exact", where_text="exact colors"
+        ),
     ),
     Metric("flat_color_de00_best", "flat colors ΔE00 best", "{:.2f}"),
     # How closely the pipeline finds the artwork's ink lines (T3.1), which the page prints from 0.1.28 (T3.2). Scored as
