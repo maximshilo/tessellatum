@@ -672,13 +672,17 @@ Four of the targets need explaining:
 - **Text CER page** counts from the source's, because OCR doesn't read all of the
   source either (0.04–0.26 at preview size, see the text metrics).
 - **Flat colors ΔE00** counts from the floor its own difficulty and artwork set,
-  because the metric's reachable value runs from 0 to 9.45 over the benchmark
-  set before a page is drawn at all. The 2.5 is the margin every page whose
-  palette can be the artwork's colors keeps today: over the 40 cases of the five
-  images with flat colors, the two digital drawings and `scene.png` sit
-  0.28–2.42 above their floor at v0.1.29, and the two scans 3.27–10.80, where
-  what the legend loses is their hatching (T3.4 in the plan) rather than the
-  palette.
+  because that floor alone runs from 0 to 7.64 over the benchmark set before a
+  page is drawn at all. The 2.5 is the margin every page whose palette can be
+  the artwork's colors keeps today: over the 40 cases of the five images with
+  flat colors, the two digital drawings and `scene.png` sit 0.34–2.42 above
+  their floor at v0.1.29, and the two scans 3.13–10.12. The scans miss it on
+  their whole palette too (2.73–6.62 above), not only on their legend: some
+  colors their manifest lists are hardly in the fills at all -- at Hard, no
+  pixel of the comics' fills is within 5 ΔE00 of its two blues or its red, and
+  a quarter of the postcard's is within 5 of no listed color -- and their
+  legends lose more of their colors in the gaps between hatching strokes (T3.4
+  in the plan).
 
 The baseline confirmed all three (T1.8): line art scores 1.007–1.017 on jaggedness
 at both sizes, a renderer drawing each boundary once scores 1.017–1.047 on the
