@@ -104,7 +104,9 @@ ink:
   counted into a histogram, and the color the most pixels crowd around, the
   farthest from every color taken so far, is taken over and over, never within
   10 CIEDE2000 of one already taken. Nothing is merged afterwards and nothing
-  is random, so a drawing keeps colors a merge would have spent;
+  is random, so a drawing keeps colors a merge would have spent. A shade the
+  margin leaves off the legend is painted in the color nearest it in L\*a\*b\*,
+  the one it looks closest to;
 - the regions are the areas the ink encloses; a boundary between two fills
   that no ink divides is drawn as on any page;
 - a shape the ink encloses on its own, a finger or a button, keeps its number

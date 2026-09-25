@@ -47,6 +47,12 @@ _SURELY_APART = 3.0
 # _BIN * sqrt(3) away.
 _SETTLE_STEPS = 2
 _SETTLE_RADIUS = 1.5 * _BIN
+# A pixel takes the color nearest it in L*a*b*, which is 8-bit Lab with its L
+# scaled back by 100/255: squared, each channel's difference counts this much.
+_LAB_WEIGHT = np.array([(100 / 255) ** 2, 1.0, 1.0])
+# How many pixels are given their color at a time: the pixels-by-colors scores
+# of one block stay a few MB instead of the whole page's.
+_NEAREST_BLOCK = 1 << 16
 
 
 def quantize(
@@ -274,9 +280,25 @@ def _settle_colors(
 
 
 def _nearest_color(samples_lab: np.ndarray, centers_lab: np.ndarray) -> np.ndarray:
-    """Each sample's nearest center by Lab distance, as one matrix product (the squared norms cancel)."""
-    centers = np.ascontiguousarray(centers_lab, dtype=samples_lab.dtype)
-    return np.argmax(samples_lab @ (2 * centers).T - (centers * centers).sum(axis=1)[None, :], axis=1).astype(np.int32)
+    """Each sample's nearest center by distance in L*a*b*, a block of samples at a time.
+
+    Both are in OpenCV's 8-bit Lab, whose L is L* stretched by 255/100. Measured
+    there, a step in lightness would count two and a half times what the same
+    step in a or b does, and a dark gray whose own color is not on the legend
+    would go to a brown of its lightness rather than the near-black beside it:
+    #2d2d2d is 6.9 CIEDE2000 from #171717 and 15.4 from #482c1a, but nearer the
+    brown in 8-bit Lab. Each block is one matrix product, the samples' squared
+    norms cancelling.
+    """
+    centers = np.asarray(centers_lab, dtype=np.float64)
+    weighted = centers * _LAB_WEIGHT
+    scale = np.ascontiguousarray((2 * weighted).T, dtype=samples_lab.dtype)
+    offset = (weighted * centers).sum(axis=1).astype(samples_lab.dtype)
+    nearest = np.empty(len(samples_lab), dtype=np.int32)
+    for start in range(0, len(samples_lab), _NEAREST_BLOCK):
+        block = samples_lab[start : start + _NEAREST_BLOCK]
+        nearest[start : start + len(block)] = np.argmax(block @ scale - offset, axis=1)
+    return nearest
 
 
 def _nearest_fitted(label_map: np.ndarray, fitted: np.ndarray) -> np.ndarray:

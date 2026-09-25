@@ -3,9 +3,11 @@ import numpy as np
 import pytest
 
 from tessellatum.core.color import MIN_PALETTE_DE00, pairwise_de00
+from tessellatum.core import quantize as quantize_module
 from tessellatum.core.quantize import (
     _lab_centers_to_bgr,
     _merge_close_colors,
+    _nearest_color,
     _sparse_bilateral,
     bilateral_filter,
     quantize,
@@ -275,3 +277,37 @@ def test_flat_color_palette_without_a_margin_keeps_colors_the_picture_puts_close
 
     assert len(palette) == 3
     assert pairwise_de00(palette).min() < MIN_PALETTE_DE00
+
+
+def test_line_art_paints_a_color_left_off_the_legend_in_the_one_nearest_it_to_the_eye():
+    # A dark gray patch in a near-black fill, beside a brown one. The gray is 6.9 ΔE00 from the black and 15.4 from
+    # the brown, so it cannot be on the legend beside the black, and it should be painted black. In OpenCV's 8-bit
+    # Lab, which stretches lightness 2.55 times, the brown is the nearer (21.4 against 28.0).
+    black, gray, brown = (23, 23, 23), (45, 45, 45), (26, 44, 72)
+    image, line = _three_fills_and_ink(second=brown)
+    image[:, :47] = black
+    image[:, 5:20] = gray
+    assert pairwise_de00(np.array([black, gray], dtype=np.uint8)).min() < MIN_PALETTE_DE00
+
+    labels, palette = quantize(image, 12, 0.0, ink=line, halo_px=1.0)
+
+    fills = [black, gray, brown, (240, 240, 240)]
+    assert {_nearest_fill(color, fills) for color in palette} == {black, brown, (240, 240, 240)}
+    assert (labels[:, 5:20] == labels[30, 30]).all()
+    assert _nearest_fill(palette[labels[30, 10]], fills) == black
+
+
+def test_nearest_color_measures_in_l_star_a_star_b_star_a_block_at_a_time(monkeypatch):
+    rng = np.random.default_rng(3)
+    samples = rng.integers(0, 256, (1000, 3)).astype(np.float32)
+    centers = rng.integers(0, 256, (7, 3)).astype(np.float64)
+    monkeypatch.setattr(quantize_module, "_NEAREST_BLOCK", 64)  # 16 blocks, the last one short
+
+    nearest = _nearest_color(samples, centers)
+
+    scale = np.array([100 / 255, 1.0, 1.0])  # 8-bit L back to L*
+    distance = (((samples[:, None, :] - centers[None, :, :]) * scale) ** 2).sum(axis=2)
+    assert nearest.dtype == np.int32
+    assert (nearest == distance.argmin(axis=1)).all()
+    # Measured in 8-bit Lab itself, a good share of these would go elsewhere.
+    assert (nearest != ((samples[:, None, :] - centers[None, :, :]) ** 2).sum(axis=2).argmin(axis=1)).mean() > 0.1
