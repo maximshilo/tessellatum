@@ -11,7 +11,16 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from tessellatum.core.boundaries import trace_boundaries
-from tessellatum.core.labels import LEADER_REACH_MM, Label, LabelSpacing, font, min_font_size, place_labels, text_bbox
+from tessellatum.core.labels import (
+    LEADER_REACH_MM,
+    Label,
+    LabelSpacing,
+    cleared,
+    font,
+    min_font_size,
+    place_labels,
+    text_bbox,
+)
 from tessellatum.core.print_size import OUTLINE_WIDTH_MM, print_scale
 from tessellatum.core.regions import Region
 
@@ -74,6 +83,8 @@ class RenderedPage:
     labels: list[Label]  # every number on the page, in drawing order
     strokes: list[np.ndarray]  # every line drawn, in drawing order: Nx2 float64 (x, y); a closed one returns to its first point
     leaders: Image.Image  # "L": the ink the numbers' leader lines put on the page, as in ``outlines``
+    # HxW bool: line art's ink as printed, less the detail ink cleared behind numbers written on hatching; None without.
+    printed_ink: np.ndarray | None = None
 
 
 def render_page(
@@ -83,6 +94,7 @@ def render_page(
     style: PageStyle = PageStyle(),
     ink: np.ndarray | None = None,
     ink_gray: int = 0,
+    clearable: np.ndarray | None = None,
 ) -> RenderedPage:
     """Draw the boundaries of ``region_id_map`` + numbers for ``regions`` onto a white ``size`` canvas.
 
@@ -96,12 +108,16 @@ def render_page(
     ``ink`` (HxW bool) is line art's own ink, printed solid in ``ink_gray``,
     the artwork's own tone (see ``ink.ink_gray``): part of the drawing, not
     something to paint. It is the line wherever it runs, so no line is drawn
-    along it, and no number goes on it.
+    along it, and no number goes on it. ``clearable`` is the part of it a
+    region's paint goes over whole, hatching (see ``regions.detail_ink``): a
+    number with no room near its region but on that ink is written in the
+    region with the ink under it, and a line's width round it, left unprinted
+    (see ``labels.place_labels``).
 
     Returns the page, plus what it was built from: the ink the lines and the
     printed ink put on it, the geometry each line was drawn from, where each
-    number went, and the ink of the leader lines that point a number written
-    outside its region into it.
+    number went, the ink of the leader lines that point a number written
+    outside its region into it, and the ink printed.
     """
     inked = ink is not None and bool(ink.any())
     strokes = trace_boundaries(region_id_map, ink=ink if inked else None)
@@ -110,7 +126,6 @@ def render_page(
     lines_only = coverage
     if inked:
         coverage = np.where(ink, np.uint8(PAPER), coverage)
-    outlines = Image.fromarray(PAPER - coverage, "L")
 
     spacing = LabelSpacing(
         min_font_size=min_font_size(size),
@@ -119,7 +134,14 @@ def render_page(
         leader_dot_px=line_width * style.leader_dot_ratio,
         leader_reach_px=print_scale(size).mm_to_px(LEADER_REACH_MM),
     )
-    labels = place_labels(regions, region_id_map, coverage == 0, spacing)
+    # A number goes on no printed ink, and a leader runs through none, whichever region's paint goes over it.
+    seen = np.where(ink, -1, region_id_map) if inked else region_id_map
+    detail = np.where(clearable, region_id_map, -1).astype(np.int32) if inked and clearable is not None else None
+    labels = place_labels(regions, seen, coverage == 0, spacing, detail)
+    if detail is not None and any(label.clears for label in labels):
+        ink = ink & ~cleared(labels, detail, spacing.label_gap_px)
+        coverage = np.where(ink, np.uint8(PAPER), lines_only)
+    outlines = Image.fromarray(PAPER - coverage, "L")
     leader_coverage = _leader_coverage(size, labels, line_width, spacing.leader_dot_px)
 
     paper = _paper_under(lines_only, style.line_gray)
@@ -141,6 +163,7 @@ def render_page(
         labels=labels,
         strokes=strokes,
         leaders=Image.fromarray(PAPER - leader_coverage, "L"),
+        printed_ink=ink if inked else None,
     )
 
 

@@ -405,3 +405,212 @@ def test_the_search_weighs_a_diagonal_step_as_the_longer_one():
     nearest = kernels.nearest_seed_within(seeds.reshape(-1), passable.reshape(-1), 8, 8).reshape(8, 8)
 
     assert nearest[4, 0] == 1
+
+
+def _thin_ink_painted(ids, printed, max_width_px=6.0, image=None, palette=((200, 120, 40),), own=None):
+    image = np.zeros(ids.shape + (3,), dtype=np.uint8) if image is None else image
+    colors = np.zeros(int(ids.max()) + 1, dtype=np.int32)
+    return regions_module.paint_over_thin_ink(
+        ids, colors, printed, max_width_px, image, np.array(palette, dtype=np.uint8), own
+    )
+
+
+def _touching_pairs(ids: np.ndarray) -> int:
+    """8-adjacent pairs of pixels in two different regions."""
+    pairs = ((ids[:, :-1], ids[:, 1:]), (ids[:-1, :], ids[1:, :]), (ids[:-1, :-1], ids[1:, 1:]), (ids[:-1, 1:], ids[1:, :-1]))
+    return sum(int(((a != b) & (a >= 0) & (b >= 0)).sum()) for a, b in pairs)
+
+
+def test_a_thin_line_between_two_regions_is_shared_down_its_middle_with_a_seam():
+    ids = np.zeros((20, 30), dtype=np.int32)
+    ids[:, 16:] = 1
+    ids[:, 12:16] = -1  # a line 4 px wide, thinner than the 6 px the paint goes over
+    printed = ids < 0
+
+    painted = _thin_ink_painted(ids, printed)
+
+    # Columns 12-13 are nearer region 0, 14-15 nearer region 1; where the two meet, the higher id steps back.
+    assert (painted[:, :14] == 0).all() and (painted[:, 14] == -1).all() and (painted[:, 15:] == 1).all()
+    assert _touching_pairs(painted) == 0  # the two regions still never touch: each keeps its own number
+    assert (ids[:, 12:16] == -1).all()  # a new map
+
+
+def test_a_stroke_with_one_region_all_round_it_becomes_part_of_it():
+    ids = np.zeros((20, 20), dtype=np.int32)
+    ids[5:15, 9:11] = -1  # a hatching stroke 2 px wide
+
+    painted = _thin_ink_painted(ids, ids < 0)
+
+    assert (painted == 0).all()
+
+
+def test_bold_ink_is_never_painted():
+    ids = np.zeros((20, 30), dtype=np.int32)
+    ids[:, 20:] = 1
+    ids[:, 10:20] = -1  # a band 10 px wide, bolder than the 6 px the paint goes over
+
+    painted = _thin_ink_painted(ids, ids < 0)
+
+    # A 6 px disk fits everywhere in it but at its corners on the page's edge, where a round brush cannot reach.
+    assert (painted[3:17, 10:20] == -1).all()
+    assert (painted[:, :10] == 0).all() and (painted[:, 20:] == 1).all()
+
+
+def test_a_seam_keeps_two_regions_from_touching_across_a_diagonal_line():
+    y, x = np.mgrid[0:30, 0:30]
+    ids = np.where(x + y < 20, 0, 1).astype(np.int32)
+    ids[(x + y >= 20) & (x + y < 23)] = -1  # a diagonal line about 2 px wide
+
+    painted = _thin_ink_painted(ids, ids < 0)
+
+    assert _touching_pairs(painted) == 0
+    assert (painted >= 0).sum() > (ids >= 0).sum()  # most of the line is shared out
+
+
+def test_a_bit_of_a_region_cut_off_from_its_own_pixels_is_dropped():
+    ids = np.full((10, 10), -1, dtype=np.int32)
+    ids[:, :3] = 0
+    ids[6:8, 6:8] = 0  # joined ink of region 0 that no longer reaches it
+    own = np.zeros(ids.shape, dtype=bool)
+    own[:, :3] = True
+
+    kept = regions_module._connected_to_own(ids, own, 1)
+
+    assert (kept[:, :3] == 0).all() and (kept[3:, 3:] == -1).all()
+
+
+def test_paper_between_strokes_joins_the_region_of_its_color_and_a_highlight_stays_paper():
+    ids = np.zeros((30, 40), dtype=np.int32)
+    image = np.full((30, 40, 3), FILL_BGR, dtype=np.uint8)
+    printed = np.zeros(ids.shape, dtype=bool)
+    for x0, fill in ((5, FILL_BGR), (25, (255, 255, 255))):  # two rings of thin ink, 2 px wide, round 2 x 2 of paper
+        printed[5:11, x0 : x0 + 6] = True
+        printed[7:9, x0 + 2 : x0 + 4] = False
+        image[7:9, x0 + 2 : x0 + 4] = fill
+    ids[5:11, :] = np.where(printed[5:11, :], -1, ids[5:11, :])
+    ids[7:9, 7:9] = ids[7:9, 27:29] = -1  # bare paper, too small to paint
+
+    painted = _thin_ink_painted(ids, printed, max_width_px=4.0, image=image, palette=(FILL_BGR,))
+
+    assert (painted[printed] == 0).all()  # the thin rings are painted over
+    assert (painted[7:9, 7:9] == 0).all()  # the fill showing between the strokes is painted with it
+    assert (painted[7:9, 27:29] == -1).all()  # a white highlight is left as paper
+
+
+def test_paper_edged_by_bold_ink_stays_paper():
+    ids = np.zeros((30, 30), dtype=np.int32)
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[5:25, 5:25] = True  # a black square 20 px wide with a speck of paper in it
+    printed[14:16, 14:16] = False
+    ids[5:25, 5:25] = -1
+    image = np.full((30, 30, 3), FILL_BGR, dtype=np.uint8)
+
+    painted = _thin_ink_painted(ids, printed, image=image, palette=(FILL_BGR,))
+
+    assert (painted[14:16, 14:16] == -1).all()
+
+
+def test_detail_ink_is_the_ink_inside_one_region_away_from_everything_else():
+    ids = np.zeros((20, 40), dtype=np.int32)
+    ids[:, 20:] = 1
+    ids[:, 19] = -1  # a seam
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[8:12, 5] = True  # a stroke deep in region 0
+    printed[8:12, 17] = True  # a stroke of region 0 beside the seam
+    printed[:, 18:21] = True  # the line between the two regions: its halves and the seam
+
+    detail = regions_module.detail_ink(ids, printed, 3.0)
+
+    assert detail[8:12, 5].all()
+    assert not detail[:, 16:22].any()  # neither the stroke beside the seam nor the line's halves
+    assert not detail[~printed].any()
+
+
+def test_a_thin_line_running_out_across_bare_paper_is_painted_only_near_its_region():
+    ids = np.full((10, 12), -1, dtype=np.int32)
+    ids[:, :4] = 0
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[5, 4:] = True  # a line 1 px wide from region 0 out across bare paper
+
+    painted = _thin_ink_painted(ids, printed, max_width_px=4.0, image=np.full((10, 12, 3), 255, dtype=np.uint8))
+
+    assert (painted[5, 4:8] == 0).all()  # within the thin ink's width of the region
+    assert (painted[5, 8:] == -1).all()  # farther out, next to no region, it is left out
+
+
+def test_thin_ink_cut_off_from_its_region_by_bare_paper_is_not_painted():
+    ids = np.full((10, 12), -1, dtype=np.int32)
+    ids[:, :4] = 0
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[:, 4] = printed[:, 7] = True  # two strokes, bare white paper between them and beyond
+    white = np.full((10, 12, 3), 255, dtype=np.uint8)
+
+    painted = _thin_ink_painted(ids, printed, max_width_px=4.0, image=white)
+
+    assert (painted[:, 4] == 0).all()
+    assert (painted[:, 7] == -1).all()  # nearest region 0, 4 px away, but not joined to it: paper lies between
+
+
+def test_paper_s_color_is_read_off_the_ink_s_anti_aliased_edge():
+    ids = np.zeros((30, 30), dtype=np.int32)
+    image = np.full((30, 30, 3), FILL_BGR, dtype=np.uint8)
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[10:20, 10:20] = True  # a ring of thin ink, 2 px wide, round 6 x 6 of paper
+    printed[12:18, 12:18] = False
+    ids[10:20, 10:20] = -1
+    image[12:18, 12:18] = (40, 40, 40)  # the paper's edge, a mix of the ink and the fill
+    image[13:17, 13:17] = FILL_BGR
+    own = np.ones(ids.shape, dtype=bool)
+    own[12:18, 12:18] = False
+    own[13:17, 13:17] = True
+
+    painted = _thin_ink_painted(ids, printed, image=image, palette=(FILL_BGR,), own=own)
+
+    assert (painted[12:18, 12:18] == 0).all()  # off its edge, the paper is the fill's color: the fill between strokes
+
+
+def test_paper_at_the_page_edge_joins_the_region_round_it():
+    ids = np.zeros((20, 24), dtype=np.int32)
+    image = np.full((20, 24, 3), FILL_BGR, dtype=np.uint8)
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[0:4, 8:16] = True  # thin ink, 2 px wide, round paper on three sides: the page's edge is the fourth
+    printed[0:2, 10:14] = False
+    ids[0:4, 8:16] = -1
+
+    painted = _thin_ink_painted(ids, printed, image=image, palette=(FILL_BGR,))
+
+    assert (painted[0:2, 10:14] == 0).all()
+
+
+def test_paper_edged_partly_by_bold_ink_stays_paper():
+    ids = np.zeros((30, 30), dtype=np.int32)
+    image = np.full((30, 30, 3), FILL_BGR, dtype=np.uint8)
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[5:25, 0:10] = True  # a bold block
+    printed[10:17, 10:15] = True  # thin ink round 3 x 3 of paper on the other three sides
+    printed[12:15, 10:13] = False
+    ids[printed] = -1
+    ids[12:15, 10:13] = -1
+
+    painted = _thin_ink_painted(ids, printed, image=image, palette=(FILL_BGR,))
+
+    assert (painted[12:15, 10:13] == -1).all()  # not one region all round it
+
+
+def test_a_region_s_label_point_is_off_the_ink_its_paint_goes_over():
+    ids = np.zeros((21, 40), dtype=np.int32)
+    ids[:, 30:] = 1
+    ids[2:7, 32:37] = 2
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[:, 9:12] = True  # a fold through region 0's middle, which its paint goes over
+    printed[2:7, 32:37] = True  # region 2, the ink all over it (no page has one; the point stays in it)
+
+    regions = {region.region_id: region for region in extract_regions(ids, np.arange(3, dtype=np.int32), printed=printed)}
+    everywhere = {region.region_id: region for region in extract_regions(ids, np.arange(3, dtype=np.int32))}
+
+    x, y = everywhere[0].interior_point
+    assert printed[y, x]  # the middle of the whole region is on the fold
+    x, y = regions[0].interior_point
+    assert ids[y, x] == 0 and not printed[y, x]
+    x, y = regions[2].interior_point
+    assert ids[y, x] == 2

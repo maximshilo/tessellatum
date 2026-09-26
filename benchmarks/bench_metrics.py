@@ -581,7 +581,9 @@ def source_edges(image_bgr: np.ndarray, smoothing_px: float, thresholds: tuple[f
     return cv2.Canny(dx, dy, low * _EDGE_FIXED_POINT, high * _EDGE_FIXED_POINT, L2gradient=True) > 0
 
 
-def edge_alignment(region_id_map: np.ndarray, edges: np.ndarray, tolerance_px: float) -> dict[str, float | None]:
+def edge_alignment(
+    region_id_map: np.ndarray, edges: np.ndarray, tolerance_px: float, printed: np.ndarray | None = None
+) -> dict[str, float | None]:
     """Do the region boundaries lie on the source's edges?
 
     ``edge_precision`` is the share of boundary pixels (``boundary_map``) within
@@ -589,8 +591,17 @@ def edge_alignment(region_id_map: np.ndarray, edges: np.ndarray, tolerance_px: f
     within it of a boundary pixel, and ``edge_f1`` their harmonic mean. A share
     of nothing is None; F1 is None only when there are neither boundaries nor
     edges.
+
+    With line art's ``printed`` ink (HxW bool), the boundaries are the lines
+    the page shows: the edges of the printed ink, and the region boundaries
+    that are not under it. From 0.1.30 a region's paint goes over thin ink, so
+    a boundary can run down the middle of a line, where the page shows none;
+    before, printed ink was in no region, and the two readings differ only by
+    the ink's edge against bare paper.
     """
     boundary = boundary_map(region_id_map)
+    if printed is not None:
+        boundary = (boundary & ~printed) | boundary_map(np.asarray(printed, dtype=bool))
     precision = _share_near(boundary, edges, tolerance_px)
     recall = _share_near(edges, boundary, tolerance_px)
     return {"edge_precision": precision, "edge_recall": recall, "edge_f1": _f1(precision, recall)}
@@ -731,7 +742,9 @@ def printed_ink_match(
     return {"ink_print_precision": precision, "ink_print_recall": recall, "ink_print_f1": _f1(precision, recall)}
 
 
-def tube_regions(region_id_map: np.ndarray, ink: np.ndarray, max_width_px: float) -> dict[str, float | int | None]:
+def tube_regions(
+    region_id_map: np.ndarray, ink: np.ndarray, max_width_px: float, printed: np.ndarray | None = None
+) -> dict[str, float | int | None]:
     """Ink lines the page turns into shapes to paint.
 
     ``ink`` is ``source_ink``'s mask. ``tube_regions`` counts the regions at
@@ -743,8 +756,14 @@ def tube_regions(region_id_map: np.ndarray, ink: np.ndarray, max_width_px: float
     the same color. It is None without ink. Ink that the page leaves out of
     every region, or that lies along the edge of a wide region, counts for
     neither.
+
+    The page's ``printed`` ink (HxW bool) counts as in no region: it is printed
+    rather than painted, even where a region's paint goes over it (from 0.1.30,
+    over thin ink). Before, printed ink was in no region anyway.
     """
     ids = np.asarray(region_id_map)
+    if printed is not None:
+        ids = np.where(printed, -1, ids)
     inside = ids >= 0
     areas = np.bincount(ids[inside].ravel())
     on_ink = np.bincount(ids[inside & ink].ravel(), minlength=areas.size)

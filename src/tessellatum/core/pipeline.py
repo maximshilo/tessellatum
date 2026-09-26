@@ -18,7 +18,15 @@ from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import render_legend
 from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, MIN_REGION_AREA_MM2, print_scale
 from tessellatum.core.quantize import quantize
-from tessellatum.core.regions import Region, build_regions, extract_regions, join_ink, settle_enclosed
+from tessellatum.core.regions import (
+    Region,
+    build_regions,
+    detail_ink,
+    extract_regions,
+    join_ink,
+    paint_over_thin_ink,
+    settle_enclosed,
+)
 from tessellatum.core.render import Label, PageStyle, render_page
 
 PREVIEW_LONG_EDGE = 1100
@@ -55,8 +63,11 @@ class PageAnalysis:
     Its boundaries are still drawn: the lines come from the region map, not
     from the regions.
 
-    On line art, the pixels in no region (-1) are the printed ink, and the
-    bits of bare paper it encloses that are too small to paint.
+    On line art, the pixels in no region (-1) are the bold printed ink, the
+    seam down the middle of a thin line between two regions, and the bits of
+    bare paper the ink encloses that are too small to paint. The thin ink
+    otherwise belongs to the regions whose paint goes over it (see
+    ``regions.paint_over_thin_ink``); it is printed all the same.
     """
 
     region_id_map: np.ndarray  # HxW int32: each pixel's region id, -1 for none
@@ -82,8 +93,9 @@ class PageAnalysis:
     ink_lines: np.ndarray
     # HxW bool: the ink printed on the page, solid, in the gray ``ink_gray`` (0 black, 255 white): line art's ink lines,
     # and the patches in the ink's own color taken for it where it runs wider than a line (see ``regions.join_ink`` and
-    # ``regions.settle_enclosed``). All False unless the picture is line art. Printed ink is in no region; nor is bare
-    # paper the ink encloses too small to paint.
+    # ``regions.settle_enclosed``), less the hatching cleared behind numbers written on it. All False unless the picture
+    # is line art. Bold printed ink is in no region, nor is bare paper the ink encloses too small to paint; thin printed
+    # ink is in the regions whose paint goes over it.
     printed_ink: np.ndarray
     ink_gray: int
 
@@ -239,8 +251,10 @@ def generate(
 
     Line art (see ``ink``) is drawn from its own ink: the ink is printed, in
     the artwork's own tone, and the regions are the areas it encloses, colored
-    from the fills without the ink or its anti-aliased edge. Every other
-    picture is drawn from its colors alone.
+    from the fills without the ink or its anti-aliased edge. Their paint goes
+    over the ink's thin parts -- hatching, and fine lines as far as their
+    middle -- but never over bold ink. Every other picture is drawn from its
+    colors alone.
 
     Resizing, finding the ink and quantization results are cached per image
     object, so regenerating the same image with a different minimum region
@@ -292,15 +306,22 @@ def generate(
     # colors that do not exist.
     region_id_map, region_color = build_regions(labels, len(palette_bgr), min_area_px, min_width_px)
     printed_ink = labels >= len(palette_bgr)  # the ink quantize gave no color: all False unless the picture is line art
+    clearable = None
     if ink_mask is not None:
         region_id_map, inked = settle_enclosed(
             region_id_map, region_color, resized, (ink_gray,) * 3, min_width_px, off_edge
         )
         printed_ink |= inked
+        # A brush goes over thin ink, which the regions beside it share; a number on hatching may clear it.
+        thin_px = print_scale((w, h)).mm_to_px(ink.THIN_INK_MM)
+        region_id_map = paint_over_thin_ink(
+            region_id_map, region_color, printed_ink, thin_px, resized, palette_bgr, off_edge
+        )
+        clearable = detail_ink(region_id_map, printed_ink, thin_px / 2)
     report("regions")
 
     check_cancelled()
-    regions = extract_regions(region_id_map, region_color)
+    regions = extract_regions(region_id_map, region_color, printed=printed_ink if ink_mask is not None else None)
     report("contours")
 
     check_cancelled()
@@ -314,7 +335,9 @@ def generate(
         region.color_index = remap[region.color_index]
     used_palette_bgr = palette_bgr[used_color_indices]
 
-    rendered = render_page((w, h), regions, region_id_map, style, ink=printed_ink, ink_gray=ink_gray)
+    rendered = render_page((w, h), regions, region_id_map, style, ink=printed_ink, ink_gray=ink_gray, clearable=clearable)
+    if rendered.printed_ink is not None:
+        printed_ink = rendered.printed_ink  # less the hatching cleared behind numbers
     legend = render_legend(used_palette_bgr, width=w)
     report("render")
 

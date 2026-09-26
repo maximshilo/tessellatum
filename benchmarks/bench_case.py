@@ -110,7 +110,9 @@ class PageData:
     leader_labels: int  # numbers written outside their region, with a leader pointing in
     ink_lines: np.ndarray | None = None  # HxW bool: the ink lines the pipeline found; None before 0.1.27
     line_art: object | None = None  # the pipeline's ``ink.LineArt`` decision; None before 0.1.27
-    printed_ink: np.ndarray | None = None  # HxW bool: the ink the page prints, in no region; None before 0.1.28
+    # HxW bool: the ink the page prints; None before 0.1.28. In no region before 0.1.30; from then on, thin ink is in the
+    # regions whose paint goes over it.
+    printed_ink: np.ndarray | None = None
     ink_gray: int = 0  # the gray the printed ink is in, 0 black to 255 white
 
 
@@ -329,7 +331,8 @@ def main() -> int:
         )
         quality.update(bm.fidelity(reference, bm.fit_to(painted, (w, h))))
         quality["undersized_regions"] = bm.count_undersized(page_data.region_id_map, page_data.min_region_area_px)
-        # The share of the area to paint: what the page prints, line art's ink, carries no number.
+        # The share of the area to paint, the regions: what the page prints, line art's ink, carries no number, but its
+        # thin parts lie in the regions whose paint goes over them (from 0.1.30).
         quality.update(
             bm.label_coverage(page_data.regions, page_data.labeled_region_ids, int((page_data.region_id_map >= 0).sum()))
         )
@@ -352,7 +355,11 @@ def main() -> int:
         )
         source = bm.fit_to(reference, page_data.region_id_map.shape[::-1])
         edges = bm.source_edges(source, print_scale.mm_to_px(bm.EDGE_SMOOTHING_MM))
-        quality.update(bm.edge_alignment(page_data.region_id_map, edges, print_scale.mm_to_px(bm.EDGE_TOLERANCE_MM)))
+        quality.update(
+            bm.edge_alignment(
+                page_data.region_id_map, edges, print_scale.mm_to_px(bm.EDGE_TOLERANCE_MM), page_data.printed_ink
+            )
+        )
         quality.update(bm.palette_separation(page_data.legend_bgr))
         # Line art is scored against the image's manifest entry: its flat colors, and its ink lines if it has ink colors.
         flat_colors, ink_colors = (
@@ -372,7 +379,7 @@ def main() -> int:
             ink_colored = bm.source_ink_colored(source, flat_colors, ink_colors)
             ink = ink_colored & bm.sliver_mask(ink_colored.astype(np.int32), ink_width_px)  # bm.source_ink
             quality.update(bm.ink_line_match(page_data.strokes, ink, ink_tolerance_px, page_data.printed_ink))
-            quality.update(bm.tube_regions(page_data.region_id_map, ink, ink_width_px))
+            quality.update(bm.tube_regions(page_data.region_id_map, ink, ink_width_px, page_data.printed_ink))
             if page_data.printed_ink is not None:
                 quality.update(bm.printed_ink_match(page_data.printed_ink, ink, ink_tolerance_px, ink_colored))
         quality.update(found_ink_scores(page_data, ink, image_info, print_scale))

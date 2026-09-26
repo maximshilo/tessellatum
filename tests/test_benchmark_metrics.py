@@ -638,6 +638,27 @@ def test_found_ink_is_matched_to_the_artworks_pixel_by_pixel_within_the_toleranc
     assert match(ink, np.zeros_like(ink)) == {"ink_found_precision": 0.0, "ink_found_recall": None, "ink_found_f1": 0.0}
 
 
+def test_edge_alignment_on_line_art_scores_the_lines_the_page_shows():
+    image = np.full((60, 80, 3), 200, dtype=np.uint8)
+    image[:, 36:44] = 20  # a dark line 8 px wide: the source has an edge along each side of it
+    edges = bm.source_edges(image, 1.0)
+    printed = np.zeros((60, 80), dtype=bool)
+    printed[:, 36:44] = True
+    inside = np.zeros((60, 80), dtype=np.int32)  # a stroke one region's paint goes over
+    shared = np.where(np.arange(80) < 40, 0, 1)[None, :].repeat(60, axis=0).astype(np.int32)
+    shared[:, 40] = -1  # a line two regions share down its middle, with a seam
+
+    # The region map alone has no boundary along a stroke inside a region, and one down the middle of a shared line.
+    assert bm.edge_alignment(inside, edges, 1.5)["edge_recall"] == 0.0
+    assert bm.edge_alignment(shared, edges, 1.5)["edge_precision"] == 0.0
+    # With the printed ink, the lines are its edges, which lie on the source's, and nothing under it counts.
+    for ids in (inside, shared):
+        assert bm.edge_alignment(ids, edges, 1.5, printed) == {"edge_precision": 1.0, "edge_recall": 1.0, "edge_f1": 1.0}
+    # Where the ink is in no region, as before 0.1.30, the reading is the same with it or without.
+    left_out = np.where(printed, -1, shared)
+    assert bm.edge_alignment(left_out, edges, 1.5, printed) == bm.edge_alignment(left_out, edges, 1.5)
+
+
 def test_tube_regions_are_ink_lines_turned_into_shapes_to_paint():
     ink = np.zeros((60, 80), dtype=bool)
     ink[20:31, 20:60] = True  # an ink line 11 px wide and 40 px long
@@ -662,6 +683,17 @@ def test_tube_regions_are_ink_lines_turned_into_shapes_to_paint():
     # No region of its own, but paint all the same, except where a disk inside the fill reaches into it.
     assert tubes(merged)["tube_regions"] == 0 and 0.9 < tubes(merged)["tube_ink_fraction"] < 1
     assert tubes(own, np.zeros_like(ink)) == {"tube_regions": 0, "tube_ink_fraction": None}
+
+
+def test_printed_ink_a_region_s_paint_goes_over_is_no_tube():
+    ink = np.zeros((40, 60), dtype=bool)
+    ink[10:30, 20:26] = True  # a stroke 6 px wide, printed
+    ids = np.zeros(ink.shape, dtype=np.int32)
+    ids[10:30, 20:28] = 1  # a narrow region: 2 px of fill beside it, and the stroke under its paint
+    ids[:, 28:] = 2
+
+    assert bm.tube_regions(ids, ink, 15.0)["tube_regions"] == 1  # read as paint, the stroke is most of the region
+    assert bm.tube_regions(ids, ink, 15.0, printed=ink) == {"tube_regions": 0, "tube_ink_fraction": 0.0}
 
 
 def test_an_outline_too_wide_to_be_a_line_on_paper_becomes_a_tube():

@@ -3,19 +3,23 @@
 import dataclasses
 import itertools
 import math
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
 import pytest
 
+from tessellatum.core import render as render_module
 from tessellatum.core.boundaries import trace_boundaries
 from tessellatum.core.labels import (
     FONT_SIZE_RADIUS_RATIO,
     MAX_FONT_SIZE,
     MIN_FONT_SIZE,
+    Label,
     LabelSpacing,
     _LeaderRoom,
     _pixels_along,
+    cleared,
     min_font_size,
     place_labels,
     text_box_size,
@@ -398,3 +402,167 @@ def test_with_a_dot_smaller_than_its_line_no_number_goes_too_near_for_a_leader_t
             x0, y0, x1, y1 = label.box
             near = (min(max(x, x0 - 0.5), x1 - 0.5), min(max(y, y0 - 0.5), y1 - 0.5))
             assert math.dist((x, y), near) > small_dot.leader_width_px / 2 + 1
+
+
+def _hatched_page(hatch_left: bool = True):
+    """Two regions side by side, 60 x 60 px each, hatched with a stroke on every other column (1 px of paper between).
+
+    Returns the regions, the region map the numbers see (the strokes in no region), the free pixels, the strokes, and
+    the detail ink a number may clear: the strokes more than 4 px from the other region, by region.
+    """
+    ids = np.zeros((60, 120), dtype=np.int32)
+    ids[:, 60:] = 1
+    regions, free = _page(ids)
+    strokes = np.zeros(ids.shape, dtype=bool)
+    strokes[:, 61::2] = True
+    if hatch_left:
+        strokes[:, 1:60:2] = True
+    detail = np.where(strokes & (np.abs(np.arange(120) - 59.5) > 4)[None, :], ids, -1).astype(np.int32)
+    return regions, np.where(strokes, -1, ids), free & ~strokes, strokes, detail
+
+
+def test_a_number_with_no_room_but_on_hatching_clears_its_own_detail_ink():
+    regions, seen, free, strokes, detail = _hatched_page()
+
+    labels = place_labels(regions, seen, free, SPACING, detail)
+
+    assert [label.clears for label in labels] == [True, True]
+    assert all(label.leader is None for label in labels)
+    gap = math.ceil(SPACING.label_gap_px)
+    clear = cleared(labels, detail, SPACING.label_gap_px)
+    for label in labels:
+        x0, y0, x1, y1 = (int(v) for v in label.box)
+        spaced = (slice(y0 - gap, y1 + gap), slice(x0 - gap, x1 + gap))
+        assert (seen[spaced] == -1).any()  # there was ink under it
+        assert ((detail[spaced] == label.region_id) | (free[spaced] & (seen[spaced] == label.region_id))).all()
+        assert clear[spaced][strokes[spaced]].all()  # and after clearing, its box and the gap round it are bare
+    assert not (clear & (detail < 0)).any()  # nothing but detail ink is cleared
+
+
+def test_a_number_that_fits_or_has_room_for_a_leader_clears_nothing():
+    regions, seen, free, _strokes, detail = _hatched_page(hatch_left=False)
+
+    labels = place_labels(regions, seen, free, SPACING, detail)
+
+    left, right = sorted(labels, key=lambda label: label.region_id)
+    assert not left.clears and left.leader is None  # it fits in its own region
+    assert not right.clears and right.leader is not None  # the hatched one points in from the room next door
+    assert not cleared(labels, detail, SPACING.label_gap_px).any()
+
+
+def test_without_detail_ink_a_number_on_hatching_lands_on_the_ink_as_before():
+    regions, seen, free, _strokes, _detail = _hatched_page()
+
+    labels = place_labels(regions, seen, free, SPACING)
+
+    assert not any(label.clears for label in labels)
+    assert any(not free[_pixels(label.box)].all() for label in labels)
+
+
+def _hatched_regions(ids: np.ndarray, margin: float = 4.0):
+    """Every region hatched with a stroke on every other column; the strokes more than ``margin`` px from another
+    region are its detail ink. Returns the regions, the map the numbers see, the free pixels and the detail ink."""
+    regions, free = _page(ids)
+    strokes = np.zeros(ids.shape, dtype=bool)
+    strokes[:, 1::2] = True
+    others = np.zeros(ids.shape, dtype=bool)
+    for rid in np.unique(ids):
+        near_other = cv2.dilate((ids != rid).astype(np.uint8), np.ones((2 * int(margin) + 1,) * 2, np.uint8)).astype(bool)
+        others |= (ids == rid) & near_other
+    detail = np.where(strokes & ~others, ids, -1).astype(np.int32)
+    return regions, np.where(strokes, -1, ids), free & ~strokes, detail
+
+
+def _clear_of_kept_ink(label, seen, free, detail) -> bool:
+    """Whether a cleared number's box, and the gap round it, lie on its own region's free pixels and detail ink alone."""
+    gap = math.ceil(SPACING.label_gap_px)
+    x0, y0, x1, y1 = (int(v) for v in label.box)
+    spaced = (slice(y0 - gap, y1 + gap), slice(x0 - gap, x1 + gap))
+    own = (detail[spaced] == label.region_id) | (free[spaced] & (seen[spaced] == label.region_id))
+    return bool(own.all())
+
+
+def test_a_cleared_number_keeps_a_gap_from_the_ink_that_stays():
+    ids = np.zeros((60, 120), dtype=np.int32)
+    ids[:, 60:] = 1
+    regions, seen, free, detail = _hatched_regions(ids)
+    detail[:, 31] = -1  # a stroke through region 0's middle that is not its detail ink: it stays printed
+
+    labels = place_labels(regions, seen, free, SPACING, detail)
+
+    assert all(label.clears for label in labels)
+    assert all(_clear_of_kept_ink(label, seen, free, detail) for label in labels)
+
+
+def test_a_number_clears_no_other_region_s_hatching():
+    ids = np.zeros((60, 120), dtype=np.int32)
+    ids[:, 60:68] = 1  # too narrow to have detail ink 4 px from both its neighbors
+    ids[:, 68:] = 2
+    regions, seen, free, detail = _hatched_regions(ids)
+    assert not (detail == 1).any()
+    detail[15:45, 40:56] = 0  # and a solid block of region 0's, room enough for a number, in reach of region 1's
+    seen[15:45, 40:56] = -1
+    free[15:45, 40:56] = False
+
+    labels = {label.region_id: label for label in place_labels(regions, seen, free, SPACING, detail)}
+
+    assert not labels[1].clears  # its neighbors' hatching is theirs to clear: it lands on its own ink instead
+    assert labels[0].clears and labels[2].clears
+    assert all(_clear_of_kept_ink(label, seen, free, detail) for label in labels.values() if label.clears)
+
+
+def test_cleared_takes_only_the_number_s_own_region_s_detail_ink():
+    detail = np.full((20, 40), -1, dtype=np.int32)
+    detail[:, 1:20:2] = 0
+    detail[:, 21::2] = 1
+    label = Label(1, "2", 10, (15, 5, 25, 13), clears=True)  # its box and gap reach into region 0's hatching
+
+    clear = cleared([label], detail, 1.3)
+
+    assert clear[3:15, 21:27].any() and not (clear & (detail != 1)).any()
+
+
+def test_a_cleared_number_keeps_off_other_numbers_and_dots_and_takes_its_box():
+    ids = np.zeros((60, 60), dtype=np.int32)
+    ids[34:36, 28:30] = 1  # a region too small for anything, below region 0's middle
+    strokes = np.zeros(ids.shape, dtype=bool)
+    strokes[:, 1::2] = True
+    strokes[ids == 1] = False
+    seen = np.where(strokes, -1, ids)
+    free = ~strokes
+    detail = np.where(strokes, 0, -1).astype(np.int32)  # right up to the small region, so its dot is in reach
+    placed = Label(5, "9", 10, (30, 20, 36, 28))  # a number placed before, beside region 0's middle
+    anchors = [(31, 31), (28, 34)]
+    room = _LeaderRoom(seen, free, [placed], anchors, SPACING, detail)
+
+    label = room.place(SimpleNamespace(region_id=0, color_index=0, interior_point=anchors[0], interior_radius=1.0))
+
+    assert label.clears
+    gap = math.ceil(SPACING.label_gap_px)
+    x0, y0, x1, y1 = (int(v) for v in label.box)
+    spaced = np.zeros(ids.shape, dtype=bool)
+    spaced[y0 - gap : y1 + gap, x0 - gap : x1 + gap] = True
+    assert not spaced[_pixels(placed.box)].any()  # clear of the number already there
+    ys, xs = np.nonzero(spaced)
+    assert (np.hypot(xs - anchors[1][0], ys - anchors[1][1]) > room.dot_reach).all()  # and of the other's dot
+    assert room.boxes[_pixels(label.box)].all() and room.spaced[y0 - gap : y1 + gap, x0 - gap : x1 + gap].all()
+
+
+def test_numbers_see_the_ink_a_region_s_paint_goes_over_as_in_no_region(monkeypatch):
+    ids = np.zeros((40, 60), dtype=np.int32)
+    ids[:, 30:] = 1
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[5:35, 10:12] = True  # a stroke in region 0, which its paint goes over
+    seen = {}
+    real = render_module.place_labels
+
+    def spy(regions, region_id_map, free, spacing, clearable=None):
+        seen["ids"], seen["clearable"] = region_id_map, clearable
+        return real(regions, region_id_map, free, spacing, clearable)
+
+    monkeypatch.setattr(render_module, "place_labels", spy)
+    regions = extract_regions(ids, np.arange(2, dtype=np.int32), printed=printed)
+    render_page((60, 40), regions, ids, ink=printed, clearable=printed.copy())
+
+    assert (seen["ids"][printed] == -1).all() and (seen["ids"][~printed] == ids[~printed]).all()
+    assert (seen["clearable"][printed] == 0).all() and (seen["clearable"][~printed] == -1).all()

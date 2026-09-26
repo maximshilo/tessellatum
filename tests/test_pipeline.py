@@ -353,7 +353,16 @@ def test_line_art_prints_its_ink_and_paints_the_areas_it_encloses():
     # closing bridges the outline's diagonal).
     assert (printed == analysis.ink_lines).all() and printed[(drawing == 0).all(axis=2)].all()
     assert analysis.ink_gray == 0  # the drawing's own ink is black
-    assert (analysis.region_id_map[printed] == -1).all()  # the ink is in no region: it is printed, not painted
+    # The outlines are 1.3 mm wide, thinner than ink.THIN_INK_MM: the regions on either side reach to their middle,
+    # where a seam a pixel wide keeps them from touching. Across the first square's left outline (columns 40-43):
+    across = analysis.region_id_map[150, 38:46]
+    background, fill = int(across[0]), int(across[-1])
+    assert background >= 0 and fill >= 0 and background != fill
+    assert list(across[:3]) == [background] * 3 and list(across[5:]) == [fill] * 3
+    assert sorted([int(across[3]), int(across[4])]) in ([-1, background], [-1, fill]) and -1 in across
+    ids = analysis.region_id_map  # and no two regions touch anywhere: every fill here is outlined
+    for a, b in ((ids[:, :-1], ids[:, 1:]), (ids[:-1, :], ids[1:, :]), (ids[:-1, :-1], ids[1:, 1:]), (ids[:-1, 1:], ids[1:, :-1])):
+        assert not ((a != b) & (a >= 0) & (b >= 0)).any()
     page = np.asarray(result.page.convert("L"))
     assert (page[printed] == 0).all()
     # Each fill is one region, and so is the finger, though it is far below Easy's 300 mm²: the ink encloses it alone.
@@ -463,3 +472,66 @@ def test_only_line_art_takes_the_flat_color_palette(sample_image_bgr, monkeypatc
     generate(_outlined_shapes()[0], difficulty.params_for_preset("Easy"), long_edge=400)
 
     assert calls == [False, True]  # a photograph's colors still come from k-means; a drawing's from its fills
+
+
+def _hatched_sheet() -> np.ndarray:
+    """A 400 x 300 sheet (1.44 px/mm on paper) hatched from row 6 down with black strokes 2 px (1.4 mm) wide, 2 px apart:
+    a band of paper 6 px tall along the top joins the gaps, too short for a number."""
+    image = np.full((300, 400, 3), 255, dtype=np.uint8)
+    for x in range(0, 400, 4):
+        image[6:, x : x + 2] = 0
+    return image
+
+
+def test_paint_goes_over_hatching_and_a_number_on_it_clears_its_strokes():
+    sheet = _hatched_sheet()
+
+    result = generate(sheet, difficulty.params_for_preset("Easy"), long_edge=400, collect_analysis=True)
+
+    analysis = result.analysis
+    assert analysis.line_art.is_line_art
+    ids = analysis.region_id_map
+    assert result.num_regions == 1 and (ids == 0).all()  # the strokes are thin: the paint goes over them, gaps and all
+    (label,) = analysis.labels
+    assert label.clears and label.leader is None  # no room on the paper anywhere: the strokes under it are cleared
+    x0, y0, x1, y1 = (int(v) for v in label.box)
+    hatched = (sheet == 0).all(axis=2)
+    gap = int(np.ceil(render.PageStyle().line_width_px((400, 300))))  # a line's width round the number
+    cleared_area = (slice(max(0, y0 - gap), y1 + gap), slice(max(0, x0 - gap), x1 + gap))
+    assert hatched[cleared_area].any()  # strokes ran under it
+    assert (analysis.outlines[y0:y1, x0:x1] == 255).all()  # no line or ink in its box
+    assert not analysis.printed_ink[cleared_area].any()  # nor in the line's width round it
+    assert analysis.printed_ink[hatched].mean() > 0.99  # every other stroke is printed, as the page shows
+    page = np.asarray(result.page.convert("L"))
+    assert (page[analysis.printed_ink] == analysis.ink_gray).all()
+    assert (page[hatched & ~analysis.printed_ink] > 0).all()
+
+
+def test_the_paint_goes_over_ink_thinner_than_thin_ink_mm_and_the_numbers_keep_off_it(monkeypatch):
+    drawing, _shapes = _outlined_shapes()
+    seen = {}
+    real_paint, real_detail, real_extract = pipeline.paint_over_thin_ink, pipeline.detail_ink, pipeline.extract_regions
+
+    def paint_spy(ids, colors, printed, max_width_px, image, palette, own=None):
+        seen["paint"] = (printed.copy(), max_width_px, own)
+        return real_paint(ids, colors, printed, max_width_px, image, palette, own)
+
+    def detail_spy(ids, printed, reach_px):
+        seen["reach_px"] = reach_px
+        return real_detail(ids, printed, reach_px)
+
+    def extract_spy(ids, colors, min_contour_area=1.0, printed=None):
+        seen["extract_printed"] = printed
+        return real_extract(ids, colors, min_contour_area, printed=printed)
+
+    monkeypatch.setattr(pipeline, "paint_over_thin_ink", paint_spy)
+    monkeypatch.setattr(pipeline, "detail_ink", detail_spy)
+    monkeypatch.setattr(pipeline, "extract_regions", extract_spy)
+    analysis = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True).analysis
+
+    thin_px = print_size.print_scale((600, 800)).mm_to_px(ink.THIN_INK_MM)
+    printed, width, own = seen["paint"]
+    assert width == thin_px and seen["reach_px"] == thin_px / 2  # detail ink: none of a line's halves
+    assert (printed == analysis.printed_ink).all()  # every number fits here, so nothing is cleared
+    assert (own == ~ink.near(analysis.ink_lines, 1.0)).all()  # paper's color judged off the ink's edge
+    assert seen["extract_printed"] is not None and (seen["extract_printed"] == printed).all()  # numbers off the ink
