@@ -14,6 +14,7 @@ from tessellatum.core.labels import (
     MAX_FONT_SIZE,
     MIN_FONT_SIZE,
     LabelSpacing,
+    cleared,
     _LeaderRoom,
     _pixels_along,
     min_font_size,
@@ -398,3 +399,58 @@ def test_with_a_dot_smaller_than_its_line_no_number_goes_too_near_for_a_leader_t
             x0, y0, x1, y1 = label.box
             near = (min(max(x, x0 - 0.5), x1 - 0.5), min(max(y, y0 - 0.5), y1 - 0.5))
             assert math.dist((x, y), near) > small_dot.leader_width_px / 2 + 1
+
+
+def _hatched_page(hatch_left: bool = True):
+    """Two regions side by side, 60 x 60 px each, hatched with a stroke on every other column (1 px of paper between).
+
+    Returns the regions, the region map the numbers see (the strokes in no region), the free pixels, the strokes, and
+    the detail ink a number may clear: the strokes more than 4 px from the other region, by region.
+    """
+    ids = np.zeros((60, 120), dtype=np.int32)
+    ids[:, 60:] = 1
+    regions, free = _page(ids)
+    strokes = np.zeros(ids.shape, dtype=bool)
+    strokes[:, 61::2] = True
+    if hatch_left:
+        strokes[:, 1:60:2] = True
+    detail = np.where(strokes & (np.abs(np.arange(120) - 59.5) > 4)[None, :], ids, -1).astype(np.int32)
+    return regions, np.where(strokes, -1, ids), free & ~strokes, strokes, detail
+
+
+def test_a_number_with_no_room_but_on_hatching_clears_its_own_detail_ink():
+    regions, seen, free, strokes, detail = _hatched_page()
+
+    labels = place_labels(regions, seen, free, SPACING, detail)
+
+    assert [label.clears for label in labels] == [True, True]
+    assert all(label.leader is None for label in labels)
+    gap = math.ceil(SPACING.label_gap_px)
+    clear = cleared(labels, detail, SPACING.label_gap_px)
+    for label in labels:
+        x0, y0, x1, y1 = (int(v) for v in label.box)
+        spaced = (slice(y0 - gap, y1 + gap), slice(x0 - gap, x1 + gap))
+        assert (seen[spaced] == -1).any()  # there was ink under it
+        assert ((detail[spaced] == label.region_id) | (free[spaced] & (seen[spaced] == label.region_id))).all()
+        assert clear[spaced][strokes[spaced]].all()  # and after clearing, its box and the gap round it are bare
+    assert not (clear & (detail < 0)).any()  # nothing but detail ink is cleared
+
+
+def test_a_number_that_fits_or_has_room_for_a_leader_clears_nothing():
+    regions, seen, free, _strokes, detail = _hatched_page(hatch_left=False)
+
+    labels = place_labels(regions, seen, free, SPACING, detail)
+
+    left, right = sorted(labels, key=lambda label: label.region_id)
+    assert not left.clears and left.leader is None  # it fits in its own region
+    assert not right.clears and right.leader is not None  # the hatched one points in from the room next door
+    assert not cleared(labels, detail, SPACING.label_gap_px).any()
+
+
+def test_without_detail_ink_a_number_on_hatching_lands_on_the_ink_as_before():
+    regions, seen, free, _strokes, _detail = _hatched_page()
+
+    labels = place_labels(regions, seen, free, SPACING)
+
+    assert not any(label.clears for label in labels)
+    assert any(not free[_pixels(label.box)].all() for label in labels)

@@ -50,7 +50,8 @@ images x presets x output sizes:
   - every line drawn, as a polyline;
   - whether the picture is line art, and the ink lines it was drawn with;
   - the ink the page prints (from 0.1.28: line art's own ink, printed solid,
-    in no region) and the gray it prints in.
+    in no region; from 0.1.30 its thin parts lie in the regions whose paint
+    goes over them) and the gray it prints in.
 
   The timed runs don't collect it, as in the app. One more run after them
   does, and its page must match theirs for the case to count as
@@ -216,7 +217,7 @@ and whether their features survive, and on whether OCR still reads the text:
 |---|---|---|
 | ΔE00 mean / p95 | CIEDE2000 color error between painting and source | lower |
 | SSIM | structural similarity of luma between painting and source | higher |
-| labeled area | share of the area to paint (the page less what it prints) inside regions that carry a number | higher |
+| labeled area | share of the area to paint (the regions: the page less what it prints, but for the thin ink paint goes over from 0.1.30) inside regions that carry a number | higher |
 | unlabeled | regions without a number | lower (0) |
 | slivers | share of the page a round brush 3 mm wide can't paint without crossing into another region | lower |
 | labels < 6 pt | share of numbers printing smaller than 6 pt; `case.json` also records the smallest, as `min_label_pt` | lower (0) |
@@ -258,6 +259,13 @@ How the paintability metrics are defined:
     can't reach: a square region loses a few pixels at each corner.
   - The brush is an odd number of pixels across (13 px for a 13.2 px width,
     15 px for 14 px), so a bar is judged to within a pixel of the width.
+  - On line art the brush goes wherever the region map puts the region. Until
+    0.1.29 printed ink was in no region, a wall like any other boundary, so the
+    gaps between hatching strokes were slivers. From 0.1.30 the paint goes over
+    ink thinner than 1.5 mm (D-038): a stroke inside one region is part of it,
+    and a thin line between two is shared down its middle with a seam a pixel
+    wide in no region, as a page's own lines are on any other picture. Bold ink
+    is still in no region.
 - **Unlabeled** regions are counted from the region map, so a region too small
   to get an outline counts too.
 - **Label size** is each number's em size in points. Versions before 0.1.10
@@ -353,7 +361,11 @@ How the line metrics are defined:
     √2 (1.414). A staircase of 20 px steps scores 1.063, a lone right angle with
     legs of about 30 and 40 px 1.018, and a circle of radius 50 px 1.0008.
 - **Edge F1** compares the region boundaries, as `boundary_map` marks them, with
-  the source's edges.
+  the source's edges. On line art it compares the lines the page shows: the
+  edges of the printed ink, and the region boundaries not under it. From 0.1.30
+  a region's paint goes over thin ink, so a boundary can run down the middle of
+  a line, or not run along a stroke at all; before, the two readings differ
+  only by the ink's edge against bare paper, which the page shows as a line.
   - The edges come from Canny on the source at output size, in CIE Lab, after a
     Gaussian blur of 0.5 mm. Its thresholds are clean color steps of 5 and 10
     Lab units (L runs 0–100) in whichever channel changes most: a lightness step
@@ -428,6 +440,9 @@ How the line-art metrics are defined:
   ink-line pixels in parts of regions a 5 mm disk doesn't fit into (the opening
   used for slivers). Ink lines along the edge of a wide region, or left out of
   every region, count for neither.
+- Both read the ink the page prints as in no region: it is printed, not
+  painted, even where a region's paint goes over it (from 0.1.30, thin ink).
+  Before, printed ink was in no region anyway.
 - **Flat colors ΔE00** takes each manifest flat color's CIEDE2000 difference to
   the nearest legend color (exact Lab), and averages them. At Easy the legend
   can have fewer colors than the artwork, so some flat colors have no close

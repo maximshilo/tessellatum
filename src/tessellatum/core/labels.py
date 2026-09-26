@@ -50,6 +50,9 @@ class Label:
     # A number written outside its region: the leader line from the number to the point in the region it
     # points at, as ((x, y), (x, y)) with pixel centers at integer coordinates, like the page's lines.
     leader: tuple[tuple[float, float], tuple[float, float]] | None = None
+    # A number written on hatching: the region's own detail ink under its box, and a gap round it, is not printed
+    # (see ``cleared``).
+    clears: bool = False
 
 
 @dataclass(frozen=True)
@@ -78,7 +81,9 @@ def min_font_size(size: tuple[int, int]) -> int:
     return font_size
 
 
-def place_labels(regions, region_id_map: np.ndarray, free: np.ndarray, spacing: LabelSpacing) -> list[Label]:
+def place_labels(
+    regions, region_id_map: np.ndarray, free: np.ndarray, spacing: LabelSpacing, clearable: np.ndarray | None = None
+) -> list[Label]:
     """A number for every region in ``regions``, placed where no line runs through it.
 
     ``free`` is True where the page's lines put no ink at all. A number's text
@@ -86,6 +91,14 @@ def place_labels(regions, region_id_map: np.ndarray, free: np.ndarray, spacing: 
     their own regions can never touch: a line lies between them. The numbers
     that need a leader are placed after all the others, in whatever room those
     leave (see ``_LeaderRoom``).
+
+    ``clearable`` (HxW int32) is line art's detail ink, which a region's paint
+    goes over whole (see ``regions.detail_ink``): the id of the region it is
+    in, -1 elsewhere. ``region_id_map`` has all the ink the page prints in no
+    region, detail ink too, since no number or leader may go on it. Where a
+    number has no room anywhere near without landing on ink -- in hatching --
+    it goes in its own region with the detail ink under it cleared (see
+    ``cleared``), rather than on the ink.
 
     Returns the labels in drawing order: the numbers inside their regions, in
     the order of ``regions``, then the others.
@@ -109,9 +122,31 @@ def place_labels(regions, region_id_map: np.ndarray, free: np.ndarray, spacing: 
             labels.append(label)
 
     if homeless:
-        room = _LeaderRoom(ids, free, labels, [region.interior_point for region in homeless], spacing)
+        room = _LeaderRoom(ids, free, labels, [region.interior_point for region in homeless], spacing, clearable)
         labels.extend(room.place(region) for region in homeless)
     return labels
+
+
+def cleared(labels: list[Label], clearable: np.ndarray, gap_px: float) -> np.ndarray:
+    """HxW bool: the detail ink the numbers written on hatching clear, their box and ``gap_px`` round it.
+
+    ``clearable`` is as ``place_labels`` took it, and ``gap_px`` the
+    ``LabelSpacing.label_gap_px`` the numbers were placed with. A number
+    clears only its own region's detail ink.
+    """
+    clear = np.zeros(clearable.shape, dtype=bool)
+    for label in labels:
+        if label.clears:
+            spaced = _spaced_slices(label.box, gap_px)
+            clear[spaced] |= clearable[spaced] == label.region_id
+    return clear
+
+
+def _spaced_slices(box, gap_px: float) -> tuple[slice, slice]:
+    """The rows and columns of a number's ``box`` and the gap of ``gap_px`` kept round it, cut to the page's top left."""
+    x0, y0, x1, y1 = (int(math.floor(box[0])), int(math.floor(box[1])), int(math.ceil(box[2])), int(math.ceil(box[3])))
+    gap = int(math.ceil(gap_px))
+    return slice(max(0, y0 - gap), y1 + gap), slice(max(0, x0 - gap), x1 + gap)
 
 
 def text_box_size(text: str, font_size: int) -> tuple[int, int]:
@@ -176,13 +211,26 @@ class _LeaderRoom:
       and leader, whose leader runs from the region into the number's region
       and nowhere else, keeping clear of every other number, leader and dot;
     * failing that, the same with a leader that may cross other regions;
+    * failing that, inside its own region with the detail ink under it
+      cleared, if it has room there once that ink is gone: its box and the gap
+      kept round it lie on the region's free pixels and its detail ink
+      (``clearable``) alone, clear of every other number, leader and dot, as
+      near the region's middle as it can be;
     * failing that -- there is no room at all -- as near the region's middle as
       it can be without landing on another number or leader, lines or not,
       which the benchmark reports.
     """
 
-    def __init__(self, ids: np.ndarray, free: np.ndarray, labels: list[Label], anchors, spacing: LabelSpacing) -> None:
-        self.ids, self.free, self.spacing = ids, free, spacing
+    def __init__(
+        self,
+        ids: np.ndarray,
+        free: np.ndarray,
+        labels: list[Label],
+        anchors,
+        spacing: LabelSpacing,
+        clearable: np.ndarray | None = None,
+    ) -> None:
+        self.ids, self.free, self.spacing, self.clearable = ids, free, spacing, clearable
         self.anchors = list(anchors)
         # A line's ink reaches half its width and a pixel of anti-aliasing from its middle, and a dot's likewise.
         self.line_reach = spacing.leader_width_px / 2 + 1
@@ -263,9 +311,22 @@ class _LeaderRoom:
                 self._take_leader((rows + wy0, columns + wx0))
                 return Label(region.region_id, text, font_size, box, leader=(end, anchor))
 
+        others_dots = _disks(busy.shape, [(ox - wx0, oy - wy0) for ox, oy in others], self.dot_reach)
+        if self.clearable is not None:
+            # In hatching: in the region itself, where clearing its detail ink leaves room.
+            gap = int(math.ceil(spacing.label_gap_px))
+            own = ((local_ids == region.region_id) & self.free[window]) | (self.clearable[window] == region.region_id)
+            room = own & ~busy & ~others_dots
+            tops, lefts, _distance = _nearest_boxes(room, box_width + 2 * gap, box_height + 2 * gap, (x - wx0, y - wy0))
+            if len(tops):
+                left, top = int(lefts[0]) + gap + wx0, int(tops[0]) + gap + wy0
+                box = (left, top, left + box_width, top + box_height)
+                self._take_box(box)
+                return Label(region.region_id, text, font_size, box, clears=True)
+
         # No room anywhere near: at the region's middle, or as near it as the number can be without landing on
         # another number, a leader or a dot.
-        clear = ~busy & ~_disks(busy.shape, [(ox - wx0, oy - wy0) for ox, oy in others], self.dot_reach)
+        clear = ~busy & ~others_dots
         tops, lefts, distance = _nearest_boxes(clear, box_width, box_height, (x - wx0, y - wy0))
         if len(tops) and distance[0] <= spacing.leader_reach_px:
             left, top = int(lefts[0]) + wx0, int(tops[0]) + wy0
@@ -276,10 +337,8 @@ class _LeaderRoom:
         return Label(region.region_id, text, font_size, box)
 
     def _take_box(self, box) -> None:
-        x0, y0, x1, y1 = (int(math.floor(box[0])), int(math.floor(box[1])), int(math.ceil(box[2])), int(math.ceil(box[3])))
-        self.boxes[max(0, y0) : y1, max(0, x0) : x1] = True
-        gap = int(math.ceil(self.spacing.label_gap_px))
-        self.spaced[max(0, y0 - gap) : y1 + gap, max(0, x0 - gap) : x1 + gap] = True
+        self.boxes[_spaced_slices(box, 0)] = True
+        self.spaced[_spaced_slices(box, self.spacing.label_gap_px)] = True
 
     def _take_leader(self, path: tuple[np.ndarray, np.ndarray]) -> None:
         """Mark where a leader along ``path``, (rows, columns) of its middle, puts ink."""

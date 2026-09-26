@@ -55,6 +55,11 @@ GAP_MIN_DEPTH = 5.0
 # fills' colors are found without them (see ``quantize``).
 HALO_MM = 0.25
 
+# Ink thinner than this is painted over (see ``regions.paint_over_thin_ink``): a hatching stroke or a fold inside one
+# fill wholly, a fine line between two fills as far as its middle, the way a page's own lines are shared by the two
+# regions beside them on any other picture. Bolder ink -- an outline, a black shape -- is never painted.
+THIN_INK_MM = 1.5
+
 # Deciding whether a picture is line art. Its lines are deep where at least
 # DEEP_LINE_DEPTH darker than the paper around them, as ink on a light fill
 # is; line art has them over at least MIN_DEEP_LINE_SHARE of the picture. Its

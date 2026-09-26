@@ -286,6 +286,178 @@ def settle_enclosed(
     return np.where(gone, -1, ids).astype(np.int32), inked
 
 
+def paint_over_thin_ink(
+    region_id_map: np.ndarray,
+    region_color: np.ndarray,
+    printed: np.ndarray,
+    max_width_px: float,
+    image_bgr: np.ndarray,
+    palette_bgr: np.ndarray,
+    own: np.ndarray | None = None,
+) -> np.ndarray:
+    """``region_id_map`` with the thin parts of line art's ink given to the regions whose paint goes over them.
+
+    ``printed`` (HxW bool) is the ink the page prints, in no region (-1). A
+    brush cannot keep off a stroke narrower than it: the gaps between
+    hatching strokes are too narrow to paint around them. So the ink in parts
+    narrower than ``max_width_px`` is painted over, and each of its pixels is
+    given to the region nearest it:
+
+    - a stroke with one region all round it -- hatching, shading, a fold --
+      becomes part of that region;
+    - a line between two regions is shared down its middle, as a page's own
+      lines are on any other picture. A seam one pixel wide stays out of both,
+      so no two regions touch across the ink: they are still two areas, each
+      with its own number.
+
+    Ink as wide as ``max_width_px`` or wider -- an outline, a black shape --
+    stays out of every region: it is never painted.
+
+    Bare paper the thin ink encloses inside one region -- a gap between
+    crossing strokes -- becomes part of it too, if its own pixels in
+    ``image_bgr`` are that region's color, within ``color.MIN_PALETTE_DE00``
+    of it in ``palette_bgr``: the fill showing between the strokes. A white
+    highlight in a colored shape stays paper. As in ``join_ink``, only the
+    pixels in ``own`` count where it has any.
+
+    The ink is printed either way; only where paint may go changes. Returns
+    the new region map.
+    """
+    ids = np.ascontiguousarray(region_id_map, dtype=np.int32)
+    count = int(region_color.size)
+    outside = ids < 0
+    thin = _thin_part(printed & outside, max_width_px)
+    if count == 0 or not thin.any() or outside.all():
+        return ids
+    distance, nearest = cv2.distanceTransformWithLabels(
+        outside.view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE, labelType=cv2.DIST_LABEL_PIXEL
+    )
+    region_of_label = np.full(int(nearest.max()) + 1, -1, dtype=np.int32)
+    region_of_label[nearest[~outside]] = ids[~outside]
+    nearest_region = region_of_label[nearest]
+    # Thin ink lies within half its width of something that is not ink; a stroke beside bare paper, farther.
+    joined = thin & (nearest_region >= 0) & (distance <= max_width_px)
+    painted = _with_seams(np.where(joined, nearest_region, ids).astype(np.int32), joined)
+    painted = _connected_to_own(painted, ~outside, count)
+    return _join_enclosed_paper(painted, region_color, printed, image_bgr, palette_bgr, own)
+
+
+def detail_ink(region_id_map: np.ndarray, printed: np.ndarray, reach_px: float) -> np.ndarray:
+    """HxW bool: the printed ink inside one region with nothing but that region within ``reach_px`` of it.
+
+    That is ink a region's paint goes over whole (see ``paint_over_thin_ink``):
+    hatching, shading. With ``reach_px`` half the thin ink's width, it leaves
+    out the halves of the lines between two regions, and the ink round bare
+    paper or beside bold ink. It is what a number may clear behind it (see
+    ``labels.place_labels``).
+    """
+    ids = np.asarray(region_id_map)
+    candidates = printed & (ids >= 0)
+    if not candidates.any():
+        return candidates
+    values = (ids + 1).astype(np.float32)  # ink and bare paper in no region (-1) become 0, another value
+    disk = _disk(reach_px)
+    most = cv2.dilate(values, disk)  # off the page is nothing, not another region
+    least = cv2.erode(values, disk)
+    return candidates & (most == least)
+
+
+def _thin_part(mask: np.ndarray, width_px: float) -> np.ndarray:
+    """The pixels of ``mask`` in parts of it narrower than ``width_px``: those its opening by a disk that wide leaves out.
+
+    Off the page is outside the mask, so a band along the page's edge is judged by its own width.
+    """
+    if not mask.any():
+        return mask.copy()
+    disk = _disk(width_px / 2)
+    pad = disk.shape[0]
+    padded = cv2.copyMakeBorder(mask.view(np.uint8), pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0)
+    opened = cv2.morphologyEx(padded, cv2.MORPH_OPEN, disk)[pad:-pad, pad:-pad].view(bool)
+    return mask & ~opened
+
+
+def _disk(radius: float) -> np.ndarray:
+    """The pixels within ``radius`` of a center pixel, as a structuring element."""
+    n = int(np.floor(radius))
+    y, x = np.mgrid[-n : n + 1, -n : n + 1]
+    return ((x * x + y * y) <= radius * radius).astype(np.uint8)
+
+
+def _with_seams(ids: np.ndarray, joined: np.ndarray) -> np.ndarray:
+    """``ids`` with every ``joined`` pixel that touches another region put back in none (-1).
+
+    Where a ``joined`` pixel is 8-adjacent to a pixel of another region, one
+    of the two leaves its region: the joined one if the other was a region's
+    own pixel already, else the one with the higher id. One pass leaves no two
+    regions touching where either pixel was joined.
+    """
+    h, w = ids.shape
+    padded = np.pad(ids, 1, constant_values=-1)
+    padded_joined = np.pad(joined, 1)
+    drop = np.zeros((h, w), dtype=bool)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == 0 and dx == 0:
+                continue
+            other = padded[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            other_joined = padded_joined[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            drop |= joined & (other >= 0) & (other != ids) & (~other_joined | (other < ids))
+    return np.where(drop, -1, ids).astype(np.int32)
+
+
+def _connected_to_own(ids: np.ndarray, own_pixels: np.ndarray, count: int) -> np.ndarray:
+    """``ids`` without the bits of a region (8-connected) that hold none of its ``own_pixels``: cut off by a seam."""
+    h, w = ids.shape
+    pieces = np.empty((h, w), dtype=np.int32)
+    _region_of_piece, _areas = kernels.label_components(np.ascontiguousarray(ids).reshape(-1), h, w, count, pieces.reshape(-1))
+    inside = pieces >= 0
+    anchored = np.zeros(int(pieces.max()) + 1, dtype=bool)
+    anchored[pieces[inside & own_pixels]] = True
+    stray = inside & ~anchored[np.where(inside, pieces, 0)]
+    return np.where(stray, -1, ids).astype(np.int32)
+
+
+def _join_enclosed_paper(ids, region_color, printed, image_bgr, palette_bgr, own) -> np.ndarray:
+    """``ids`` with each piece of bare paper whose ring is one region, in that region's color, made part of it.
+
+    A piece's ring is the pixels 8-adjacent to it, off the page left out. Its
+    color is its own pixels' mean (in ``own`` where it has any), within
+    ``color.MIN_PALETTE_DE00`` of the region's color in ``palette_bgr``.
+    """
+    paper = (ids < 0) & ~printed
+    if not paper.any():
+        return ids
+    h, w = ids.shape
+    count, piece = cv2.connectedComponents(paper.view(np.uint8), connectivity=8)
+    piece = piece.astype(np.int32) - 1  # -1 off the paper
+    lowest = np.full(count - 1, np.iinfo(np.int32).max, dtype=np.int64)
+    highest = np.full(count - 1, -2, dtype=np.int64)
+    padded = np.pad(ids, 1, constant_values=-2)  # off the page: not in the ring
+    padded_paper = np.pad(paper, 1)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == 0 and dx == 0:
+                continue
+            other = padded[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            # A paper pixel 8-adjacent to this one is in its piece; what else it touches is a region, or ink (-1).
+            ring = paper & (other != -2) & ~padded_paper[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            np.minimum.at(lowest, piece[ring], other[ring])
+            np.maximum.at(highest, piece[ring], other[ring])
+    single = (lowest == highest) & (highest >= 0)
+    if not single.any():
+        return ids
+    means = _mean_colors(piece, image_bgr, single, own)
+    target = np.where(single, highest, 0)
+    colors = palette_bgr[region_color[target]]
+    de00 = ciede2000(bgr_to_lab(np.rint(means).clip(0, 255).astype(np.uint8)), bgr_to_lab(colors))
+    joining = single & (de00 < MIN_PALETTE_DE00)
+    if not joining.any():
+        return ids
+    on_paper = piece >= 0
+    moves = on_paper & joining[np.where(on_paper, piece, 0)]
+    return np.where(moves, target[np.where(on_paper, piece, 0)], ids).astype(np.int32)
+
+
 def _mean_colors(ids: np.ndarray, image_bgr: np.ndarray, asked: np.ndarray, own: np.ndarray | None) -> np.ndarray:
     """The mean BGR color in ``image_bgr`` of each region id ``asked`` about: of its pixels in ``own`` where it has any.
 
@@ -348,13 +520,20 @@ def _brush_fits(region_id_map: np.ndarray, num_regions: int, radius: float) -> n
     return fits
 
 
-def extract_regions(region_id_map: np.ndarray, region_color: np.ndarray, min_contour_area: float = 1.0) -> list[Region]:
+def extract_regions(
+    region_id_map: np.ndarray, region_color: np.ndarray, min_contour_area: float = 1.0, printed: np.ndarray | None = None
+) -> list[Region]:
     """Extract one outer contour + label point per surviving region id.
 
     Each region is processed inside its own one-pixel-padded bounding box
     rather than across the whole image (same result: nothing outside the box
     can affect its contour or distance transform), spread over worker threads.
     Regions come back in region-id order.
+
+    ``printed`` (HxW bool), line art's printed ink, is where no number can go,
+    even where a region's paint goes over it (see ``paint_over_thin_ink``): a
+    region's label point is the one of its unprinted pixels farthest from
+    everything else, as if the ink were in no region.
     """
     ids = np.ascontiguousarray(region_id_map, dtype=np.int32)
     h, w = ids.shape
@@ -386,7 +565,13 @@ def extract_regions(region_id_map: np.ndarray, region_color: np.ndarray, min_con
         # The zero padding also makes the distance transform treat the image
         # edge as a boundary, so a region touching the edge can't report a
         # "safe" label point right at the canvas corner.
-        dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
+        room = mask
+        if printed is not None:
+            unprinted = mask[1:-1, 1:-1] & ~printed[y0 : y1 + 1, x0 : x1 + 1]
+            if unprinted.any():
+                room = np.zeros_like(mask)
+                room[1:-1, 1:-1] = unprinted
+        dist = cv2.distanceTransform(room, cv2.DIST_L2, 5)
         _min_val, max_val, _min_loc, max_loc = cv2.minMaxLoc(dist)
 
         return Region(

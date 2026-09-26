@@ -97,7 +97,10 @@ ink:
 
 - the ink is printed solid, in the artwork's own tone — black for digital
   line art, the dark gray of the printed ink for a scan — and it is the line
-  wherever it runs: no line is drawn beside it and no number goes on it;
+  wherever it runs: no line is drawn beside it and no number goes on it. The
+  one exception is a number with no room anywhere near but on hatching: the
+  hatching of its own region is cleared under it, and a line's width round
+  it, so that it reads;
 - the colors are the fills' own. A cartoon is painted in the colors the
   artist chose, so the page offers those rather than the means k-means lands
   on, which carry the blends along every fill's edge: the fills' colors are
@@ -109,13 +112,23 @@ ink:
   the one it looks closest to;
 - the regions are the areas the ink encloses; a boundary between two fills
   that no ink divides is drawn as on any page;
+- a brush cannot keep off ink thinner than it, so the paint goes over ink
+  thinner than 1.5 mm: a hatching or shading stroke inside one area is
+  painted over along with the gaps around it, and a fine line between two
+  areas is shared down its middle, as a page's own lines are on any other
+  picture — the two areas still never touch, and each keeps its own number.
+  Bolder ink, an outline or a black shape, is never painted. The ink is
+  printed all the same;
 - a shape the ink encloses on its own, a finger or a button, keeps its number
   whatever the difficulty's smallest region, as long as a 3 mm brush fits in
-  it; one too small for the brush is left as bare paper, and a small patch in
-  the ink's own color, edged mostly by the ink, is printed with it.
+  it; one too small for the brush is left as bare paper — unless it is a gap
+  between thin strokes in the color of the area round it, which is painted
+  with it — and a small patch in the ink's own color, edged mostly by the ink,
+  is printed with it.
 
-The ink's hatching and shading strokes are printed as they are for now, so a
-densely hatched scan leaves many gaps between strokes too narrow to paint.
+A densely hatched scan is still drawn as a patchwork: the gaps between its
+strokes take the colors of the fills nearest them rather than their own, so a
+hatched coat can come out the color of the sky behind it.
 
 ### Performance
 
