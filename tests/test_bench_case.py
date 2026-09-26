@@ -246,6 +246,51 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
     assert (out / "painted.png").is_file() and (out / "regions.npz").is_file()
 
 
+
+def _hatched_drawing(tmp_path: Path) -> tuple[Path, np.ndarray]:
+    """600 x 400 line art (2.17 px/mm on paper): an orange square in a white band, a bold bar under it, and below that
+    white paper hatched with black strokes 2 px (0.9 mm) wide, 1 px apart, over a white band the brush fits in."""
+    drawing = np.full((400, 600, 3), 255, dtype=np.uint8)
+    drawing[10:50, 20:100] = 0
+    drawing[12:48, 22:98] = (230, 150, 90)
+    drawing[58:66, :] = 0
+    for x in range(0, 600, 3):
+        drawing[66:388, x : x + 2] = 0
+    image = tmp_path / "hatched.png"
+    Image.fromarray(drawing).save(image)
+    manifest = {"size": [600, 400], "categories": ["cartoon"], "flat_colors": ["#ffffff", "#e6965a"], "ink_colors": ["#000000"]}
+    (tmp_path / "manifest.json").write_text(json.dumps({"schema": 1, "images": {"hatched.png": manifest}}), encoding="utf-8")
+    return image, drawing
+
+
+def test_case_runner_reads_the_ink_a_region_s_paint_goes_over_as_printed(tmp_path):
+    image, drawing = _hatched_drawing(tmp_path)
+    out = tmp_path / "case"
+    arguments = _case_arguments(image, out, repeats=1)
+    arguments[arguments.index("--long-edge") + 1] = "600"
+
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "benchmarks" / "bench_case.py"), *arguments], capture_output=True, text=True, timeout=300
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    case = json.loads((out / "case.json").read_text(encoding="utf-8"))
+    assert case["line_art"]["is_line_art"]
+    ids = np.load(out / "regions.npz")["region_id_map"]
+    printed = np.asarray(Image.open(out / "page.png").convert("L")) == 0  # the ink prints black; lines and numbers gray
+    assert (ids[printed] >= 0).mean() > 0.5  # most of the hatching lies in the region its paint goes over
+    scale = bm.print_size.print_scale((600, 400))
+    source = drawing[:, :, ::-1]
+    edges = bm.source_edges(source, scale.mm_to_px(bm.EDGE_SMOOTHING_MM))
+    tolerance = scale.mm_to_px(bm.EDGE_TOLERANCE_MM)
+    as_printed = bm.edge_alignment(ids, edges, tolerance, printed)
+    assert case["quality"]["edge_f1"] == pytest.approx(as_printed["edge_f1"])
+    assert as_printed["edge_f1"] > bm.edge_alignment(ids, edges, tolerance)["edge_f1"] + 0.1
+    flats = np.array([(255, 255, 255), (90, 150, 230)], dtype=np.uint8)
+    ink = bm.source_ink(source, flats, np.array([(0, 0, 0)], dtype=np.uint8), scale.mm_to_px(bm.INK_MAX_WIDTH_MM))
+    assert case["quality"]["tube_regions"] == 0  # the hatching is printed, not a shape to paint...
+    assert bm.tube_regions(ids, ink, scale.mm_to_px(bm.INK_MAX_WIDTH_MM))["tube_regions"] >= 1  # ...read as paint, it is
+
 # Runs bench_case.py as its own script would, with the OCR package made impossible to import.
 WITHOUT_OCR = (
     "import runpy, sys; from pathlib import Path; script = sys.argv[1]; sys.argv = sys.argv[1:]; "

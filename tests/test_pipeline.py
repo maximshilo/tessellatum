@@ -505,3 +505,33 @@ def test_paint_goes_over_hatching_and_a_number_on_it_clears_its_strokes():
     page = np.asarray(result.page.convert("L"))
     assert (page[analysis.printed_ink] == analysis.ink_gray).all()
     assert (page[hatched & ~analysis.printed_ink] > 0).all()
+
+
+def test_the_paint_goes_over_ink_thinner_than_thin_ink_mm_and_the_numbers_keep_off_it(monkeypatch):
+    drawing, _shapes = _outlined_shapes()
+    seen = {}
+    real_paint, real_detail, real_extract = pipeline.paint_over_thin_ink, pipeline.detail_ink, pipeline.extract_regions
+
+    def paint_spy(ids, colors, printed, max_width_px, image, palette, own=None):
+        seen["paint"] = (printed.copy(), max_width_px, own)
+        return real_paint(ids, colors, printed, max_width_px, image, palette, own)
+
+    def detail_spy(ids, printed, reach_px):
+        seen["reach_px"] = reach_px
+        return real_detail(ids, printed, reach_px)
+
+    def extract_spy(ids, colors, min_contour_area=1.0, printed=None):
+        seen["extract_printed"] = printed
+        return real_extract(ids, colors, min_contour_area, printed=printed)
+
+    monkeypatch.setattr(pipeline, "paint_over_thin_ink", paint_spy)
+    monkeypatch.setattr(pipeline, "detail_ink", detail_spy)
+    monkeypatch.setattr(pipeline, "extract_regions", extract_spy)
+    analysis = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True).analysis
+
+    thin_px = print_size.print_scale((600, 800)).mm_to_px(ink.THIN_INK_MM)
+    printed, width, own = seen["paint"]
+    assert width == thin_px and seen["reach_px"] == thin_px / 2  # detail ink: none of a line's halves
+    assert (printed == analysis.printed_ink).all()  # every number fits here, so nothing is cleared
+    assert (own == ~ink.near(analysis.ink_lines, 1.0)).all()  # paper's color judged off the ink's edge
+    assert seen["extract_printed"] is not None and (seen["extract_printed"] == printed).all()  # numbers off the ink
