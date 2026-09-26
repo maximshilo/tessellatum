@@ -803,24 +803,28 @@ def best_flat_color_match(
     not by the page -- and it is the same for every page of one image at one
     preset, which is what makes the distance to it comparable.
 
-    Every subset of the right size is tried, largest first, and the largest
-    size with a subset that keeps the margin wins: a color can only be added
-    to a legend, never taken away, without the mean rising. Beyond
-    ``_MAX_SUBSETS`` of one size the search is a greedy one improved by swaps,
-    which may land above the true floor; no benchmark image comes near that.
+    Every subset of every size up to ``num_colors`` is tried, and the lowest
+    mean wins. A smaller legend can win: where the colors crowd, the only
+    legends with room for one more color may be built from colors at the
+    crowd's edges, which serve the rest worse than one from its middle does.
+    Beyond ``_MAX_SUBSETS`` of one size the search at that size is a greedy one
+    improved by swaps, which may land above the true floor; no benchmark image
+    comes near that.
     """
     flats = np.asarray(flat_colors_bgr, dtype=np.uint8).reshape(-1, 3)
     if len(flats) == 0 or num_colors < 1:
         return None
     distance = ciede2000(bgr_to_lab_exact(flats)[:, None, :], bgr_to_lab_exact(flats)[None, :, :])
     apart = distance >= min_de00
+    best = None
     for size in range(min(int(num_colors), len(flats)), 0, -1):
         if math.comb(len(flats), size) > _MAX_SUBSETS:
-            return _greedy_flat_color_match(distance, apart, size)
-        best = _best_subset(distance, apart, size)
-        if best is not None:
-            return best
-    return None
+            found = _greedy_flat_color_match(distance, apart, size)
+        else:
+            found = _best_subset(distance, apart, size)
+        if found is not None:
+            best = found if best is None else min(best, found)
+    return best
 
 
 def _best_subset(distance: np.ndarray, apart: np.ndarray, size: int) -> float | None:

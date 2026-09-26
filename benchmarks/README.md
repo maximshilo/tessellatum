@@ -444,9 +444,11 @@ How the line-art metrics are defined:
     postcard's 12, 11 of the comics' 13, all 7 of `scene.png`'s).
   - It depends only on the image and the difficulty, never on the page, so it
     is the same number for every result set and the distance to it is
-    comparable. Every set of the right size is tried, largest first; past
-    300,000 of one size the search is a greedy one improved by swaps, which no
-    benchmark image comes near.
+    comparable. Every set of up to that many colors is tried, not only the
+    largest that keeps the margin: where the colors crowd, one color from the
+    middle of a crowd can serve it better than two from its edges. Past 300,000
+    sets of one size the search at that size is a greedy one improved by swaps,
+    which no benchmark image comes near.
 
 How the printed-ink metrics are defined:
 

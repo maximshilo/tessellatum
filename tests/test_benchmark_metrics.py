@@ -724,6 +724,22 @@ def test_best_flat_color_match_is_the_closest_a_legend_of_that_many_of_the_artwo
     )
 
 
+def test_best_flat_color_match_can_be_a_smaller_legend_than_the_margin_leaves_room_for():
+    grays = _grays
+    # Three grays a step apart, and one gray on either side of them just inside the margin, the two standing apart. The
+    # only legend of two that keeps the margin is the outer pair, which leaves the middle three far off; one gray from
+    # the middle serves all five better. A floor read from the largest legend alone would sit above it.
+    flats = grays(30, 59, 60, 61, 85)
+    assert max(_gray_de00(30, gray) for gray in (59, 60, 61)) < bm.PALETTE_MIN_DE00
+    assert max(_gray_de00(85, gray) for gray in (59, 60, 61)) < bm.PALETTE_MIN_DE00
+    assert _gray_de00(30, 85) > bm.PALETTE_MIN_DE00
+    outer_pair = np.mean([min(_gray_de00(gray, 30), _gray_de00(gray, 85)) for gray in (30, 59, 60, 61, 85)])
+
+    floor = bm.best_flat_color_match(flats, num_colors=2)
+
+    assert floor == bm.best_flat_color_match(flats, num_colors=1) < outer_pair - 1.0
+
+
 def test_best_flat_color_match_greedy_fallback_matches_the_exhaustive_search(monkeypatch):
     rng = np.random.default_rng(7)
     flats = rng.integers(0, 256, size=(12, 3), dtype=np.uint8)
