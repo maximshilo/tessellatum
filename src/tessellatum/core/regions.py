@@ -311,7 +311,8 @@ def paint_over_thin_ink(
       with its own number.
 
     Ink as wide as ``max_width_px`` or wider -- an outline, a black shape --
-    stays out of every region: it is never painted.
+    stays out of every region: it is never painted, but for its sharp corners,
+    where a disk that wide does not reach either.
 
     Bare paper the thin ink encloses inside one region -- a gap between
     crossing strokes -- becomes part of it too, if its own pixels in
