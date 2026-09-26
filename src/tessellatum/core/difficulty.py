@@ -23,9 +23,9 @@ class DifficultyParams:
     """Parameters that control how granular the generated coloring page is.
 
     Attributes:
-        num_colors: how many colors k-means looks for. The page keeps at most
-            that many: colors too close to tell apart are merged (see
-            ``quantize``), so a picture whose colors crowd together keeps fewer.
+        num_colors: how many colors the palette looks for. The page keeps at
+            most that many, every two clearly apart (see ``quantize``), so a
+            picture whose colors crowd together keeps fewer.
         min_region_area_mm2: the smallest region on the printed page, in square
             millimeters; smaller regions are merged into a neighbor. Never
             below ``print_size.MIN_REGION_AREA_MM2``, the brush's footprint.

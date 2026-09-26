@@ -432,3 +432,34 @@ def test_the_ink_s_edge_is_left_out_by_at_least_a_pixel_and_the_enclosed_shapes_
     assert (seen["own"] == ~ink.near(result.analysis.ink_lines, 1.0)).all()  # colors judged off the ink's edge
     assert result.analysis.printed_ink[settled].all()
     assert (np.asarray(result.page.convert("L"))[settled] == result.analysis.ink_gray).all()
+
+
+def test_a_line_art_legend_offers_the_artwork_s_own_colors():
+    drawing, _shapes = _outlined_shapes()
+
+    analysis = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True).analysis
+
+    # Easy asks for 6 colors and the drawing has 5, so every one of them is on the legend, exactly as painted --
+    # not the mean of a fill and the blends along its edges, which is what minimizing distance lands on.
+    legend = analysis.palette_bgr[: analysis.legend_size]
+    drawn = [(255, 255, 255), (90, 150, 230), (60, 160, 60), (200, 120, 40), (180, 180, 250)]
+    assert len(legend) == len(drawn)
+    for color in legend:
+        assert np.abs(np.asarray(drawn, dtype=int) - color.astype(int)).max(axis=1).min() <= 3
+
+
+def test_only_line_art_takes_the_flat_color_palette(sample_image_bgr, monkeypatch):
+    calls = []
+    original = pipeline.quantize
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs.get("ink") is not None)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "quantize", spy)
+    pipeline.clear_cache()
+    generate(sample_image_bgr, difficulty.params_for_preset("Hard"), long_edge=200)
+    pipeline.clear_cache()
+    generate(_outlined_shapes()[0], difficulty.params_for_preset("Easy"), long_edge=400)
+
+    assert calls == [False, True]  # a photograph's colors still come from k-means; a drawing's from its fills

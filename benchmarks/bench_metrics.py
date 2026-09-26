@@ -25,6 +25,8 @@ the version being measured.
 from __future__ import annotations
 
 import importlib.util
+import itertools
+import math
 import sys
 import unicodedata
 from collections.abc import Callable
@@ -55,6 +57,10 @@ EDGE_TOLERANCE_MM = 0.5
 EDGE_THRESHOLDS = (5.0, 10.0)
 # Palette. Colors should differ from each other by a clear margin: at least PALETTE_MIN_DE00 (CIEDE2000).
 PALETTE_MIN_DE00 = 10.0
+# How many legends of one size ``best_flat_color_match`` tries before falling back to a greedy search, and how many
+# it scores at a time. 15 flat colors make at most 6,435 of one size; the fallback is for an artwork twice that rich.
+_MAX_SUBSETS = 300_000
+_SUBSET_BLOCK = 20_000
 # Line art. The artwork's ink lines are its ink colors (from the image manifest) where they are narrower than
 # INK_MAX_WIDTH_MM; wider areas in an ink color are fills. A drawn line within INK_LINE_TOLERANCE_MM of an ink
 # line's centerline runs along it.
@@ -750,20 +756,119 @@ def tube_regions(region_id_map: np.ndarray, ink: np.ndarray, max_width_px: float
     }
 
 
-def flat_color_match(flat_colors_bgr: np.ndarray, legend_bgr: np.ndarray) -> dict[str, float | None]:
-    """How closely the legend offers the artwork's flat colors.
+def flat_color_match(
+    flat_colors_bgr: np.ndarray, legend_bgr: np.ndarray, num_colors: int | None = None
+) -> dict[str, float | None]:
+    """How closely the legend offers the artwork's flat colors, and how closely it could.
 
-    Both are Kx3 uint8 sRGB colors in BGR order, compared by CIEDE2000 on
-    ``bgr_to_lab_exact``. Returns the mean (``flat_color_de00_mean``) and the
-    largest (``flat_color_de00_max``) difference between a flat color and the
-    legend color nearest to it; both None without flat colors or a legend.
+    ``flat_colors_bgr`` and ``legend_bgr`` are Kx3 uint8 sRGB colors in BGR
+    order, compared by CIEDE2000 on ``bgr_to_lab_exact``. Returns the mean
+    (``flat_color_de00_mean``) and the largest (``flat_color_de00_max``)
+    difference between a flat color and the legend color nearest to it; both
+    None without flat colors or a legend.
+
+    With ``num_colors``, the difficulty's color count, it also returns
+    ``flat_color_de00_best``: the lowest mean a legend of that many colors
+    could reach (``best_flat_color_match``). The mean on its own is not
+    comparable between presets -- a page of 6 colors cannot serve 15 -- so the
+    target is set from the distance to it.
     """
     flats = np.asarray(flat_colors_bgr, dtype=np.uint8).reshape(-1, 3)
     legend = np.asarray(legend_bgr, dtype=np.uint8).reshape(-1, 3)
+    best = best_flat_color_match(flats, num_colors) if num_colors else None
     if len(flats) == 0 or len(legend) == 0:
-        return {"flat_color_de00_mean": None, "flat_color_de00_max": None}
+        return {"flat_color_de00_mean": None, "flat_color_de00_max": None, "flat_color_de00_best": best}
     differences = ciede2000(bgr_to_lab_exact(flats)[:, None, :], bgr_to_lab_exact(legend)[None, :, :]).min(axis=1)
-    return {"flat_color_de00_mean": float(differences.mean()), "flat_color_de00_max": float(differences.max())}
+    return {
+        "flat_color_de00_mean": float(differences.mean()),
+        "flat_color_de00_max": float(differences.max()),
+        "flat_color_de00_best": best,
+    }
+
+
+def best_flat_color_match(
+    flat_colors_bgr: np.ndarray, num_colors: int, min_de00: float = PALETTE_MIN_DE00
+) -> float | None:
+    """The lowest flat colors ΔE00 a legend of ``num_colors`` colors could reach on this artwork.
+
+    The best legend is a set of the artwork's own flat colors: no other color
+    is nearer to one of them than it is to itself, and the page is painted in
+    what the artist used. It can hold at most ``num_colors`` of them, and no
+    two closer than ``min_de00``, which is what the pipeline's palette keeps
+    (see ``palette_separation``); with the artwork's colors crowded, that is
+    fewer than it asked for. The score is then the mean over every flat color
+    of the distance to the nearest one chosen.
+
+    So the number is a floor set by the difficulty and the artwork alone --
+    not by the page -- and it is the same for every page of one image at one
+    preset, which is what makes the distance to it comparable.
+
+    Every subset of every size up to ``num_colors`` is tried, and the lowest
+    mean wins. A smaller legend can win: where the colors crowd, the only
+    legends with room for one more color may be built from colors at the
+    crowd's edges, which serve the rest worse than one from its middle does.
+    Beyond ``_MAX_SUBSETS`` of one size the search at that size is a greedy one
+    improved by swaps, which may land above the true floor; no benchmark image
+    comes near that.
+    """
+    flats = np.asarray(flat_colors_bgr, dtype=np.uint8).reshape(-1, 3)
+    if len(flats) == 0 or num_colors < 1:
+        return None
+    distance = ciede2000(bgr_to_lab_exact(flats)[:, None, :], bgr_to_lab_exact(flats)[None, :, :])
+    apart = distance >= min_de00
+    best = None
+    for size in range(min(int(num_colors), len(flats)), 0, -1):
+        if math.comb(len(flats), size) > _MAX_SUBSETS:
+            found = _greedy_flat_color_match(distance, apart, size)
+        else:
+            found = _best_subset(distance, apart, size)
+        if found is not None:
+            best = found if best is None else min(best, found)
+    return best
+
+
+def _best_subset(distance: np.ndarray, apart: np.ndarray, size: int) -> float | None:
+    """The lowest mean nearest-color distance over the subsets of ``size`` colors that stand ``apart``, or None."""
+    best = None
+    for block in _subsets(len(distance), size):
+        keeps_margin = apart[block[:, :, None], block[:, None, :]] | np.eye(size, dtype=bool)
+        block = block[keeps_margin.all(axis=(1, 2))]
+        if len(block) == 0:
+            continue
+        means = distance[:, block].min(axis=2).mean(axis=0)
+        block_best = float(means.min())
+        best = block_best if best is None else min(best, block_best)
+    return best
+
+
+def _subsets(count: int, size: int):
+    """Every combination of ``size`` of ``count`` indices, in blocks of at most _SUBSET_BLOCK rows."""
+    combinations = itertools.combinations(range(count), size)
+    while block := list(itertools.islice(combinations, _SUBSET_BLOCK)):
+        yield np.asarray(block, dtype=np.intp)
+
+
+def _greedy_flat_color_match(distance: np.ndarray, apart: np.ndarray, size: int) -> float:
+    """A legend built one color at a time, then improved by swapping one color for another, for a large artwork."""
+    chosen: list[int] = []
+    while len(chosen) < size:
+        allowed = [i for i in range(len(distance)) if all(apart[i, j] for j in chosen)]
+        if not allowed:
+            break
+        chosen.append(min(allowed, key=lambda i: distance[:, chosen + [i]].min(axis=1).mean()))
+    best = float(distance[:, chosen].min(axis=1).mean())
+    improved = True
+    while improved:
+        improved = False
+        for position in range(len(chosen)):
+            rest = chosen[:position] + chosen[position + 1 :]
+            for candidate in range(len(distance)):
+                if candidate in chosen or not all(apart[candidate, j] for j in rest):
+                    continue
+                score = float(distance[:, rest + [candidate]].min(axis=1).mean())
+                if score < best - 1e-12:
+                    best, chosen, improved = score, rest + [candidate], True
+    return best
 
 
 def face_fidelity(source_bgr: np.ndarray, painted_bgr: np.ndarray, face_boxes) -> dict[str, float | None]:

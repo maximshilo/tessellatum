@@ -681,15 +681,74 @@ def test_an_outline_too_wide_to_be_a_line_on_paper_becomes_a_tube():
     assert bm.ink_line_match([one_line], ink, 2.0) == {"ink_line_precision": 1.0, "ink_line_recall": 1.0, "ink_line_f1": 1.0}
 
 
-def test_flat_color_match_is_the_difference_from_each_flat_color_to_the_nearest_legend_color():
-    def grays(*values):
-        return np.repeat(np.array(values, dtype=np.uint8)[:, None], 3, axis=1).reshape(-1, 3)
+def _grays(*values):
+    return np.repeat(np.array(values, dtype=np.uint8)[:, None], 3, axis=1).reshape(-1, 3)
 
+
+def test_flat_color_match_is_the_difference_from_each_flat_color_to_the_nearest_legend_color():
+    grays = _grays
     assert bm.flat_color_match(grays(100, 200), grays(200, 110)) == pytest.approx(
-        {"flat_color_de00_mean": _gray_de00(100, 110) / 2, "flat_color_de00_max": _gray_de00(100, 110)}, abs=1e-9
+        {
+            "flat_color_de00_mean": _gray_de00(100, 110) / 2,
+            "flat_color_de00_max": _gray_de00(100, 110),
+            "flat_color_de00_best": None,  # only with a color count to measure the floor at
+        },
+        abs=1e-9,
     )
-    nothing = {"flat_color_de00_mean": None, "flat_color_de00_max": None}
+    nothing = {"flat_color_de00_mean": None, "flat_color_de00_max": None, "flat_color_de00_best": None}
     assert bm.flat_color_match(grays(), grays(100)) == bm.flat_color_match(grays(100), grays()) == nothing
+    # With the difficulty's color count, the floor the legend is judged against comes too -- whatever the legend is.
+    with_count = bm.flat_color_match(grays(100, 200), grays(200, 110), num_colors=2)
+    assert with_count["flat_color_de00_best"] == 0.0  # two colors, and they stand apart: the legend can hold both
+    assert bm.flat_color_match(grays(100, 200), grays(0), num_colors=2)["flat_color_de00_best"] == 0.0
+
+
+def test_best_flat_color_match_is_the_closest_a_legend_of_that_many_of_the_artwork_s_own_colors_comes():
+    grays = _grays
+    # One color for two: the best is one of them, not the shade between -- a legend offers the artwork's own colors.
+    one = bm.best_flat_color_match(grays(100, 200), num_colors=1)
+    assert one == pytest.approx(_gray_de00(100, 200) / 2)
+    assert bm.best_flat_color_match(grays(100, 200), num_colors=2) == 0.0
+    # More colors than the artwork has changes nothing, and a legend of none has no floor.
+    assert bm.best_flat_color_match(grays(100, 200), num_colors=40) == 0.0
+    assert bm.best_flat_color_match(grays(), num_colors=6) is None
+    assert bm.best_flat_color_match(grays(100), num_colors=0) is None
+    # The margin holds: of three grays a step apart, no legend may carry all three, so asking for three gets two.
+    ramp = grays(100, 118, 140)
+    assert _gray_de00(100, 118) < bm.PALETTE_MIN_DE00 and _gray_de00(118, 140) < bm.PALETTE_MIN_DE00
+    assert _gray_de00(100, 140) > bm.PALETTE_MIN_DE00
+    assert bm.best_flat_color_match(ramp, num_colors=3) == bm.best_flat_color_match(ramp, num_colors=2) > 0.0
+    # And the two it carries are the ends, which leave the middle nearest: the mean is a third of its distance.
+    assert bm.best_flat_color_match(ramp, num_colors=2) == pytest.approx(
+        min(_gray_de00(118, 100), _gray_de00(118, 140)) / 3
+    )
+
+
+def test_best_flat_color_match_can_be_a_smaller_legend_than_the_margin_leaves_room_for():
+    grays = _grays
+    # Three grays a step apart, and one gray on either side of them just inside the margin, the two standing apart. The
+    # only legend of two that keeps the margin is the outer pair, which leaves the middle three far off; one gray from
+    # the middle serves all five better. A floor read from the largest legend alone would sit above it.
+    flats = grays(30, 59, 60, 61, 85)
+    assert max(_gray_de00(30, gray) for gray in (59, 60, 61)) < bm.PALETTE_MIN_DE00
+    assert max(_gray_de00(85, gray) for gray in (59, 60, 61)) < bm.PALETTE_MIN_DE00
+    assert _gray_de00(30, 85) > bm.PALETTE_MIN_DE00
+    outer_pair = np.mean([min(_gray_de00(gray, 30), _gray_de00(gray, 85)) for gray in (30, 59, 60, 61, 85)])
+
+    floor = bm.best_flat_color_match(flats, num_colors=2)
+
+    assert floor == bm.best_flat_color_match(flats, num_colors=1) < outer_pair - 1.0
+
+
+def test_best_flat_color_match_greedy_fallback_matches_the_exhaustive_search(monkeypatch):
+    rng = np.random.default_rng(7)
+    flats = rng.integers(0, 256, size=(12, 3), dtype=np.uint8)
+
+    exhaustive = bm.best_flat_color_match(flats, num_colors=5)
+    monkeypatch.setattr(bm, "_MAX_SUBSETS", 1)  # too many to try: the greedy search with swaps takes over
+    greedy = bm.best_flat_color_match(flats, num_colors=5)
+
+    assert greedy == pytest.approx(exhaustive)
 
 
 def test_face_fidelity_scores_the_painting_inside_the_face_boxes_and_counts_overlaps_once():

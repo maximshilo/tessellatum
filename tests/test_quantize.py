@@ -3,9 +3,11 @@ import numpy as np
 import pytest
 
 from tessellatum.core.color import MIN_PALETTE_DE00, pairwise_de00
+from tessellatum.core import quantize as quantize_module
 from tessellatum.core.quantize import (
     _lab_centers_to_bgr,
     _merge_close_colors,
+    _nearest_color,
     _sparse_bilateral,
     bilateral_filter,
     quantize,
@@ -185,3 +187,127 @@ def test_without_ink_the_colors_are_found_as_before(sample_image_bgr):
     no_ink = quantize(sample_image_bgr, 5, 1.0, ink=np.zeros(sample_image_bgr.shape[:2], dtype=bool), halo_px=2.0)
 
     assert (plain[0] == no_ink[0]).all() and (plain[1] == no_ink[1]).all()
+
+
+def _nearest_fill(color, fills) -> tuple[int, ...]:
+    """Which of ``fills`` a palette color is, to the rounding of 8-bit Lab (at most 3 per channel)."""
+    difference = np.abs(np.asarray(fills, dtype=int) - np.asarray(color, dtype=int)).max(axis=1)
+    assert difference.min() <= 3, f"{color} is none of the artwork's colors"
+    return tuple(int(v) for v in np.asarray(fills)[int(difference.argmin())])
+
+
+def _three_fills_and_ink(second: tuple[int, int, int] = (200, 120, 40)) -> tuple[np.ndarray, np.ndarray]:
+    """Three flat fills separated by black lines 4 px wide, every edge anti-aliased half way."""
+    image = np.zeros((60, 150, 3), dtype=np.uint8)
+    fills = [(60, 160, 60), second, (240, 240, 240)]
+    for index, fill in enumerate(fills):
+        image[:, index * 50 : (index + 1) * 50] = fill
+    line = np.zeros((60, 150), dtype=bool)
+    for cut in (50, 100):
+        line[:, cut - 2 : cut + 2] = True
+        image[:, cut - 3] = np.array(fills[cut // 50 - 1]) // 2  # half ink, half the fill on its left
+        image[:, cut + 2] = np.array(fills[cut // 50]) // 2
+    return image, line
+
+
+def test_line_art_takes_the_fills_own_colors_and_none_of_the_blends_between_them():
+    image, line = _three_fills_and_ink()
+
+    labels, palette = quantize(image, 12, 0.0, ink=line, halo_px=1.0)
+
+    # Every fill is on the legend as the artwork painted it, and nothing else is: no mean of two fills, no
+    # half-ink edge. K-means, which minimizes distance rather than picking the colors out, spends colors on those.
+    assert len(palette) == 3
+    fills = [(60, 160, 60), (200, 120, 40), (240, 240, 240)]
+    assert sorted(_nearest_fill(color, fills) for color in palette) == sorted(fills)
+    assert (labels[line] == len(palette)).all() and (labels[~line] < len(palette)).all()
+    assert labels[30, 10] != labels[30, 60] != labels[30, 120]
+
+
+def test_line_art_colors_do_not_depend_on_a_seed():
+    image, line = _three_fills_and_ink()
+
+    first = quantize(image, 12, 0.0, seed=0, ink=line, halo_px=1.0)
+    again = quantize(image, 12, 0.0, seed=17, ink=line, halo_px=1.0)
+
+    assert (first[0] == again[0]).all() and (first[1] == again[1]).all()
+
+
+def test_line_art_keeps_the_margin_by_leaving_a_color_out_rather_than_by_mixing_two():
+    # The second fill is a shade of the third, 5.8 ΔE00 from it: they cannot both be on the legend.
+    image, line = _three_fills_and_ink(second=(228, 228, 228))
+    assert pairwise_de00(np.array([(228, 228, 228), (240, 240, 240)], dtype=np.uint8)).min() < MIN_PALETTE_DE00
+
+    _labels, palette = quantize(image, 12, 0.0, ink=line, halo_px=1.0)
+
+    assert len(palette) == 2
+    assert pairwise_de00(palette).min() >= MIN_PALETTE_DE00
+    # The color kept is one of the two, not the gray between them, and it is the one the fills hold more of:
+    # both cover 50 columns, but the lighter one keeps the column its neighbor's anti-aliased edge takes away.
+    fills = [(60, 160, 60), (228, 228, 228), (240, 240, 240)]
+    assert {_nearest_fill(color, fills) for color in palette} == {(60, 160, 60), (240, 240, 240)}
+
+
+def test_line_art_colors_at_the_ends_of_the_scale_stay_apart():
+    # Black and white sit in opposite corners of the histogram. A neighborhood that wrapped round would make
+    # them one color, and the black would be gone from the legend.
+    image, line = _three_fills_and_ink(second=(0, 0, 0))
+    image[:, 100:] = 255
+
+    _labels, palette = quantize(image, 12, 0.0, ink=line, halo_px=1.0)
+
+    fills = [(0, 0, 0), (60, 160, 60), (255, 255, 255)]
+    assert sorted(_nearest_fill(color, fills) for color in palette) == fills
+
+
+def test_line_art_palette_is_at_most_the_colors_asked_for_and_sorted_by_lightness():
+    image, line = _three_fills_and_ink()
+
+    for num_colors in (1, 2, 3, 12):
+        _labels, palette = quantize(image, num_colors, 0.0, ink=line, halo_px=1.0)
+        assert len(palette) == min(num_colors, 3)
+        lightness = list(cv2.cvtColor(palette.reshape(-1, 1, 3), cv2.COLOR_BGR2LAB).reshape(-1, 3)[:, 0])
+        assert lightness == sorted(lightness)
+
+
+def test_flat_color_palette_without_a_margin_keeps_colors_the_picture_puts_close_together():
+    image, line = _three_fills_and_ink(second=(228, 228, 228))
+
+    _labels, palette = quantize(image, 12, 0.0, min_de00=0.0, ink=line, halo_px=1.0)
+
+    assert len(palette) == 3
+    assert pairwise_de00(palette).min() < MIN_PALETTE_DE00
+
+
+def test_line_art_paints_a_color_left_off_the_legend_in_the_one_nearest_it_to_the_eye():
+    # A dark gray patch in a near-black fill, beside a brown one. The gray is 6.9 ΔE00 from the black and 15.4 from
+    # the brown, so it cannot be on the legend beside the black, and it should be painted black. In OpenCV's 8-bit
+    # Lab, which stretches lightness 2.55 times, the brown is the nearer (21.4 against 28.0).
+    black, gray, brown = (23, 23, 23), (45, 45, 45), (26, 44, 72)
+    image, line = _three_fills_and_ink(second=brown)
+    image[:, :47] = black
+    image[:, 5:20] = gray
+    assert pairwise_de00(np.array([black, gray], dtype=np.uint8)).min() < MIN_PALETTE_DE00
+
+    labels, palette = quantize(image, 12, 0.0, ink=line, halo_px=1.0)
+
+    fills = [black, gray, brown, (240, 240, 240)]
+    assert {_nearest_fill(color, fills) for color in palette} == {black, brown, (240, 240, 240)}
+    assert (labels[:, 5:20] == labels[30, 30]).all()
+    assert _nearest_fill(palette[labels[30, 10]], fills) == black
+
+
+def test_nearest_color_measures_in_l_star_a_star_b_star_a_block_at_a_time(monkeypatch):
+    rng = np.random.default_rng(3)
+    samples = rng.integers(0, 256, (1000, 3)).astype(np.float32)
+    centers = rng.integers(0, 256, (7, 3)).astype(np.float64)
+    monkeypatch.setattr(quantize_module, "_NEAREST_BLOCK", 64)  # 16 blocks, the last one short
+
+    nearest = _nearest_color(samples, centers)
+
+    scale = np.array([100 / 255, 1.0, 1.0])  # 8-bit L back to L*
+    distance = (((samples[:, None, :] - centers[None, :, :]) * scale) ** 2).sum(axis=2)
+    assert nearest.dtype == np.int32
+    assert (nearest == distance.argmin(axis=1)).all()
+    # Measured in 8-bit Lab itself, a good share of these would go elsewhere.
+    assert (nearest != ((samples[:, None, :] - centers[None, :, :]) ** 2).sum(axis=2).argmin(axis=1)).mean() > 0.1

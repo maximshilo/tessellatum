@@ -236,7 +236,7 @@ and whether their features survive, and on whether OCR still reads the text:
 | ink printed recall / precision | on line art, how much of the artwork's ink lines the page prints, and how much of what it prints is the artwork's ink, each pixel within 0.5 mm (from 0.1.28); `case.json` also records `ink_print_f1` | higher |
 | tubes | regions at least half made of the artwork's ink lines | lower (0) |
 | ink in shapes < 5 mm | share of the ink lines lying in parts of regions narrower than 5 mm: ink to paint instead of print | lower (0) |
-| flat colors ΔE00 | mean CIEDE2000 from each of the artwork's flat colors to the nearest legend color; `case.json` also records the largest, as `flat_color_de00_max` | lower |
+| flat colors ΔE00 | mean CIEDE2000 from each of the artwork's flat colors to the nearest legend color; `case.json` also records the largest, as `flat_color_de00_max`, the lowest a legend of the difficulty's color count could reach, as `flat_color_de00_best`, and whether the manifest's colors are exact, as `flat_color_reference_exact` | lower |
 | ink found | share of the page the pipeline takes for the artwork's ink lines (from 0.1.27; printed from 0.1.28) | informational |
 | ink found recall / precision | on line art, how much of the artwork's ink lines the pipeline found, and how much of what it found is on them, each within 0.5 mm; `case.json` also records `ink_found_f1`, and whether the manifest's colors are exact as `ink_reference_exact` | higher |
 | stray ink | the share of the page found to be ink lines on a picture that isn't line art | lower (0) |
@@ -432,6 +432,23 @@ How the line-art metrics are defined:
   the nearest legend color (exact Lab), and averages them. At Easy the legend
   can have fewer colors than the artwork, so some flat colors have no close
   match.
+  - The number on its own is not comparable between presets, or between two
+    artworks of different richness, which is why the target is set from the
+    floor beside it. **Flat colors ΔE00 best** is the lowest mean a legend of
+    the difficulty's color count could reach on that artwork: the best set of
+    the artwork's *own* flat colors, at most that many of them and no two
+    closer than the 10 ΔE00 the palette keeps. A page cannot do better without
+    offering colors the artwork does not have, and no page can reach 0 where
+    the artwork's own colors crowd closer than the margin (of the benchmark
+    set: 13 of the bold-line girl's 15, 10 of the reaper's 14, 10 of the
+    postcard's 12, 11 of the comics' 13, all 7 of `scene.png`'s).
+  - It depends only on the image and the difficulty, never on the page, so it
+    is the same number for every result set and the distance to it is
+    comparable. Every set of up to that many colors is tried, not only the
+    largest that keeps the margin: where the colors crowd, one color from the
+    middle of a crowd can serve it better than two from its edges. Past 300,000
+    sets of one size the search at that size is a greedy one improved by swaps,
+    which no benchmark image comes near.
 
 How the printed-ink metrics are defined:
 
@@ -598,9 +615,9 @@ page of 1100 px, and **export**, a page at the image's own size (see
 | labels on text | clean drawing | 1.3 | 2.7 | 0 |
 | palette min ΔE00 | palette | 1.3 | 0.93 | ≥ 10 |
 | color pairs < 10 ΔE00 | palette | 3.2 | 3.1 | – |
-| flat colors ΔE00 | palette | 1.2 | 0.81 | – |
+| flat colors ΔE00 | palette | 1.2 | 0.81 | ≤ flat colors ΔE00 best + 2.5 on exact colors |
 
-Colors, regions, ink and text CER source only inform. The per-case tables add the
+Colors, regions, ink, text CER source and flat colors ΔE00 best only inform. The per-case tables add the
 number of targets each case misses.
 
 The printed-ink metrics' tolerances come from 48 pairs at each size, the four line-art
@@ -637,9 +654,11 @@ spell out the four jobs:
     manifest's colors are exact;
   - text still readable, with no numbers on it;
 - **resembles:** faces keep their eyes, noses and mouths;
-- **palette:** every two colors at least 10 ΔE00 apart.
+- **palette:** every two colors at least 10 ΔE00 apart, and the artwork's own
+  flat colors offered as closely as a legend of that many colors can, where the
+  manifest's colors are exact.
 
-Three of the targets need explaining:
+Four of the targets need explaining:
 
 - **Lines per boundary** carries the target on the count clear of junctions, and
   may be 1 ± 0.05 there, not exactly 1. Near a point where three regions meet, a
@@ -655,6 +674,19 @@ Three of the targets need explaining:
   1.05–1.25.
 - **Text CER page** counts from the source's, because OCR doesn't read all of the
   source either (0.04–0.26 at preview size, see the text metrics).
+- **Flat colors ΔE00** counts from the floor its own difficulty and artwork set,
+  because that floor alone runs from 0 to 7.64 over the benchmark set before a
+  page is drawn at all, and holds only where the manifest's colors are exact,
+  as the ink precision targets do. The 2.5 is the margin every page whose
+  palette can be the artwork's colors keeps today: the two digital drawings and
+  `scene.png` sit 0.34–2.42 above their floor at v0.1.29. The two scans sit
+  3.13–10.12 above theirs, and are reported rather than targeted: they miss on
+  their whole palette too (2.73–6.62 above), not only on their legend, because
+  some colors their manifest lists are hardly in the fills at all -- at Hard, no
+  pixel of the comics' fills is within 5 ΔE00 of its two blues or its red, and
+  a quarter of the postcard's is within 5 of no listed color. Their legends
+  also lose colors in the gaps between hatching strokes (T3.4 in the plan),
+  which the report still shows, and the regression check still judges.
 
 The baseline confirmed all three (T1.8): line art scores 1.007–1.017 on jaggedness
 at both sizes, a renderer drawing each boundary once scores 1.017–1.047 on the
