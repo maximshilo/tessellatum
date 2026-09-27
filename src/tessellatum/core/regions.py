@@ -10,6 +10,10 @@ import numpy as np
 from tessellatum.core import kernels, parallel
 from tessellatum.core.color import MIN_PALETTE_DE00, bgr_to_lab, ciede2000
 
+# How often line art's regions are merged and split again before they settle (see ``split_areas``). On the benchmark
+# pages they settle after one or two.
+_SETTLE_ROUNDS = 4
+
 # Regions with a smaller bounding box than this are extracted on the calling
 # thread: for them, handing off to a worker (and contending for the GIL) costs
 # more than the OpenCV work itself.
@@ -69,8 +73,8 @@ def _regions_from_labels(labels: np.ndarray, num_colors: int, min_area_px: int) 
 
     region_color, areas = kernels.label_components(labels.reshape(-1), h, w, int(num_colors), flat_ids)
     if region_color.size:
-        kernels.merge_small_regions(flat_ids, h, w, areas, int(min_area_px))
-        kernels.merge_same_color_neighbors(flat_ids, h, w, region_color, areas)
+        kernels.merge_small_regions(flat_ids, h, w, areas, int(min_area_px), True)
+        kernels.merge_same_color_neighbors(flat_ids, h, w, region_color, areas, True)
     return region_id_map, region_color
 
 
@@ -286,6 +290,515 @@ def settle_enclosed(
     return np.where(gone, -1, ids).astype(np.int32), inked
 
 
+def look_through_hatching(
+    labels: np.ndarray, num_colors: int, thin_px: float, brush_px: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """``labels`` as the region stage should see line art: through its hatching, but not through a line between two areas.
+
+    ``labels`` marks line art's ink with ``num_colors``, one past the
+    palette. The white pieces of the page -- the 4-connected runs of pixels
+    off the ink -- are what a painter sees as areas. A piece a brush
+    ``brush_px`` wide fits in is an area to paint; the rest are the gaps
+    between strokes. Each paintable piece claims the gaps and the thin ink
+    (thinner than ``thin_px``, see ``paint_over_thin_ink``) it reaches first
+    without crossing bold ink, a gap going wholly to the piece that reaches
+    most of it; what no paintable piece reaches, hatching that bold ink walls
+    in, is claimed by nobody but itself. Where two claims meet, the ink stays
+    ink: a wall, so no region can join two areas a painter sees as two, and
+    each keeps its own number. Where two pieces of different claims touch at
+    a corner, across a one-pixel diagonal line, one of the two pixels is taken
+    for ink too, and returned so that it is printed with it.
+
+    Every other thin ink pixel takes the label of the nearest pixel off the
+    ink in its claim, as if the ink weren't there. So a hatched patch is one
+    run of its gaps' colors, which the region stage makes into areas the way
+    it does on any picture -- the patch is colored from its own gaps, not
+    from whatever lies beyond its strokes. The ink is printed either way.
+
+    Returns the labels the region stage should build regions from, and an HxW
+    bool mask of the pixels taken for ink at the corners.
+    """
+    ink = labels == num_colors
+    corners = np.zeros(labels.shape, dtype=bool)
+    if not ink.any() or ink.all():
+        return labels, corners
+    bold = ink & ~_thin_part(ink, thin_px)
+    white = ~ink
+    count, piece = cv2.connectedComponents(white.view(np.uint8), connectivity=4)
+    piece = piece.astype(np.int32) - 1  # -1 on the ink
+    # Off the page is not white, so a brush fits in a piece along the page's edge only as far in as it does on paper.
+    distance = cv2.distanceTransform(np.pad(white, 1).view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)[1:-1, 1:-1]
+    paintable = np.zeros(count - 1, dtype=bool)
+    paintable[piece[white & (distance > brush_px / 2)]] = True
+    claim = _claims(piece, paintable, ~bold)
+    wall = _claim_walls(claim, ink)
+    corners = wall & white
+    passable = (claim >= 0) & ~wall & ~bold
+    through = _nearest_seed_within(np.where(white & passable, labels, -1), passable)
+    seen = ink & (through >= 0)
+    region_labels = np.where(seen, through, labels)
+    region_labels[corners] = num_colors
+    return region_labels.astype(np.int32), corners
+
+
+def _claims(piece: np.ndarray, paintable: np.ndarray, passable: np.ndarray) -> np.ndarray:
+    """Which paintable piece claims each pixel of ``passable``: the one a path through ``passable`` reaches it from first.
+
+    A piece no brush fits in goes wholly to the claim most of its pixels are
+    in. Each 8-connected run of ``passable`` that no paintable piece reaches is
+    a claim of its own, numbered after the pieces. -1 off ``passable``.
+    """
+    white = piece >= 0
+    inside = np.where(white, piece, 0)
+    seeds = np.where(white & paintable[inside], piece, -1)
+    claim = _nearest_seed_within(seeds, passable)
+    gap = white & ~paintable[inside] & (claim >= 0)
+    if gap.any():
+        stride = np.int64(paintable.size + 1)
+        pairs, counts = np.unique(piece[gap].astype(np.int64) * stride + claim[gap], return_counts=True)
+        gaps, claims = np.divmod(pairs, stride)
+        order = np.lexsort((-counts, gaps))  # per gap, the claim with the most of its pixels first (ties: the lowest)
+        gaps, claims = gaps[order], claims[order]
+        first = np.r_[True, gaps[1:] != gaps[:-1]]
+        best = np.full(paintable.size, -1, dtype=np.int64)
+        best[gaps[first]] = claims[first]
+        claim = np.where(gap, best[inside], claim).astype(np.int32)
+    unclaimed = passable & (claim < 0)
+    if unclaimed.any():
+        _count, runs = cv2.connectedComponents(unclaimed.view(np.uint8), connectivity=8)
+        claim = np.where(unclaimed, paintable.size + runs.astype(np.int32) - 1, claim).astype(np.int32)
+    return claim
+
+
+def _claim_walls(claim: np.ndarray, ink: np.ndarray) -> np.ndarray:
+    """The pixels that keep two claims apart: of every two 8-adjacent pixels of different claims, one.
+
+    The ink one if only one of them is ink, else the one of the higher claim.
+    Afterwards no two pixels of different claims touch, diagonals included.
+    """
+    h, w = claim.shape
+    padded = np.pad(claim, 1, constant_values=-1)
+    padded_ink = np.pad(ink, 1)
+    wall = np.zeros((h, w), dtype=bool)
+    claimed = claim >= 0
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == 0 and dx == 0:
+                continue
+            other = padded[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            other_ink = padded_ink[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            differ = claimed & (other >= 0) & (other != claim)
+            wall |= differ & ((ink & ~other_ink) | ((ink == other_ink) & (claim > other)))
+    return wall
+
+
+def _nearest_seed_within(seeds: np.ndarray, passable: np.ndarray) -> np.ndarray:
+    """``kernels.nearest_seed_within`` on HxW arrays."""
+    h, w = passable.shape
+    flat_seeds = np.ascontiguousarray(seeds, dtype=np.int32).reshape(-1)
+    flat_passable = np.ascontiguousarray(passable, dtype=bool).reshape(-1)
+    return kernels.nearest_seed_within(flat_seeds, flat_passable, h, w).reshape(h, w)
+
+
+def leave_pockets(region_id_map: np.ndarray, region_color: np.ndarray, printed: np.ndarray, min_width_px: float) -> np.ndarray:
+    """``region_id_map`` with the pockets no brush reaches that ink walls in left as bare paper (-1).
+
+    A brush ``min_width_px`` wide reaches the part of a region it can sweep
+    without leaving it. On line art, what it can't reach lies mostly in
+    pockets against ink no paint goes over (``printed``, in no region): the
+    tips a fill makes against a bold outline, the channels between dark
+    blobs. Such a pocket -- an 8-connected run of unreached pixels, at least
+    half of whose contacts with pixels outside it and its region are that ink
+    -- is left unpainted. The unreached corners two regions make against each
+    other, or against the page's edge, stay.
+
+    Taking pockets out can cut a region in two, or leave a bit of one too
+    small to keep: ``split_areas`` sorts that out.
+    """
+    ids = np.ascontiguousarray(region_id_map, dtype=np.int32)
+    count = int(region_color.size)
+    inside = ids >= 0
+    if count == 0 or not inside.any():
+        return ids
+    radius = min_width_px / 2
+    fits = _brush_fits(ids, count, radius)
+    if not fits.any():
+        return ids
+    to_brush = cv2.distanceTransform((~fits).view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+    # Squared distances are whole numbers, which the float32 roots only approximate: compare those, as the benchmark does.
+    unreached = inside & (np.rint(to_brush.astype(np.float64) ** 2) > radius * radius)
+    if not unreached.any():
+        return ids
+    walls = printed & ~inside
+    n, pocket = cv2.connectedComponents(unreached.view(np.uint8), connectivity=8)
+    pocket = pocket.astype(np.int32)
+    h, w = ids.shape
+    padded = np.pad(ids, 1, constant_values=-2)  # off the page: a contact, not ink
+    padded_walls = np.pad(walls, 1)
+    padded_pocket = np.pad(pocket, 1)
+    contacts = np.zeros(n, dtype=np.int64)
+    on_walls = np.zeros(n, dtype=np.int64)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == 0 and dx == 0:
+                continue
+            other = padded[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            outside_it = unreached & (padded_pocket[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w] != pocket) & (other != ids)
+            contacts += np.bincount(pocket[outside_it], minlength=n)
+            on_walls += np.bincount(pocket[outside_it & padded_walls[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]], minlength=n)
+    left = (contacts > 0) & (2 * on_walls >= contacts)
+    left[0] = False  # 0 is every reached pixel
+    return np.where(left[pocket], -1, ids).astype(np.int32)
+
+
+def split_areas(
+    region_id_map: np.ndarray,
+    region_color: np.ndarray,
+    printed: np.ndarray,
+    min_width_px: float,
+    min_area_px: int,
+    num_colors: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Line art's regions, one per area a painter sees, each area a brush fits in with a number of its own.
+
+    A region's paint goes over the thin ink in it (``printed``), so a region
+    can hold several white areas the ink or its neighbors keep apart -- the
+    sky on either side of a figure, joined through hatching, or two parts a
+    one-pixel diagonal line divides. The page numbers a region once, so each
+    white area a brush ``min_width_px`` wide fits in (a 4-connected run of the
+    region's unprinted pixels) becomes a region of its own, in the same
+    color, with the rest of the region -- the ink it paints over, the gaps no
+    brush fits in -- going to the area that reaches it first through the
+    region, a gap wholly to the one that reaches most of it. Where two meet,
+    the ink between them stays out of both, as a seam; where two white areas
+    touch at a corner, one of the two pixels is taken for ink, and returned
+    so that it is printed.
+
+    The regions are then rebuilt from their colors (``num_colors`` for none),
+    so parts a pocket cut off (see ``leave_pockets``) become regions of their
+    own, and those smaller than ``min_area_px`` merge as ``build_regions``
+    merges them -- but only into a region their white shares an edge with, so
+    that they join its area rather than become another area of it (see
+    ``_rebuilt_by_white``). A merge can still make a region two areas, when
+    the white it shares an edge with is a gap of that region rather than its
+    area: those are split again, and what is left merged again, until nothing
+    splits (at most ``_SETTLE_ROUNDS`` times). A small region left over with
+    no room for a brush in its white is no area of its own, and merges as
+    ``build_regions`` merges, through its ink too (see ``_merged_bits``). A
+    small region whose white does hold a brush but shares no edge with
+    another region's is an area the ink encloses on its own, and keeps its
+    number as those do (see ``settle_enclosed``): where its ink touches
+    another region, it gets a seam, as a thin line between two regions does
+    (see ``paint_over_thin_ink``), and where its white touches another's at a
+    corner, one of the two pixels is taken for ink. A region all of ink, or
+    alone with no room for a brush, is dropped (see ``_without_unpaintable``).
+
+    Returns the region map, the region colors and an HxW bool mask of the
+    pixels taken for ink.
+    """
+    radius = min_width_px / 2
+    ids, colors, corners = _split_all(region_id_map, region_color, printed, radius)
+    inked = printed | corners
+    for _round in range(_SETTLE_ROUNDS):
+        ids, colors, _areas = _rebuilt_by_white(_painted(ids, colors, num_colors), num_colors, min_area_px, inked)
+        # A merge through a gap of the region it joins -- white it shares an edge with, but that the region's own area
+        # doesn't -- makes that region two areas again: split, and merge what is left over, until nothing splits.
+        count = colors.size
+        ids, colors, more = _split_all(ids, colors, inked, radius)
+        corners |= more
+        inked |= more
+        if colors.size == count:
+            break
+    ids, colors = _merged_bits(ids, colors, inked, radius, min_area_px, num_colors)
+    # That merge can join two areas too: split once more, and settle without merging.
+    ids, colors, more = _split_all(ids, colors, inked, radius)
+    corners |= more
+    inked |= more
+    h, w = ids.shape
+    rebuilt = np.empty((h, w), dtype=np.int32)
+    colors, areas = kernels.label_components(_painted(ids, colors, num_colors).reshape(-1), h, w, num_colors, rebuilt.reshape(-1))
+    small = (areas > 0) & (areas < min_area_px)
+    if small.any():
+        rebuilt, more = _seams_round(rebuilt, inked, small)
+        corners |= more
+        inked |= more
+    return _without_unpaintable(rebuilt, colors, inked, min_width_px, min_area_px), colors, corners
+
+
+def _merged_bits(
+    ids: np.ndarray, colors: np.ndarray, printed: np.ndarray, radius: float, min_area_px: int, num_colors: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """The regions rebuilt, with each one smaller than ``min_area_px`` that has no area of its own merged away.
+
+    A region whose white holds no brush of ``radius`` -- a bit of hatching, or
+    of a region's edge cut off -- is not an area the painter sees on its own,
+    so it merges as ``build_regions`` merges, into the neighbor owning the
+    most of its 8-connected ring, through the ink its paint goes over too. A
+    small region whose white holds a brush is an area, and stays.
+    """
+    h, w = ids.shape
+    rebuilt = np.empty((h, w), dtype=np.int32)
+    colors, areas = kernels.label_components(_painted(ids, colors, num_colors).reshape(-1), h, w, num_colors, rebuilt.reshape(-1))
+    small = (areas > 0) & (areas < min_area_px)
+    if not small.any():
+        return rebuilt, colors
+    white = np.where(printed, -1, rebuilt).astype(np.int32)
+    roomy = np.bincount(white[_brush_fits(white, int(colors.size), radius)], minlength=colors.size) > 0
+    # An area too small for the difficulty keeps its number all the same: it counts as large enough not to merge.
+    areas = np.where(small & roomy, np.maximum(areas, min_area_px), areas).astype(areas.dtype)
+    flat = rebuilt.reshape(-1)
+    kernels.merge_small_regions(flat, h, w, areas, int(min_area_px), True)
+    kernels.merge_same_color_neighbors(flat, h, w, colors, areas, True)
+    return rebuilt, colors
+
+
+def _split_all(
+    region_id_map: np.ndarray, region_color: np.ndarray, printed: np.ndarray, radius: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Every region with more than one white area a brush of ``radius`` fits in, split into one region per area.
+
+    Returns the region map, the region colors (new regions appended) and the
+    pixels taken for ink where two areas touched at a corner.
+    """
+    ids = np.array(region_id_map, dtype=np.int32)
+    colors = np.asarray(region_color, dtype=np.int32)
+    corners = np.zeros(ids.shape, dtype=bool)
+    if not colors.size or not (ids >= 0).any():
+        return ids, colors, corners
+    next_id = int(colors.size)
+    extra_colors: list[int] = []
+    h, w = ids.shape
+    bounds, areas = kernels.region_bounds(ids.reshape(-1), h, w, int(colors.size))
+    for rid in np.flatnonzero(areas > 0).tolist():
+        x0, y0, x1, y1 = bounds[rid].tolist()
+        box = (slice(y0, y1 + 1), slice(x0, x1 + 1))
+        region = ids[box] == rid
+        claim, wall = _split_region(region, printed[box], radius)
+        if claim is None:
+            continue
+        new_ids = np.where(claim > 0, next_id + claim - 1, rid)
+        ids[box] = np.where(region & ~wall, new_ids, np.where(region, -1, ids[box]))
+        corners[box] |= wall & ~printed[box]
+        extra = int(claim.max())
+        extra_colors += [int(colors[rid])] * extra
+        next_id += extra
+    return ids, np.concatenate([colors, np.asarray(extra_colors, dtype=np.int32)]), corners
+
+
+def _painted(ids: np.ndarray, colors: np.ndarray, num_colors: int) -> np.ndarray:
+    """Each pixel's color, ``num_colors`` where it is in no region: labels to rebuild regions from."""
+    inside = ids >= 0
+    return np.ascontiguousarray(np.where(inside, colors[np.where(inside, ids, 0)], num_colors), dtype=np.int32)
+
+
+def _rebuilt_by_white(
+    labels: np.ndarray, num_colors: int, min_area_px: int, printed: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """``_regions_from_labels``, with the merges seeing only the regions' unprinted pixels, edge to edge.
+
+    A region smaller than ``min_area_px`` -- counting the ink its paint goes
+    over -- merges into the neighbor whose white owns the most of its white's
+    4-connected ring, and two regions of one color whose white shares an edge
+    become one. The ink a region's paint goes over is not where two areas meet
+    on the page, and two white areas touching at a corner are two areas, so
+    neither makes two regions neighbors. A small region whose white shares no
+    edge with another region's is left as it is. Returns the region map, the
+    region colors and each region's area.
+    """
+    h, w = labels.shape
+    ids = np.empty((h, w), dtype=np.int32)
+    region_color, areas = kernels.label_components(np.ascontiguousarray(labels).reshape(-1), h, w, num_colors, ids.reshape(-1))
+    if not region_color.size:
+        return ids, region_color, areas
+    white = np.where(printed, -1, ids).astype(np.int32)
+    merged = white.reshape(-1).copy()
+    kernels.merge_small_regions(merged, h, w, areas, int(min_area_px), False)
+    kernels.merge_same_color_neighbors(merged, h, w, region_color, areas, False)
+    # Every region goes where its white went; one with no white stays itself.
+    target = np.arange(region_color.size, dtype=np.int32)
+    has_white = white >= 0
+    target[white[has_white]] = merged.reshape(h, w)[has_white]
+    return np.where(ids >= 0, target[np.where(ids >= 0, ids, 0)], -1).astype(np.int32), region_color, areas
+
+
+def _seams_round(ids: np.ndarray, printed: np.ndarray, which: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """``ids`` with the regions ``which`` marks kept from touching any other, and the pixels taken for ink to do it.
+
+    Of two 8-adjacent pixels of different regions, one of them a region
+    ``which`` marks, one leaves its region: the ``printed`` one if only one
+    is, else the one with the higher id. Where neither is printed -- two
+    white areas touching at a corner -- the one that leaves is taken for ink,
+    and returned so that it is printed. Two white pixels sharing an edge are
+    a boundary the page draws, and are left as they are.
+    """
+    h, w = ids.shape
+    inside = ids >= 0
+    marked = inside & which[np.where(inside, ids, 0)]
+    padded = np.pad(ids, 1, constant_values=-1)
+    padded_printed = np.pad(printed, 1)
+    padded_marked = np.pad(marked, 1)
+    drop = np.zeros((h, w), dtype=bool)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == 0 and dx == 0:
+                continue
+            other = padded[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            other_printed = padded_printed[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            other_marked = padded_marked[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            meet = inside & (other >= 0) & (other != ids) & (marked | other_marked)
+            if dy != 0 and dx != 0:
+                drop |= meet & ((printed & ~other_printed) | ((printed == other_printed) & (other < ids)))
+            else:
+                drop |= meet & printed & (~other_printed | (other < ids))
+    return np.where(drop, -1, ids).astype(np.int32), drop & ~printed
+
+
+def _without_unpaintable(
+    ids: np.ndarray, region_color: np.ndarray, printed: np.ndarray, min_width_px: float, min_area_px: int
+) -> np.ndarray:
+    """``ids`` without the regions nothing can be painted in: all printed ink, or alone with no room for a brush.
+
+    A bit of ink a seam cut off from its area is printed, not painted, like
+    any ink in no region. A bit of a region no brush fits in, which no other
+    region touches for it to merge into, is left as bare paper, as the shapes
+    the ink encloses alone are (see ``settle_enclosed``). So is one smaller
+    than ``min_area_px`` whose white holds no brush, even if its ink does: a
+    lobe a pocket cut off, mostly ink, with no room for its number and
+    nothing to merge into, is part of the pocket.
+    """
+    count = int(region_color.size)
+    inside = ids >= 0
+    if count == 0 or not inside.any():
+        return ids
+    region_of = np.where(inside, ids, 0)
+    unprinted = np.bincount(ids[inside & ~printed], minlength=count) > 0
+    fits = np.bincount(ids[_brush_fits(ids, count, min_width_px / 2)], minlength=count) > 0
+    white = np.where(printed, -1, ids).astype(np.int32)
+    white_fits = np.bincount(white[_brush_fits(white, count, min_width_px / 2)], minlength=count) > 0
+    small = np.bincount(ids[inside], minlength=count) < min_area_px
+    gone = ~unprinted | ((~fits | (small & ~white_fits)) & ~_has_neighbor(ids, count))
+    if not gone.any():
+        return ids
+    return np.where(inside & gone[region_of], -1, ids).astype(np.int32)
+
+
+def _split_region(region: np.ndarray, printed: np.ndarray, radius: float) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """The areas of one region (HxW bool, in a box): each pixel's area, 0 the first, and the seams between them.
+
+    None, None when the region has at most one white area a brush of
+    ``radius`` fits in.
+    """
+    white = region & ~printed
+    count, piece = cv2.connectedComponents(white.view(np.uint8), connectivity=4)
+    if count <= 2:  # the background and at most one area
+        return None, None
+    distance = cv2.distanceTransform(np.pad(white, 1).view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)[1:-1, 1:-1]
+    piece = piece.astype(np.int32) - 1
+    paintable = np.zeros(count - 1, dtype=bool)
+    paintable[piece[white & (distance > radius)]] = True
+    if paintable.sum() <= 1:
+        return None, None
+    claim = _claims(piece, paintable, region)
+    # Numbered 0, 1, ... in the order of the paintable pieces. A part of the region no paintable piece reaches, cut off
+    # by a pocket, is claimed by nobody (-1): it keeps the region's id, and the rebuild makes it a region of its own.
+    rank = np.full(int(claim.max()) + 1, -1, dtype=np.int32)
+    rank[np.flatnonzero(paintable)] = np.arange(int(paintable.sum()), dtype=np.int32)
+    claim = np.where(claim >= 0, rank[np.maximum(claim, 0)], -1)
+    wall = _claim_walls(claim, printed) & region
+    return np.where(region, claim, 0), wall
+
+
+def merge_cramped(
+    region_id_map: np.ndarray, region_color: np.ndarray, printed: np.ndarray, cramped, min_width_px: float
+) -> np.ndarray | None:
+    """``region_id_map`` with each region in ``cramped`` merged into the neighbor its white shares the most edge with.
+
+    A region whose number found no room anywhere -- not inside it, not beside
+    it with a leader, not on its own hatching cleared (see
+    ``labels.place_labels``) -- is smaller, in the room it has, than the page
+    can number, as a region below the difficulty's smallest area is: it joins
+    the area beside it. A neighbor whose unprinted pixels share an edge with
+    its own, so that the two become one white area rather than one region of
+    two. Failing that, if its white has no room for a brush ``min_width_px``
+    wide -- it is hatching, painted across its strokes, and no area of its
+    own -- the neighbor it touches most, through its ink too. Otherwise it
+    stays. Ties go to the lowest id. A region that comes to share an edge of
+    white with one of its own color (``region_color``) becomes one with it.
+    Returns None when no region moved.
+    """
+    ids = np.asarray(region_id_map)
+    white = np.where(printed, -1, ids)
+    asked = np.zeros(int(ids.max()) + 1, dtype=bool)
+    asked[[r for r in cramped if 0 <= r < asked.size]] = True
+    regions, neighbors = _most_touched(white, asked, diagonals=False)
+    through_ink = asked.copy()
+    through_ink[regions] = False
+    if through_ink.any():
+        roomy = np.bincount(white[_brush_fits(white, asked.size, min_width_px / 2)], minlength=asked.size) > 0
+        through_ink &= ~roomy
+        if through_ink.any():
+            more_regions, more_neighbors = _most_touched(ids, through_ink, diagonals=True)
+            regions = np.concatenate([regions, more_regions])
+            neighbors = np.concatenate([neighbors, more_neighbors])
+    if not regions.size:
+        return None
+    # A region may join one that joins another in turn; of two that would join each other, the first asked goes.
+    target = np.arange(asked.size, dtype=np.int64)
+
+    def root(r: int) -> int:
+        while target[r] != r:
+            r = int(target[r])
+        return r
+
+    for region, neighbor in zip(regions.tolist(), neighbors.tolist()):
+        joined = root(neighbor)
+        if joined != region:
+            target[region] = joined
+    for region in regions.tolist():
+        target[region] = root(region)
+    if np.array_equal(target, np.arange(asked.size)):
+        return None
+    inside = ids >= 0
+    merged = np.where(inside, target[np.where(inside, ids, 0)], -1).astype(np.int32)
+    h, w = merged.shape
+    white = np.where(printed, -1, merged).astype(np.int32)
+    joined = white.reshape(-1).copy()
+    colors = np.asarray(region_color, dtype=np.int32)
+    areas = np.bincount(merged[inside], minlength=colors.size).astype(np.int64)
+    kernels.merge_same_color_neighbors(joined, h, w, colors, areas, False)
+    same = np.arange(colors.size, dtype=np.int32)  # every region goes where its white went
+    has_white = white >= 0
+    same[white[has_white]] = joined.reshape(h, w)[has_white]
+    return np.where(inside, same[np.where(inside, merged, 0)], -1).astype(np.int32)
+
+
+def _most_touched(ids: np.ndarray, asked: np.ndarray, diagonals: bool) -> tuple[np.ndarray, np.ndarray]:
+    """For each region ``asked`` about that touches another in ``ids``, the one it touches along the most pixel pairs.
+
+    Pixels touch across an edge, and across a corner too with ``diagonals``.
+    Ties go to the lowest id. Returns the regions, in id order, and their
+    neighbors.
+    """
+    shifts = [(ids[:, :-1], ids[:, 1:]), (ids[:-1, :], ids[1:, :])]
+    if diagonals:
+        shifts += [(ids[:-1, :-1], ids[1:, 1:]), (ids[:-1, 1:], ids[1:, :-1])]
+    first = np.concatenate([a.ravel() for a, _b in shifts]).astype(np.int64)
+    second = np.concatenate([b.ravel() for _a, b in shifts]).astype(np.int64)
+    meet = (first >= 0) & (second >= 0) & (first != second)
+    mine = np.concatenate([first[meet], second[meet]])
+    theirs = np.concatenate([second[meet], first[meet]])
+    keep = asked[mine]
+    if not keep.any():
+        return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64)
+    stride = np.int64(asked.size)
+    pairs, counts = np.unique(mine[keep] * stride + theirs[keep], return_counts=True)
+    regions, neighbors = np.divmod(pairs, stride)
+    order = np.lexsort((neighbors, -counts, regions))  # per region, the most pairs first, then the lowest id
+    regions, neighbors = regions[order], neighbors[order]
+    first_of_each = np.r_[True, regions[1:] != regions[:-1]]
+    return regions[first_of_each], neighbors[first_of_each]
+
+
 def paint_over_thin_ink(
     region_id_map: np.ndarray,
     region_color: np.ndarray,
@@ -343,24 +856,29 @@ def paint_over_thin_ink(
     return _join_enclosed_paper(painted, region_color, printed, image_bgr, palette_bgr, own)
 
 
-def detail_ink(region_id_map: np.ndarray, printed: np.ndarray, reach_px: float) -> np.ndarray:
-    """HxW bool: the printed ink inside one region with nothing but that region within ``reach_px`` of it.
+def detail_ink(region_id_map: np.ndarray, printed: np.ndarray, reach_px: float, apart_px: float) -> np.ndarray:
+    """HxW bool: the printed ink inside a region that is neither part of a line nor beside one.
 
     That is ink a region's paint goes over whole (see ``paint_over_thin_ink``):
-    hatching, shading. With ``reach_px`` half the thin ink's width, it leaves
-    out the halves of the lines between two regions, and the ink round bare
-    paper or beside bold ink. It is what a number may clear behind it (see
-    ``labels.place_labels``).
+    hatching, shading. A line between two regions is shared down its middle
+    with a seam in no region, so with ``reach_px`` half the thin ink's width,
+    leaving out the ink with anything in no region within ``reach_px`` leaves
+    out the halves of those lines, and the ink round bare paper or beside
+    bold ink. Hatching runs on across a change of color inside a hatched
+    patch, where the two regions meet under the strokes with no line between
+    them: the ink within ``apart_px`` of another region is left out too, so
+    that what stays printed there is the line. It is what a number may clear
+    behind it (see ``labels.place_labels``).
     """
     ids = np.asarray(region_id_map)
     candidates = printed & (ids >= 0)
     if not candidates.any():
         return candidates
-    values = (ids + 1).astype(np.float32)  # ink and bare paper in no region (-1) become 0, another value
-    disk = _disk(reach_px)
-    most = cv2.dilate(values, disk)  # off the page is nothing, not another region
-    least = cv2.erode(values, disk)
-    return candidates & (most == least)
+    near_nothing = cv2.dilate((ids < 0).view(np.uint8), _disk(reach_px)).view(bool)  # off the page is not in no region
+    values = (ids + 1).astype(np.float32)
+    disk = _disk(apart_px)
+    alone = cv2.dilate(values, disk) == cv2.erode(values, disk)  # off the page is nothing, not another region
+    return candidates & ~near_nothing & alone
 
 
 def _thin_part(mask: np.ndarray, width_px: float) -> np.ndarray:

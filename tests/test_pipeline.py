@@ -516,9 +516,9 @@ def test_the_paint_goes_over_ink_thinner_than_thin_ink_mm_and_the_numbers_keep_o
         seen["paint"] = (printed.copy(), max_width_px, own)
         return real_paint(ids, colors, printed, max_width_px, image, palette, own)
 
-    def detail_spy(ids, printed, reach_px):
-        seen["reach_px"] = reach_px
-        return real_detail(ids, printed, reach_px)
+    def detail_spy(ids, printed, reach_px, apart_px):
+        seen["reach_px"], seen["apart_px"] = reach_px, apart_px
+        return real_detail(ids, printed, reach_px, apart_px)
 
     def extract_spy(ids, colors, min_contour_area=1.0, printed=None):
         seen["extract_printed"] = printed
@@ -532,6 +532,7 @@ def test_the_paint_goes_over_ink_thinner_than_thin_ink_mm_and_the_numbers_keep_o
     thin_px = print_size.print_scale((600, 800)).mm_to_px(ink.THIN_INK_MM)
     printed, width, own = seen["paint"]
     assert width == thin_px and seen["reach_px"] == thin_px / 2  # detail ink: none of a line's halves
+    assert seen["apart_px"] == render.PageStyle().line_width_px((600, 800))  # nor where two regions meet unlined
     assert (printed == analysis.printed_ink).all()  # every number fits here, so nothing is cleared
     assert (own == ~ink.near(analysis.ink_lines, 1.0)).all()  # paper's color judged off the ink's edge
     assert seen["extract_printed"] is not None and (seen["extract_printed"] == printed).all()  # numbers off the ink

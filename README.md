@@ -111,7 +111,13 @@ ink:
   margin leaves off the legend is painted in the color nearest it in L\*a\*b\*,
   the one it looks closest to;
 - the regions are the areas the ink encloses; a boundary between two fills
-  that no ink divides is drawn as on any page;
+  that no ink divides is drawn as on any page. Hatching encloses nothing: the
+  white areas a 3 mm brush fits in are what a painter sees as areas, and the
+  regions are built through every thin stroke but those that keep two such
+  areas apart, so a hatched patch is one run of its own gaps' colors — the
+  policeman's hatched coat is painted blue, not the sky's gray around it.
+  Every white area a brush fits in is a region of its own, with its own
+  number;
 - a brush cannot keep off ink thinner than it, so the paint goes over ink
   thinner than 1.5 mm: a hatching or shading stroke inside one area is
   painted over along with the gaps around it, and a fine line between two
@@ -124,11 +130,14 @@ ink:
   it; one too small for the brush is left as bare paper — unless it is a gap
   between thin strokes in the color of the area round it, which is painted
   with it — and a small patch in the ink's own color, edged mostly by the ink,
-  is printed with it.
-
-A densely hatched scan is still drawn as a patchwork: the gaps between its
-strokes take the colors of the fills nearest them rather than their own, so a
-hatched coat can come out the color of the sky behind it.
+  is printed with it;
+- what a brush still can't reach, in pockets walled mostly by ink it may not
+  go over — the tips a fill makes against a bold outline, the channels
+  between dark blobs of a scan — is left as bare paper, outlined like any
+  other area: too narrow to paint;
+- a region whose number finds no room anywhere, not even on its own hatching
+  cleared, joins the area beside it, as a region below the difficulty's
+  smallest area does.
 
 ### Performance
 

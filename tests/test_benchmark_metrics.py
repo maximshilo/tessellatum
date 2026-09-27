@@ -1138,5 +1138,10 @@ def test_a_bold_outline_that_prints_as_a_line_is_printed_and_is_no_tube():
         "ink_print_recall": 1.0,
         "ink_print_f1": 1.0,
     }
+    # The fill's four corners inside the square outline are pockets no round brush reaches, left as paper (Q22), each
+    # outlined by a short line beside the ink rather than down its middle.
+    paper = (analysis.region_id_map < 0) & ~analysis.printed_ink
+    corners = [paper[108:110, 158:160], paper[108:110, 640:642], paper[490:492, 158:160], paper[490:492, 640:642]]
+    assert paper.sum() == sum(corner.sum() for corner in corners) == 12
     line_match = bm.ink_line_match(analysis.strokes, ink, scale.mm_to_px(0.5), analysis.printed_ink)
-    assert line_match["ink_line_f1"] == pytest.approx(1.0)
+    assert line_match["ink_line_recall"] == 1.0 and line_match["ink_line_f1"] > 0.99

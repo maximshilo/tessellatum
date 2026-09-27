@@ -519,11 +519,23 @@ def test_detail_ink_is_the_ink_inside_one_region_away_from_everything_else():
     printed[8:12, 17] = True  # a stroke of region 0 beside the seam
     printed[:, 18:21] = True  # the line between the two regions: its halves and the seam
 
-    detail = regions_module.detail_ink(ids, printed, 3.0)
+    detail = regions_module.detail_ink(ids, printed, 3.0, 1.0)
 
     assert detail[8:12, 5].all()
     assert not detail[:, 16:22].any()  # neither the stroke beside the seam nor the line's halves
     assert not detail[~printed].any()
+
+
+def test_hatching_across_a_change_of_color_is_detail_ink_but_for_a_line_s_width_of_it():
+    ids = np.zeros((20, 40), dtype=np.int32)
+    ids[:, 20:] = 1  # two regions meeting under the hatching, with no line or seam between them
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[8:10, 10:30] = True  # a stroke running on across the change of color
+
+    detail = regions_module.detail_ink(ids, printed, 3.0, 2.0)
+
+    assert detail[8:10, 10:18].all() and detail[8:10, 22:30].all()
+    assert not detail[8:10, 18:22].any()  # the ink within 2 px of the other region stays: it is the line there
 
 
 def test_a_thin_line_running_out_across_bare_paper_is_painted_only_near_its_region():

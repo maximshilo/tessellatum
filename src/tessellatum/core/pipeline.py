@@ -24,8 +24,12 @@ from tessellatum.core.regions import (
     detail_ink,
     extract_regions,
     join_ink,
+    leave_pockets,
+    look_through_hatching,
+    merge_cramped,
     paint_over_thin_ink,
     settle_enclosed,
+    split_areas,
 )
 from tessellatum.core.render import Label, PageStyle, render_page
 
@@ -64,9 +68,12 @@ class PageAnalysis:
     from the regions.
 
     On line art, the pixels in no region (-1) are the bold printed ink, the
-    seam down the middle of a thin line between two regions, and the bits of
-    bare paper the ink encloses that are too small to paint. The thin ink
-    otherwise belongs to the regions whose paint goes over it (see
+    seam down the middle of a thin line between two regions (or between two
+    white areas of one color, kept apart), the bits of bare paper the ink
+    encloses that are too small to paint, and the pockets no brush reaches
+    against ink it may not go over, left as paper (see
+    ``regions.leave_pockets``). The thin ink otherwise belongs to the regions
+    whose paint goes over it (see ``regions.look_through_hatching`` and
     ``regions.paint_over_thin_ink``); it is printed all the same.
     """
 
@@ -295,17 +302,23 @@ def generate(
     check_cancelled()
     min_area_px, min_width_px = _paintable_limits(params, (w, h))
     ink_gray = 0
+    region_labels = labels
+    printed_ink = labels >= len(palette_bgr)  # the ink quantize gave no color: all False unless the picture is line art
     if ink_mask is not None:
-        ink_gray = ink.ink_gray(resized, labels >= len(palette_bgr))
+        ink_gray = ink.ink_gray(resized, printed_ink)
         off_edge = ~ink.near(ink_mask, halo_px)  # a fill's own colors, away from the ink's anti-aliased edge
         labels = join_ink(labels, len(palette_bgr), resized, (ink_gray,) * 3, min_area_px, off_edge)  # a new map
+        # The regions are built through hatching, a hatched patch one run of its gaps' colors, but never through a
+        # line between two areas a painter sees as two.
+        thin_px = print_scale((w, h)).mm_to_px(ink.THIN_INK_MM)
+        region_labels, corners = look_through_hatching(labels, len(palette_bgr), thin_px, min_width_px)
+        printed_ink = (labels >= len(palette_bgr)) | corners
     # The palette can be shorter than the difficulty asked for: colors too
     # close to tell apart are merged (see ``quantize``). Passing the count the
     # difficulty asked for gives the same regions -- the labeling only needs an
     # upper bound -- but not the same meaning, and it sizes its arrays for
     # colors that do not exist.
-    region_id_map, region_color = build_regions(labels, len(palette_bgr), min_area_px, min_width_px)
-    printed_ink = labels >= len(palette_bgr)  # the ink quantize gave no color: all False unless the picture is line art
+    region_id_map, region_color = build_regions(region_labels, len(palette_bgr), min_area_px, min_width_px)
     clearable = None
     if ink_mask is not None:
         region_id_map, inked = settle_enclosed(
@@ -313,31 +326,53 @@ def generate(
         )
         printed_ink |= inked
         # A brush goes over thin ink, which the regions beside it share; a number on hatching may clear it.
-        thin_px = print_scale((w, h)).mm_to_px(ink.THIN_INK_MM)
         region_id_map = paint_over_thin_ink(
             region_id_map, region_color, printed_ink, thin_px, resized, palette_bgr, off_edge
         )
-        clearable = detail_ink(region_id_map, printed_ink, thin_px / 2)
+        # What a brush still can't reach against ink it may not cross is left unpainted, and every white area a brush
+        # fits in is a region of its own, with its own number.
+        region_id_map = leave_pockets(region_id_map, region_color, printed_ink, min_width_px)
+        region_id_map, region_color, corners = split_areas(
+            region_id_map, region_color, printed_ink, min_width_px, min_area_px, len(palette_bgr)
+        )
+        printed_ink |= corners
+        # A number may clear hatching, but no line: not half of one between two areas, nor the ink left where two
+        # regions meet under the strokes, a line's width of it.
+        clearable = detail_ink(region_id_map, printed_ink, thin_px / 2, style.line_width_px((w, h)))
     report("regions")
 
+    def numbered(region_id_map: np.ndarray) -> tuple[list[Region], list[int], dict[int, int]]:
+        regions = extract_regions(region_id_map, region_color, printed=printed_ink if ink_mask is not None else None)
+        # Quantizing to more colors than the image actually has can leave some
+        # k-means clusters with no (or a merged-away) region. Drop those from the
+        # legend and renumber the rest contiguously so "1..N" always matches what
+        # is actually drawn on the page.
+        used_color_indices = sorted({r.color_index for r in regions})
+        remap = {old: new for new, old in enumerate(used_color_indices)}
+        for region in regions:
+            region.color_index = remap[region.color_index]
+        return regions, used_color_indices, remap
+
     check_cancelled()
-    regions = extract_regions(region_id_map, region_color, printed=printed_ink if ink_mask is not None else None)
+    regions, used_color_indices, remap = numbered(region_id_map)
     report("contours")
 
     check_cancelled()
-    # Quantizing to more colors than the image actually has can leave some
-    # k-means clusters with no (or a merged-away) region. Drop those from the
-    # legend and renumber the rest contiguously so "1..N" always matches what
-    # is actually drawn on the page.
-    used_color_indices = sorted({r.color_index for r in regions})
-    remap = {old: new for new, old in enumerate(used_color_indices)}
-    for region in regions:
-        region.color_index = remap[region.color_index]
-    used_palette_bgr = palette_bgr[used_color_indices]
-
     rendered = render_page((w, h), regions, region_id_map, style, ink=printed_ink, ink_gray=ink_gray, clearable=clearable)
+    cramped = sorted({label.region_id for label in rendered.labels if label.cramped}) if ink_mask is not None else []
+    merged = merge_cramped(region_id_map, region_color, printed_ink, cramped, min_width_px) if cramped else None
+    if merged is not None:
+        # On line art, a region whose number found no room anywhere joins the area beside it, and the page is drawn
+        # again. Every other picture is drawn once, as it always was.
+        region_id_map = merged
+        clearable = detail_ink(region_id_map, printed_ink, thin_px / 2, style.line_width_px((w, h)))
+        regions, used_color_indices, remap = numbered(region_id_map)
+        rendered = render_page(
+            (w, h), regions, region_id_map, style, ink=printed_ink, ink_gray=ink_gray, clearable=clearable
+        )
     if rendered.printed_ink is not None:
         printed_ink = rendered.printed_ink  # less the hatching cleared behind numbers
+    used_palette_bgr = palette_bgr[used_color_indices]
     legend = render_legend(used_palette_bgr, width=w)
     report("render")
 
