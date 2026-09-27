@@ -1,3 +1,6 @@
+from pathlib import Path
+
+import cv2
 import numpy as np
 import pytest
 
@@ -536,3 +539,95 @@ def test_the_paint_goes_over_ink_thinner_than_thin_ink_mm_and_the_numbers_keep_o
     assert (printed == analysis.printed_ink).all()  # every number fits here, so nothing is cleared
     assert (own == ~ink.near(analysis.ink_lines, 1.0)).all()  # paper's color judged off the ink's edge
     assert seen["extract_printed"] is not None and (seen["extract_printed"] == printed).all()  # numbers off the ink
+
+
+# --- T3.4b: hatched patches, white areas, numbers with no room -------------------------------------------------------
+
+
+SAMPLE_IMAGES = Path(__file__).resolve().parent / "sample_images"
+
+
+def _white_areas_per_region(analysis) -> np.ndarray:
+    """For each region, how many white areas a brush fits in it holds: 4-connected runs of its unprinted pixels."""
+    ids, printed = analysis.region_id_map, analysis.printed_ink
+    radius = analysis.min_paintable_width_px / 2
+    counts = np.zeros(int(ids.max()) + 1, dtype=np.int64)
+    for rid in np.unique(ids[ids >= 0]).tolist():
+        ys, xs = np.nonzero(ids == rid)
+        box = (slice(ys.min(), ys.max() + 1), slice(xs.min(), xs.max() + 1))
+        white = ((ids[box] == rid) & ~printed[box]).astype(np.uint8)
+        _count, parts = cv2.connectedComponents(white, connectivity=4)
+        distance = cv2.distanceTransform(np.pad(white, 1), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)[1:-1, 1:-1]
+        counts[rid] = len(np.unique(parts[(distance > radius) & (white > 0)]))
+    return counts
+
+
+@pytest.mark.parametrize("preset, long_edge", [("Max", 1100), ("Hard", 2400)])
+def test_a_densely_hatched_scan_numbers_every_white_area_and_no_number_sits_on_a_line(preset, long_edge):
+    image = pipeline.load_image_bgr(SAMPLE_IMAGES / "m-cartoon-complex.jpg")
+    params = difficulty.finest_params() if preset == "Max" else difficulty.params_for_preset(preset)
+
+    analysis = generate(image, params, long_edge=long_edge, collect_analysis=True).analysis
+
+    assert analysis.line_art.is_line_art
+    assert (_white_areas_per_region(analysis) <= 1).all()  # every white area a brush fits in has a number of its own
+    numbered = {label.region_id for label in analysis.labels}
+    assert numbered == set(np.unique(analysis.region_id_map[analysis.region_id_map >= 0]).tolist())
+    for label in analysis.labels:  # none written where it found no room: every one clear of lines and ink
+        x0, y0, x1, y1 = label.box
+        box = (slice(max(0, int(np.floor(y0))), int(np.ceil(y1))), slice(max(0, int(np.floor(x0))), int(np.ceil(x1))))
+        assert not label.cramped and (analysis.outlines[box] == 255).all()
+
+
+def test_a_hatched_patch_is_painted_in_its_own_gaps_color_not_the_color_beyond_its_strokes():
+    sky, orange = (230, 200, 160), (60, 140, 230)
+    image = np.full((600, 800, 3), sky, dtype=np.uint8)
+    image[150:450, 200:600] = orange
+    for x in range(200, 600, 6):
+        image[150:450, x : x + 2] = 0  # strokes 2 px wide, 4 px apart, open at both ends to the sky
+
+    analysis = generate(image, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True).analysis
+
+    assert analysis.line_art.is_line_art
+    gaps = analysis.region_id_map[200:400, 203:596:6]  # the middle of every gap, well inside the patch
+    assert len(np.unique(gaps)) == 1  # one area, strokes and all
+    painted = analysis.palette_bgr[analysis.region_color[gaps[0, 0]]].astype(int)
+    assert np.abs(painted - orange).sum() < np.abs(painted - sky).sum()
+
+
+def test_a_one_pixel_diagonal_line_keeps_the_two_areas_it_divides_apart_and_is_printed_whole():
+    drawing, _shapes = _outlined_shapes()
+    y0, x0 = 44, 44  # inside the first square's outline
+    steps = np.arange(242)
+    drawing[y0 + steps, x0 + steps] = 0  # a line one pixel wide, corner to corner
+
+    analysis = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True).analysis
+
+    ids, printed = analysis.region_id_map, analysis.printed_ink
+    below, above = ids[y0 + 180, x0 + 40], ids[y0 + 40, x0 + 180]
+    assert below >= 0 and above >= 0 and below != above  # two areas, two regions ...
+    assert {below, above} <= {label.region_id for label in analysis.labels}  # ... each with its number
+    along = np.zeros(ids.shape, dtype=bool)
+    middle = steps[20:-20]  # its ends make tips against the outline no brush reaches, left as paper (Q22)
+    along[y0 + middle, x0 + middle] = True
+    along = cv2.dilate(along.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
+    assert not (along & (ids < 0) & ~printed).any()  # what keeps them apart is printed, not left as a speck of paper
+
+
+def test_the_pixels_splitting_takes_for_ink_are_printed(monkeypatch):
+    drawing, _shapes = _outlined_shapes()
+    real_split = pipeline.split_areas
+    taken = {}
+
+    def split_spy(ids, colors, printed, min_width_px, min_area_px, num_colors):
+        split, split_colors, corners = real_split(ids, colors, printed, min_width_px, min_area_px, num_colors)
+        spare = np.argwhere((split < 0) & ~printed & ~corners)  # a pixel of bare paper, to hand back as a corner
+        taken["at"] = tuple(spare[0])
+        corners = corners.copy()
+        corners[taken["at"]] = True
+        return split, split_colors, corners
+
+    monkeypatch.setattr(pipeline, "split_areas", split_spy)
+    analysis = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True).analysis
+
+    assert analysis.printed_ink[taken["at"]]

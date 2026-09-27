@@ -682,7 +682,15 @@ def _seams_round(ids: np.ndarray, printed: np.ndarray, which: np.ndarray) -> tup
             other_marked = padded_marked[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
             meet = inside & (other >= 0) & (other != ids) & (marked | other_marked)
             if dy != 0 and dx != 0:
-                drop |= meet & ((printed & ~other_printed) | ((printed == other_printed) & (other < ids)))
+                # Two white pixels across a corner are a contact of their own only where neither pixel beside them joins
+                # the two regions edge to edge: along a drawn boundary every pixel has the other region at its corners.
+                beside = [(padded[1 + dy : 1 + dy + h, 1 : 1 + w], padded_printed[1 + dy : 1 + dy + h, 1 : 1 + w]),
+                          (padded[1 : 1 + h, 1 + dx : 1 + dx + w], padded_printed[1 : 1 + h, 1 + dx : 1 + dx + w])]
+                edge_to_edge = np.zeros((h, w), dtype=bool)
+                for side, side_printed in beside:
+                    edge_to_edge |= ~side_printed & ((side == ids) | (side == other))
+                white_corner = ~printed & ~other_printed & ~edge_to_edge & (other < ids)
+                drop |= meet & ((printed & ~other_printed) | (printed & other_printed & (other < ids)) | white_corner)
             else:
                 drop |= meet & printed & (~other_printed | (other < ids))
     return np.where(drop, -1, ids).astype(np.int32), drop & ~printed

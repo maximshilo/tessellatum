@@ -136,8 +136,13 @@ ink:
   between dark blobs of a scan — is left as bare paper, outlined like any
   other area: too narrow to paint;
 - a region whose number finds no room anywhere, not even on its own hatching
-  cleared, joins the area beside it, as a region below the difficulty's
-  smallest area does.
+  cleared, joins the area its white shares an edge with, as a region below the
+  difficulty's smallest area does — or, if it is hatching with no room for a
+  brush in its white, the region it touches most through its strokes.
+
+Hatching drawn finer than the ink's anti-aliased edge — gaps under about
+0.5 mm between strokes — has no pixels of its fill's own color to go by: such
+a patch takes its color from the fill nearest it beyond its strokes.
 
 ### Performance
 
