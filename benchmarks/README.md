@@ -307,6 +307,14 @@ How the line metrics are defined:
     because outlines don't trace holes.
   - Where a region is only 1–2 px wide, the lines on its two sides are within
     reach of each other, so even one line per boundary scores 2 or more there.
+  - Line art's printed ink counts as in no region, as for tubes and ink in
+    shapes: the page prints it rather than drawing it, and draws no line along
+    it. From 0.1.31 two regions can meet under a stroke, where a hatched patch
+    changes color, and a boundary crossing a stroke is drawn as two lines
+    ending at it: read so, the ink ends the boundary there, as a junction does.
+    On v0.1.30's line art, where no two regions ever met at printed ink, every
+    count comes out the same either way; only `clear_boundary_fraction` falls,
+    by 0.0001–0.03.
 - **Lines per boundary (clear)** is the same count over the boundary more than
   2.5 px from a junction. Within that reach the count cannot tell one
   boundary's line from the lines of the boundaries that end at the junction, so

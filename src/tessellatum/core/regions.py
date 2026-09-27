@@ -500,18 +500,18 @@ def split_areas(
     ids, colors, corners = _split_all(region_id_map, region_color, printed, radius)
     inked = printed | corners
     for _round in range(_SETTLE_ROUNDS):
-        ids, colors, _areas = _rebuilt_by_white(_painted(ids, colors, num_colors), num_colors, min_area_px, inked)
+        ids, colors, grown = _rebuilt_by_white(_painted(ids, colors, num_colors), num_colors, min_area_px, inked)
         # A merge through a gap of the region it joins -- white it shares an edge with, but that the region's own area
         # doesn't -- makes that region two areas again: split, and merge what is left over, until nothing splits.
         count = colors.size
-        ids, colors, more = _split_all(ids, colors, inked, radius)
+        ids, colors, more = _split_all(ids, colors, inked, radius, grown)
         corners |= more
         inked |= more
         if colors.size == count:
             break
-    ids, colors = _merged_bits(ids, colors, inked, radius, min_area_px, num_colors)
+    ids, colors, grown = _merged_bits(ids, colors, inked, radius, min_area_px, num_colors)
     # That merge can join two areas too: split once more, and settle without merging.
-    ids, colors, more = _split_all(ids, colors, inked, radius)
+    ids, colors, more = _split_all(ids, colors, inked, radius, grown)
     corners |= more
     inked |= more
     h, w = ids.shape
@@ -527,36 +527,39 @@ def split_areas(
 
 def _merged_bits(
     ids: np.ndarray, colors: np.ndarray, printed: np.ndarray, radius: float, min_area_px: int, num_colors: int
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """The regions rebuilt, with each one smaller than ``min_area_px`` that has no area of its own merged away.
 
     A region whose white holds no brush of ``radius`` -- a bit of hatching, or
     of a region's edge cut off -- is not an area the painter sees on its own,
     so it merges as ``build_regions`` merges, into the neighbor owning the
     most of its 8-connected ring, through the ink its paint goes over too. A
-    small region whose white holds a brush is an area, and stays.
+    small region whose white holds a brush is an area, and stays. Returns the
+    region map, the region colors, and which regions grew.
     """
     h, w = ids.shape
     rebuilt = np.empty((h, w), dtype=np.int32)
     colors, areas = kernels.label_components(_painted(ids, colors, num_colors).reshape(-1), h, w, num_colors, rebuilt.reshape(-1))
     small = (areas > 0) & (areas < min_area_px)
     if not small.any():
-        return rebuilt, colors
-    white = np.where(printed, -1, rebuilt).astype(np.int32)
-    roomy = np.bincount(white[_brush_fits(white, int(colors.size), radius)], minlength=colors.size) > 0
+        return rebuilt, colors, np.zeros(colors.size, dtype=bool)
+    roomy = _room_for_a_brush(rebuilt, ~printed, small, radius)
     # An area too small for the difficulty keeps its number all the same: it counts as large enough not to merge.
     areas = np.where(small & roomy, np.maximum(areas, min_area_px), areas).astype(areas.dtype)
+    before = areas.copy()
     flat = rebuilt.reshape(-1)
     kernels.merge_small_regions(flat, h, w, areas, int(min_area_px), True)
     kernels.merge_same_color_neighbors(flat, h, w, colors, areas, True)
-    return rebuilt, colors
+    return rebuilt, colors, areas > before
 
 
 def _split_all(
-    region_id_map: np.ndarray, region_color: np.ndarray, printed: np.ndarray, radius: float
+    region_id_map: np.ndarray, region_color: np.ndarray, printed: np.ndarray, radius: float, only: np.ndarray | None = None
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Every region with more than one white area a brush of ``radius`` fits in, split into one region per area.
 
+    ``only`` (a bool per region), when given, says which regions can have
+    gained a second area -- those a merge grew -- and no other is looked at.
     Returns the region map, the region colors (new regions appended) and the
     pixels taken for ink where two areas touched at a corner.
     """
@@ -569,7 +572,20 @@ def _split_all(
     extra_colors: list[int] = []
     h, w = ids.shape
     bounds, areas = kernels.region_bounds(ids.reshape(-1), h, w, int(colors.size))
-    for rid in np.flatnonzero(areas > 0).tolist():
+    if only is not None:
+        candidates = np.zeros(colors.size, dtype=bool)
+        candidates[: len(only)] = only
+    else:
+        # Where a brush fits in a region's white lies at least its radius from anything else, so two white areas
+        # never share such a pixel, nor touch through two: only a region whose such pixels fall in two runs or more
+        # can split.
+        white = np.where(printed, -1, ids).astype(np.int32)
+        fits = _brush_fits(white, int(colors.size), radius)
+        count, runs = cv2.connectedComponents(fits.view(np.uint8), connectivity=8)
+        run_region = np.full(count, -1, dtype=np.int64)
+        run_region[runs[fits]] = white[fits]
+        candidates = np.bincount(run_region[1:][run_region[1:] >= 0], minlength=colors.size) >= 2
+    for rid in np.flatnonzero((areas > 0) & candidates).tolist():
         x0, y0, x1, y1 = bounds[rid].tolist()
         box = (slice(y0, y1 + 1), slice(x0, x1 + 1))
         region = ids[box] == rid
@@ -603,13 +619,13 @@ def _rebuilt_by_white(
     on the page, and two white areas touching at a corner are two areas, so
     neither makes two regions neighbors. A small region whose white shares no
     edge with another region's is left as it is. Returns the region map, the
-    region colors and each region's area.
+    region colors, and which regions grew.
     """
     h, w = labels.shape
     ids = np.empty((h, w), dtype=np.int32)
     region_color, areas = kernels.label_components(np.ascontiguousarray(labels).reshape(-1), h, w, num_colors, ids.reshape(-1))
     if not region_color.size:
-        return ids, region_color, areas
+        return ids, region_color, np.zeros(0, dtype=bool)
     white = np.where(printed, -1, ids).astype(np.int32)
     merged = white.reshape(-1).copy()
     kernels.merge_small_regions(merged, h, w, areas, int(min_area_px), False)
@@ -618,7 +634,9 @@ def _rebuilt_by_white(
     target = np.arange(region_color.size, dtype=np.int32)
     has_white = white >= 0
     target[white[has_white]] = merged.reshape(h, w)[has_white]
-    return np.where(ids >= 0, target[np.where(ids >= 0, ids, 0)], -1).astype(np.int32), region_color, areas
+    grown = np.zeros(region_color.size, dtype=bool)
+    grown[target[target != np.arange(region_color.size)]] = True
+    return np.where(ids >= 0, target[np.where(ids >= 0, ids, 0)], -1).astype(np.int32), region_color, grown
 
 
 def _seams_round(ids: np.ndarray, printed: np.ndarray, which: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -672,14 +690,39 @@ def _without_unpaintable(
         return ids
     region_of = np.where(inside, ids, 0)
     unprinted = np.bincount(ids[inside & ~printed], minlength=count) > 0
-    fits = np.bincount(ids[_brush_fits(ids, count, min_width_px / 2)], minlength=count) > 0
-    white = np.where(printed, -1, ids).astype(np.int32)
-    white_fits = np.bincount(white[_brush_fits(white, count, min_width_px / 2)], minlength=count) > 0
-    small = np.bincount(ids[inside], minlength=count) < min_area_px
-    gone = ~unprinted | ((~fits | (small & ~white_fits)) & ~_has_neighbor(ids, count))
+    areas = np.bincount(ids[inside], minlength=count)
+    alone = ~_has_neighbor(ids, count) & (areas > 0)
+    gone = ~unprinted
+    if alone.any():
+        fits = _room_for_a_brush(ids, np.ones(ids.shape, dtype=bool), alone, min_width_px / 2)
+        white_fits = _room_for_a_brush(ids, ~printed, alone & (areas < min_area_px), min_width_px / 2)
+        gone |= alone & (~fits | ((areas < min_area_px) & ~white_fits))
     if not gone.any():
         return ids
     return np.where(inside & gone[region_of], -1, ids).astype(np.int32)
+
+
+def _room_for_a_brush(ids: np.ndarray, keep: np.ndarray, which: np.ndarray, radius: float) -> np.ndarray:
+    """For each region ``which`` marks, whether a brush of ``radius`` fits in its pixels ``keep`` (HxW bool) keeps.
+
+    What ``_brush_fits`` finds for the whole page, for a few regions only: each is measured in its own box, where
+    everything but its kept pixels -- other regions, ink, paper, off the page -- is in the brush's way.
+    """
+    out = np.zeros(which.size, dtype=bool)
+    wanted = np.flatnonzero(which)
+    if not wanted.size:
+        return out
+    h, w = ids.shape
+    bounds, areas = kernels.region_bounds(np.ascontiguousarray(ids).reshape(-1), h, w, int(which.size))
+    for rid in wanted.tolist():
+        if areas[rid] == 0:
+            continue
+        x0, y0, x1, y1 = bounds[rid].tolist()
+        kept = (ids[y0 : y1 + 1, x0 : x1 + 1] == rid) & keep[y0 : y1 + 1, x0 : x1 + 1]
+        if kept.any():
+            distance = cv2.distanceTransform(np.pad(kept, 1).view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+            out[rid] = bool(distance.max() > radius)
+    return out
 
 
 def _split_region(region: np.ndarray, printed: np.ndarray, radius: float) -> tuple[np.ndarray | None, np.ndarray | None]:

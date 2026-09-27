@@ -392,6 +392,21 @@ def test_a_line_runs_along_a_boundary_within_a_pixel_of_it_and_counts_once():
     assert [lines_at(x) for x in (7, 8, 9, 10, 11, 12)] == [0.0, 1.0, 1.0, 1.0, 1.0, 0.0]
 
 
+def test_a_boundary_under_printed_ink_is_the_ink_s_and_ends_there_as_at_a_junction():
+    page = np.zeros((40, 40), dtype=np.int32)
+    page[:, 20:] = 1  # two regions, their boundary between columns 19 and 20 ...
+    printed = np.zeros(page.shape, dtype=bool)
+    printed[18:22, :] = True  # ... crossed by a stroke both paint over, where the page draws no line
+    drawn = [np.array([[19.5, 0.0], [19.5, 17.0]]), np.array([[19.5, 22.0], [19.5, 39.0]])]  # ending at the ink
+
+    as_regions = bm.boundary_lines(page, drawn)
+    as_ink = bm.boundary_lines(page, drawn, printed=printed)
+
+    assert as_regions["undrawn_boundary_fraction"] > 0  # the edges under the stroke, with no line drawn
+    assert as_ink["undrawn_boundary_fraction"] == 0 and as_ink["lines_per_boundary_clear"] == 1.0
+    assert as_ink["clear_boundary_fraction"] < as_regions["clear_boundary_fraction"]  # the ink ends the boundary
+
+
 def test_the_page_edge_is_not_a_boundary():
     page = np.zeros((10, 10), dtype=np.int32)
     frame = np.array([[0.0, 0.0], [9.0, 0.0], [9.0, 9.0], [0.0, 9.0], [0.0, 0.0]])
