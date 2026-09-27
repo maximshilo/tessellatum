@@ -760,6 +760,21 @@ def test_a_small_white_area_with_nothing_to_join_keeps_its_number_and_touches_no
     assert (split[around] == -1).all()  # a seam wherever its ink met another region's
 
 
+def test_two_regions_of_one_color_brought_together_by_a_merge_stay_two_areas():
+    ids = np.zeros((30, 40), dtype=np.int32)
+    ids[:, 15:20] = 1  # a small region between two of one color: its white shares an edge with the left one only ...
+    ids[:, 20:] = 2
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[:, 19:21] = True  # ... and its ink touches the right one's, a change of color under a stroke, no seam
+
+    split, colors, corners = regions_module.split_areas(ids, np.array([0, 1, 0], dtype=np.int32), printed, 6.0, 400, 2)
+
+    left, right = split[15, 5], split[15, 30]
+    assert split[15, 17] == left  # the small one joins the region its white touches
+    assert left >= 0 and right >= 0 and left != right  # and the two of one color, touching now, stay two areas
+    assert colors[left] == colors[right] == 0 and _touching_pairs(split) == 0
+
+
 def test_a_speck_of_white_no_brush_fits_in_is_no_area_of_its_own():
     ids = np.zeros((30, 50), dtype=np.int32)
     ids[:, 40:] = 1

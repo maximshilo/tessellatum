@@ -500,7 +500,7 @@ def split_areas(
     ids, colors, corners = _split_all(region_id_map, region_color, printed, radius)
     inked = printed | corners
     for _round in range(_SETTLE_ROUNDS):
-        ids, colors, grown = _rebuilt_by_white(_painted(ids, colors, num_colors), num_colors, min_area_px, inked)
+        ids, colors, grown = _rebuilt_by_white(ids, colors, num_colors, min_area_px, inked)
         # A merge through a gap of the region it joins -- white it shares an edge with, but that the region's own area
         # doesn't -- makes that region two areas again: split, and merge what is left over, until nothing splits.
         count = colors.size
@@ -535,14 +535,17 @@ def _merged_bits(
     so it merges as ``build_regions`` merges, into the neighbor owning the
     most of its 8-connected ring, through the ink its paint goes over too. A
     small region whose white holds a brush is an area, and stays. Returns the
-    region map, the region colors, and which regions grew.
+    region map, the region colors, and which regions grew -- by a merge, or by
+    two regions of one color that touch becoming one when the colors are
+    labeled again.
     """
     h, w = ids.shape
     rebuilt = np.empty((h, w), dtype=np.int32)
     colors, areas = kernels.label_components(_painted(ids, colors, num_colors).reshape(-1), h, w, num_colors, rebuilt.reshape(-1))
+    joined = _joined(ids, rebuilt, int(colors.size))  # two regions of one color that touch are one again
     small = (areas > 0) & (areas < min_area_px)
     if not small.any():
-        return rebuilt, colors, np.zeros(colors.size, dtype=bool)
+        return rebuilt, colors, joined
     roomy = _room_for_a_brush(rebuilt, ~printed, small, radius)
     # An area too small for the difficulty keeps its number all the same: it counts as large enough not to merge.
     areas = np.where(small & roomy, np.maximum(areas, min_area_px), areas).astype(areas.dtype)
@@ -550,7 +553,8 @@ def _merged_bits(
     flat = rebuilt.reshape(-1)
     kernels.merge_small_regions(flat, h, w, areas, int(min_area_px), True)
     kernels.merge_same_color_neighbors(flat, h, w, colors, areas, True)
-    return rebuilt, colors, areas > before
+    # A merge keeps the id it merges into, and one merged away has no area left, whose target grew.
+    return rebuilt, colors, (areas > before) | (joined & (areas > 0))
 
 
 def _split_all(
@@ -608,9 +612,9 @@ def _painted(ids: np.ndarray, colors: np.ndarray, num_colors: int) -> np.ndarray
 
 
 def _rebuilt_by_white(
-    labels: np.ndarray, num_colors: int, min_area_px: int, printed: np.ndarray
+    region_id_map: np.ndarray, region_color: np.ndarray, num_colors: int, min_area_px: int, printed: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """``_regions_from_labels``, with the merges seeing only the regions' unprinted pixels, edge to edge.
+    """``_regions_from_labels`` on the regions' colors, with the merges seeing only their unprinted pixels, edge to edge.
 
     A region smaller than ``min_area_px`` -- counting the ink its paint goes
     over -- merges into the neighbor whose white owns the most of its white's
@@ -619,13 +623,16 @@ def _rebuilt_by_white(
     on the page, and two white areas touching at a corner are two areas, so
     neither makes two regions neighbors. A small region whose white shares no
     edge with another region's is left as it is. Returns the region map, the
-    region colors, and which regions grew.
+    region colors, and which regions grew -- by a merge, or by two regions of
+    one color that touch becoming one when the colors are labeled again.
     """
-    h, w = labels.shape
+    h, w = region_id_map.shape
     ids = np.empty((h, w), dtype=np.int32)
-    region_color, areas = kernels.label_components(np.ascontiguousarray(labels).reshape(-1), h, w, num_colors, ids.reshape(-1))
+    labels = _painted(region_id_map, region_color, num_colors)
+    region_color, areas = kernels.label_components(labels.reshape(-1), h, w, num_colors, ids.reshape(-1))
     if not region_color.size:
         return ids, region_color, np.zeros(0, dtype=bool)
+    joined = _joined(region_id_map, ids, int(region_color.size))
     white = np.where(printed, -1, ids).astype(np.int32)
     merged = white.reshape(-1).copy()
     kernels.merge_small_regions(merged, h, w, areas, int(min_area_px), False)
@@ -635,8 +642,18 @@ def _rebuilt_by_white(
     has_white = white >= 0
     target[white[has_white]] = merged.reshape(h, w)[has_white]
     grown = np.zeros(region_color.size, dtype=bool)
-    grown[target[target != np.arange(region_color.size)]] = True
+    grown[target[(target != np.arange(region_color.size)) | joined]] = True
     return np.where(ids >= 0, target[np.where(ids >= 0, ids, 0)], -1).astype(np.int32), region_color, grown
+
+
+def _joined(old: np.ndarray, new: np.ndarray, count: int) -> np.ndarray:
+    """For each of ``count`` regions of ``new``, whether it holds pixels of two regions of ``old`` or more."""
+    both = (old >= 0) & (new >= 0)
+    if not both.any():
+        return np.zeros(count, dtype=bool)
+    stride = np.int64(int(old.max()) + 1)
+    pairs = np.unique(new[both].astype(np.int64) * stride + old[both])
+    return np.bincount(pairs // stride, minlength=count) >= 2
 
 
 def _seams_round(ids: np.ndarray, printed: np.ndarray, which: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
