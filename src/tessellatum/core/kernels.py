@@ -152,12 +152,14 @@ def _sift_up(heap, i):
 
 
 @njit(cache=True, nogil=True)
-def merge_small_regions(ids, height, width, areas, min_area_px):
+def merge_small_regions(ids, height, width, areas, min_area_px, diagonals):
     """Merge regions smaller than ``min_area_px`` into a neighbor, in place.
 
     Repeatedly takes the smallest undersized region (lowest id on ties) and
     relabels it to the neighbor owning the most pixels of its 8-connected
     outer ring (lowest id on ties); a region with no neighbor is left alone.
+    Without ``diagonals`` the ring is 4-connected: a region touching another
+    only at a corner is not its neighbor.
 
     Each merge visits only the merged region's own pixels, kept as per-region
     linked lists. A region always merges into one at least as large, so a
@@ -217,6 +219,8 @@ def merge_small_regions(ids, height, width, areas, min_area_px):
             x = p - y * width
             for yy in range(max(y - 1, 0), min(y + 2, height)):
                 for xx in range(max(x - 1, 0), min(x + 2, width)):
+                    if not diagonals and yy != y and xx != x:
+                        continue
                     q = yy * width + xx
                     s = ids[q]
                     if s >= 0 and s != r and ring_stamp[q] != visit:
@@ -258,8 +262,11 @@ def merge_small_regions(ids, height, width, areas, min_area_px):
 
 
 @njit(cache=True, nogil=True)
-def merge_same_color_neighbors(ids, height, width, region_color, areas):
+def merge_same_color_neighbors(ids, height, width, region_color, areas, diagonals):
     """Union 8-adjacent regions of the same color into one region, in place.
+
+    Without ``diagonals``, only 4-adjacent ones: two regions touching at a
+    corner stay apart.
 
     Components start out one color each, so only ``merge_small_regions`` can
     leave two neighbors sharing a color: a small region merges into whichever
@@ -297,6 +304,8 @@ def merge_same_color_neighbors(ids, height, width, region_color, areas):
             if y + 1 < height:
                 below = row + width
                 for xx in range(max(x - 1, 0), min(x + 2, width)):
+                    if not diagonals and xx != x:
+                        continue
                     s = ids[below + xx]
                     if s >= 0 and s != r and region_color[s] == c:
                         _union(parent, r, s)
@@ -717,8 +726,8 @@ def warm_up() -> None:
     labels = np.array([0, 0, 1, 0, 1, 1, 2, 2, 1], dtype=np.int32)
     ids = np.empty(9, dtype=np.int32)
     region_color, areas = label_components(labels, 3, 3, 3, ids)
-    merge_small_regions(ids, 3, 3, areas, 3)
-    merge_same_color_neighbors(ids, 3, 3, region_color, areas)
+    merge_small_regions(ids, 3, 3, areas, 3, True)
+    merge_same_color_neighbors(ids, 3, 3, region_color, areas, True)
     edge_adjacency_classes(ids, 3, 3, int(ids.max()) + 1, np.empty(9, dtype=np.int8))
     region_bounds(ids, 3, 3, int(ids.max()) + 1)
     nearest_seed_within(labels - 1, labels >= 0, 3, 3)

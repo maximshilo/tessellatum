@@ -341,7 +341,7 @@ def main() -> int:
         quality["sliver_area_fraction"] = bm.sliver_share(page_data.region_id_map, brush_px)
         quality.update(label_scores(page_data, print_scale))
         quality.update(bm.compactness_stats(page_data.region_id_map))
-        quality.update(bm.boundary_lines(page_data.region_id_map, page_data.strokes))
+        quality.update(bm.boundary_lines(page_data.region_id_map, page_data.strokes, printed=page_data.printed_ink))
         quality.update(
             bm.enclosure(page_data.region_id_map, page_data.outlines)
             if page_data.outlines is not None

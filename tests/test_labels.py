@@ -192,6 +192,7 @@ def test_with_no_room_anywhere_a_number_still_goes_at_the_middle_of_its_region()
 
     assert [label.region_id for label in labels] == [0, 1]
     assert all(label.leader is None and label.font_size == SPACING.min_font_size for label in labels)
+    assert all(label.cramped for label in labels)  # the last resort says so, for the pipeline to act on
     x, y = regions[1].interior_point
     x0, y0, x1, y1 = labels[1].box
     assert x0 <= x < x1 and y0 <= y < y1
@@ -427,7 +428,7 @@ def test_a_number_with_no_room_but_on_hatching_clears_its_own_detail_ink():
     labels = place_labels(regions, seen, free, SPACING, detail)
 
     assert [label.clears for label in labels] == [True, True]
-    assert all(label.leader is None for label in labels)
+    assert all(label.leader is None and not label.cramped for label in labels)  # clearing found room: not the last resort
     gap = math.ceil(SPACING.label_gap_px)
     clear = cleared(labels, detail, SPACING.label_gap_px)
     for label in labels:
@@ -448,6 +449,7 @@ def test_a_number_that_fits_or_has_room_for_a_leader_clears_nothing():
     assert not left.clears and left.leader is None  # it fits in its own region
     assert not right.clears and right.leader is not None  # the hatched one points in from the room next door
     assert not cleared(labels, detail, SPACING.label_gap_px).any()
+    assert not left.cramped and not right.cramped
 
 
 def test_without_detail_ink_a_number_on_hatching_lands_on_the_ink_as_before():

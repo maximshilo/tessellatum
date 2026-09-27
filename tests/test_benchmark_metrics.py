@@ -392,6 +392,21 @@ def test_a_line_runs_along_a_boundary_within_a_pixel_of_it_and_counts_once():
     assert [lines_at(x) for x in (7, 8, 9, 10, 11, 12)] == [0.0, 1.0, 1.0, 1.0, 1.0, 0.0]
 
 
+def test_a_boundary_under_printed_ink_is_the_ink_s_and_ends_there_as_at_a_junction():
+    page = np.zeros((40, 40), dtype=np.int32)
+    page[:, 20:] = 1  # two regions, their boundary between columns 19 and 20 ...
+    printed = np.zeros(page.shape, dtype=bool)
+    printed[18:22, :] = True  # ... crossed by a stroke both paint over, where the page draws no line
+    drawn = [np.array([[19.5, 0.0], [19.5, 17.0]]), np.array([[19.5, 22.0], [19.5, 39.0]])]  # ending at the ink
+
+    as_regions = bm.boundary_lines(page, drawn)
+    as_ink = bm.boundary_lines(page, drawn, printed=printed)
+
+    assert as_regions["undrawn_boundary_fraction"] > 0  # the edges under the stroke, with no line drawn
+    assert as_ink["undrawn_boundary_fraction"] == 0 and as_ink["lines_per_boundary_clear"] == 1.0
+    assert as_ink["clear_boundary_fraction"] < as_regions["clear_boundary_fraction"]  # the ink ends the boundary
+
+
 def test_the_page_edge_is_not_a_boundary():
     page = np.zeros((10, 10), dtype=np.int32)
     frame = np.array([[0.0, 0.0], [9.0, 0.0], [9.0, 9.0], [0.0, 9.0], [0.0, 0.0]])
@@ -1138,5 +1153,10 @@ def test_a_bold_outline_that_prints_as_a_line_is_printed_and_is_no_tube():
         "ink_print_recall": 1.0,
         "ink_print_f1": 1.0,
     }
+    # The fill's four corners inside the square outline are pockets no round brush reaches, left as paper (Q22), each
+    # outlined by a short line beside the ink rather than down its middle.
+    paper = (analysis.region_id_map < 0) & ~analysis.printed_ink
+    corners = [paper[108:110, 158:160], paper[108:110, 640:642], paper[490:492, 158:160], paper[490:492, 640:642]]
+    assert paper.sum() == sum(corner.sum() for corner in corners) == 12
     line_match = bm.ink_line_match(analysis.strokes, ink, scale.mm_to_px(0.5), analysis.printed_ink)
-    assert line_match["ink_line_f1"] == pytest.approx(1.0)
+    assert line_match["ink_line_recall"] == 1.0 and line_match["ink_line_f1"] > 0.99

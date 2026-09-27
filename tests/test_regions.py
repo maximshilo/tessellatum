@@ -519,11 +519,23 @@ def test_detail_ink_is_the_ink_inside_one_region_away_from_everything_else():
     printed[8:12, 17] = True  # a stroke of region 0 beside the seam
     printed[:, 18:21] = True  # the line between the two regions: its halves and the seam
 
-    detail = regions_module.detail_ink(ids, printed, 3.0)
+    detail = regions_module.detail_ink(ids, printed, 3.0, 1.0)
 
     assert detail[8:12, 5].all()
     assert not detail[:, 16:22].any()  # neither the stroke beside the seam nor the line's halves
     assert not detail[~printed].any()
+
+
+def test_hatching_across_a_change_of_color_is_detail_ink_but_for_a_line_s_width_of_it():
+    ids = np.zeros((20, 40), dtype=np.int32)
+    ids[:, 20:] = 1  # two regions meeting under the hatching, with no line or seam between them
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[8:10, 10:30] = True  # a stroke running on across the change of color
+
+    detail = regions_module.detail_ink(ids, printed, 3.0, 2.0)
+
+    assert detail[8:10, 10:18].all() and detail[8:10, 22:30].all()
+    assert not detail[8:10, 18:22].any()  # the ink within 2 px of the other region stays: it is the line there
 
 
 def test_a_thin_line_running_out_across_bare_paper_is_painted_only_near_its_region():
@@ -614,3 +626,392 @@ def test_a_region_s_label_point_is_off_the_ink_its_paint_goes_over():
     assert ids[y, x] == 0 and not printed[y, x]
     x, y = regions[2].interior_point
     assert ids[y, x] == 2
+
+
+# --- T3.4b: hatched patches, white areas, pockets ---------------------------------------------------------------------
+
+INK = 2  # the ink's label in the two-color label maps below
+
+
+def _through(labels, thin_px=4.0, brush_px=6.0):
+    return regions_module.look_through_hatching(np.asarray(labels, dtype=np.int32), INK, thin_px, brush_px)
+
+
+def _region_count(labels) -> int:
+    ids, colors = build_regions(np.asarray(labels, dtype=np.int32), INK, 1)
+    return len(np.unique(ids[ids >= 0]))
+
+
+def test_the_region_stage_looks_through_hatching_so_a_hatched_patch_is_one_run_of_its_gaps_color():
+    labels = np.zeros((40, 60), dtype=np.int32)
+    labels[10:30, 10:50] = 1  # a patch of color 1 on a field of color 0
+    labels[10:30, 12:48:3] = INK  # hatched: a stroke 1 px wide every 3 px, the gaps 2 px wide
+
+    region_labels, corners = _through(labels)
+
+    assert not corners.any()
+    assert (region_labels[12:28, 12:48:3] == 1).all()  # each stroke takes its gaps' color
+    assert (region_labels[labels != INK] == labels[labels != INK]).all()  # nothing else changes
+    assert _region_count(labels) > 2 and _region_count(region_labels) == 2  # a patchwork of gaps, now one patch
+
+
+def test_a_thin_line_between_two_areas_a_brush_fits_in_stays_ink():
+    labels = np.zeros((30, 41), dtype=np.int32)
+    labels[:, 20] = INK  # one color on both sides
+
+    region_labels, corners = _through(labels)
+
+    assert (region_labels[:, 20] == INK).all() and not corners.any()
+    assert _region_count(region_labels) == 2  # two areas, two numbers
+
+
+def test_a_thin_line_between_two_areas_just_wide_enough_for_a_brush_stays_ink():
+    labels = np.zeros((30, 17), dtype=np.int32)
+    labels[:, 8] = INK  # two areas 8 px wide: a brush 6 px wide fits in each, with a pixel to spare
+
+    region_labels, _corners = _through(labels, brush_px=6.0)
+
+    assert (region_labels[:, 8] == INK).all()
+    assert _region_count(region_labels) == 2
+
+
+def test_a_gap_two_areas_reach_goes_wholly_to_the_one_that_reaches_most_of_it():
+    labels = np.zeros((20, 40), dtype=np.int32)
+    labels[:, 14:26] = INK  # a band of thin ink between two areas ...
+    labels[5:15, 16:22] = 0  # ... round a gap too small for a brush, nearer the left area for most of it
+
+    region_labels, corners = _through(labels, thin_px=20.0, brush_px=6.0)
+
+    assert not corners[5:15, 16:22].any()  # the wall between the two claims runs through the ink, not the gap
+    assert (region_labels[5:15, 15] == 0).all()  # the ink between the gap and the left area is looked through
+    assert _region_count(region_labels) == 2
+
+
+def test_two_areas_meeting_across_a_one_pixel_diagonal_line_are_kept_apart_at_every_corner():
+    labels = np.zeros((30, 30), dtype=np.int32)
+    labels[np.arange(30), 29 - np.arange(30)] = INK  # a diagonal line one pixel wide, corner to corner
+    assert _region_count(labels) == 1  # the two sides touch at the line's every step, diagonally
+
+    region_labels, corners = _through(labels, brush_px=4.0)
+
+    assert corners.any() and (region_labels[corners] == INK).all()  # a pixel at each step is taken for ink
+    assert _region_count(region_labels) == 2
+
+
+def test_bold_ink_is_never_looked_through():
+    labels = np.zeros((30, 40), dtype=np.int32)
+    labels[5:25, 10:30] = 1
+    labels[5:25, 17:23] = INK  # a bar 6 px wide: bold, against a thin width of 4
+    labels[10:20, 12:28:3] = INK  # and hatching either side of it
+
+    region_labels, _corners = _through(labels)
+
+    assert (region_labels[7:23, 17:23] == INK).all()  # all but its sharp corners, which a disk that wide misses
+    assert (region_labels[12:18, 12:16:3] == 1).all()
+
+
+def test_hatching_bold_ink_walls_in_is_looked_through_all_the_same():
+    labels = np.zeros((30, 30), dtype=np.int32)
+    labels[3:27, 3:27] = INK  # a bold frame 6 px wide ...
+    labels[9:21, 9:21] = 1  # ... round a patch too small for a brush,
+    labels[9:21, 10:21:2] = INK  # hatched every other column
+
+    region_labels, _corners = _through(labels, brush_px=6.0)
+
+    assert (region_labels[11:19, 10:19:2] == 1).all()  # clear of the frame: a stroke's end joins the bold ink it meets
+    assert (region_labels[3:9, 6:24] == INK).all()  # the frame, but for its sharp outer corners
+
+
+def test_a_pocket_against_ink_is_left_as_paper_and_a_corner_against_another_region_is_not():
+    ids = np.full((36, 36), -1, dtype=np.int32)
+    ids[3:33, 3:33] = 0  # a square fill in a printed frame
+    printed = ids < 0
+
+    left = regions_module.leave_pockets(ids, np.array([0], dtype=np.int32), printed, 10.0)
+
+    gone = (left == -1) & (ids == 0)
+    corners = np.zeros(ids.shape, dtype=bool)
+    for rows in (slice(3, 9), slice(27, 33)):
+        for columns in (slice(3, 9), slice(27, 33)):
+            corners[rows, columns] = True
+    assert gone[3:5, 3:5].any() and gone[31:33, 31:33].any()  # its corners, which no round brush reaches, go
+    assert not (gone & ~corners).any()  # and nothing but its corners
+    two = np.zeros((30, 30), dtype=np.int32)
+    two[:, 15:] = 1  # no ink: the corners are against the page's edge and the other region
+    assert (regions_module.leave_pockets(two, np.array([0, 1], dtype=np.int32), np.zeros_like(printed[:30, :30]), 10.0) == two).all()
+
+
+def test_a_tip_between_ink_and_another_region_is_a_pocket_but_not_against_bare_paper():
+    ids = np.ones((40, 60), dtype=np.int32)
+    ys, xs = np.mgrid[0:40, 0:60]
+    ids[(ys < 30) & (ys >= 30 - xs * 0.5)] = 0  # a wedge of region 0 between region 1 and ...
+    ids[30:, :] = -1  # ... what lies below: ink, then bare paper
+    colors = np.array([0, 1], dtype=np.int32)
+    wedge = ids == 0
+
+    on_ink = regions_module.leave_pockets(ids, colors, ids < 0, 10.0)
+    on_paper = regions_module.leave_pockets(ids, colors, np.zeros(ids.shape, dtype=bool), 10.0)
+
+    tip = wedge & (on_ink == -1)
+    assert tip.any() and (xs[tip] < 30).all() and on_ink[25, 55] == 0  # its tip, where a brush can't reach, goes
+    assert (on_paper == ids).all()  # walled by paper and a region, not ink, the tip is no pocket: it stays
+
+
+def test_a_pocket_with_exactly_half_its_contacts_on_ink_is_left_as_paper():
+    ids = np.ones((30, 50), dtype=np.int32)
+    ids[:9, :] = 2
+    ids[9, :] = -1  # ink above ...
+    ids[10, :5] = -1
+    ids[10, 5:45] = 0  # ... a strip one pixel tall no brush reaches, region 1 below: 121 contacts on ink, 121 not
+    printed = ids < 0
+
+    left = regions_module.leave_pockets(ids, np.array([0, 1, 2], dtype=np.int32), printed, 6.0)
+
+    assert (left[10, 5:45] == -1).all()
+
+
+def test_two_white_areas_of_one_region_joined_through_its_ink_become_two_regions_that_never_touch():
+    ids = np.zeros((20, 41), dtype=np.int32)
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[:, 20] = True  # a stroke region 0 paints over, joining its two squares
+
+    split, colors, corners = regions_module.split_areas(ids, np.array([0], dtype=np.int32), printed, 6.0, 10, 1)
+
+    assert split[10, 5] >= 0 and split[10, 35] >= 0 and split[10, 5] != split[10, 35]
+    assert colors[split[10, 5]] == colors[split[10, 35]] == 0
+    assert _touching_pairs(split) == 0  # the stroke holds a seam
+    assert not corners.any()
+
+
+def test_a_small_white_area_split_off_joins_the_region_its_white_shares_an_edge_with():
+    ids = np.zeros((30, 50), dtype=np.int32)
+    ids[:, 40:] = 1  # region 1, another color, right of ...
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[:, 30] = True  # ... a stroke of region 0 that cuts off a strip 9 px wide, too small to stay
+
+    split, colors, _corners = regions_module.split_areas(ids, np.array([0, 1], dtype=np.int32), printed, 6.0, 400, 2)
+
+    assert colors[split[15, 35]] == 1 and split[15, 35] == split[15, 45]  # the strip is painted as region 1
+    assert colors[split[15, 10]] == 0
+
+
+def test_a_small_white_area_with_nothing_to_join_keeps_its_number_and_touches_no_region():
+    ids = np.zeros((30, 50), dtype=np.int32)
+    ids[:, 40:] = 1
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[:, 30] = True  # region 0's stroke ...
+    printed[:, 39:41] = True  # ... and ink between the strip and region 1: region 1's paint goes over its half
+    ids[:, 39] = 0
+
+    split, colors, _corners = regions_module.split_areas(ids, np.array([0, 1], dtype=np.int32), printed, 6.0, 400, 2)
+
+    strip = split[15, 35]
+    assert strip >= 0 and strip != split[15, 10] and colors[strip] == 0  # an area of its own, too small or not
+    around = cv2.dilate((split == strip).astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool) & (split != strip)
+    assert (split[around] == -1).all()  # a seam wherever its ink met another region's
+
+
+@pytest.mark.parametrize("speck", [False, True])
+def test_two_regions_of_one_color_brought_together_by_a_merge_stay_two_areas(speck):
+    ids = np.zeros((30, 40), dtype=np.int32)
+    ids[:, 15:20] = 1  # a small region between two of one color: its white shares an edge with the left one only ...
+    ids[:, 20:] = 2
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[:, 19:21] = True  # ... and its ink touches the right one's, a change of color under a stroke, no seam
+    if speck:  # a region too small to keep somewhere else, alone in ink: the merge of small bits has work to do
+        ids[0:4, 0:4] = -1
+        printed[0:4, 0:4] = True
+        ids[1:3, 1:3] = 3
+    colors = np.array([0, 1, 0, 1], dtype=np.int32)
+
+    split, colors, corners = regions_module.split_areas(ids, colors, printed, 6.0, 400, 2)
+
+    left, right = split[15, 5], split[15, 30]
+    assert split[15, 17] == left  # the small one joins the region its white touches
+    assert left >= 0 and right >= 0 and left != right  # and the two of one color, touching now, stay two areas
+    assert colors[left] == colors[right] == 0 and _touching_pairs(split) == 0
+
+
+def test_a_small_area_touching_another_only_at_a_white_corner_gets_that_corner_printed():
+    ids = np.full((30, 30), -1, dtype=np.int32)
+    ids[:15, :] = 0  # a large region, ink below it ...
+    ids[15, 5] = 0
+    ids[16:26, 6:16] = 1  # ... and a small area in the ink, touching it at one white corner only
+    printed = ids < 0
+
+    split, colors, corners = regions_module.split_areas(ids, np.array([0, 1], dtype=np.int32), printed, 6.0, 400, 2)
+
+    assert split[20, 10] >= 0 and split[20, 10] != split[5, 5]  # the small area keeps its number
+    assert _touching_pairs(split) == 0 and corners.sum() == 1  # one of the corner's two pixels is taken for ink
+
+
+def test_a_seam_round_a_small_region_cuts_it_off_through_ink_and_at_corners_but_not_along_a_drawn_boundary():
+    ids = np.zeros((10, 20), dtype=np.int32)
+    ids[:, 10:] = 1  # region 1, small: marked
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[:5, 9:11] = True  # the two meet under a stroke along the top half, white to white along the bottom
+
+    seamed, corners = regions_module._seams_round(ids, printed, np.array([False, True]))
+
+    assert (seamed[5:, 9:11] == ids[5:, 9:11]).all() and not corners.any()  # white to white: the line the page draws
+    assert (seamed[:4, 9:11] == -1).sum() == 4  # under the stroke, a seam: one of each two pixels that touch
+
+
+def test_a_region_whose_two_white_areas_meet_at_a_corner_splits_there_with_the_corner_printed():
+    ids = np.full((24, 24), -1, dtype=np.int32)
+    ids[:12, :12] = 0
+    ids[12:, 12:] = 0  # one region: two squares meeting at a single corner
+    printed = ids < 0
+
+    split, colors, corners = regions_module.split_areas(ids, np.array([0], dtype=np.int32), printed, 6.0, 10, 1)
+
+    assert split[5, 5] >= 0 and split[18, 18] >= 0 and split[5, 5] != split[18, 18]
+    assert corners.sum() == 1 and (split[corners] == -1).all() and _touching_pairs(split) == 0
+
+
+def test_a_speck_of_white_no_brush_fits_in_is_no_area_of_its_own():
+    ids = np.zeros((30, 50), dtype=np.int32)
+    ids[:, 40:] = 1
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[:, 30:40] = True  # region 0's ink, 10 px wide, all but ...
+    printed[10:14, 33:36] = False  # ... a speck of white no brush fits in, cut off from region 0's white
+
+    split, colors, _corners = regions_module.split_areas(ids, np.array([0, 1], dtype=np.int32), printed, 6.0, 400, 2)
+
+    assert split[12, 34] == split[5, 10]  # part of region 0 still, not split off with a number of its own
+
+
+def test_what_can_not_be_painted_is_dropped_all_ink_or_alone_with_no_white_room():
+    ids = np.zeros((40, 40), dtype=np.int32)
+    ids[5:15, 25:35] = 1  # region 1: all ink
+    ids[25:33, 25:33] = 2  # region 2: alone, 8 x 8, with 2 x 2 of white
+    ids[4:16, 24:36][ids[4:16, 24:36] == 0] = -1
+    ids[24:34, 24:34][ids[24:34, 24:34] == 0] = -1
+    printed = ids < 0
+    printed[5:15, 25:35] = True
+    printed[25:33, 25:33] = True
+    printed[28:30, 28:30] = False
+
+    split, colors, _corners = regions_module.split_areas(ids, np.array([0, 1, 2], dtype=np.int32), printed, 6.0, 100, 3)
+
+    assert split[10, 30] == -1 and split[29, 29] == -1
+    assert split[2, 2] >= 0
+
+
+def test_a_cramped_region_joins_the_neighbor_its_white_shares_the_most_edge_with():
+    ids = np.zeros((20, 30), dtype=np.int32)
+    ids[5:15, 10:20] = 1
+    ids[:, 25:] = 2
+    colors = np.array([0, 1, 2], dtype=np.int32)
+    printed = np.zeros(ids.shape, dtype=bool)
+
+    merged = regions_module.merge_cramped(ids, colors, printed, [1], 6.0)
+
+    assert (merged[5:15, 10:20] == 0).all() and (merged[:, 25:] == 2).all()
+    assert regions_module.merge_cramped(ids, colors, printed, [], 6.0) is None
+
+
+def test_a_cramped_region_with_room_for_a_brush_but_no_white_neighbor_stays():
+    ids = np.zeros((30, 30), dtype=np.int32)
+    ids[5:25, 5:25] = 1
+    colors = np.array([0, 1], dtype=np.int32)
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[5:25, 5:25] = True
+    printed[7:23, 7:23] = False  # its white, 16 x 16, holds a brush; its edge is ink, so no white edge is shared
+
+    assert regions_module.merge_cramped(ids, colors, printed, [1], 6.0) is None
+    printed[7:23, 7:23] = True
+    printed[14:16, 14:16] = False  # no room for a brush in its white: hatching, painted across its strokes
+    merged = regions_module.merge_cramped(ids, colors, printed, [1], 6.0)
+    assert (merged == 0).all()  # joins through its ink
+
+
+def test_a_cramped_region_joins_the_one_its_white_shares_an_edge_with_not_one_it_touches_at_corners():
+    ids = np.full((10, 10), -1, dtype=np.int32)
+    steps = np.arange(3)
+    ids[4 + steps, 4 + steps] = 2  # the cramped region, a diagonal run of pixels
+    ids[3 + steps, 5 + steps] = 0  # region 0 touches it at three corners only
+    ids[7, 6] = 1  # region 1 shares one edge with it
+    colors = np.array([0, 1, 2], dtype=np.int32)
+
+    merged = regions_module.merge_cramped(ids, colors, np.zeros(ids.shape, dtype=bool), [2], 1.0)
+
+    assert (merged[4 + steps, 4 + steps] == 1).all()
+
+
+def test_cramped_regions_joining_one_another_in_a_chain_all_end_in_the_last():
+    ids = np.full((10, 20), 2, dtype=np.int32)
+    ids[:5, :3] = 0  # cramped: its best neighbor is region 1 ...
+    ids[:, 3:6] = 1  # ... cramped too, whose best is region 2
+    ids[5:, :3] = 3
+    colors = np.array([0, 1, 2, 3], dtype=np.int32)
+
+    merged = regions_module.merge_cramped(ids, colors, np.zeros(ids.shape, dtype=bool), [0, 1], 4.0)
+
+    assert (merged[:, :6][ids[:, :6] < 3] == 2).all() and (merged[ids == 3] == 3).all()
+
+
+def test_two_cramped_regions_that_would_join_each_other_join_once():
+    ids = np.zeros((10, 20), dtype=np.int32)
+    ids[:, 10:] = 1
+    colors = np.array([0, 1], dtype=np.int32)
+
+    merged = regions_module.merge_cramped(ids, colors, np.zeros(ids.shape, dtype=bool), [0, 1], 4.0)
+
+    assert len(np.unique(merged)) == 1
+
+
+def test_a_cramped_region_that_joins_brings_two_regions_of_one_color_together():
+    ids = np.zeros((20, 30), dtype=np.int32)
+    ids[:, 10:20] = 1
+    ids[:, 20:] = 2
+    colors = np.array([0, 1, 0], dtype=np.int32)  # 0 and 2 share a color, with 1 between them
+
+    merged = regions_module.merge_cramped(ids, colors, np.zeros(ids.shape, dtype=bool), [1], 6.0)
+
+    assert len(np.unique(merged)) == 1
+
+
+def test_a_rebuild_merges_a_small_region_only_into_one_its_white_shares_an_edge_with():
+    ids = np.full((12, 12), -1, dtype=np.int32)
+    ids[:6, :6] = 0  # a large region ...
+    ids[6:8, 6:8] = 1  # ... and a small one touching it at a corner only, in bare paper
+    printed = np.zeros(ids.shape, dtype=bool)
+
+    rebuilt, colors, grown = regions_module._rebuilt_by_white(ids, np.array([0, 1], dtype=np.int32), 2, 10, printed)
+
+    assert rebuilt[7, 7] != rebuilt[0, 0] and not grown.any()  # two white areas touching at a corner are two areas
+    ids[6, 5] = 0
+    printed[6, 5] = True  # nor does ink make them neighbors: a stroke of the large one's, edge to edge with the small
+    rebuilt, colors, grown = regions_module._rebuilt_by_white(ids, np.array([0, 1], dtype=np.int32), 2, 10, printed)
+    assert rebuilt[7, 7] != rebuilt[0, 0]
+
+
+def test_a_rebuild_says_which_regions_came_together_so_they_are_looked_at_again():
+    ids = np.zeros((10, 20), dtype=np.int32)
+    ids[:, 10:] = 1  # two regions of one color, touching under a stroke both paint over
+    printed = np.zeros(ids.shape, dtype=bool)
+    printed[:, 9:11] = True
+
+    rebuilt, colors, grown = regions_module._rebuilt_by_white(ids, np.array([0, 0], dtype=np.int32), 1, 10, printed)
+
+    assert rebuilt[5, 2] == rebuilt[5, 17] and grown[rebuilt[5, 2]]  # one region now, and marked to be split again
+    _rebuilt, _colors, bits_grown = regions_module._merged_bits(ids, np.array([0, 0], dtype=np.int32), printed, 3.0, 10, 1)
+    assert bits_grown.any()
+
+
+def test_merges_without_diagonals_do_not_count_a_corner_as_a_neighbor():
+    ids = np.full((6, 6), -1, dtype=np.int32)
+    ids[0:3, 0:3] = 0
+    ids[3, 3] = 1  # a region of one pixel touching region 0 at a corner only
+    for diagonals, expected in ((False, 1), (True, 0)):
+        flat = ids.reshape(-1).copy()
+        areas = np.array([9, 1], dtype=np.int64)
+        kernels.merge_small_regions(flat, 6, 6, areas, 4, diagonals)
+        assert flat.reshape(6, 6)[3, 3] == expected
+    same = np.full((4, 4), -1, dtype=np.int32)
+    same[0, 0], same[1, 1] = 0, 1  # two regions of one color, touching at a corner
+    for diagonals, expected in ((False, 1), (True, 0)):
+        flat = same.reshape(-1).copy()
+        kernels.merge_same_color_neighbors(flat, 4, 4, np.array([5, 5], dtype=np.int32), np.array([1, 1], dtype=np.int64), diagonals)
+        assert flat.reshape(4, 4)[1, 1] == expected

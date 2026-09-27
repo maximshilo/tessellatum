@@ -291,6 +291,28 @@ def test_case_runner_reads_the_ink_a_region_s_paint_goes_over_as_printed(tmp_pat
     assert case["quality"]["tube_regions"] == 0  # the hatching is printed, not a shape to paint...
     assert bm.tube_regions(ids, ink, scale.mm_to_px(bm.INK_MAX_WIDTH_MM))["tube_regions"] >= 1  # ...read as paint, it is
 
+def test_case_runner_reads_a_boundary_under_printed_ink_as_the_ink_s(tmp_path):
+    drawing = np.full((400, 600, 3), 255, dtype=np.uint8)
+    drawing[40:360, 40:300] = (230, 150, 90)  # orange on the left, white on the right ...
+    for y in range(40, 360, 6):
+        drawing[y : y + 2, 40:560] = 0  # ... hatched across the change of color: the two meet under every stroke
+    image = tmp_path / "across.png"
+    Image.fromarray(drawing).save(image)
+    manifest = {"size": [600, 400], "categories": ["cartoon"], "flat_colors": ["#ffffff", "#e6965a"], "ink_colors": ["#000000"]}
+    (tmp_path / "manifest.json").write_text(json.dumps({"schema": 1, "images": {"across.png": manifest}}), encoding="utf-8")
+    out = tmp_path / "case"
+    arguments = _case_arguments(image, out, repeats=1)
+    arguments[arguments.index("--long-edge") + 1] = "600"
+
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "benchmarks" / "bench_case.py"), *arguments], capture_output=True, text=True, timeout=300
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    quality = json.loads((out / "case.json").read_text(encoding="utf-8"))["quality"]
+    assert quality["undrawn_boundary_fraction"] == 0  # the boundary under a stroke is the ink's, not a line left out
+
+
 # Runs bench_case.py as its own script would, with the OCR package made impossible to import.
 WITHOUT_OCR = (
     "import runpy, sys; from pathlib import Path; script = sys.argv[1]; sys.argv = sys.argv[1:]; "

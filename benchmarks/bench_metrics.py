@@ -397,7 +397,10 @@ def compactness_stats(region_id_map: np.ndarray) -> dict[str, float | None]:
 
 
 def boundary_lines(
-    region_id_map: np.ndarray, strokes, junction_clearance_px: float = JUNCTION_CLEARANCE_PX
+    region_id_map: np.ndarray,
+    strokes,
+    junction_clearance_px: float = JUNCTION_CLEARANCE_PX,
+    printed: np.ndarray | None = None,
 ) -> dict[str, float | None]:
     """How many drawn lines run along the boundaries between regions: 1 means one line per boundary.
 
@@ -407,6 +410,17 @@ def boundary_lines(
     pixel edge if its rasterized centerline passes through or next to
     (8-neighborhood) either of the edge's two pixels, and counts once however
     often it passes.
+
+    ``printed`` (HxW bool) is line art's printed ink, read as in no region, as
+    tubes and ink in shapes read it: the page prints it rather than drawing
+    it, and draws no line along it. From 0.1.31 two regions can meet under
+    it, where a hatched patch changes color under its strokes, and a boundary
+    crossing a stroke is drawn as two lines that end at it; read as in no
+    region, the ink ends the boundary there, as a junction does. Before 0.1.31
+    no two regions met at printed ink: on v0.1.30's 32 line-art pages every
+    count is the same either way, and only ``clear_boundary_fraction`` falls
+    (by 0.0001-0.03), as the ink's own junctions take some boundary out of
+    the clear part.
 
     Near a junction that reach cannot tell the lines of one boundary from
     those of the boundaries that end there, so however few lines a page draws,
@@ -420,6 +434,8 @@ def boundary_lines(
     two or more lines and with none (all None on a page without boundaries).
     """
     ids = np.asarray(region_id_map)
+    if printed is not None:
+        ids = np.where(printed, -1, ids)
     h, w = ids.shape
     between_columns = (ids[:, :-1] != ids[:, 1:]) & (ids[:, :-1] >= 0) & (ids[:, 1:] >= 0)
     between_rows = (ids[:-1, :] != ids[1:, :]) & (ids[:-1, :] >= 0) & (ids[1:, :] >= 0)

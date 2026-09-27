@@ -53,6 +53,8 @@ class Label:
     # A number written on hatching: the region's own detail ink under its box, and a gap round it, is not printed
     # (see ``cleared``).
     clears: bool = False
+    # A number that found no room anywhere, written where lines may run through it (the last resort of ``place_labels``).
+    cramped: bool = False
 
 
 @dataclass(frozen=True)
@@ -334,7 +336,7 @@ class _LeaderRoom:
             left, top = _centered_box((x, y), box_width, box_height, (width, height))
         box = (left, top, left + box_width, top + box_height)
         self._take_box(box)
-        return Label(region.region_id, text, font_size, box)
+        return Label(region.region_id, text, font_size, box, cramped=True)
 
     def _take_box(self, box) -> None:
         self.boxes[_spaced_slices(box, 0)] = True
