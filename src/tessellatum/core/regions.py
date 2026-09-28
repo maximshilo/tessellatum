@@ -345,21 +345,18 @@ def _claims(piece: np.ndarray, paintable: np.ndarray, passable: np.ndarray) -> n
     return claim
 
 
-def _claim_walls(claim: np.ndarray, ink: np.ndarray, groups: np.ndarray | None = None) -> np.ndarray:
+def _claim_walls(claim: np.ndarray, ink: np.ndarray) -> np.ndarray:
     """The pixels that keep two claims apart: of every two 8-adjacent pixels of different claims, one.
 
     The ink one if only one of them is ink, else the one of the higher claim.
     Afterwards no two pixels of different claims touch, diagonals included.
-    With ``groups`` (HxW int32, -1 for none), each group's claims are its own:
-    only two pixels of one group are compared (see ``kernels.claim_walls``).
     """
     h, w = claim.shape
     wall = np.empty((h, w), dtype=bool)
-    flat_groups = np.zeros(0, dtype=np.int32) if groups is None else np.ascontiguousarray(groups, dtype=np.int32).reshape(-1)
     kernels.claim_walls(
         np.ascontiguousarray(claim, dtype=np.int32).reshape(-1),
         np.ascontiguousarray(ink, dtype=bool).reshape(-1),
-        flat_groups,
+        np.zeros(0, dtype=np.int32),  # one group: every claim against every other
         h,
         w,
         wall.reshape(-1),
@@ -550,7 +547,8 @@ def _split_all(
     piece_region = kernels.white_pieces(white.reshape(-1), h, w, piece.reshape(-1))
     if only is None:
         # Where a brush fits in a region's white: farther than its radius from anything else, which one distance
-        # transform per class of regions measures for them all (see ``_brush_fits``).
+        # transform per class of regions measures for them all (see ``_brush_fits``). It is the distance measuring each
+        # region in its own box gives (``_paintable_pieces``): the nearest pixel outside a region's white lies beside it.
         paintable = np.zeros(piece_region.size, dtype=bool)
         paintable[piece[_brush_fits(white, int(colors.size), radius)]] = True
     else:

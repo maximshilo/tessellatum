@@ -173,6 +173,75 @@ def test_the_constructed_pages_exercise_the_steps():
     assert all(totals.values()), totals
 
 
+# --- the helpers, on speckled maps -----------------------------------------------------------------------------------
+
+
+def _speckled(seed: int):
+    """A small region map full of what smooth pages rarely have: specks, and regions meeting at a corner only.
+
+    Returns the region map (8-connected runs of one color, -1 on the ink), the regions' colors, the ink printed (all of
+    what is in no region, and some of what is), and the number of colors.
+    """
+    rng = np.random.default_rng(seed)
+    h, w = int(rng.integers(12, 40)), int(rng.integers(12, 40))
+    num_colors = int(rng.integers(2, 6))
+    field = cv2.GaussianBlur(rng.random((h, w)).astype(np.float32), (0, 0), float(rng.uniform(0.5, 3.0)))
+    labels = np.digitize(field, np.quantile(field, np.linspace(0, 1, num_colors + 1)[1:-1])).astype(np.int32)
+    ink = rng.random((h, w)) < rng.uniform(0.05, 0.45)
+    labels[ink] = num_colors
+    ids = np.empty((h, w), dtype=np.int32)
+    colors, _areas = kernels.label_components(labels.reshape(-1), h, w, num_colors, ids.reshape(-1))
+    printed = ink | ((ids >= 0) & (rng.random((h, w)) < 0.15))
+    return ids, colors, printed, num_colors
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_the_region_helpers_match_v0_1_31_on_speckled_maps(seed):
+    rng = np.random.default_rng(1000 + seed)
+    ids, colors, printed, num_colors = _speckled(seed)
+    count = int(colors.size)
+    radius = float(rng.uniform(1.0, 3.0))
+    min_area_px = int(rng.integers(2, 20))
+    some = rng.random(count) < 0.4
+
+    _both("_has_neighbor", ids, count)
+    _both("_seams_round", ids, printed, some)
+    _both("_without_unpaintable", ids, colors, printed, 2 * radius, min_area_px)
+    _both("_painted", ids, colors, num_colors)
+    shuffled = np.where(ids >= 0, rng.permutation(count).astype(np.int32)[np.maximum(ids, 0)] % max(1, count // 2), -1)
+    _both("_joined", ids, shuffled.astype(np.int32), count)
+    _both("_rebuilt_by_white", ids, colors, num_colors, min_area_px, printed)
+    _both("_merged_bits", ids, colors, printed, radius, min_area_px, num_colors)
+    _both("_split_all", ids, colors, printed, radius)
+    _both("_split_all", ids, colors, printed, radius, some)
+    _both("_connected_to_own", ids, rng.random(ids.shape) < 0.5, count)
+    _both("_ink_is_main_neighbor", ids, some)
+    _both("leave_pockets", ids, colors, printed, 2 * radius)
+    _both("split_areas", ids, colors, printed, 2 * radius, min_area_px, num_colors)
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_the_claims_and_their_walls_match_v0_1_31_on_speckled_maps(seed):
+    rng = np.random.default_rng(seed)
+    h, w = int(rng.integers(8, 40)), int(rng.integers(8, 40))
+    white = rng.random((h, w)) < rng.uniform(0.3, 0.8)
+    count, piece = cv2.connectedComponents(white.view(np.uint8), connectivity=4)
+    piece = piece.astype(np.int32) - 1
+    paintable = rng.random(count - 1) < 0.3
+    passable = white | (rng.random((h, w)) < 0.5)
+
+    claim = _both("_claims", piece, paintable, passable)
+    _both("_claim_walls", claim, ~white)
+
+
+def test_a_region_touching_another_only_down_and_to_the_left_has_a_neighbor():
+    ids = np.full((3, 3), -1, dtype=np.int32)
+    ids[0, 2] = 0
+    ids[1, 1] = 1  # the two meet at one corner, the second below and left of the first
+
+    assert regions._has_neighbor(ids, 2).all()
+
+
 # --- the claim search ------------------------------------------------------------------------------------------------
 
 

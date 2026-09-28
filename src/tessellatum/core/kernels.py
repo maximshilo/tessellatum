@@ -823,21 +823,20 @@ def white_pieces(ids, height, width, out_piece):
             if y > 0 and ids[p - width] == r:
                 _union(parent, p, p - width)
     # _union keeps the lower index as the root, so a piece's root is its first pixel in raster order, and every parent
-    # lies before its child: in raster order, a pixel's parent already points at the root.
+    # lies before its child, in the same piece: in raster order, a pixel's parent is numbered already.
     piece_region = np.empty(n, np.int32)
     count = 0
     for p in range(n):
         if ids[p] < 0:
             out_piece[p] = -1
             continue
-        root = parent[parent[p]]
-        parent[p] = root
-        if root == p:
+        up = parent[p]
+        if up == p:
             out_piece[p] = count
             piece_region[count] = ids[p]
             count += 1
         else:
-            out_piece[p] = out_piece[root]
+            out_piece[p] = out_piece[up]
     return piece_region[:count].copy()
 
 
