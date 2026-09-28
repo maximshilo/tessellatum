@@ -5,8 +5,13 @@ small-region merge, the same-color union that follows it, the greedy coloring
 that groups regions for the width measurement, the walk that turns the
 boundaries between regions into one path each, the search for the nearest
 core a thin part can reach without crossing line art's ink, and the bilateral
-filter's per-pixel weighting -- runs here as compiled code. Arrays are passed
-flattened (row-major) with explicit ``height``/``width``.
+filter's per-pixel weighting -- runs here as compiled code. So do line art's
+region steps (see ``regions.look_through_hatching`` to ``regions.split_areas``):
+their searches along paths, and the passes over the page that compare each
+pixel with its neighbors, which NumPy would make one whole-page array per
+neighbor for. Those give exactly what the NumPy code they replace gave
+(``tests/reference_line_art.py`` keeps it). Arrays are passed flattened
+(row-major) with explicit ``height``/``width``.
 
 Kernels compile on first call and are cached on disk (``cache=True``), so only
 the first run after an install pays the compile cost; ``warm_up`` pays it
@@ -83,11 +88,16 @@ def label_components(labels, height, width, num_colors, out_ids):
             if y > 0 and x + 1 < width and labels[p - width + 1] == c:
                 _union(parent, p, p - width + 1)
 
+    # A parent always lies before its child (see _union), so one pass in raster order points every pixel at its root.
     count_per_label = np.zeros(num_colors, np.int64)
     for p in range(n):
-        c = labels[p]
-        if 0 <= c < num_colors and _find(parent, p) == p:
-            count_per_label[c] += 1
+        up = parent[p]
+        if up != p:
+            parent[p] = parent[up]
+        else:
+            c = labels[p]
+            if 0 <= c < num_colors:
+                count_per_label[c] += 1
     next_id = np.empty(num_colors, np.int64)
     total = 0
     for c in range(num_colors):
@@ -106,7 +116,7 @@ def label_components(labels, height, width, num_colors, out_ids):
                     c = labels[p]
                     if c < 0 or c >= num_colors:
                         continue
-                    root = _find(parent, p)
+                    root = parent[p]
                     if out_ids[root] < 0:
                         out_ids[root] = next_id[c]
                         region_color[next_id[c]] = c
@@ -117,7 +127,7 @@ def label_components(labels, height, width, num_colors, out_ids):
         c = labels[p]
         if c < 0 or c >= num_colors:
             continue
-        rid = out_ids[_find(parent, p)]
+        rid = out_ids[parent[p]]
         out_ids[p] = rid
         areas[rid] += 1
     return region_color, areas
@@ -164,6 +174,9 @@ def merge_small_regions(ids, height, width, areas, min_area_px, diagonals):
     Each merge visits only the merged region's own pixels, kept as per-region
     linked lists. A region always merges into one at least as large, so a
     pixel moves at most ~log2(min_area_px) times: O(pixels * log(min_area)).
+    Only a region starting below ``min_area_px`` is ever merged away (a
+    region only grows), so only those keep a list: a region at least that
+    large takes the pixels merged into it without one.
     """
     num_regions = areas.shape[0]
     if min_area_px <= 0 or num_regions <= 1:
@@ -172,11 +185,13 @@ def merge_small_regions(ids, height, width, areas, min_area_px, diagonals):
 
     head = np.full(num_regions, -1, np.int32)
     tail = np.full(num_regions, -1, np.int32)
-    next_pixel = np.full(n, -1, np.int32)
+    listed = areas < min_area_px
+    next_pixel = np.empty(n, np.int32)  # written for every listed pixel before it is read
     for p in range(n):
         r = ids[p]
-        if r < 0:
+        if r < 0 or not listed[r]:
             continue
+        next_pixel[p] = -1
         if head[r] < 0:
             head[r] = p
         else:
@@ -248,8 +263,9 @@ def merge_small_regions(ids, height, width, areas, min_area_px, diagonals):
         while p >= 0:
             ids[p] = target
             p = next_pixel[p]
-        next_pixel[tail[target]] = head[r]
-        tail[target] = tail[r]
+        if listed[target]:  # one that isn't is too large ever to merge away: it needs no list
+            next_pixel[tail[target]] = head[r]
+            tail[target] = tail[r]
         head[r] = -1
         tail[r] = -1
         areas[target] += areas[r]
@@ -623,70 +639,134 @@ def nearest_seed_within(seeds, passable, height, width):
     the first label that reaches it at its shortest distance, so the result is
     deterministic.
     """
+    return _nearest_seed(seeds, passable, height, width, False)
+
+
+@njit(cache=True, nogil=True)
+def nearest_seed_in_groups(seeds, groups, height, width):
+    """``nearest_seed_within``, with a path stepping only between pixels of one group.
+
+    ``groups`` holds each pixel's group (>= 0), or -1 where it is passable by
+    none. Each group is searched as if it were the only passable part of the
+    page: what ``nearest_seed_within`` gives for it, run on it alone, is what
+    this gives for it, since a pass over one group never reads another.
+    """
+    return _nearest_seed(seeds, groups, height, width, -1)
+
+
+@njit(cache=True, nogil=True)
+def _nearest_seed(seeds, groups, height, width, none):
+    """The raster passes of ``nearest_seed_within``, skipping only what they could not change.
+
+    A pixel is passable where ``groups`` isn't ``none``, and a step joins two
+    pixels of one group. Seeds and pixels no path enters never change, so a
+    pass visits only the others, in raster order: the order the passes over
+    the whole page visit them in. A forward pass reads a pixel's own row and
+    the row above, so a row where neither has changed since the forward pass
+    last went over it keeps what it has; a pass back reads the row below
+    instead, and skips a row the same way. Neither skip changes what any pass
+    does, so the result is exactly that of passing over every pixel.
+    """
     n = height * width
     unreached = np.int64(1) << 60
     dist = np.full(n, unreached, np.int64)
     out = np.full(n, -1, np.int32)
-    for p in range(n):
-        if seeds[p] >= 0 and passable[p]:
-            dist[p] = 0
-            out[p] = seeds[p]
+    todo = np.empty(n, np.int32)  # the pixels a pass can change, row by row: those of row y at row_start[y]:row_start[y + 1]
+    row_start = np.empty(height + 1, np.int64)
+    k = 0
+    for y in range(height):
+        row_start[y] = k
+        for p in range(y * width, (y + 1) * width):
+            if groups[p] == none:
+                continue
+            if seeds[p] >= 0:
+                dist[p] = 0
+                out[p] = seeds[p]
+            else:
+                todo[k] = p
+                k += 1
+    row_start[height] = k
 
+    # Pass numbers: the last pass that changed a pixel of each row, and the last forward and back pass over it.
+    changed_in = np.zeros(height, np.int64)
+    forward_over = np.full(height, -1, np.int64)
+    back_over = np.full(height, -1, np.int64)
+    step = 0
     changed = True
     while changed:
         changed = False
+        step += 1
         for y in range(height):  # forward: from the pixels above and to the left
+            if row_start[y] == row_start[y + 1]:
+                continue
+            if changed_in[y] <= forward_over[y] and (y == 0 or changed_in[y - 1] <= forward_over[y]):
+                continue
             row = y * width
-            for x in range(width):
-                p = row + x
-                if not passable[p]:
-                    continue
+            row_changed = False
+            for i in range(row_start[y], row_start[y + 1]):
+                p = todo[i]
+                x = p - row
+                g = groups[p]
                 best = dist[p]
                 label = out[p]
                 if y > 0:
                     q = p - width
-                    if x > 0 and passable[q - 1] and dist[q - 1] + 7 < best:
+                    if x > 0 and groups[q - 1] == g and dist[q - 1] + 7 < best:
                         best = dist[q - 1] + 7
                         label = out[q - 1]
-                    if passable[q] and dist[q] + 5 < best:
+                    if groups[q] == g and dist[q] + 5 < best:
                         best = dist[q] + 5
                         label = out[q]
-                    if x + 1 < width and passable[q + 1] and dist[q + 1] + 7 < best:
+                    if x + 1 < width and groups[q + 1] == g and dist[q + 1] + 7 < best:
                         best = dist[q + 1] + 7
                         label = out[q + 1]
-                if x > 0 and passable[p - 1] and dist[p - 1] + 5 < best:
+                if x > 0 and groups[p - 1] == g and dist[p - 1] + 5 < best:
                     best = dist[p - 1] + 5
                     label = out[p - 1]
                 if best < dist[p]:
                     dist[p] = best
                     out[p] = label
-                    changed = True
+                    row_changed = True
+            forward_over[y] = step
+            if row_changed:
+                changed_in[y] = step
+                changed = True
+        step += 1
         for y in range(height - 1, -1, -1):  # back: from the pixels below and to the right
+            if row_start[y] == row_start[y + 1]:
+                continue
+            if changed_in[y] <= back_over[y] and (y == height - 1 or changed_in[y + 1] <= back_over[y]):
+                continue
             row = y * width
-            for x in range(width - 1, -1, -1):
-                p = row + x
-                if not passable[p]:
-                    continue
+            row_changed = False
+            for i in range(row_start[y + 1] - 1, row_start[y] - 1, -1):
+                p = todo[i]
+                x = p - row
+                g = groups[p]
                 best = dist[p]
                 label = out[p]
                 if y + 1 < height:
                     q = p + width
-                    if x + 1 < width and passable[q + 1] and dist[q + 1] + 7 < best:
+                    if x + 1 < width and groups[q + 1] == g and dist[q + 1] + 7 < best:
                         best = dist[q + 1] + 7
                         label = out[q + 1]
-                    if passable[q] and dist[q] + 5 < best:
+                    if groups[q] == g and dist[q] + 5 < best:
                         best = dist[q] + 5
                         label = out[q]
-                    if x > 0 and passable[q - 1] and dist[q - 1] + 7 < best:
+                    if x > 0 and groups[q - 1] == g and dist[q - 1] + 7 < best:
                         best = dist[q - 1] + 7
                         label = out[q - 1]
-                if x + 1 < width and passable[p + 1] and dist[p + 1] + 5 < best:
+                if x + 1 < width and groups[p + 1] == g and dist[p + 1] + 5 < best:
                     best = dist[p + 1] + 5
                     label = out[p + 1]
                 if best < dist[p]:
                     dist[p] = best
                     out[p] = label
-                    changed = True
+                    row_changed = True
+            back_over[y] = step
+            if row_changed:
+                changed_in[y] = step
+                changed = True
     return out
 
 
@@ -718,6 +798,579 @@ def region_color_sums(ids, pixels, asked, own):
     return sums, counts, own_sums, own_counts
 
 
+@njit(cache=True, nogil=True)
+def white_pieces(ids, height, width, out_piece):
+    """4-connected runs of one id in ``ids`` (-1 for none): each pixel's piece to ``out_piece``, -1 where it has no id.
+
+    Pieces are numbered in raster order of their first pixel, which is how
+    ``cv2.connectedComponents`` numbers the 4-connected parts of one mask: the
+    pieces of one id come in the order that numbering gives them in any box
+    holding them. Returns the id of each piece.
+    """
+    n = height * width
+    parent = np.empty(n, np.int32)
+    for p in range(n):
+        parent[p] = p
+    for y in range(height):
+        row = y * width
+        for x in range(width):
+            p = row + x
+            r = ids[p]
+            if r < 0:
+                continue
+            if x > 0 and ids[p - 1] == r:
+                _union(parent, p, p - 1)
+            if y > 0 and ids[p - width] == r:
+                _union(parent, p, p - width)
+    # _union keeps the lower index as the root, so a piece's root is its first pixel in raster order, and every parent
+    # lies before its child, in the same piece: in raster order, a pixel's parent is numbered already.
+    piece_region = np.empty(n, np.int32)
+    count = 0
+    for p in range(n):
+        if ids[p] < 0:
+            out_piece[p] = -1
+            continue
+        up = parent[p]
+        if up == p:
+            out_piece[p] = count
+            piece_region[count] = ids[p]
+            count += 1
+        else:
+            out_piece[p] = out_piece[up]
+    return piece_region[:count].copy()
+
+
+@njit(cache=True, nogil=True)
+def nearest_core_color(nearest, fits, ids, region_color, out_color):
+    """Each pixel's color in ``out_color``: that of the region of its nearest core pixel.
+
+    ``nearest`` comes from a distance transform with a label per pixel over the
+    pixels outside the cores (``fits`` False): the label of the nearest core
+    pixel, which is its own on a core pixel.
+    """
+    most = 0
+    for p in range(nearest.shape[0]):
+        if nearest[p] > most:
+            most = nearest[p]
+    color_of_label = np.zeros(most + 1, np.int32)
+    for p in range(nearest.shape[0]):
+        if fits[p]:
+            color_of_label[nearest[p]] = region_color[ids[p]]
+    for p in range(nearest.shape[0]):
+        out_color[p] = color_of_label[nearest[p]]
+
+
+@njit(cache=True, nogil=True)
+def across_to_nearest_core(nearest, fits, compartment, outside, out_across):
+    """Mark in ``out_across`` the pixels not ``outside`` whose nearest core pixel lies in another ``compartment``.
+
+    ``nearest`` is as in ``nearest_core_color``. Returns, per compartment,
+    whether it holds such a pixel.
+    """
+    most = 0
+    most_compartment = 0
+    for p in range(nearest.shape[0]):
+        if nearest[p] > most:
+            most = nearest[p]
+        if compartment[p] > most_compartment:
+            most_compartment = compartment[p]
+    compartment_of_label = np.zeros(most + 1, np.int32)
+    for p in range(nearest.shape[0]):
+        if fits[p]:
+            compartment_of_label[nearest[p]] = compartment[p]
+    wanted = np.zeros(most_compartment + 1, np.bool_)
+    for p in range(nearest.shape[0]):
+        out_across[p] = not outside[p] and compartment_of_label[nearest[p]] != compartment[p]
+        if out_across[p]:
+            wanted[compartment[p]] = True
+    return wanted
+
+
+@njit(cache=True, nogil=True)
+def white_of(ids, printed, asked, out_white):
+    """Each pixel's region id in ``out_white`` where it is unprinted and ``asked`` marks its region, else -1."""
+    for p in range(ids.shape[0]):
+        r = ids[p]
+        out_white[p] = r if r >= 0 and not printed[p] and asked[r] else -1
+
+
+@njit(cache=True, nogil=True)
+def split_seeds(ids, piece, paintable, splitting, out_groups, out_seeds):
+    """The claim search's input for the regions ``splitting`` marks (see ``regions._split_all``).
+
+    ``out_groups``: each pixel's region where it is splitting, else -1.
+    ``out_seeds``: its piece where that piece is ``paintable``, else -1.
+    """
+    for p in range(ids.shape[0]):
+        r = ids[p]
+        if r >= 0 and splitting[r]:
+            out_groups[p] = r
+            k = piece[p]
+            out_seeds[p] = k if k >= 0 and paintable[k] else -1
+        else:
+            out_groups[p] = -1
+            out_seeds[p] = -1
+
+
+@njit(cache=True, nogil=True)
+def apply_split(ids, claim, rank, printed, groups, base, height, width, out_corners):
+    """Split the regions ``groups`` marks in place in ``ids``, one region per area, with walls where two areas meet.
+
+    ``claim`` holds, where a region splits, the area claiming each pixel (a
+    piece, see ``white_pieces``) or -1, and becomes each pixel's rank there:
+    ``rank`` numbers a region's areas 0, 1, ... . The first keeps the
+    region's id, and area k > 0 of region r gets ``base[r] + k - 1``. Of two
+    8-adjacent pixels of one region claimed by different areas, one is a wall
+    (see ``claim_walls``) and leaves every region (-1); ``out_corners`` marks
+    the unprinted walls, which the page prints.
+    """
+    for p in range(ids.shape[0]):
+        c = claim[p]
+        if c >= 0:
+            claim[p] = rank[c]
+    wall = np.empty(height * width, np.bool_)
+    claim_walls(claim, printed, groups, height, width, wall)
+    for p in range(ids.shape[0]):
+        out_corners[p] = wall[p] and not printed[p]
+        if wall[p]:
+            ids[p] = -1
+        elif claim[p] > 0:
+            ids[p] = base[groups[p]] + claim[p] - 1
+
+
+@njit(cache=True, nogil=True)
+def painted_labels(ids, colors, num_colors, out_labels):
+    """Each pixel's color in ``out_labels``: its region's in ``colors``, ``num_colors`` where it is in no region."""
+    for p in range(ids.shape[0]):
+        r = ids[p]
+        out_labels[p] = colors[r] if r >= 0 else num_colors
+
+
+@njit(cache=True, nogil=True)
+def regions_joined(old, new, count):
+    """For each of ``count`` regions of ``new``, whether it holds pixels of two regions of ``old`` or more."""
+    first = np.full(count, -1, np.int32)  # the first region of old seen in each region of new
+    joined = np.zeros(count, np.bool_)
+    for p in range(old.shape[0]):
+        o = old[p]
+        r = new[p]
+        if o < 0 or r < 0:
+            continue
+        if first[r] < 0:
+            first[r] = o
+        elif first[r] != o:
+            joined[r] = True
+    return joined
+
+
+@njit(cache=True, nogil=True)
+def follow_white(ids, white, merged, count, out_ids):
+    """Every region of ``ids`` where its white went in ``merged``: each pixel's new id to ``out_ids``.
+
+    ``white`` is ``ids`` less the printed pixels (-1), ``merged`` the same
+    after merging, in which every pixel of a region moved together. A region
+    with no white stays itself. Returns, per region, where it went.
+    """
+    target = np.arange(count).astype(np.int32)
+    for p in range(ids.shape[0]):
+        if white[p] >= 0:
+            target[white[p]] = merged[p]
+    for p in range(ids.shape[0]):
+        r = ids[p]
+        out_ids[p] = target[r] if r >= 0 else -1
+    return target
+
+
+@njit(cache=True, nogil=True)
+def seams_round(ids, printed, which, height, width, out_ids, out_taken):
+    """``regions._seams_round``: keep the regions ``which`` marks from touching another, taking a pixel of the two away.
+
+    Of two 8-adjacent pixels of different regions, one of them a region
+    ``which`` marks, one leaves its region (-1 in ``out_ids``): the printed
+    one if only one is, else the one with the higher id. Two white pixels
+    across a corner count only where neither pixel beside them joins the two
+    regions edge to edge, and the one that leaves is marked in ``out_taken``.
+    Two white pixels sharing an edge are left as they are.
+
+    Only a pixel of a marked region, or beside one, can leave, so only the
+    boxes round the marked regions, a pixel wider, are looked at.
+    """
+    num_regions = which.shape[0]
+    box = np.empty((num_regions, 4), np.int64)  # x0, y0, x1, y1 of each marked region
+    box[:, 0] = width
+    box[:, 1] = height
+    box[:, 2] = -1
+    box[:, 3] = -1
+    for y in range(height):
+        row = y * width
+        for x in range(width):
+            p = row + x
+            r = ids[p]
+            out_ids[p] = r
+            out_taken[p] = False
+            if r >= 0 and which[r]:
+                box[r, 0] = min(box[r, 0], x)
+                box[r, 1] = min(box[r, 1], y)
+                box[r, 2] = max(box[r, 2], x)
+                box[r, 3] = max(box[r, 3], y)
+    for k in range(num_regions):
+        if box[k, 2] < 0:
+            continue
+        for y in range(max(box[k, 1] - 1, 0), min(box[k, 3] + 2, height)):
+            for x in range(max(box[k, 0] - 1, 0), min(box[k, 2] + 2, width)):
+                _seam_pixel(ids, printed, which, height, width, y, x, out_ids, out_taken)
+
+
+@njit(cache=True, nogil=True)
+def _seam_pixel(ids, printed, which, height, width, y, x, out_ids, out_taken):
+    """``seams_round`` for the pixel at ``(x, y)``: whether it leaves its region, from ``ids`` alone."""
+    row = y * width
+    p = row + x
+    r = ids[p]
+    if r < 0:
+        return
+    marked = which[r]
+    drop = False
+    for dy in range(-1, 2):
+        yy = y + dy
+        if yy < 0 or yy >= height:
+            continue
+        for dx in range(-1, 2):
+            xx = x + dx
+            if (dy == 0 and dx == 0) or xx < 0 or xx >= width:
+                continue
+            q = yy * width + xx
+            o = ids[q]
+            if o < 0 or o == r or not (marked or which[o]):
+                continue
+            if dy != 0 and dx != 0:
+                a = yy * width + x  # the two pixels beside both, sharing an edge with each
+                b = row + xx
+                edge_to_edge = (not printed[a] and (ids[a] == r or ids[a] == o)) or (
+                    not printed[b] and (ids[b] == r or ids[b] == o)
+                )
+                if printed[p]:
+                    drop = drop or not printed[q] or o < r
+                elif not printed[q] and not edge_to_edge and o < r:
+                    drop = True
+            elif printed[p] and (not printed[q] or o < r):
+                drop = True
+    if drop:
+        out_ids[p] = -1
+        out_taken[p] = not printed[p]
+
+
+@njit(cache=True, nogil=True)
+def region_census(ids, printed, count, height, width):
+    """Per region id below ``count``: its pixels, its unprinted pixels, and whether another region touches it (8-adjacent)."""
+    areas = np.zeros(count, np.int64)
+    unprinted = np.zeros(count, np.int64)
+    touched = np.zeros(count, np.bool_)
+    for y in range(height):
+        row = y * width
+        for x in range(width):
+            p = row + x
+            r = ids[p]
+            if r < 0:
+                continue
+            areas[r] += 1
+            if not printed[p]:
+                unprinted[r] += 1
+            # Each pair once: the pixel to the right and the three below.
+            if x + 1 < width:
+                s = ids[p + 1]
+                if s >= 0 and s != r:
+                    touched[r] = True
+                    touched[s] = True
+            if y + 1 < height:
+                for xx in range(max(x - 1, 0), min(x + 2, width)):
+                    s = ids[row + width + xx]
+                    if s >= 0 and s != r:
+                        touched[r] = True
+                        touched[s] = True
+    return areas, unprinted, touched
+
+
+@njit(cache=True, nogil=True)
+def unreached_by_brush(ids, to_brush, radius, out_unreached):
+    """``out_unreached``: the pixels in a region farther than ``radius`` from where a brush fits (``to_brush``, float32).
+
+    Squared distances are whole numbers, which the float32 roots only
+    approximate: they are rounded back and compared, as the benchmark does.
+    """
+    limit = radius * radius
+    for p in range(ids.shape[0]):
+        d = np.float64(to_brush[p])
+        out_unreached[p] = ids[p] >= 0 and np.rint(d * d) > limit
+
+
+@njit(cache=True, nogil=True)
+def pocket_contacts(pocket, ids, walls, count, height, width):
+    """For each pocket (``pocket`` > 0, numbered below ``count``), its contacts and how many of them are ``walls``.
+
+    A contact is a pixel 8-adjacent to one of the pocket's that is neither in
+    the pocket nor in that pixel's region; off the page is a contact too, and
+    no wall. Each pair of pixels counts once.
+    """
+    contacts = np.zeros(count, np.int64)
+    on_walls = np.zeros(count, np.int64)
+    for y in range(height):
+        row = y * width
+        for x in range(width):
+            p = row + x
+            k = pocket[p]
+            if k == 0:
+                continue
+            r = ids[p]
+            for dy in range(-1, 2):
+                yy = y + dy
+                for dx in range(-1, 2):
+                    if dy == 0 and dx == 0:
+                        continue
+                    xx = x + dx
+                    if yy < 0 or yy >= height or xx < 0 or xx >= width:
+                        contacts[k] += 1
+                        continue
+                    q = yy * width + xx
+                    if pocket[q] != k and ids[q] != r:
+                        contacts[k] += 1
+                        if walls[q]:
+                            on_walls[k] += 1
+    return contacts, on_walls
+
+
+@njit(cache=True, nogil=True)
+def thin_ink_to_nearest(ids, thin, nearest, distance, max_width, height, width, out_ids, out_joined):
+    """Give each ``thin`` ink pixel the region nearest it, within ``max_width``, and put seams where two regions meet.
+
+    ``nearest`` and ``distance`` come from a distance transform with a label
+    per pixel over the pixels in no region (``ids`` < 0): the label of the
+    nearest pixel in a region, and how far it is. ``out_joined`` marks the
+    pixels given a region; ``out_ids`` is ``ids`` with them in it, less every
+    joined pixel 8-adjacent to another region's pixel that was a region's own
+    already, or joined too and of a lower id: one pass leaves no two regions
+    touching where either pixel was joined.
+    """
+    n = height * width
+    most = 0
+    for p in range(n):
+        if nearest[p] > most:
+            most = nearest[p]
+    region_of_label = np.full(most + 1, -1, np.int32)
+    for p in range(n):
+        if ids[p] >= 0:
+            region_of_label[nearest[p]] = ids[p]
+    for p in range(n):
+        out_joined[p] = False
+        out_ids[p] = ids[p]
+        if thin[p]:
+            r = region_of_label[nearest[p]]
+            if r >= 0 and distance[p] <= max_width:
+                out_joined[p] = True
+                out_ids[p] = r
+    drop = np.zeros(n, np.bool_)  # every pixel is tested against the joined map before any leaves it
+    for y in range(height):
+        row = y * width
+        for x in range(width):
+            p = row + x
+            if not out_joined[p]:
+                continue
+            r = out_ids[p]
+            for yy in range(max(y - 1, 0), min(y + 2, height)):
+                for xx in range(max(x - 1, 0), min(x + 2, width)):
+                    q = yy * width + xx
+                    o = out_ids[q]
+                    if o >= 0 and o != r and (not out_joined[q] or o < r):
+                        drop[p] = True
+    for p in range(n):
+        if drop[p]:
+            out_ids[p] = -1
+
+
+@njit(cache=True, nogil=True)
+def keep_anchored(ids, pieces, own, out_ids):
+    """``out_ids``: ``ids`` less each piece (``pieces``, 8-connected runs of one region) holding none of its ``own`` pixels."""
+    most = -1
+    for p in range(ids.shape[0]):
+        if pieces[p] > most:
+            most = pieces[p]
+    anchored = np.zeros(most + 1, np.bool_)
+    for p in range(ids.shape[0]):
+        if pieces[p] >= 0 and own[p]:
+            anchored[pieces[p]] = True
+    for p in range(ids.shape[0]):
+        k = pieces[p]
+        out_ids[p] = -1 if k >= 0 and not anchored[k] else ids[p]
+
+
+@njit(cache=True, nogil=True)
+def paper_rings(piece, ids, paper, count, height, width):
+    """For each piece of paper (``piece`` >= 0, below ``count``), the lowest and highest id in its ring.
+
+    A piece's ring is the pixels 8-adjacent to it that aren't paper, off the
+    page left out: a region's id, or -1 for ink. With no ring, the lowest is
+    the largest int32 and the highest -2.
+    """
+    lowest = np.full(count, np.iinfo(np.int32).max, np.int64)
+    highest = np.full(count, -2, np.int64)
+    for y in range(height):
+        row = y * width
+        for x in range(width):
+            p = row + x
+            k = piece[p]
+            if k < 0:
+                continue
+            for yy in range(max(y - 1, 0), min(y + 2, height)):
+                for xx in range(max(x - 1, 0), min(x + 2, width)):
+                    q = yy * width + xx
+                    if paper[q]:
+                        continue
+                    o = ids[q]
+                    if o < lowest[k]:
+                        lowest[k] = o
+                    if o > highest[k]:
+                        highest[k] = o
+    return lowest, highest
+
+
+@njit(cache=True, nogil=True)
+def ink_is_main_neighbor(ids, asked, height, width):
+    """For each patch ``asked`` about, whether the ink (-1 in ``ids``) owns at least as much of its outer ring as any one patch.
+
+    A patch's ring is the pixels 8-adjacent to it that aren't its own, each
+    counted once, off the page left out, as ``merge_small_regions`` counts it;
+    a tie goes to the ink, and a patch with no ink in its ring is False.
+    """
+    count = asked.shape[0]
+    n = height * width
+    start = np.zeros(count + 1, np.int64)  # the asked patches' pixels, patch by patch: patch k's at start[k]:start[k + 1]
+    for p in range(n):
+        r = ids[p]
+        if r >= 0 and asked[r]:
+            start[r + 1] += 1
+    for k in range(count):
+        start[k + 1] += start[k]
+    pixels = np.empty(start[count], np.int64)
+    fill = start[:count].copy()
+    for p in range(n):
+        r = ids[p]
+        if r >= 0 and asked[r]:
+            pixels[fill[r]] = p
+            fill[r] += 1
+    result = np.zeros(count, np.bool_)
+    stamp = np.zeros(n, np.int32)
+    tally = np.zeros(count, np.int64)
+    owners = np.empty(count, np.int32)
+    for k in range(count):
+        if start[k] == start[k + 1]:
+            continue
+        by_ink = 0
+        num_owners = 0
+        for i in range(start[k], start[k + 1]):
+            p = pixels[i]
+            y = p // width
+            x = p - y * width
+            for yy in range(max(y - 1, 0), min(y + 2, height)):
+                for xx in range(max(x - 1, 0), min(x + 2, width)):
+                    q = yy * width + xx
+                    o = ids[q]
+                    if o == k or stamp[q] == k + 1:
+                        continue
+                    stamp[q] = k + 1
+                    if o < 0:
+                        by_ink += 1
+                    else:
+                        if tally[o] == 0:
+                            owners[num_owners] = o
+                            num_owners += 1
+                        tally[o] += 1
+        most = 0
+        for j in range(num_owners):
+            o = owners[j]
+            if tally[o] > most:
+                most = tally[o]
+            tally[o] = 0
+        result[k] = by_ink > 0 and by_ink >= most
+    return result
+
+
+@njit(cache=True, nogil=True)
+def claim_walls(claim, ink, groups, height, width, out_wall):
+    """Mark, in ``out_wall``, the pixels that keep two claims apart: of every two 8-adjacent pixels of different claims, one.
+
+    ``claim`` is each pixel's claim (>= 0), or -1 for none; ``ink`` a bool per
+    pixel. Of two pixels of different claims, the ink one is the wall if only
+    one of them is ink, else the one of the higher claim. With ``groups``
+    (a group per pixel, as in ``nearest_seed_in_groups``) not empty, only two
+    pixels of one group are compared: each group's claims are its own.
+    """
+    grouped = groups.shape[0] > 0
+    for y in range(height):
+        row = y * width
+        for x in range(width):
+            p = row + x
+            c = claim[p]
+            out_wall[p] = False
+            if c < 0:
+                continue
+            for yy in range(max(y - 1, 0), min(y + 2, height)):
+                for xx in range(max(x - 1, 0), min(x + 2, width)):
+                    q = yy * width + xx
+                    o = claim[q]
+                    if o < 0 or o == c or (grouped and groups[q] != groups[p]):
+                        continue
+                    if ink[p] != ink[q]:
+                        if ink[p]:
+                            out_wall[p] = True
+                    elif c > o:
+                        out_wall[p] = True
+
+
+@njit(cache=True, nogil=True)
+def settle_gaps(piece, claim, paintable):
+    """Give each piece no brush fits in, in place in ``claim``, wholly to the claim most of its pixels are in.
+
+    ``piece`` is each pixel's piece (-1 for none), ``paintable`` a bool per
+    piece, ``claim`` each pixel's claim: a paintable piece (-1 for none). Of a
+    piece that isn't paintable, only its claimed pixels count, and only they
+    take the claim, which goes to the lowest on a tie.
+    """
+    num_pieces = paintable.shape[0]
+    counts = np.zeros(num_pieces + 1, np.int64)
+    for p in range(piece.shape[0]):
+        k = piece[p]
+        if k >= 0 and not paintable[k] and claim[p] >= 0:
+            counts[k + 1] += 1
+    for k in range(num_pieces):  # counts[k]: where piece k's claims start in ``claims``
+        counts[k + 1] += counts[k]
+    claims = np.empty(counts[num_pieces], np.int32)
+    fill = counts[:num_pieces].copy()
+    for p in range(piece.shape[0]):
+        k = piece[p]
+        if k >= 0 and not paintable[k] and claim[p] >= 0:
+            claims[fill[k]] = claim[p]
+            fill[k] += 1
+    best = np.full(num_pieces, -1, np.int32)
+    tally = np.zeros(num_pieces, np.int64)
+    for k in range(num_pieces):
+        start, stop = counts[k], counts[k + 1]
+        if start == stop:
+            continue
+        most = 0
+        for i in range(start, stop):
+            c = claims[i]
+            tally[c] += 1
+            if tally[c] > most or (tally[c] == most and c < best[k]):
+                most = tally[c]
+                best[k] = c
+        for i in range(start, stop):
+            tally[claims[i]] = 0
+    for p in range(piece.shape[0]):
+        k = piece[p]
+        if k >= 0 and not paintable[k] and claim[p] >= 0:
+            claim[p] = best[k]
+
+
 def warm_up() -> None:
     """Compile (or load from cache) every kernel using tiny inputs.
 
@@ -732,6 +1385,34 @@ def warm_up() -> None:
     region_bounds(ids, 3, 3, int(ids.max()) + 1)
     nearest_seed_within(labels - 1, labels >= 0, 3, 3)
     region_color_sums(ids, np.zeros((9, 3), dtype=np.uint8), np.ones(int(ids.max()) + 1, dtype=np.bool_), labels >= 0)
+
+    # Line art's region steps.
+    count = int(ids.max()) + 1
+    flags = np.ones(count, dtype=np.bool_)
+    printed = labels == 2
+    ids32 = np.empty(9, dtype=np.int32)
+    taken = np.empty(9, dtype=np.bool_)
+    nearest_seed_in_groups(labels - 1, ids, 3, 3)
+    white_of(ids, printed, flags, ids32)
+    piece_region = white_pieces(ids, 3, 3, ids32)
+    split_seeds(ids, ids32, np.ones(piece_region.size, dtype=np.bool_), flags, np.empty(9, dtype=np.int32), labels - 1)
+    settle_gaps(ids32, labels - 1, np.zeros(piece_region.size, dtype=np.bool_))
+    claim_walls(labels - 1, printed, ids, 3, 3, taken)
+    claim_walls(labels - 1, printed, np.zeros(0, dtype=np.int32), 3, 3, taken)
+    apply_split(ids.copy(), labels.copy(), labels, printed, ids, np.zeros(count, dtype=np.int64), 3, 3, taken)
+    painted_labels(ids, region_color, 3, ids32)
+    regions_joined(ids, ids, count)
+    follow_white(ids, ids, ids, count, ids32)
+    seams_round(ids, printed, flags, 3, 3, ids32, taken)
+    region_census(ids, printed, count, 3, 3)
+    unreached_by_brush(ids, np.ones(9, dtype=np.float32), 1.5, taken)
+    pocket_contacts(labels, ids, printed, 3, 3, 3)
+    thin_ink_to_nearest(ids, printed, labels, np.ones(9, dtype=np.float32), 1.5, 3, 3, ids32, taken)
+    keep_anchored(ids, ids, printed, ids32)
+    paper_rings(labels - 1, ids, printed, 3, 3, 3)
+    ink_is_main_neighbor(ids, flags, 3, 3)
+    nearest_core_color(labels, printed, ids, region_color, ids32)
+    across_to_nearest_core(labels, printed, labels, printed, taken)
 
     from tessellatum.core.boundaries import crack_edges  # imported here: boundaries imports this module
 
