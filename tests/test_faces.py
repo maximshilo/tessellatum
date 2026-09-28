@@ -265,6 +265,34 @@ def test_a_cascade_of_another_kind_is_refused(tmp_path):
         faces.load_cascade(path)
 
 
+@pytest.mark.parametrize(
+    "broken",
+    [
+        ("<rect>0 0 2 2</rect>", "<rect>1 0 2 2</rect>"),  # three 2-px blocks from x = 1 reach past a 6-px window
+        ("<rect>0 0 2 2</rect>", "<rect>0 0 0 2</rect>"),  # blocks of no width
+        ("<internalNodes>0 -1 0 ", "<internalNodes>0 -1 6 "),  # a seventh feature, of six
+        ("<leafValues>1.0 -1.0</leafValues>", "<leafValues>1.0</leafValues>"),
+    ],
+    ids=["past the window", "empty blocks", "no such feature", "one leaf"],
+)
+def test_a_cascade_the_search_could_read_outside_of_is_refused(broken, tmp_path):
+    xml = random_cascade_xml(1)
+    old, new = broken
+    assert old in xml
+    path = tmp_path / "cascade.xml"
+    path.write_text(xml.replace(old, new, 1))
+    with pytest.raises(ValueError):
+        faces.load_cascade(path)
+    path.write_text(xml)
+    faces.load_cascade(path)  # the cascade as written loads
+
+
+def test_an_image_whose_integral_overflows_32_bits_is_refused():
+    faces.detect_cascade(np.zeros((2048, 4112), dtype=np.uint8), _one_stump_cascade(0), min_neighbors=0)  # 8,421,376 px
+    with pytest.raises(ValueError):
+        faces.detect_cascade(np.zeros((2048, 4113), dtype=np.uint8), _one_stump_cascade(0), min_neighbors=0)
+
+
 def _one_stump_cascade(code: int) -> faces.Cascade:
     """A 3 x 3 window, one feature of 1 x 1 blocks, passing only windows whose LBP code is ``code``."""
     subset = np.zeros((1, 8), dtype=np.uint32)

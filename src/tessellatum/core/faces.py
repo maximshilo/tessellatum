@@ -190,7 +190,11 @@ class Cascade:
 def load_cascade(path: Path) -> Cascade:
     """Read an LBP cascade saved by OpenCV's ``opencv_traincascade`` (``stageType`` BOOST, ``featureType`` LBP).
 
-    Stage thresholds are lowered by 1e-5 in single precision, as OpenCV does when it loads one.
+    Numbers are read as doubles and kept in single precision, and stage
+    thresholds lowered by 1e-5 in single precision, as OpenCV does when it
+    loads one. A cascade whose features reach outside its window, or whose
+    stumps read a feature it doesn't have, is refused: the window search
+    doesn't check where it reads.
     """
     root = ElementTree.parse(path).getroot().find("cascade")
     if root is None or root.findtext("featureType") != "LBP" or root.findtext("stageType") != "BOOST":
@@ -198,7 +202,7 @@ def load_cascade(path: Path) -> Cascade:
     subset_size = (int(root.findtext("featureParams/maxCatCount")) + 31) // 32
     stage_ends, thresholds, features, subsets, leaves = [], [], [], [], []
     for stage in root.find("stages"):
-        thresholds.append(np.float32(stage.findtext("stageThreshold")) - _THRESHOLD_EPS)
+        thresholds.append(np.float32(float(stage.findtext("stageThreshold"))) - _THRESHOLD_EPS)
         for weak in stage.find("weakClassifiers"):
             nodes = [int(value) for value in weak.findtext("internalNodes").split()]
             if len(nodes) != 3 + subset_size:
@@ -206,13 +210,21 @@ def load_cascade(path: Path) -> Cascade:
             features.append(nodes[2])
             subsets.append(nodes[3:])
             leaves.append([float(value) for value in weak.findtext("leafValues").split()])
+            if len(leaves[-1]) != 2:
+                raise ValueError(f"{path}: a stump has two leaves")
         stage_ends.append(len(features))
     rects = np.array(
         [[int(value) for value in feature.findtext("rect").split()] for feature in root.find("features")], dtype=np.int32
-    )
+    ).reshape(-1, 4)
+    window = (int(root.findtext("width")), int(root.findtext("height")))
+    x, y, w, h = rects.T
+    if ((w < 1) | (h < 1) | (x < 0) | (y < 0) | (x + 3 * w > window[0]) | (y + 3 * h > window[1])).any():
+        raise ValueError(f"{path}: a feature reaches outside the {window[0]} x {window[1]} window")
+    if any(not 0 <= feature < len(rects) for feature in features):
+        raise ValueError(f"{path}: a stump reads a feature the cascade doesn't have")
     steps = np.arange(4, dtype=np.int32)
     return Cascade(
-        window=(int(root.findtext("width")), int(root.findtext("height"))),
+        window=window,
         stage_ends=np.array(stage_ends, dtype=np.int32),
         thresholds=np.array(thresholds, dtype=np.float32),
         features=np.array(features, dtype=np.int32),
@@ -261,8 +273,13 @@ def detect_cascade(
     twofold, two pixels apart on the others. As OpenCV splits the rows of
     windows into stripes, a count that rounds down, a two-pixel step can leave
     the last row unsearched (see ``_searched_rows``).
+
+    The image's integral must fit in 32 bits, as OpenCV's does: at most
+    8,421,504 pixels.
     """
     h, w = gray.shape
+    if 255 * gray.size >= 2**31:
+        raise ValueError(f"a {w} x {h} image is too big for a 32-bit integral")
     win_w, win_h = cascade.window
     every = []  # every size that fits, as OpenCV lists them: the growing factor in double, kept in single precision
     factor = 1.0
