@@ -157,6 +157,10 @@ Previews are meant to be quick enough to tweak difficulty interactively:
   linearly with image size, and contour extraction works on each region's
   bounding box rather than the whole image. Their output is pixel-identical
   to the original straightforward implementation.
+- So do line art's own region steps — looking through hatching, leaving
+  pockets as paper, giving every white area its own region — which search
+  every area at once, in one pass over the page, rather than one area at a
+  time. Their output is pixel-identical to the NumPy code they replaced.
 - Resizing and quantization results are cached per image, so changing only
   the region size skips straight to the region stages.
 - The compiled kernels are built on the very first launch (a few seconds, in

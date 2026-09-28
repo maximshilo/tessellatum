@@ -1,14 +1,119 @@
-"""Connected-component region extraction, region merging, and contour extraction."""
+"""The line-art region steps as v0.1.31 had them, before T3.5 compiled them: what the compiled steps must match exactly.
+
+``regions.py`` as it was at v0.1.31 (T3.4b), verbatim below the kernels, with the one kernel T3.5 rewrote
+(``nearest_seed_within``) kept here as it was. The other kernels it calls are the package's own, unchanged by T3.5.
+``tests/test_line_art_equivalence.py`` runs both on real line-art pages and on constructed ones.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
+from numba import njit
 
-from tessellatum.core import kernels, parallel
+from tessellatum.core import kernels as _kernels
+from tessellatum.core import parallel
 from tessellatum.core.color import MIN_PALETTE_DE00, bgr_to_lab, ciede2000
+
+
+@njit(nogil=True)
+def nearest_seed_within(seeds, passable, height, width):
+    """For every pixel, the label of the seed nearest to it along a path through ``passable`` pixels.
+
+    ``seeds`` holds a label (>= 0) at each seed pixel and -1 elsewhere; a seed
+    on a pixel that isn't passable is ignored. A path steps between
+    8-neighbors, a straight step counting 5 and a diagonal one 7: a chamfer
+    distance within a few percent of the straight-line one, measured around
+    whatever isn't passable rather than through it. Returns -1 where no seed
+    can be reached, and on pixels that aren't passable.
+
+    The distances are propagated in raster passes, forward and back, until a
+    pass changes nothing: each pass carries them along every path that runs
+    its way, and a path that doubles back takes another pair. A pixel keeps
+    the first label that reaches it at its shortest distance, so the result is
+    deterministic.
+    """
+    n = height * width
+    unreached = np.int64(1) << 60
+    dist = np.full(n, unreached, np.int64)
+    out = np.full(n, -1, np.int32)
+    for p in range(n):
+        if seeds[p] >= 0 and passable[p]:
+            dist[p] = 0
+            out[p] = seeds[p]
+
+    changed = True
+    while changed:
+        changed = False
+        for y in range(height):  # forward: from the pixels above and to the left
+            row = y * width
+            for x in range(width):
+                p = row + x
+                if not passable[p]:
+                    continue
+                best = dist[p]
+                label = out[p]
+                if y > 0:
+                    q = p - width
+                    if x > 0 and passable[q - 1] and dist[q - 1] + 7 < best:
+                        best = dist[q - 1] + 7
+                        label = out[q - 1]
+                    if passable[q] and dist[q] + 5 < best:
+                        best = dist[q] + 5
+                        label = out[q]
+                    if x + 1 < width and passable[q + 1] and dist[q + 1] + 7 < best:
+                        best = dist[q + 1] + 7
+                        label = out[q + 1]
+                if x > 0 and passable[p - 1] and dist[p - 1] + 5 < best:
+                    best = dist[p - 1] + 5
+                    label = out[p - 1]
+                if best < dist[p]:
+                    dist[p] = best
+                    out[p] = label
+                    changed = True
+        for y in range(height - 1, -1, -1):  # back: from the pixels below and to the right
+            row = y * width
+            for x in range(width - 1, -1, -1):
+                p = row + x
+                if not passable[p]:
+                    continue
+                best = dist[p]
+                label = out[p]
+                if y + 1 < height:
+                    q = p + width
+                    if x + 1 < width and passable[q + 1] and dist[q + 1] + 7 < best:
+                        best = dist[q + 1] + 7
+                        label = out[q + 1]
+                    if passable[q] and dist[q] + 5 < best:
+                        best = dist[q] + 5
+                        label = out[q]
+                    if x > 0 and passable[q - 1] and dist[q - 1] + 7 < best:
+                        best = dist[q - 1] + 7
+                        label = out[q - 1]
+                if x + 1 < width and passable[p + 1] and dist[p + 1] + 5 < best:
+                    best = dist[p + 1] + 5
+                    label = out[p + 1]
+                if best < dist[p]:
+                    dist[p] = best
+                    out[p] = label
+                    changed = True
+    return out
+
+
+# The kernels v0.1.31's region steps call, with nearest_seed_within as it was.
+kernels = SimpleNamespace(
+    label_components=_kernels.label_components,
+    merge_small_regions=_kernels.merge_small_regions,
+    merge_same_color_neighbors=_kernels.merge_same_color_neighbors,
+    edge_adjacency_classes=_kernels.edge_adjacency_classes,
+    region_bounds=_kernels.region_bounds,
+    region_color_sums=_kernels.region_color_sums,
+    nearest_seed_within=nearest_seed_within,
+)
+
 
 # How often line art's regions are merged and split again before they settle (see ``split_areas``). On the benchmark
 # pages they settle after one or two.
@@ -113,15 +218,9 @@ def absorb_thin_parts(
     _distance, nearest = cv2.distanceTransformWithLabels(
         (~fits).view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE, labelType=cv2.DIST_LABEL_PIXEL
     )
-    nearest = np.ascontiguousarray(nearest, dtype=np.int32)
-    widened = np.empty(nearest.shape, dtype=np.int32)
-    kernels.nearest_core_color(
-        nearest.reshape(-1),
-        fits.reshape(-1),
-        np.ascontiguousarray(region_id_map, dtype=np.int32).reshape(-1),
-        np.asarray(region_color, dtype=np.int32),
-        widened.reshape(-1),
-    )
+    color_of_label = np.zeros(int(nearest.max()) + 1, dtype=np.int32)
+    color_of_label[nearest[fits]] = region_color[region_id_map[fits]]
+    widened = color_of_label[nearest]
 
     outside = region_id_map < 0
     if outside.any():
@@ -141,14 +240,14 @@ def _keep_to_own_side(widened, nearest, fits, outside, region_id_map, region_col
     """
     h, w = region_id_map.shape
     _count, compartment = cv2.connectedComponents((~outside).view(np.uint8), connectivity=8)
-    compartment = np.ascontiguousarray(compartment, dtype=np.int32)
-    across = np.empty((h, w), dtype=bool)
-    # Only the compartments holding such pixels need searching, and only as far as they reach.
-    wanted = kernels.across_to_nearest_core(
-        nearest.reshape(-1), fits.reshape(-1), compartment.reshape(-1), outside.reshape(-1), across.reshape(-1)
-    )
-    if not wanted.any():
+    compartment_of_label = np.zeros(int(nearest.max()) + 1, dtype=np.int32)
+    compartment_of_label[nearest[fits]] = compartment[fits]
+    across = ~outside & (compartment_of_label[nearest] != compartment)
+    if not across.any():
         return
+    # Only the compartments holding such pixels need searching, and only as far as they reach.
+    wanted = np.zeros(int(compartment.max()) + 1, dtype=bool)
+    wanted[compartment[across]] = True
     # A shortest path from the cores leaves them at their edge, so their insides need no searching.
     core_edge = fits & ~cv2.erode(fits.view(np.uint8), np.ones((3, 3), np.uint8)).view(bool)
     searched = wanted[compartment] & ~outside & (~fits | core_edge)
@@ -218,8 +317,28 @@ def _ink_is_main_neighbor(ids: np.ndarray, asked: np.ndarray) -> np.ndarray:
     h, w = ids.shape
     if not asked.any():
         return asked
-    # Off the page is nobody's.
-    return kernels.ink_is_main_neighbor(np.ascontiguousarray(ids, dtype=np.int32).reshape(-1), asked, h, w)
+    y, x = np.nonzero((ids >= 0) & asked[np.where(ids >= 0, ids, 0)])
+    own = ids[y, x].astype(np.int64)
+    keys = []
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == 0 and dx == 0:
+                continue
+            yy, xx = y + dy, x + dx
+            on_page = (yy >= 0) & (yy < h) & (xx >= 0) & (xx < w)  # off the page is nobody's
+            yy, xx = yy[on_page], xx[on_page]
+            other = ids[yy, xx]
+            differs = other != own[on_page]
+            keys.append(own[on_page][differs] * (h * w) + (yy[differs].astype(np.int64) * w + xx[differs]))
+    ring = np.unique(np.concatenate(keys))
+    patch, pixel = np.divmod(ring, h * w)
+    owner = ids.reshape(-1)[pixel]
+    by_ink = np.bincount(patch[owner < 0], minlength=asked.size)
+    others = owner >= 0
+    pairs, counts = np.unique(patch[others] * (int(ids.max()) + 1) + owner[others], return_counts=True)
+    most_by_one = np.zeros(asked.size, dtype=np.int64)
+    np.maximum.at(most_by_one, pairs // (int(ids.max()) + 1), counts)
+    return asked & (by_ink > 0) & (by_ink >= most_by_one)
 
 
 def settle_enclosed(
@@ -335,9 +454,20 @@ def _claims(piece: np.ndarray, paintable: np.ndarray, passable: np.ndarray) -> n
     a claim of its own, numbered after the pieces. -1 off ``passable``.
     """
     white = piece >= 0
-    seeds = np.where(white & paintable[np.where(white, piece, 0)], piece, -1)
+    inside = np.where(white, piece, 0)
+    seeds = np.where(white & paintable[inside], piece, -1)
     claim = _nearest_seed_within(seeds, passable)
-    kernels.settle_gaps(np.ascontiguousarray(piece, dtype=np.int32).reshape(-1), claim.reshape(-1), paintable)
+    gap = white & ~paintable[inside] & (claim >= 0)
+    if gap.any():
+        stride = np.int64(paintable.size + 1)
+        pairs, counts = np.unique(piece[gap].astype(np.int64) * stride + claim[gap], return_counts=True)
+        gaps, claims = np.divmod(pairs, stride)
+        order = np.lexsort((-counts, gaps))  # per gap, the claim with the most of its pixels first (ties: the lowest)
+        gaps, claims = gaps[order], claims[order]
+        first = np.r_[True, gaps[1:] != gaps[:-1]]
+        best = np.full(paintable.size, -1, dtype=np.int64)
+        best[gaps[first]] = claims[first]
+        claim = np.where(gap, best[inside], claim).astype(np.int32)
     unclaimed = passable & (claim < 0)
     if unclaimed.any():
         _count, runs = cv2.connectedComponents(unclaimed.view(np.uint8), connectivity=8)
@@ -345,25 +475,25 @@ def _claims(piece: np.ndarray, paintable: np.ndarray, passable: np.ndarray) -> n
     return claim
 
 
-def _claim_walls(claim: np.ndarray, ink: np.ndarray, groups: np.ndarray | None = None) -> np.ndarray:
+def _claim_walls(claim: np.ndarray, ink: np.ndarray) -> np.ndarray:
     """The pixels that keep two claims apart: of every two 8-adjacent pixels of different claims, one.
 
     The ink one if only one of them is ink, else the one of the higher claim.
     Afterwards no two pixels of different claims touch, diagonals included.
-    With ``groups`` (HxW int32, -1 for none), each group's claims are its own:
-    only two pixels of one group are compared (see ``kernels.claim_walls``).
     """
     h, w = claim.shape
-    wall = np.empty((h, w), dtype=bool)
-    flat_groups = np.zeros(0, dtype=np.int32) if groups is None else np.ascontiguousarray(groups, dtype=np.int32).reshape(-1)
-    kernels.claim_walls(
-        np.ascontiguousarray(claim, dtype=np.int32).reshape(-1),
-        np.ascontiguousarray(ink, dtype=bool).reshape(-1),
-        flat_groups,
-        h,
-        w,
-        wall.reshape(-1),
-    )
+    padded = np.pad(claim, 1, constant_values=-1)
+    padded_ink = np.pad(ink, 1)
+    wall = np.zeros((h, w), dtype=bool)
+    claimed = claim >= 0
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == 0 and dx == 0:
+                continue
+            other = padded[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            other_ink = padded_ink[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            differ = claimed & (other >= 0) & (other != claim)
+            wall |= differ & ((ink & ~other_ink) | ((ink == other_ink) & (claim > other)))
     return wall
 
 
@@ -400,16 +530,27 @@ def leave_pockets(region_id_map: np.ndarray, region_color: np.ndarray, printed: 
     if not fits.any():
         return ids
     to_brush = cv2.distanceTransform((~fits).view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
-    h, w = ids.shape
-    unreached = np.empty((h, w), dtype=bool)
-    kernels.unreached_by_brush(ids.reshape(-1), to_brush.reshape(-1), radius, unreached.reshape(-1))
+    # Squared distances are whole numbers, which the float32 roots only approximate: compare those, as the benchmark does.
+    unreached = inside & (np.rint(to_brush.astype(np.float64) ** 2) > radius * radius)
     if not unreached.any():
         return ids
     walls = printed & ~inside
     n, pocket = cv2.connectedComponents(unreached.view(np.uint8), connectivity=8)
-    pocket = np.ascontiguousarray(pocket, dtype=np.int32)
-    # Off the page is a contact, not ink.
-    contacts, on_walls = kernels.pocket_contacts(pocket.reshape(-1), ids.reshape(-1), walls.reshape(-1), n, h, w)
+    pocket = pocket.astype(np.int32)
+    h, w = ids.shape
+    padded = np.pad(ids, 1, constant_values=-2)  # off the page: a contact, not ink
+    padded_walls = np.pad(walls, 1)
+    padded_pocket = np.pad(pocket, 1)
+    contacts = np.zeros(n, dtype=np.int64)
+    on_walls = np.zeros(n, dtype=np.int64)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == 0 and dx == 0:
+                continue
+            other = padded[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            outside_it = unreached & (padded_pocket[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w] != pocket) & (other != ids)
+            contacts += np.bincount(pocket[outside_it], minlength=n)
+            on_walls += np.bincount(pocket[outside_it & padded_walls[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]], minlength=n)
     left = (contacts > 0) & (2 * on_walls >= contacts)
     left[0] = False  # 0 is every reached pixel
     return np.where(left[pocket], -1, ids).astype(np.int32)
@@ -534,82 +675,45 @@ def _split_all(
     ids = np.array(region_id_map, dtype=np.int32)
     colors = np.asarray(region_color, dtype=np.int32)
     corners = np.zeros(ids.shape, dtype=bool)
-    asked = np.ones(colors.size, dtype=bool)
+    if not colors.size or not (ids >= 0).any():
+        return ids, colors, corners
+    next_id = int(colors.size)
+    extra_colors: list[int] = []
+    h, w = ids.shape
+    bounds, areas = kernels.region_bounds(ids.reshape(-1), h, w, int(colors.size))
     if only is not None:
-        asked[:] = False
-        asked[: len(only)] = only
-    if not colors.size or not asked.any() or not (ids >= 0).any():
-        return ids, colors, corners
-    h, w = ids.shape
-    flat_ids = ids.reshape(-1)
-    flat_printed = np.ascontiguousarray(printed, dtype=bool).reshape(-1)
-    # The white areas of the regions asked about: the 4-connected runs of their unprinted pixels, in raster order.
-    white = np.empty((h, w), dtype=np.int32)
-    kernels.white_of(flat_ids, flat_printed, asked, white.reshape(-1))
-    piece = np.empty((h, w), dtype=np.int32)
-    piece_region = kernels.white_pieces(white.reshape(-1), h, w, piece.reshape(-1))
-    if only is None:
-        # Where a brush fits in a region's white: farther than its radius from anything else, which one distance
-        # transform per class of regions measures for them all (see ``_brush_fits``).
-        paintable = np.zeros(piece_region.size, dtype=bool)
-        paintable[piece[_brush_fits(white, int(colors.size), radius)]] = True
+        candidates = np.zeros(colors.size, dtype=bool)
+        candidates[: len(only)] = only
     else:
-        asked &= np.bincount(piece_region, minlength=colors.size) >= 2  # one white area can't split
-        paintable = _paintable_pieces(ids, printed, piece, piece_region.size, asked, radius)
-    areas_of = np.bincount(piece_region[paintable], minlength=colors.size)
-    splitting = areas_of >= 2
-    if not splitting.any():
-        return ids, colors, corners
-    groups = np.empty(h * w, dtype=np.int32)
-    seeds = np.empty(h * w, dtype=np.int32)
-    kernels.split_seeds(flat_ids, piece.reshape(-1), paintable, splitting, groups, seeds)
-    # Each area claims what of its region it reaches first along a path through the region, a gap no brush fits in
-    # going wholly to the area that reaches most of it.
-    claim = kernels.nearest_seed_in_groups(seeds, groups, h, w)
-    kernels.settle_gaps(piece.reshape(-1), claim, paintable)
-    # Numbered 0, 1, ... in each region in the order of its areas. A part of the region no area reaches, cut off by a
-    # pocket, is claimed by nobody (-1): it keeps the region's id, and the rebuild makes it a region of its own.
-    ranked = np.flatnonzero(paintable & splitting[piece_region])
-    order = np.argsort(piece_region[ranked], kind="stable")
-    first = np.searchsorted(piece_region[ranked][order], piece_region[ranked][order])
-    rank = np.full(piece_region.size, -1, dtype=np.int32)
-    rank[ranked[order]] = np.arange(ranked.size) - first
-    # The first area keeps the region's id; the others get new ones, region by region, after every id there is.
-    extra = np.where(splitting, areas_of - 1, 0)
-    base = (colors.size + np.cumsum(extra) - extra).astype(np.int64)
-    kernels.apply_split(flat_ids, claim, rank, flat_printed, groups, base, h, w, corners.reshape(-1))
-    return ids, np.concatenate([colors, np.repeat(colors, extra)]).astype(np.int32), corners
-
-
-def _paintable_pieces(
-    ids: np.ndarray, printed: np.ndarray, piece: np.ndarray, num_pieces: int, asked: np.ndarray, radius: float
-) -> np.ndarray:
-    """For each piece of white (``piece``, see ``kernels.white_pieces``), whether a brush of ``radius`` fits in it.
-
-    Only the pieces of the regions ``asked`` marks are measured, each region in its own box, where everything but its
-    unprinted pixels is in the brush's way; the others are False.
-    """
-    paintable = np.zeros(num_pieces, dtype=bool)
-    if not asked.any():
-        return paintable
-    h, w = ids.shape
-    bounds, areas = kernels.region_bounds(ids.reshape(-1), h, w, int(asked.size))
-    for rid in np.flatnonzero(asked & (areas > 0)).tolist():
+        # Where a brush fits in a region's white lies at least its radius from anything else, so two white areas
+        # never share such a pixel, nor touch through two: only a region whose such pixels fall in two runs or more
+        # can split.
+        white = np.where(printed, -1, ids).astype(np.int32)
+        fits = _brush_fits(white, int(colors.size), radius)
+        count, runs = cv2.connectedComponents(fits.view(np.uint8), connectivity=8)
+        run_region = np.full(count, -1, dtype=np.int64)
+        run_region[runs[fits]] = white[fits]
+        candidates = np.bincount(run_region[1:][run_region[1:] >= 0], minlength=colors.size) >= 2
+    for rid in np.flatnonzero((areas > 0) & candidates).tolist():
         x0, y0, x1, y1 = bounds[rid].tolist()
         box = (slice(y0, y1 + 1), slice(x0, x1 + 1))
-        white = (ids[box] == rid) & ~printed[box]
-        distance = cv2.distanceTransform(np.pad(white, 1).view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)[1:-1, 1:-1]
-        paintable[piece[box][white & (distance > radius)]] = True
-    return paintable
+        region = ids[box] == rid
+        claim, wall = _split_region(region, printed[box], radius)
+        if claim is None:
+            continue
+        new_ids = np.where(claim > 0, next_id + claim - 1, rid)
+        ids[box] = np.where(region & ~wall, new_ids, np.where(region, -1, ids[box]))
+        corners[box] |= wall & ~printed[box]
+        extra = int(claim.max())
+        extra_colors += [int(colors[rid])] * extra
+        next_id += extra
+    return ids, np.concatenate([colors, np.asarray(extra_colors, dtype=np.int32)]), corners
 
 
 def _painted(ids: np.ndarray, colors: np.ndarray, num_colors: int) -> np.ndarray:
     """Each pixel's color, ``num_colors`` where it is in no region: labels to rebuild regions from."""
-    labels = np.empty(ids.shape, dtype=np.int32)
-    kernels.painted_labels(
-        np.ascontiguousarray(ids, dtype=np.int32).reshape(-1), np.asarray(colors, dtype=np.int32), num_colors, labels.reshape(-1)
-    )
-    return labels
+    inside = ids >= 0
+    return np.ascontiguousarray(np.where(inside, colors[np.where(inside, ids, 0)], num_colors), dtype=np.int32)
 
 
 def _rebuilt_by_white(
@@ -639,18 +743,22 @@ def _rebuilt_by_white(
     kernels.merge_small_regions(merged, h, w, areas, int(min_area_px), False)
     kernels.merge_same_color_neighbors(merged, h, w, region_color, areas, False)
     # Every region goes where its white went; one with no white stays itself.
-    followed = np.empty((h, w), dtype=np.int32)
-    target = kernels.follow_white(ids.reshape(-1), white.reshape(-1), merged, int(region_color.size), followed.reshape(-1))
+    target = np.arange(region_color.size, dtype=np.int32)
+    has_white = white >= 0
+    target[white[has_white]] = merged.reshape(h, w)[has_white]
     grown = np.zeros(region_color.size, dtype=bool)
     grown[target[(target != np.arange(region_color.size)) | joined]] = True
-    return followed, region_color, grown
+    return np.where(ids >= 0, target[np.where(ids >= 0, ids, 0)], -1).astype(np.int32), region_color, grown
 
 
 def _joined(old: np.ndarray, new: np.ndarray, count: int) -> np.ndarray:
     """For each of ``count`` regions of ``new``, whether it holds pixels of two regions of ``old`` or more."""
-    return kernels.regions_joined(
-        np.ascontiguousarray(old, dtype=np.int32).reshape(-1), np.ascontiguousarray(new, dtype=np.int32).reshape(-1), count
-    )
+    both = (old >= 0) & (new >= 0)
+    if not both.any():
+        return np.zeros(count, dtype=bool)
+    stride = np.int64(int(old.max()) + 1)
+    pairs = np.unique(new[both].astype(np.int64) * stride + old[both])
+    return np.bincount(pairs // stride, minlength=count) >= 2
 
 
 def _seams_round(ids: np.ndarray, printed: np.ndarray, which: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -663,21 +771,34 @@ def _seams_round(ids: np.ndarray, printed: np.ndarray, which: np.ndarray) -> tup
     and returned so that it is printed. Two white pixels sharing an edge are
     a boundary the page draws, and are left as they are.
     """
-    # Two white pixels across a corner are a contact of their own only where neither pixel beside them joins the two
-    # regions edge to edge: along a drawn boundary every pixel has the other region at its corners.
     h, w = ids.shape
-    kept = np.empty((h, w), dtype=np.int32)
-    taken = np.empty((h, w), dtype=bool)
-    kernels.seams_round(
-        np.ascontiguousarray(ids, dtype=np.int32).reshape(-1),
-        np.ascontiguousarray(printed, dtype=bool).reshape(-1),
-        np.asarray(which, dtype=bool),
-        h,
-        w,
-        kept.reshape(-1),
-        taken.reshape(-1),
-    )
-    return kept, taken
+    inside = ids >= 0
+    marked = inside & which[np.where(inside, ids, 0)]
+    padded = np.pad(ids, 1, constant_values=-1)
+    padded_printed = np.pad(printed, 1)
+    padded_marked = np.pad(marked, 1)
+    drop = np.zeros((h, w), dtype=bool)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == 0 and dx == 0:
+                continue
+            other = padded[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            other_printed = padded_printed[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            other_marked = padded_marked[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            meet = inside & (other >= 0) & (other != ids) & (marked | other_marked)
+            if dy != 0 and dx != 0:
+                # Two white pixels across a corner are a contact of their own only where neither pixel beside them joins
+                # the two regions edge to edge: along a drawn boundary every pixel has the other region at its corners.
+                beside = [(padded[1 + dy : 1 + dy + h, 1 : 1 + w], padded_printed[1 + dy : 1 + dy + h, 1 : 1 + w]),
+                          (padded[1 : 1 + h, 1 + dx : 1 + dx + w], padded_printed[1 : 1 + h, 1 + dx : 1 + dx + w])]
+                edge_to_edge = np.zeros((h, w), dtype=bool)
+                for side, side_printed in beside:
+                    edge_to_edge |= ~side_printed & ((side == ids) | (side == other))
+                white_corner = ~printed & ~other_printed & ~edge_to_edge & (other < ids)
+                drop |= meet & ((printed & ~other_printed) | (printed & other_printed & (other < ids)) | white_corner)
+            else:
+                drop |= meet & printed & (~other_printed | (other < ids))
+    return np.where(drop, -1, ids).astype(np.int32), drop & ~printed
 
 
 def _without_unpaintable(
@@ -698,12 +819,10 @@ def _without_unpaintable(
     if count == 0 or not inside.any():
         return ids
     region_of = np.where(inside, ids, 0)
-    h, w = ids.shape
-    areas, unprinted, touched = kernels.region_census(
-        np.ascontiguousarray(ids, dtype=np.int32).reshape(-1), np.ascontiguousarray(printed, dtype=bool).reshape(-1), count, h, w
-    )
-    alone = ~touched & (areas > 0)
-    gone = unprinted == 0
+    unprinted = np.bincount(ids[inside & ~printed], minlength=count) > 0
+    areas = np.bincount(ids[inside], minlength=count)
+    alone = ~_has_neighbor(ids, count) & (areas > 0)
+    gone = ~unprinted
     if alone.any():
         fits = _room_for_a_brush(ids, np.ones(ids.shape, dtype=bool), alone, min_width_px / 2)
         white_fits = _room_for_a_brush(ids, ~printed, alone & (areas < min_area_px), min_width_px / 2)
@@ -734,6 +853,32 @@ def _room_for_a_brush(ids: np.ndarray, keep: np.ndarray, which: np.ndarray, radi
             distance = cv2.distanceTransform(np.pad(kept, 1).view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
             out[rid] = bool(distance.max() > radius)
     return out
+
+
+def _split_region(region: np.ndarray, printed: np.ndarray, radius: float) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """The areas of one region (HxW bool, in a box): each pixel's area, 0 the first, and the seams between them.
+
+    None, None when the region has at most one white area a brush of
+    ``radius`` fits in.
+    """
+    white = region & ~printed
+    count, piece = cv2.connectedComponents(white.view(np.uint8), connectivity=4)
+    if count <= 2:  # the background and at most one area
+        return None, None
+    distance = cv2.distanceTransform(np.pad(white, 1).view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)[1:-1, 1:-1]
+    piece = piece.astype(np.int32) - 1
+    paintable = np.zeros(count - 1, dtype=bool)
+    paintable[piece[white & (distance > radius)]] = True
+    if paintable.sum() <= 1:
+        return None, None
+    claim = _claims(piece, paintable, region)
+    # Numbered 0, 1, ... in the order of the paintable pieces. A part of the region no paintable piece reaches, cut off
+    # by a pocket, is claimed by nobody (-1): it keeps the region's id, and the rebuild makes it a region of its own.
+    rank = np.full(int(claim.max()) + 1, -1, dtype=np.int32)
+    rank[np.flatnonzero(paintable)] = np.arange(int(paintable.sum()), dtype=np.int32)
+    claim = np.where(claim >= 0, rank[np.maximum(claim, 0)], -1)
+    wall = _claim_walls(claim, printed) & region
+    return np.where(region, claim, 0), wall
 
 
 def merge_cramped(
@@ -874,22 +1019,12 @@ def paint_over_thin_ink(
     distance, nearest = cv2.distanceTransformWithLabels(
         outside.view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE, labelType=cv2.DIST_LABEL_PIXEL
     )
-    # Thin ink lies within half its width of something that is not ink; a stroke beside bare paper, farther. Each
-    # joined pixel touching another region leaves again, as a seam.
-    h, w = ids.shape
-    painted = np.empty((h, w), dtype=np.int32)
-    joined = np.empty((h, w), dtype=bool)
-    kernels.thin_ink_to_nearest(
-        ids.reshape(-1),
-        np.ascontiguousarray(thin).reshape(-1),
-        np.ascontiguousarray(nearest, dtype=np.int32).reshape(-1),
-        np.ascontiguousarray(distance).reshape(-1),
-        max_width_px,
-        h,
-        w,
-        painted.reshape(-1),
-        joined.reshape(-1),
-    )
+    region_of_label = np.full(int(nearest.max()) + 1, -1, dtype=np.int32)
+    region_of_label[nearest[~outside]] = ids[~outside]
+    nearest_region = region_of_label[nearest]
+    # Thin ink lies within half its width of something that is not ink; a stroke beside bare paper, farther.
+    joined = thin & (nearest_region >= 0) & (distance <= max_width_px)
+    painted = _with_seams(np.where(joined, nearest_region, ids).astype(np.int32), joined)
     painted = _connected_to_own(painted, ~outside, count)
     return _join_enclosed_paper(painted, region_color, printed, image_bgr, palette_bgr, own)
 
@@ -940,15 +1075,38 @@ def _disk(radius: float) -> np.ndarray:
     return ((x * x + y * y) <= radius * radius).astype(np.uint8)
 
 
+def _with_seams(ids: np.ndarray, joined: np.ndarray) -> np.ndarray:
+    """``ids`` with every ``joined`` pixel that touches another region put back in none (-1).
+
+    Where a ``joined`` pixel is 8-adjacent to a pixel of another region, one
+    of the two leaves its region: the joined one if the other was a region's
+    own pixel already, else the one with the higher id. One pass leaves no two
+    regions touching where either pixel was joined.
+    """
+    h, w = ids.shape
+    padded = np.pad(ids, 1, constant_values=-1)
+    padded_joined = np.pad(joined, 1)
+    drop = np.zeros((h, w), dtype=bool)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == 0 and dx == 0:
+                continue
+            other = padded[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            other_joined = padded_joined[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            drop |= joined & (other >= 0) & (other != ids) & (~other_joined | (other < ids))
+    return np.where(drop, -1, ids).astype(np.int32)
+
+
 def _connected_to_own(ids: np.ndarray, own_pixels: np.ndarray, count: int) -> np.ndarray:
     """``ids`` without the bits of a region (8-connected) that hold none of its ``own_pixels``: cut off by a seam."""
     h, w = ids.shape
-    flat = np.ascontiguousarray(ids, dtype=np.int32).reshape(-1)
-    pieces = np.empty(h * w, dtype=np.int32)
-    _region_of_piece, _areas = kernels.label_components(flat, h, w, count, pieces)
-    kept = np.empty((h, w), dtype=np.int32)
-    kernels.keep_anchored(flat, pieces, np.ascontiguousarray(own_pixels, dtype=bool).reshape(-1), kept.reshape(-1))
-    return kept
+    pieces = np.empty((h, w), dtype=np.int32)
+    _region_of_piece, _areas = kernels.label_components(np.ascontiguousarray(ids).reshape(-1), h, w, count, pieces.reshape(-1))
+    inside = pieces >= 0
+    anchored = np.zeros(int(pieces.max()) + 1, dtype=bool)
+    anchored[pieces[inside & own_pixels]] = True
+    stray = inside & ~anchored[np.where(inside, pieces, 0)]
+    return np.where(stray, -1, ids).astype(np.int32)
 
 
 def _join_enclosed_paper(ids, region_color, printed, image_bgr, palette_bgr, own) -> np.ndarray:
@@ -963,11 +1121,20 @@ def _join_enclosed_paper(ids, region_color, printed, image_bgr, palette_bgr, own
         return ids
     h, w = ids.shape
     count, piece = cv2.connectedComponents(paper.view(np.uint8), connectivity=8)
-    piece = np.ascontiguousarray(piece, dtype=np.int32) - 1  # -1 off the paper
-    # A paper pixel 8-adjacent to a piece's is in the piece; what else it touches is a region, or ink (-1).
-    lowest, highest = kernels.paper_rings(
-        piece.reshape(-1), np.ascontiguousarray(ids, dtype=np.int32).reshape(-1), paper.reshape(-1), count - 1, h, w
-    )
+    piece = piece.astype(np.int32) - 1  # -1 off the paper
+    lowest = np.full(count - 1, np.iinfo(np.int32).max, dtype=np.int64)
+    highest = np.full(count - 1, -2, dtype=np.int64)
+    padded = np.pad(ids, 1, constant_values=-2)  # off the page: not in the ring
+    padded_paper = np.pad(paper, 1)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == 0 and dx == 0:
+                continue
+            other = padded[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            # A paper pixel 8-adjacent to this one is in its piece; what else it touches is a region, or ink (-1).
+            ring = paper & (other != -2) & ~padded_paper[1 + dy : 1 + dy + h, 1 + dx : 1 + dx + w]
+            np.minimum.at(lowest, piece[ring], other[ring])
+            np.maximum.at(highest, piece[ring], other[ring])
     single = (lowest == highest) & (highest >= 0)
     if not single.any():
         return ids
@@ -1007,9 +1174,13 @@ def _de00_to(colors_bgr: np.ndarray, target_bgr) -> np.ndarray:
 
 def _has_neighbor(ids: np.ndarray, count: int) -> np.ndarray:
     """For every region id below ``count``, whether another region touches it, diagonals included."""
-    h, w = ids.shape
-    flat = np.ascontiguousarray(ids, dtype=np.int32).reshape(-1)
-    return kernels.region_census(flat, np.zeros(flat.size, dtype=bool), count, h, w)[2]
+    has = np.zeros(count, dtype=bool)
+    pairs = ((ids[:, :-1], ids[:, 1:]), (ids[:-1, :], ids[1:, :]), (ids[:-1, :-1], ids[1:, 1:]), (ids[:-1, 1:], ids[1:, :-1]))
+    for a, b in pairs:
+        differ = (a != b) & (a >= 0) & (b >= 0)
+        has[a[differ]] = True
+        has[b[differ]] = True
+    return has
 
 
 def _brush_fits(region_id_map: np.ndarray, num_regions: int, radius: float) -> np.ndarray:
