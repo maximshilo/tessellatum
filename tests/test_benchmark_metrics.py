@@ -653,6 +653,45 @@ def test_found_ink_is_matched_to_the_artworks_pixel_by_pixel_within_the_toleranc
     assert match(ink, np.zeros_like(ink)) == {"ink_found_precision": 0.0, "ink_found_recall": None, "ink_found_f1": 0.0}
 
 
+def test_a_face_is_found_by_a_box_holding_nine_tenths_of_it_of_which_it_is_a_third():
+    face = (100, 100, 100, 100)
+
+    def match(*found):
+        return bm.found_faces_match(list(found), [face])
+
+    # Exactly 90% of the face inside a box three times its size: found, if only just.
+    exact = match((110, 100, 270, 100))  # holds 90 x 100 of the face
+    assert exact["matches"][0]["cover"] == pytest.approx(0.9)
+    assert exact["matches"][0]["share"] == pytest.approx(1 / 3) and exact["face_found_recall"] == 1.0
+    assert exact["stray_faces"] == 0
+    # A pixel less of the face, or a pixel more of box.
+    assert match((111, 100, 269, 100))["face_found_recall"] == 0.0
+    assert match((110, 100, 271, 100))["face_found_recall"] == 0.0
+    # A head box twice the face, holding all of it: found, with an IoU of only a half.
+    head = match((75, 75, 150, 400 / 3))
+    assert head["face_found_recall"] == 1.0 and head["matches"][0]["iou"] == pytest.approx(0.5)
+    # The best match is one that counts, even where another overlaps the face more.
+    best = match((100, 100, 100, 80), (60, 60, 150, 150))
+    assert best["matches"][0]["found_index"] == 1 and best["face_found_recall"] == 1.0
+    assert best["stray_faces"] == 0  # the face is all of the first box
+    # A box on no annotated face is stray; a face with no box overlapping it has no match.
+    none = match((300, 300, 50, 50))
+    assert none["stray_faces"] == 1 and none["face_found_recall"] == 0.0
+    assert none["matches"] == [{"found_index": None, "cover": 0.0, "share": 0.0, "iou": 0.0, "found": False}]
+    # Without annotated faces there is no recall, and every face found is stray.
+    assert bm.found_faces_match([(0, 0, 10, 10)], []) == {"matches": [], "face_found_recall": None, "stray_faces": 1}
+    assert bm.found_faces_match([], []) == {"matches": [], "face_found_recall": None, "stray_faces": 0}
+
+
+def test_recall_is_the_share_of_annotated_faces_found():
+    faces = [(0, 0, 100, 100), (200, 0, 100, 100), (400, 0, 100, 100), (600, 0, 100, 100)]
+    found = [(0, 0, 100, 100), (190, 0, 120, 100), (400, 0, 50, 100)]
+    match = bm.found_faces_match(found, faces)
+    assert match["face_found_recall"] == 0.5
+    assert [m["found"] for m in match["matches"]] == [True, True, False, False]
+    assert match["stray_faces"] == 0
+
+
 def test_edge_alignment_on_line_art_scores_the_lines_the_page_shows():
     image = np.full((60, 80, 3), 200, dtype=np.uint8)
     image[:, 36:44] = 20  # a dark line 8 px wide: the source has an edge along each side of it

@@ -36,8 +36,9 @@ images x presets x output sizes:
 - Per-stage timings come from wrapping the stage functions that
   `tessellatum.core.pipeline.generate` calls: `resize_to_long_edge`,
   `detect_ink` (from 0.1.28), `quantize`, `build_regions`, `extract_regions`,
-  `render_page`, `render_legend`. Keep those names if you restructure the pipeline, or
-  update `PROBED_STAGES` in `bench_case.py`.
+  `render_page`, `render_legend`, and `detect_faces` (from 0.1.33, which runs only
+  when the analysis below is collected, so no timed run reaches it). Keep those names
+  if you restructure the pipeline, or update `PROBED_STAGES` in `bench_case.py`.
 - Quality metrics read what the page is made of from the pipeline itself.
   `generate(..., collect_analysis=True)` returns it as `GeneratedPage.analysis`
   (`PageAnalysis` in `pipeline.py`):
@@ -51,7 +52,9 @@ images x presets x output sizes:
   - whether the picture is line art, and the ink lines it was drawn with;
   - the ink the page prints (from 0.1.28: line art's own ink, printed solid,
     in no region; from 0.1.30 its thin parts lie in the regions whose paint
-    goes over them) and the gray it prints in.
+    goes over them) and the gray it prints in;
+  - the faces the pipeline finds in the picture (from 0.1.33), with each one's
+    box on the page, score and detector.
 
   The timed runs don't collect it, as in the app. One more run after them
   does, and its page must match theirs for the case to count as
@@ -241,6 +244,9 @@ and whether their features survive, and on whether OCR still reads the text:
 | ink found | share of the page the pipeline takes for the artwork's ink lines (from 0.1.27; printed from 0.1.28) | informational |
 | ink found recall / precision | on line art, how much of the artwork's ink lines the pipeline found, and how much of what it found is on them, each within 0.5 mm; `case.json` also records `ink_found_f1`, and whether the manifest's colors are exact as `ink_reference_exact` | higher |
 | stray ink | the share of the page found to be ink lines on a picture that isn't line art | lower (0) |
+| faces found | how many faces the pipeline finds in the picture (from 0.1.33); `case.json` lists them under `found_faces` | informational |
+| face found recall | share of the image's annotated faces the pipeline finds; `case.json` gives each one's best match under `face_matches` | higher (1) |
+| stray faces | faces found that are on none of the image's annotated faces | lower (0) |
 | face ΔE00, face SSIM | ΔE00 mean and SSIM inside the image's face boxes | lower, higher |
 | features lost | annotated eyes, noses and mouths the page no longer shows, as lines along their edges or as a region of their own; `case.json` also records the mean share of their edges drawn, as `feature_edge_recall`, and each feature's scores under `face_features` | lower (0) |
 | labels on features | numbers overlapping a feature box | lower (0) |
@@ -510,6 +516,26 @@ How the found-ink metrics are defined:
 - **Stray ink** is ink found on an image whose manifest has no ink colors,
   where every pixel found is a mistake.
 
+How the found-faces metrics are defined:
+
+- From 0.1.33 the pipeline looks for faces (`src/tessellatum/core/faces.py`), once per
+  picture, on it at preview size, and reports them in its analysis payload
+  (`PageAnalysis.faces`) as boxes on the page. Nothing on the page uses them yet. Older
+  versions get no value.
+- **Face found recall** reads the image's manifest `faces`, scaled to the page. An
+  annotated face is found if at least 90% of its box lies inside one face found, and it
+  is at least a third of that face's box. A detector may frame more than the face -- the
+  cascade for drawn faces frames the whole head, hair and all, at about twice the face's
+  area -- but not half the picture. Images without faces get no value.
+- **Stray faces** counts the faces found that are on no annotated face: none of which is
+  a third of their box. On an image without faces, every face found is stray.
+- Faces narrower than 15 mm on paper are never reported, so the small faces of a crowd or
+  a comic strip, which the manifest leaves unannotated, don't count as stray.
+- `face_matches` in `case.json` gives each annotated face's kind and its best match: one
+  it counts as found by, if any, else the one overlapping it most, with the share of the
+  face it covers (`cover`), the share of its box that is the face (`share`), and their
+  IoU.
+
 How the face metrics are defined:
 
 - They read the image's manifest entry: its `faces`, each with a box and the boxes
@@ -662,10 +688,22 @@ Finding them doesn't depend on the difficulty, so their tolerances come from 12 
 each size, the four line-art images at Easy. Stray ink measured 0 over 21 and 24 pairs: a
 picture that isn't line art is decided once, so it has none at any size.
 
+Two more score the faces the pipeline finds (from 0.1.33), outside the scorecard for the
+same reason (faces found only informs):
+
+| metric | σ preview | σ export | target |
+|---|---|---|---|
+| face found recall | 0 | 0 | 1 |
+| stray faces | 0 | 0 | 0 |
+
+Faces are found once per picture, on it at preview size, and scaled to the page, so they
+are the same at every size and preset, and any change is a regression.
+
 ### Targets
 
 A target applies to a case where its metric has a value: the printed ink and tubes on
-line art, features lost on faces, and the text targets on images with text. They
+line art, features lost and face found recall on faces, and the text targets on images
+with text. They
 spell out the four jobs:
 - **paintable:** no slivers, a number on every region, and every number legible
   at print size, with no line and no other number drawn through it;

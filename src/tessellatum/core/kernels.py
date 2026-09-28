@@ -10,8 +10,10 @@ region steps (see ``regions.look_through_hatching`` to ``regions.split_areas``):
 their searches along paths, and the passes over the page that compare each
 pixel with its neighbors, which NumPy would make one whole-page array per
 neighbor for. Those give exactly what the NumPy code they replace gave
-(``tests/reference_line_art.py`` keeps it). Arrays are passed flattened
-(row-major) with explicit ``height``/``width``.
+(``tests/reference_line_art.py`` keeps it). So does the window search of the
+cascade that finds drawn faces (see ``faces``). Arrays are passed flattened
+(row-major) with explicit ``height``/``width``, but for the cascade's
+integral images.
 
 Kernels compile on first call and are cached on disk (``cache=True``), so only
 the first run after an install pays the compile cost; ``warm_up`` pays it
@@ -1371,6 +1373,96 @@ def settle_gaps(piece, claim, paintable):
             claim[p] = best[k]
 
 
+@njit(cache=True, nogil=True)
+def lbp_cascade_rows(
+    integral, window_w, window_h, step, row_from, row_to, fx, fy, stage_ends, thresholds, features, subsets, leaves, out_hits
+):
+    """Run an LBP cascade over the windows of rows ``row_from`` to ``row_to`` of one scaled image.
+
+    ``integral`` is the image's (h+1) x (w+1) int32 integral. The windows are
+    ``window_w`` x ``window_h``, at every ``step`` pixels down and across, and
+    row ``r`` is the windows at y = r * step. Each weak classifier ``i`` reads
+    feature ``features[i]``: a 3 x 3 grid of equal blocks whose column edges
+    are ``fx[f]`` and row edges ``fy[f]``, from the window's corner. Its 8-bit
+    code has a bit for each outer block at least as bright as the middle one,
+    clockwise from the top left, the top left the highest; the classifier adds
+    ``leaves[i, 0]`` if that bit of ``subsets[i]`` is set, else
+    ``leaves[i, 1]``. Stage ``s`` ends at classifier ``stage_ends[s]`` and
+    passes a window whose sum is at least ``thresholds[s]``. A window every
+    stage passes gets a 1 in ``out_hits`` at its corner. A window the first
+    stage rejects skips the next one along its row, as OpenCV's
+    ``CascadeClassifier`` does.
+    """
+    cols = integral.shape[1] - window_w
+    for r in range(row_from, row_to):
+        y = r * step
+        x = 0
+        while x < cols:
+            start = 0
+            passed = True
+            rejected_first = False
+            for s in range(stage_ends.size):
+                total = 0.0
+                for i in range(start, stage_ends[s]):
+                    f = features[i]
+                    y0 = y + fy[f, 0]
+                    y1 = y + fy[f, 1]
+                    y2 = y + fy[f, 2]
+                    y3 = y + fy[f, 3]
+                    x0 = x + fx[f, 0]
+                    x1 = x + fx[f, 1]
+                    x2 = x + fx[f, 2]
+                    x3 = x + fx[f, 3]
+                    a0 = integral[y0, x0]
+                    a1 = integral[y0, x1]
+                    a2 = integral[y0, x2]
+                    a3 = integral[y0, x3]
+                    b0 = integral[y1, x0]
+                    b1 = integral[y1, x1]
+                    b2 = integral[y1, x2]
+                    b3 = integral[y1, x3]
+                    c0 = integral[y2, x0]
+                    c1 = integral[y2, x1]
+                    c2 = integral[y2, x2]
+                    c3 = integral[y2, x3]
+                    d0 = integral[y3, x0]
+                    d1 = integral[y3, x1]
+                    d2 = integral[y3, x2]
+                    d3 = integral[y3, x3]
+                    middle = b1 - b2 - c1 + c2
+                    code = 0
+                    if a0 - a1 - b0 + b1 >= middle:
+                        code |= 128
+                    if a1 - a2 - b1 + b2 >= middle:
+                        code |= 64
+                    if a2 - a3 - b2 + b3 >= middle:
+                        code |= 32
+                    if b2 - b3 - c2 + c3 >= middle:
+                        code |= 16
+                    if c2 - c3 - d2 + d3 >= middle:
+                        code |= 8
+                    if c1 - c2 - d1 + d2 >= middle:
+                        code |= 4
+                    if c0 - c1 - d0 + d1 >= middle:
+                        code |= 2
+                    if b0 - b1 - c0 + c1 >= middle:
+                        code |= 1
+                    if (subsets[i, code >> 5] >> (code & 31)) & 1:
+                        total += leaves[i, 0]
+                    else:
+                        total += leaves[i, 1]
+                if total < thresholds[s]:
+                    passed = False
+                    rejected_first = s == 0
+                    break
+                start = stage_ends[s]
+            if passed:
+                out_hits[y, x] = 1
+            if rejected_first:
+                x += step
+            x += step
+
+
 def warm_up() -> None:
     """Compile (or load from cache) every kernel using tiny inputs.
 
@@ -1424,3 +1516,12 @@ def warm_up() -> None:
     offsets = np.array([0], dtype=np.int64)
     weights = np.ones(1, dtype=np.float32)
     bilateral_rows(padded, out, 0, 3, 3, 1, offsets, weights, np.ones(766, dtype=np.float32))
+
+    # The face cascade (see ``faces``): one feature of 1 x 1 blocks, one classifier, one stage.
+    integral = np.zeros((5, 5), dtype=np.int32)
+    edges = np.arange(4, dtype=np.int32).reshape(1, 4)
+    lbp_cascade_rows(
+        integral, 3, 3, 1, 0, 2, edges, edges, np.ones(1, dtype=np.int32), np.zeros(1, dtype=np.float32),
+        np.zeros(1, dtype=np.int32), np.zeros((1, 8), dtype=np.uint32), np.zeros((1, 2), dtype=np.float32),
+        np.zeros((5, 5), dtype=np.uint8),
+    )

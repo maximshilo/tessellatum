@@ -71,6 +71,11 @@ INK_LINE_TOLERANCE_MM = 0.5
 # at least FEATURE_MIN_REGION_SHARE of it.
 FEATURE_MIN_EDGE_RECALL = 0.3
 FEATURE_MIN_REGION_SHARE = 0.25
+# The faces the pipeline finds. An annotated face is found if at least FACE_MIN_COVER of its box lies inside one face
+# found, and it is at least FACE_MIN_SHARE of that face's box: a detector may frame a drawn head, hair and all, but not
+# half the picture. A face found is on an annotated face if that face is at least FACE_MIN_SHARE of its box.
+FACE_MIN_COVER = 0.9
+FACE_MIN_SHARE = 1 / 3
 # Text. OCR reads each annotated text block line by line. The block's box, turned upright, is scaled so that each of
 # its lines is TEXT_LINE_HEIGHT_PX tall, given a margin TEXT_MARGIN_LINES line heights wide in the color of its border,
 # and cut into one band per line, reaching TEXT_LINE_OVERLAP line heights into the lines above and below.
@@ -982,6 +987,56 @@ def lost_features(scores) -> dict[str, float | int | None]:
         "features_lost": sum(not score["survived"] for score in scores),
         "feature_edge_recall": float(np.mean(recalls)) if recalls else None,
     }
+
+
+def found_faces_match(found_boxes, face_boxes) -> dict:
+    """How the faces the pipeline found match the image's annotated faces.
+
+    Both are (x, y, width, height) boxes in the same pixels. For each
+    annotated face, ``matches`` gives its best face found -- one it counts as
+    found by, if any, then the one overlapping it most -- as that face's index
+    in ``found_boxes`` (None where none overlaps it), ``cover`` (the share of
+    the annotated box inside it), ``share`` (the share of its box that is the
+    annotated face's), ``iou`` and ``found``: at least ``FACE_MIN_COVER``
+    covered, at least ``FACE_MIN_SHARE`` shared. ``face_found_recall`` is the
+    share of annotated faces found, None without any; ``stray_faces`` counts
+    the faces found that are on no annotated face (no annotated face is
+    ``FACE_MIN_SHARE`` of their box).
+    """
+    overlaps = [[_box_overlap(face, box) for box in found_boxes] for face in face_boxes]
+    matches = []
+    for face, row in zip(face_boxes, overlaps):
+        best = None
+        for index, (box, inter) in enumerate(zip(found_boxes, row)):
+            cover = inter / (face[2] * face[3])
+            share = inter / (box[2] * box[3]) if box[2] * box[3] > 0 else 0.0
+            iou = inter / (face[2] * face[3] + box[2] * box[3] - inter)
+            match = {
+                "found_index": index,
+                "cover": cover,
+                "share": share,
+                "iou": iou,
+                "found": cover >= FACE_MIN_COVER and share >= FACE_MIN_SHARE,
+            }
+            if inter > 0 and (best is None or (match["found"], iou) > (best["found"], best["iou"])):
+                best = match
+        matches.append(best or {"found_index": None, "cover": 0.0, "share": 0.0, "iou": 0.0, "found": False})
+    stray = sum(
+        not any(box[2] * box[3] > 0 and row[index] / (box[2] * box[3]) >= FACE_MIN_SHARE for row in overlaps)
+        for index, box in enumerate(found_boxes)
+    )
+    return {
+        "matches": matches,
+        "face_found_recall": sum(match["found"] for match in matches) / len(matches) if matches else None,
+        "stray_faces": stray,
+    }
+
+
+def _box_overlap(a, b) -> float:
+    """The area two (x, y, width, height) boxes share."""
+    width = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
+    height = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
+    return float(max(width, 0) * max(height, 0))
 
 
 def labels_on_boxes(label_boxes, boxes) -> int:

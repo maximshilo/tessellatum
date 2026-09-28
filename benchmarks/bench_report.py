@@ -18,6 +18,7 @@ import bench_metrics as bm
 STAGE_ORDER = (
     "resize_to_long_edge",
     "detect_ink",
+    "detect_faces",
     "quantize",
     "build_regions",
     "extract_regions",
@@ -270,6 +271,20 @@ METRICS = (
         sigma_export=0,
         target=Target(0),
     ),
+    # The faces the pipeline finds (T4.1), scored as the finding itself, apart from the page's jobs, as the ink found is.
+    # They are found once on the picture at preview size, the same at every size and preset, so any change is a
+    # regression.
+    Metric("faces_found", "faces found", "{:d}"),
+    Metric(
+        "face_found_recall",
+        "face found recall ↑",
+        "{:.2f}",
+        better="higher",
+        sigma=0,
+        sigma_export=0,
+        target=Target(1.0),
+    ),
+    Metric("stray_faces", "stray faces ↓", "{:d}", better="lower", sigma=0, sigma_export=0, target=Target(0)),
     Metric("face_de00_mean", "face ΔE00 ↓", "{:.2f}", "resembles", "lower", sigma=0.078, sigma_export=0.082, relative=True),
     Metric("face_ssim", "face SSIM ↑", "{:.3f}", "resembles", "higher", sigma=0.016, sigma_export=0.038),
     Metric("features_lost", "features lost ↓", "{:d}", "resembles", "lower", sigma=0.35, sigma_export=0.29, target=Target(0)),
@@ -694,6 +709,9 @@ def _quality_section(
         f"and **precision** against the artwork's own ink lines, within "
         f"{bm.INK_LINE_TOLERANCE_MM:g} mm, with precision judged only where the manifest's colors are exact; **stray "
         "ink**: the same share on a picture that isn't line art. "
+        "**faces found**: faces the pipeline finds in the picture; **face found recall**: share of the image's annotated "
+        f"faces with at least {bm.FACE_MIN_COVER:.0%} of their box inside one face found, of whose box they are at "
+        f"least {bm.FACE_MIN_SHARE:.0%}; **stray faces**: faces found of whose box no annotated face is that much. "
         "**face ΔE00** and **face SSIM**: ΔE00 mean and SSIM inside the image's face boxes. "
         f"**features lost**: annotated eyes, noses and mouths with neither drawn lines along at least "
         f"{bm.FEATURE_MIN_EDGE_RECALL:.0%} of their edges nor a region of their own covering at least "
