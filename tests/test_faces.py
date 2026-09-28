@@ -253,8 +253,16 @@ def test_a_face_narrower_than_the_floor_is_left_out(monkeypatch):
     assert faces.find_faces(picture) == []
 
 
-def test_the_floor_is_five_brush_widths():
+def test_the_agreed_values():
+    # D-042, Q24: faces under five brush widths are left out.
     assert faces.MIN_FACE_WIDTH_MM == 15.0
+    # D-042: YuNet at 640 px, where the benchmark's faces sit in its range, keeping scores from 0.5.
+    assert (faces.YUNET_LONG_EDGE, faces.YUNET_MIN_SCORE, faces.YUNET_MAX_OVERLAP) == (640, 0.5, 0.3)
+    # D-042, Q25: the cascade at 480 px padded 15%, as nagadomi's own example runs it but for the padding and 3 neighbors.
+    assert (faces.CASCADE_LONG_EDGE, faces.CASCADE_PAD, faces.CASCADE_SCALE_STEP) == (480, 0.15, 1.1)
+    assert (faces.CASCADE_MIN_NEIGHBORS, faces.GROUP_EPS) == (3, 0.2)
+    # D-042, Q25: found when nine tenths of the face lies in one face found, of which it is a third.
+    assert (bm.FACE_MIN_COVER, bm.FACE_MIN_SHARE) == (0.9, 1 / 3)
 
 
 def test_boxes_are_clipped_to_the_picture():
