@@ -1,8 +1,10 @@
 """The line-art region steps as v0.1.31 had them, before T3.5 compiled them: what the compiled steps must match exactly.
 
-``regions.py`` as it was at v0.1.31 (T3.4b), verbatim below the kernels, with the one kernel T3.5 rewrote
-(``nearest_seed_within``) kept here as it was. The other kernels it calls are the package's own, unchanged by T3.5.
-``tests/test_line_art_equivalence.py`` runs both on real line-art pages and on constructed ones.
+``regions.py`` as it was at v0.1.31 (T3.4b), verbatim below the kernels. The kernels it calls that T3.5 changed --
+``nearest_seed_within``, and ``label_components`` and ``merge_small_regions``, made faster for every picture -- are kept
+here as they were, with the union-find and heap helpers they use; the others it calls are the package's own, which T3.5
+left as they were.
+``tests/test_line_art_equivalence.py`` runs both on real line-art pages, constructed ones and small speckled maps.
 """
 
 from __future__ import annotations
@@ -103,10 +105,252 @@ def nearest_seed_within(seeds, passable, height, width):
     return out
 
 
-# The kernels v0.1.31's region steps call, with nearest_seed_within as it was.
+@njit(nogil=True)
+def _find(parent, i):
+    root = i
+    while parent[root] != root:
+        root = parent[root]
+    while parent[i] != root:  # path compression
+        up = parent[i]
+        parent[i] = root
+        i = up
+    return root
+
+
+@njit(nogil=True)
+def _union(parent, a, b):
+    # Always keep the smaller index as root: a pixel component's root is then
+    # its first pixel in raster order, and a group of regions keeps its
+    # lowest id.
+    ra = _find(parent, a)
+    rb = _find(parent, b)
+    if ra < rb:
+        parent[rb] = ra
+    elif rb < ra:
+        parent[ra] = rb
+
+
+@njit(nogil=True)
+def label_components(labels, height, width, num_colors, out_ids):
+    """8-connected components of equal values in ``labels``.
+
+    Writes each pixel's region id to ``out_ids`` (-1 where the label is
+    outside ``[0, num_colors)``). Ids are ordered by label value, then by the
+    first 2x2 pixel block (in raster order of blocks) the component touches.
+    That is the numbering produced by running ``cv2.connectedComponents`` on
+    each label's mask in turn, whose 8-connectivity algorithms scan 2x2 blocks.
+    A block can't hold two components of one label (its pixels are all
+    8-adjacent), so the order is well defined.
+
+    Returns ``(region_color, areas)``, indexed by region id.
+    """
+    n = height * width
+    parent = np.empty(n, np.int32)
+    for p in range(n):
+        parent[p] = p
+
+    for y in range(height):
+        row = y * width
+        for x in range(width):
+            p = row + x
+            c = labels[p]
+            if c < 0 or c >= num_colors:
+                continue
+            if y > 0 and labels[p - width] == c:
+                # The pixel above is 8-adjacent to the left, upper-left and
+                # upper-right pixels too, so any of those with this label
+                # are already in its component.
+                _union(parent, p, p - width)
+                continue
+            if x > 0 and labels[p - 1] == c:
+                _union(parent, p, p - 1)
+            elif y > 0 and x > 0 and labels[p - width - 1] == c:
+                _union(parent, p, p - width - 1)
+            if y > 0 and x + 1 < width and labels[p - width + 1] == c:
+                _union(parent, p, p - width + 1)
+
+    count_per_label = np.zeros(num_colors, np.int64)
+    for p in range(n):
+        c = labels[p]
+        if 0 <= c < num_colors and _find(parent, p) == p:
+            count_per_label[c] += 1
+    next_id = np.empty(num_colors, np.int64)
+    total = 0
+    for c in range(num_colors):
+        next_id[c] = total
+        total += count_per_label[c]
+
+    # Number each component (stored at its root pixel) when its first block is
+    # reached, then give every pixel its root's id.
+    region_color = np.empty(total, np.int32)
+    out_ids[:] = -1
+    for by in range(0, height, 2):
+        for bx in range(0, width, 2):
+            for y in range(by, min(by + 2, height)):
+                for x in range(bx, min(bx + 2, width)):
+                    p = y * width + x
+                    c = labels[p]
+                    if c < 0 or c >= num_colors:
+                        continue
+                    root = _find(parent, p)
+                    if out_ids[root] < 0:
+                        out_ids[root] = next_id[c]
+                        region_color[next_id[c]] = c
+                        next_id[c] += 1
+
+    areas = np.zeros(total, np.int64)
+    for p in range(n):
+        c = labels[p]
+        if c < 0 or c >= num_colors:
+            continue
+        rid = out_ids[_find(parent, p)]
+        out_ids[p] = rid
+        areas[rid] += 1
+    return region_color, areas
+
+
+@njit(nogil=True)
+def _sift_down(heap, i, size):
+    item = heap[i]
+    while True:
+        child = 2 * i + 1
+        if child >= size:
+            break
+        if child + 1 < size and heap[child + 1] < heap[child]:
+            child += 1
+        if heap[child] >= item:
+            break
+        heap[i] = heap[child]
+        i = child
+    heap[i] = item
+
+
+@njit(nogil=True)
+def _sift_up(heap, i):
+    item = heap[i]
+    while i > 0:
+        parent = (i - 1) >> 1
+        if heap[parent] <= item:
+            break
+        heap[i] = heap[parent]
+        i = parent
+    heap[i] = item
+
+
+@njit(nogil=True)
+def merge_small_regions(ids, height, width, areas, min_area_px, diagonals):
+    """Merge regions smaller than ``min_area_px`` into a neighbor, in place.
+
+    Repeatedly takes the smallest undersized region (lowest id on ties) and
+    relabels it to the neighbor owning the most pixels of its 8-connected
+    outer ring (lowest id on ties); a region with no neighbor is left alone.
+    Without ``diagonals`` the ring is 4-connected: a region touching another
+    only at a corner is not its neighbor.
+
+    Each merge visits only the merged region's own pixels, kept as per-region
+    linked lists. A region always merges into one at least as large, so a
+    pixel moves at most ~log2(min_area_px) times: O(pixels * log(min_area)).
+    """
+    num_regions = areas.shape[0]
+    if min_area_px <= 0 or num_regions <= 1:
+        return
+    n = height * width
+
+    head = np.full(num_regions, -1, np.int32)
+    tail = np.full(num_regions, -1, np.int32)
+    next_pixel = np.full(n, -1, np.int32)
+    for p in range(n):
+        r = ids[p]
+        if r < 0:
+            continue
+        if head[r] < 0:
+            head[r] = p
+        else:
+            next_pixel[tail[r]] = p
+        tail[r] = p
+
+    # Min-heap of (area << 32 | id). Entries go stale when a region grows or
+    # is merged away; those are skipped when popped.
+    heap = np.empty(2 * num_regions + 1, np.int64)
+    size = 0
+    for r in range(num_regions):
+        if areas[r] < min_area_px:
+            heap[size] = (areas[r] << 32) | r
+            size += 1
+    for i in range(size // 2 - 1, -1, -1):
+        _sift_down(heap, i, size)
+
+    ring_stamp = np.full(n, -1, np.int32)
+    ring_counts = np.zeros(num_regions, np.int32)
+    neighbors = np.empty(num_regions, np.int32)
+    active = np.ones(num_regions, np.bool_)
+    visit = 0
+
+    while size > 0:
+        key = heap[0]
+        size -= 1
+        if size > 0:
+            heap[0] = heap[size]
+            _sift_down(heap, 0, size)
+        r = key & 0xFFFFFFFF
+        if not active[r] or areas[r] != (key >> 32):
+            continue
+
+        # Count, per neighbor region, the distinct ring pixels it owns.
+        visit += 1
+        num_neighbors = 0
+        p = head[r]
+        while p >= 0:
+            y = p // width
+            x = p - y * width
+            for yy in range(max(y - 1, 0), min(y + 2, height)):
+                for xx in range(max(x - 1, 0), min(x + 2, width)):
+                    if not diagonals and yy != y and xx != x:
+                        continue
+                    q = yy * width + xx
+                    s = ids[q]
+                    if s >= 0 and s != r and ring_stamp[q] != visit:
+                        ring_stamp[q] = visit
+                        if ring_counts[s] == 0:
+                            neighbors[num_neighbors] = s
+                            num_neighbors += 1
+                        ring_counts[s] += 1
+            p = next_pixel[p]
+
+        if num_neighbors == 0:
+            active[r] = False
+            continue
+
+        target = -1
+        best = -1
+        for k in range(num_neighbors):
+            s = neighbors[k]
+            if ring_counts[s] > best or (ring_counts[s] == best and s < target):
+                best = ring_counts[s]
+                target = s
+            ring_counts[s] = 0
+
+        p = head[r]
+        while p >= 0:
+            ids[p] = target
+            p = next_pixel[p]
+        next_pixel[tail[target]] = head[r]
+        tail[target] = tail[r]
+        head[r] = -1
+        tail[r] = -1
+        areas[target] += areas[r]
+        areas[r] = 0
+        active[r] = False
+        if areas[target] < min_area_px:
+            heap[size] = (areas[target] << 32) | target
+            _sift_up(heap, size)
+            size += 1
+
+
+# The kernels v0.1.31's region steps call, with those T3.5 changed as they were.
 kernels = SimpleNamespace(
-    label_components=_kernels.label_components,
-    merge_small_regions=_kernels.merge_small_regions,
+    label_components=label_components,
+    merge_small_regions=merge_small_regions,
     merge_same_color_neighbors=_kernels.merge_same_color_neighbors,
     edge_adjacency_classes=_kernels.edge_adjacency_classes,
     region_bounds=_kernels.region_bounds,
