@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 PROBED_STAGES = (
     "resize_to_long_edge",
     "detect_ink",
+    "detect_faces",
     "quantize",
     "build_regions",
     "extract_regions",
@@ -54,6 +55,9 @@ PRINTED_INK_KEYS = ("ink_print_precision", "ink_print_recall", "ink_print_f1")
 FOUND_INK_KEYS = ("ink_found_precision", "ink_found_recall", "ink_found_f1", "ink_reference_exact")
 # Face fields, None unless the image's manifest entry has faces.
 FACE_KEYS = ("face_de00_mean", "face_ssim", "features_lost", "feature_edge_recall", "labels_on_features")
+# The faces the pipeline found: None for versions that don't look for faces (before 0.1.33), and the recall also
+# unless the image's manifest entry has faces.
+FOUND_FACE_KEYS = ("faces_found", "face_found_recall", "stray_faces")
 # Text fields, None unless the image's manifest entry has text; the character error rates also without the OCR engine.
 TEXT_KEYS = ("text_cer_source", "text_cer_page", "text_cer_painting", "labels_on_text")
 # Enclosure fields, None for versions that report no line layer (before 0.1.10).
@@ -114,6 +118,7 @@ class PageData:
     # regions whose paint goes over it.
     printed_ink: np.ndarray | None = None
     ink_gray: int = 0  # the gray the printed ink is in, 0 black to 255 white
+    faces: list | None = None  # the faces the pipeline found in the picture (``faces.Face``); None before 0.1.33
 
 
 def page_data_from_analysis(analysis) -> PageData:
@@ -145,6 +150,7 @@ def page_data_from_analysis(analysis) -> PageData:
         line_art=getattr(analysis, "line_art", None),
         printed_ink=getattr(analysis, "printed_ink", None),  # before 0.1.28 no version printed ink
         ink_gray=int(getattr(analysis, "ink_gray", 0)),
+        faces=getattr(analysis, "faces", None),  # before 0.1.33 no version looked for faces
     )
 
 
@@ -323,6 +329,7 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     result.page.save(args.out / "page.png")
     face_features = None
+    found_faces = face_matches = None
     ocr = text_blocks = None
 
     if page_data is not None:
@@ -403,6 +410,8 @@ def main() -> int:
             quality.update(bm.lost_features(scores))
             quality["labels_on_features"] = bm.labels_on_boxes(page_data.label_boxes, feature_boxes) if features else None
             face_features = [{"part": feature.part, **score} for feature, score in zip(features, scores)]
+        face_quality, found_faces, face_matches = found_face_scores(page_data, faces)
+        quality.update(face_quality)
         # Text is read by OCR inside the manifest's text boxes, on the source, the page and the painting.
         blocks = annotations.text if annotations else ()
         reader = bm.text_reader() if blocks else None
@@ -444,6 +453,8 @@ def main() -> int:
         # Whether the pipeline took the picture for line art, and the measures that decided it; None before 0.1.27.
         "line_art": dataclasses.asdict(page_data.line_art) if page_data and page_data.line_art is not None else None,
         "face_features": face_features,  # each annotated feature's part and feature_survival score
+        "found_faces": found_faces,  # the faces the pipeline found, on the page: box, score, detector
+        "face_matches": face_matches,  # each annotated face's kind and its best face found (found_faces_match)
         "ocr": ocr,  # the OCR engine and version that read the text, None without text or without the engine
         "text_blocks": text_blocks,  # each annotated text block's string, and what OCR read on each layer
     }
@@ -491,6 +502,31 @@ def found_ink_scores(page_data: PageData, ink, image_info, scale) -> dict:
     quality.update(bm.found_ink_match(found, ink, scale.mm_to_px(bm.INK_LINE_TOLERANCE_MM)))
     quality["ink_reference_exact"] = bool(image_info.exact_colors)
     return quality
+
+
+def found_face_scores(page_data: PageData, faces) -> tuple[dict, list | None, list | None]:
+    """The quality fields about the faces the pipeline found, the faces as ``case.json`` lists them, and their matches.
+
+    ``faces`` are the manifest's faces at the page's size. ``faces_found``
+    counts the faces found, ``stray_faces`` those on no annotated face, and
+    ``face_found_recall`` is the share of annotated faces found, None without
+    any (``bench_metrics.found_faces_match``); the matches give each annotated
+    face's kind and best face found. Versions that don't look for faces get
+    None throughout.
+    """
+    import bench_metrics as bm  # imported late in this module, after the measured version's package
+
+    if page_data.faces is None:
+        return dict.fromkeys(FOUND_FACE_KEYS), None, None
+    found = [{"box": [float(v) for v in face.box], "score": face.score, "detector": face.detector} for face in page_data.faces]
+    match = bm.found_faces_match([face["box"] for face in found], [_xywh(face.box) for face in faces])
+    quality = {
+        "faces_found": len(found),
+        "face_found_recall": match["face_found_recall"],
+        "stray_faces": match["stray_faces"],
+    }
+    matches = [{"kind": face.kind, **scores} for face, scores in zip(faces, match["matches"])] if faces else None
+    return quality, found, matches
 
 
 def text_scores(blocks, layers: dict, label_boxes, reader) -> tuple[dict, list | None]:

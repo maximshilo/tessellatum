@@ -237,6 +237,10 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
     assert case["quality"]["face_de00_mean"] is not None and case["quality"]["labels_on_features"] is not None
     assert case["quality"]["features_lost"] == 0
     assert [feature["part"] for feature in case["face_features"]] == ["eye"]
+    # The pipeline looks for faces, and finds none in a square with an eye.
+    assert case["quality"]["faces_found"] == 0 and case["found_faces"] == []
+    assert case["quality"]["face_found_recall"] == 0.0 and case["quality"]["stray_faces"] == 0
+    assert [(m["kind"], m["found"]) for m in case["face_matches"]] == [("cartoon", False)]
     # The text box holds no text; with the OCR package installed, it is read on the source, the page and the painting.
     assert isinstance(case["quality"]["labels_on_text"], int)
     if importlib.util.find_spec("rapidocr"):
@@ -337,6 +341,30 @@ def test_case_runner_scores_only_labels_on_text_without_the_ocr_engine(tmp_path)
     assert [case["quality"][f"text_cer_{layer}"] for layer in ("source", "page", "painting")] == [None, None, None]
     assert isinstance(case["quality"]["labels_on_text"], int)
     assert case["quality"]["face_de00_mean"] is not None  # everything else is still scored
+
+
+def test_found_faces_are_scored_against_the_annotated_faces_and_as_stray_elsewhere():
+    face = SimpleNamespace(kind="animal", box=SimpleNamespace(x=10, y=10, w=100, h=100))  # as the manifest gives it
+    found = [
+        SimpleNamespace(box=(5.0, 5.0, 110.0, 110.0), score=0.8, detector="yunet"),
+        SimpleNamespace(box=(300.0, 10.0, 50.0, 50.0), score=6.0, detector="cascade"),
+    ]
+    quality, listed, matches = bench_case.found_face_scores(SimpleNamespace(faces=found), (face,))
+    assert quality == {"faces_found": 2, "face_found_recall": 1.0, "stray_faces": 1}
+    assert listed == [
+        {"box": [5.0, 5.0, 110.0, 110.0], "score": 0.8, "detector": "yunet"},
+        {"box": [300.0, 10.0, 50.0, 50.0], "score": 6.0, "detector": "cascade"},
+    ]
+    assert [(m["kind"], m["found_index"], m["found"]) for m in matches] == [("animal", 0, True)]
+    # A picture without annotated faces: no recall, and every face found is stray.
+    quality, _listed, matches = bench_case.found_face_scores(SimpleNamespace(faces=found), ())
+    assert quality == {"faces_found": 2, "face_found_recall": None, "stray_faces": 2} and matches is None
+    # A version that doesn't look for faces.
+    assert bench_case.found_face_scores(SimpleNamespace(faces=None), (face,)) == (
+        dict.fromkeys(bench_case.FOUND_FACE_KEYS),
+        None,
+        None,
+    )
 
 
 def test_text_scores_without_text_blocks_are_blank():

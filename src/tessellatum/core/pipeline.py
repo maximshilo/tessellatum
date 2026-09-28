@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from tessellatum.core import ink, kernels
+from tessellatum.core import faces, ink, kernels
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import render_legend
 from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, MIN_REGION_AREA_MM2, print_scale
@@ -105,6 +105,9 @@ class PageAnalysis:
     # ink is in the regions whose paint goes over it.
     printed_ink: np.ndarray
     ink_gray: int
+    # The faces in the picture (see ``faces``), found on it at preview size and given in the page's pixels. Nothing on
+    # the page uses them yet.
+    faces: list[faces.Face]
 
 
 @dataclass
@@ -221,6 +224,20 @@ def detect_ink(image_bgr: np.ndarray, resized: np.ndarray, long_edge: int) -> tu
     return _cache.get_or_compute(image_bgr, ("ink", long_edge), find)
 
 
+def detect_faces(image_bgr: np.ndarray, resized: np.ndarray) -> list[faces.Face]:
+    """The faces in the picture, in the pixels of ``resized``, its page.
+
+    They are found once per picture, on it at preview size, so a preview and
+    an export always agree; that is cached per image object, as the other
+    stages are.
+    """
+    picture = _cache.get_or_compute(
+        image_bgr, ("resize", PREVIEW_LONG_EDGE), lambda: resize_to_long_edge(image_bgr, PREVIEW_LONG_EDGE)
+    )
+    found = _cache.get_or_compute(image_bgr, ("faces",), lambda: faces.find_faces(picture))
+    return faces.scaled(found, picture.shape[1::-1], resized.shape[1::-1])
+
+
 def warm_up() -> None:
     """Pay one-time start-up costs before the first real generation.
 
@@ -252,7 +269,8 @@ def generate(
     True, ``PipelineCancelled`` is raised and no more work is done.
     ``collect_analysis`` also returns what the page is made of in
     ``GeneratedPage.analysis`` (see ``PageAnalysis``), for benchmarks and
-    tests. The page itself is the same either way. ``style`` says how the page
+    tests, and looks for the faces in the picture, which nothing on the page
+    uses yet. The page itself is the same either way. ``style`` says how the page
     is drawn -- line width and the tone of the ink (see ``PageStyle``); it
     changes nothing about which regions the page has.
 
@@ -401,6 +419,7 @@ def generate(
             ink_lines=ink_lines.copy(),  # a copy: the mask belongs to the stage cache
             printed_ink=printed_ink,
             ink_gray=ink_gray,
+            faces=detect_faces(image_bgr, resized),
         )
 
     return GeneratedPage(

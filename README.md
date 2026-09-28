@@ -144,6 +144,16 @@ Hatching drawn finer than the ink's anti-aliased edge — gaps under about
 0.5 mm between strokes — has no pixels of its fill's own color to go by: such
 a patch takes its color from the fill nearest it beyond its strokes.
 
+People notice a wrong face far more than a wrong patch of grass, so the
+pipeline also looks for faces, to give them more detail than the rest of the
+page — which nothing on the page does yet. Two small detectors ship with the
+app and run offline: YuNet, a network for photographed and painted faces
+(trained on people, it finds a cat's or a lion's face too), and
+lbpcascade_animeface, a cascade for drawn ones. A face narrower than 15 mm on
+paper is left out: its eyes would be narrower than the brush. See
+`src/tessellatum/core/faces.py`; the models' sources and licenses are in
+`src/tessellatum/resources/MODELS.md`.
+
 ### Performance
 
 Previews are meant to be quick enough to tweak difficulty interactively:
