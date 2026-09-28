@@ -202,7 +202,16 @@ SYNTHETIC_EXPECTED = {
     (3, 2, 0): (18, "71d62e7d8795d842"),
 }
 # The same for random_cascade_xml(1) on noise_image(11) with min_neighbors 0 and a min_size no window, or some, reaches.
-MIN_SIZE_EXPECTED = {(100, 100): (0, "97d170e1550eee4a"), (37, 5): (7, "312fe68bad5c9be0"), (13, 13): (120, "884fc71e896b1d86")}
+# At (38, 6) the sizes 21 and 23 are equally near: the first is searched.
+MIN_SIZE_EXPECTED = {
+    (100, 100): (0, "97d170e1550eee4a"),
+    (37, 5): (7, "312fe68bad5c9be0"),
+    (38, 6): (7, "312fe68bad5c9be0"),
+    (13, 13): (120, "884fc71e896b1d86"),
+}
+# random_cascade_xml(1) with its window 55 px wide, on noise_image(11, (90, 40)), min_neighbors 0, by min_size: 55 x 1.1
+# is 60.500000000000014, a 61 px window in double precision but 60 in the single precision OpenCV scales in.
+WIDE_EXPECTED = {(61, 0): (44, "23592f281542c5a9"), (0, 0): (126, "137f6c103d7e3429")}
 # OpenCV 4.14's CascadeClassifier on edge_cascade_xml() and noise_image(5, size), min_neighbors 0: the windows it searches.
 EDGE_EXPECTED = {
     (8, 8): (5, "7d4ebf4ab3fd86f9"),
@@ -306,8 +315,17 @@ def test_a_min_size_no_window_reaches_searches_the_nearest_size(min_size, tmp_pa
     path.write_text(random_cascade_xml(1))
     found = faces.detect_cascade(noise_image(11), faces.load_cascade(path), 1.1, 0, min_size)
     assert (len(found), _digest(box for box, _count in found)) == MIN_SIZE_EXPECTED[min_size]
-    if min_size == (37, 5):  # no window is 37 wide: the size nearest (37, 5), 21 x 21, is searched alone
+    if min_size in ((37, 5), (38, 6)):  # no window is 37 wide: the size nearest, 21 x 21, is searched alone
         assert {box[2] for box, _count in found} <= {20, 21}
+
+
+@pytest.mark.parametrize("min_size", sorted(WIDE_EXPECTED))
+def test_window_sizes_are_judged_against_min_size_in_single_precision(min_size, tmp_path):
+    path = tmp_path / "cascade.xml"
+    path.write_text(random_cascade_xml(1).replace("<width>6</width>", "<width>55</width>"))
+    found = faces.detect_cascade(noise_image(11, (90, 40)), faces.load_cascade(path), 1.1, 0, min_size)
+    assert (len(found), _digest(box for box, _count in found)) == WIDE_EXPECTED[min_size]
+    assert (60 in {box[2] for box, _count in found}) == (min_size == (0, 0))
 
 
 @pytest.mark.parametrize("size", sorted(EDGE_EXPECTED))
