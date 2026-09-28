@@ -35,6 +35,85 @@ def gray_input(name: str, factor: int, pad: int) -> np.ndarray:
     return np.pad(((blocks + factor * factor // 2) // (factor * factor)).astype(np.uint8), pad, mode="edge")
 
 
+def _lcg(seed: int):
+    state = seed
+
+    def draw(k: int) -> int:
+        nonlocal state
+        state = (state * 1103515245 + 12345) % 2**31
+        return (state >> 8) % k
+
+    return draw
+
+
+def random_cascade_xml(seed: int) -> str:
+    """An OpenCV LBP cascade of 3 stages over a 6 x 6 window, whose first stage passes about three windows in four.
+
+    On noise it passes hundreds of windows at every size, where the real
+    cascade passes a handful: so every rule about which windows are searched
+    shows in what it finds.
+    """
+    draw = _lcg(seed)
+    rects = []
+    for _ in range(6):
+        w, h = 1 + draw(2), 1 + draw(2)
+        rects.append((draw(6 - 3 * w + 1), draw(6 - 3 * h + 1), w, h))
+    stages = []
+    for stumps, threshold in ((2, 0.0), (3, -1.0), (3, -1.0)):
+        weak = []
+        for _ in range(stumps):
+            words = []
+            for _ in range(8):
+                word = (draw(65536) << 16) | draw(65536)
+                words.append(word - 2**32 if word >= 2**31 else word)
+            leaves = [(-1.0, 1.0), (1.0, -1.0), (0.5, -1.0), (-0.5, 1.0)][draw(4)]
+            weak.append(
+                f"<_><internalNodes>0 -1 {draw(6)} {' '.join(map(str, words))}</internalNodes>"
+                f"<leafValues>{leaves[0]} {leaves[1]}</leafValues></_>"
+            )
+        stages.append(
+            f"<_><maxWeakCount>{stumps}</maxWeakCount><stageThreshold>{threshold}</stageThreshold>"
+            f"<weakClassifiers>{''.join(weak)}</weakClassifiers></_>"
+        )
+    features = "".join(f"<_><rect>{x} {y} {w} {h}</rect></_>" for x, y, w, h in rects)
+    return (
+        '<?xml version="1.0"?>\n<opencv_storage><cascade><stageType>BOOST</stageType><featureType>LBP</featureType>'
+        "<height>6</height><width>6</width><stageParams><boostType>GAB</boostType><minHitRate>0.995</minHitRate>"
+        "<maxFalseAlarm>0.5</maxFalseAlarm><weightTrimRate>0.95</weightTrimRate><maxDepth>1</maxDepth>"
+        "<maxWeakCount>100</maxWeakCount></stageParams><featureParams><maxCatCount>256</maxCatCount>"
+        f"<featSize>1</featSize></featureParams><stageNum>3</stageNum><stages>{''.join(stages)}</stages>"
+        f"<features>{features}</features></cascade></opencv_storage>\n"
+    )
+
+
+def edge_cascade_xml() -> str:
+    """``random_cascade_xml(1)`` cut to one stage of one stump whose leaves are both its threshold as OpenCV lowers it.
+
+    Every window's sum is then exactly the threshold, which passes: the
+    windows it reports are exactly the windows searched.
+    """
+    xml = random_cascade_xml(1)
+    leaf = repr(float(np.float32(0) - np.float32(1e-5)))
+    head = xml.split("<stages>")[0].replace("<stageNum>3</stageNum>", "<stageNum>1</stageNum>")
+    stage = (
+        "<stages><_><maxWeakCount>1</maxWeakCount><stageThreshold>0</stageThreshold><weakClassifiers>"
+        f"<_><internalNodes>0 -1 0 -1 -1 -1 -1 -1 -1 -1 -1</internalNodes><leafValues>{leaf} {leaf}</leafValues></_>"
+        "</weakClassifiers></_></stages>"
+    )
+    return head + stage + "<features>" + xml.split("<features>")[1]
+
+
+def noise_image(seed: int, size: tuple[int, int] = (48, 36)) -> np.ndarray:
+    """A gray gradient with noise, from an LCG."""
+    draw = _lcg(seed)
+    w, h = size
+    return np.array([[(5 * x + 3 * y + draw(60)) % 256 for x in range(w)] for y in range(h)], dtype=np.uint8)
+
+
+def _digest(boxes) -> str:
+    return hashlib.sha1(repr(sorted(tuple(map(int, box)) for box in boxes)).encode()).hexdigest()[:16]
+
+
 def windows(seed: int, count: int) -> list[list[int]]:
     """Square windows around a few centers, two of them inside two others, from a small LCG."""
     state = seed
@@ -107,6 +186,29 @@ GROUP_EXPECTED = {
         ((72, 72, 43, 43), 12), ((142, 168, 90, 90), 11), ((270, 15, 67, 67), 10), ((291, 145, 80, 80), 12),
         ((292, 80, 72, 72), 8),
     ],
+}
+
+# OpenCV 4.14's CascadeClassifier on random_cascade_xml(seed) and noise_image(seed + 10), scale step 1.1:
+# (seed, min_neighbors, min_size): (how many boxes, _digest of them).
+SYNTHETIC_EXPECTED = {
+    (1, 0, 0): (361, "ed79a4788e41396e"),
+    (1, 0, 10): (166, "fd7c74b59cf959d3"),
+    (1, 2, 0): (10, "bae6789e2bd4739f"),
+    (2, 0, 0): (810, "2f31fdf53b0e8fd5"),
+    (2, 0, 10): (346, "e9994a4d1632c325"),
+    (2, 2, 0): (29, "96c59d2027c9d7d5"),
+    (3, 0, 0): (618, "3bc971ccbd2573de"),
+    (3, 0, 10): (295, "26bb1f13e7a2ea79"),
+    (3, 2, 0): (18, "71d62e7d8795d842"),
+}
+# The same for random_cascade_xml(1) on noise_image(11) with min_neighbors 0 and a min_size no window, or some, reaches.
+MIN_SIZE_EXPECTED = {(100, 100): (0, "97d170e1550eee4a"), (37, 5): (7, "312fe68bad5c9be0"), (13, 13): (120, "884fc71e896b1d86")}
+# OpenCV 4.14's CascadeClassifier on edge_cascade_xml() and noise_image(5, size), min_neighbors 0: the windows it searches.
+EDGE_EXPECTED = {
+    (8, 8): (5, "7d4ebf4ab3fd86f9"),
+    (9, 9): (9, "350efe0cf43fab27"),
+    (40, 7): (48, "d96763271aa30990"),
+    (70, 13): (519, "20075efff7b327ab"),
 }
 
 _BIG = [[100 + d, 100 + d, 100, 100] for d in range(-2, 3)] * 2  # ten windows of one face
@@ -187,6 +289,42 @@ def test_the_cascade_finds_what_opencv_4_finds(case):
     name, factor, pad, min_size, min_neighbors = case
     found = faces.detect_cascade(gray_input(name, factor, pad), CASCADE, 1.1, min_neighbors, (min_size, min_size))
     assert sorted(box for box, _count in found) == CASCADE_EXPECTED[case]
+
+
+@pytest.mark.parametrize("case", sorted(SYNTHETIC_EXPECTED), ids=lambda case: "-".join(map(str, case)))
+def test_a_cascade_passing_hundreds_of_windows_finds_what_opencv_4_finds(case, tmp_path):
+    seed, min_neighbors, min_size = case
+    path = tmp_path / "cascade.xml"
+    path.write_text(random_cascade_xml(seed))
+    found = faces.detect_cascade(noise_image(seed + 10), faces.load_cascade(path), 1.1, min_neighbors, (min_size, min_size))
+    assert (len(found), _digest(box for box, _count in found)) == SYNTHETIC_EXPECTED[case]
+
+
+@pytest.mark.parametrize("min_size", sorted(MIN_SIZE_EXPECTED))
+def test_a_min_size_no_window_reaches_searches_the_nearest_size(min_size, tmp_path):
+    path = tmp_path / "cascade.xml"
+    path.write_text(random_cascade_xml(1))
+    found = faces.detect_cascade(noise_image(11), faces.load_cascade(path), 1.1, 0, min_size)
+    assert (len(found), _digest(box for box, _count in found)) == MIN_SIZE_EXPECTED[min_size]
+    if min_size == (37, 5):  # no window is 37 wide: the size nearest (37, 5), 21 x 21, is searched alone
+        assert {box[2] for box, _count in found} <= {20, 21}
+
+
+@pytest.mark.parametrize("size", sorted(EDGE_EXPECTED))
+def test_the_windows_searched_are_opencv_4s_and_a_sum_at_the_threshold_passes(size, tmp_path):
+    path = tmp_path / "cascade.xml"
+    path.write_text(edge_cascade_xml())
+    found = faces.detect_cascade(noise_image(5, size), faces.load_cascade(path), 1.1, 0)
+    assert (len(found), _digest(box for box, _count in found)) == EDGE_EXPECTED[size]
+
+
+def test_opencv_stripes_leave_the_last_row_of_windows_unsearched_where_they_divide_exactly():
+    # Three positions at a two-pixel step, in one stripe: rows at 0 and 2, but the stripe is one step tall.
+    assert faces._searched_rows(3, 2, 1) == 1
+    assert faces._searched_rows(4, 2, 1) == 2 and faces._searched_rows(3, 1, 1) == 3
+    # 101 positions, 3 stripes of 17 steps: all 51 rows.
+    assert faces._searched_rows(101, 2, 3) == 51
+    assert faces._searched_rows(0, 2, 1) == 0
 
 
 def test_the_cascade_counts_each_window_alone_with_no_neighbors_asked():

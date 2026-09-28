@@ -255,33 +255,50 @@ def detect_cascade(
     windows it groups; with ``min_neighbors`` 0, every window that passed, each
     counted once. Windows start at the cascade's own size and grow by
     ``scale_step`` while they fit in the image, skipping those smaller than
-    ``min_size``. The image is shrunk to each size instead of the window
-    grown, and the windows are one pixel apart on images shrunk at least
-    twofold, two pixels apart on the others.
+    ``min_size`` -- unless that is all of them, when the size nearest
+    ``min_size`` is searched. The image is shrunk to each size instead of the
+    window grown, and the windows are one pixel apart on images shrunk at least
+    twofold, two pixels apart on the others. As OpenCV splits the rows of
+    windows into stripes, a count that rounds down, a two-pixel step can leave
+    the last row unsearched (see ``_searched_rows``).
     """
     h, w = gray.shape
     win_w, win_h = cascade.window
-    scales = []
+    every = []  # every size that fits, as OpenCV lists them: the growing factor in double, kept in single precision
     factor = 1.0
     while round(win_w * factor) <= w and round(win_h * factor) <= h:
-        if round(win_w * factor) >= min_size[0] and round(win_h * factor) >= min_size[1]:
-            scales.append(np.float32(factor))
+        every.append(np.float32(factor))
         factor *= scale_step
 
-    levels = []  # per size: its scale, integral image, step, first row among all sizes', and hits
+    def window(scale: np.float32) -> tuple[int, int]:
+        return int(np.rint(np.float32(win_w) * scale)), int(np.rint(np.float32(win_h) * scale))
+
+    scales = []
+    for scale in every:
+        if window(scale)[0] > w or window(scale)[1] > h:
+            break
+        if window(scale)[0] >= min_size[0] and window(scale)[1] >= min_size[1]:
+            scales.append(scale)
+    if not scales and every:
+        distances = [(min_size[0] - ww) ** 2 + (min_size[1] - wh) ** 2 for ww, wh in map(window, every)]
+        scales = [every[distances.index(min(distances))]]
+
+    levels = []  # per size: its scale, integral image, step, rows searched, first row among all sizes', and hits
     rows_before = 0
+    stripes = None
     for scale in scales:
         size = (int(np.rint(np.float32(w) / scale)), int(np.rint(np.float32(h) / scale)))
         shrunk = cv2.resize(gray, size, interpolation=cv2.INTER_LINEAR_EXACT)
         integral = cv2.integral(shrunk, sdepth=cv2.CV_32S)
         step = 1 if scale >= 2 else 2
-        rows = len(range(0, max(integral.shape[0] - win_h, 0), step))
-        levels.append((scale, integral, step, rows_before, np.zeros(integral.shape, dtype=np.uint8)))
+        if stripes is None:  # set by the first size's row of windows
+            stripes = -(-max(integral.shape[1] - win_w, 0) // 32)
+        rows = _searched_rows(max(integral.shape[0] - win_h, 0), step, stripes)
+        levels.append((scale, integral, step, rows, rows_before, np.zeros(integral.shape, dtype=np.uint8)))
         rows_before += rows
 
     def search(start: int, stop: int) -> None:
-        for scale, integral, step, first, hits in levels:
-            rows = len(range(0, max(integral.shape[0] - win_h, 0), step))
+        for _scale, integral, step, rows, first, hits in levels:
             row_from, row_to = max(start - first, 0), min(stop - first, rows)
             if row_from < row_to:
                 kernels.lbp_cascade_rows(
@@ -292,7 +309,7 @@ def detect_cascade(
     parallel.for_each_stripe(search, rows_before)
 
     windows = []
-    for scale, _integral, _step, _first, hits in levels:
+    for scale, _integral, _step, _rows, _first, hits in levels:
         box_w, box_h = int(np.rint(np.float32(win_w) * scale)), int(np.rint(np.float32(win_h) * scale))
         ys, xs = np.nonzero(hits)
         windows += [
@@ -301,6 +318,19 @@ def detect_cascade(
         ]
     grouped = group_windows(windows, min_neighbors)
     return [(box, count) for box, count in ((_clip_box(box, (w, h)), count) for box, count in grouped) if box[2] > 0 < box[3]]
+
+
+def _searched_rows(positions: int, step: int, stripes: int) -> int:
+    """How many rows of windows OpenCV 4 searches, of the rows at y = 0, step, ... below ``positions``.
+
+    It splits them into ``stripes`` stripes (one per 32 windows along the
+    first size's row) of whole steps, ``positions // step`` rows shared out,
+    rounded up, and at least one step each. Where that division comes out
+    exact, and a row starts at the last position, the stripes stop short of
+    it.
+    """
+    stripe = max((positions // step + stripes - 1) // stripes, 1) * step
+    return len(range(0, min(stripes * stripe, positions), step))
 
 
 def group_windows(

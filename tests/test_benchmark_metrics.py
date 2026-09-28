@@ -674,6 +674,10 @@ def test_a_face_is_found_by_a_box_holding_nine_tenths_of_it_of_which_it_is_a_thi
     best = match((100, 100, 100, 80), (60, 60, 150, 150))
     assert best["matches"][0]["found_index"] == 1 and best["face_found_recall"] == 1.0
     assert best["stray_faces"] == 0  # the face is all of the first box
+    # A box holding the whole face but ten times its size finds nothing, and is stray: the face is a tenth of it.
+    loose = match((0, 0, 400, 250))
+    assert loose["matches"][0]["cover"] == 1.0 and loose["matches"][0]["share"] == pytest.approx(0.1)
+    assert loose["face_found_recall"] == 0.0 and loose["stray_faces"] == 1
     # A box on no annotated face is stray; a face with no box overlapping it has no match.
     none = match((300, 300, 50, 50))
     assert none["stray_faces"] == 1 and none["face_found_recall"] == 0.0
