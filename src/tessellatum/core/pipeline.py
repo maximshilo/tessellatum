@@ -82,6 +82,10 @@ class PageAnalysis:
     palette_bgr: np.ndarray  # Kx3 uint8, legend colors first
     legend_size: int
     min_region_area_px: int  # merge threshold: smaller regions merge into a neighbor, if they have one
+    # HxW bool: where a region may be half as large, each of its pixels there counting twice towards
+    # min_region_area_px (see ``regions.build_regions``): the faces found, on a picture drawn from its colors. All False
+    # on line art, and on a picture without faces.
+    detail: np.ndarray
     min_paintable_width_px: float  # brush width: narrower parts of a region are given to a neighbor
     regions: list[Region]  # regions drawn on the page, in region-id order
     labels: list[Label]  # numbers drawn on the page
@@ -105,8 +109,8 @@ class PageAnalysis:
     # ink is in the regions whose paint goes over it.
     printed_ink: np.ndarray
     ink_gray: int
-    # The faces in the picture (see ``faces``), found on it at preview size and given in the page's pixels. Nothing on
-    # the page uses them yet.
+    # The faces in the picture (see ``faces``), found on it at preview size and given in the page's pixels. On a picture
+    # drawn from its colors, they are ``detail``; line art's page doesn't use them.
     faces: list[faces.Face]
 
 
@@ -269,8 +273,8 @@ def generate(
     True, ``PipelineCancelled`` is raised and no more work is done.
     ``collect_analysis`` also returns what the page is made of in
     ``GeneratedPage.analysis`` (see ``PageAnalysis``), for benchmarks and
-    tests, and looks for the faces in the picture, which nothing on the page
-    uses yet. The page itself is the same either way. ``style`` says how the page
+    tests, with the faces in the picture, which on line art are looked for
+    only then. The page itself is the same either way. ``style`` says how the page
     is drawn -- line width and the tone of the ink (see ``PageStyle``); it
     changes nothing about which regions the page has.
 
@@ -279,7 +283,9 @@ def generate(
     from the fills without the ink or its anti-aliased edge. Their paint goes
     over the ink's thin parts -- hatching, and fine lines as far as their
     middle -- but never over bold ink. Every other picture is drawn from its
-    colors alone.
+    colors alone, with more detail in its faces: a region inside a face the
+    pipeline finds may be half the difficulty's smallest (see ``faces`` and
+    ``regions.build_regions``). The brush is the same everywhere.
 
     Resizing, finding the ink and quantization results are cached per image
     object, so regenerating the same image with a different minimum region
@@ -336,7 +342,13 @@ def generate(
     # difficulty asked for gives the same regions -- the labeling only needs an
     # upper bound -- but not the same meaning, and it sizes its arrays for
     # colors that do not exist.
-    region_id_map, region_color = build_regions(region_labels, len(palette_bgr), min_area_px, min_width_px)
+    # A picture drawn from its colors spends more detail on its faces. Line art's faces are drawn by its own ink.
+    detail = None
+    if ink_mask is None:
+        found = detect_faces(image_bgr, resized)
+        if found:
+            detail = faces.mask(found, (w, h))
+    region_id_map, region_color = build_regions(region_labels, len(palette_bgr), min_area_px, min_width_px, detail)
     clearable = None
     if ink_mask is not None:
         region_id_map, inked = settle_enclosed(
@@ -409,6 +421,7 @@ def generate(
             palette_bgr=palette_bgr[order],  # a copy: palette_bgr belongs to the stage cache
             legend_size=len(used_color_indices),
             min_region_area_px=min_area_px,
+            detail=detail if detail is not None else np.zeros((h, w), dtype=bool),
             min_paintable_width_px=min_width_px,
             regions=regions,
             labels=rendered.labels,

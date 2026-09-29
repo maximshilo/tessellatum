@@ -1,8 +1,8 @@
 """Faces: where a picture has them, for the stages that give them more detail.
 
 People notice a wrong face far more than a wrong patch of grass, so a page
-should spend its detail there. This module finds the faces; nothing on the
-page uses them yet.
+should spend its detail there. This module finds the faces; the region stage
+lets a region be smaller inside them (see ``regions.build_regions``).
 
 Two detectors look, both shipped with the app and run offline
 (``resources/MODELS.md`` has their sources and licenses):
@@ -25,6 +25,7 @@ brush, so no stage can paint the features of a smaller one.
 
 from __future__ import annotations
 
+import math
 import threading
 import xml.etree.ElementTree as ElementTree
 from contextlib import contextmanager
@@ -104,6 +105,23 @@ def scaled(faces: list[Face], from_size: tuple[int, int], to_size: tuple[int, in
         )
         for face in faces
     ]
+
+
+def mask(faces: list[Face], size: tuple[int, int]) -> np.ndarray:
+    """HxW bool for a picture of ``size`` (width, height): the pixels whose middle lies in a box of ``faces``.
+
+    A box's corner (x, y) is the corner of pixel (x, y), as in OpenCV, so a
+    box of whole pixels covers exactly the pixels it spans.
+    """
+    width, height = size
+    covered = np.zeros((height, width), dtype=bool)
+    for face in faces:
+        x, y, w, h = face.box
+        # Pixel c's middle is at c + 0.5: inside when x <= c + 0.5 < x + w.
+        x0, x1 = max(math.ceil(x - 0.5), 0), min(math.ceil(x + w - 0.5), width)
+        y0, y1 = max(math.ceil(y - 0.5), 0), min(math.ceil(y + h - 0.5), height)
+        covered[y0:y1, x0:x1] = True
+    return covered
 
 
 def _clipped(face: Face, size: tuple[int, int]) -> Face:

@@ -16,6 +16,8 @@ now ``_smooth`` in place of the Douglas-Peucker pass those lines used to get,
 paper asks for instead of a two-pixel band, and ``_place_labels``, which gives
 every region a number no line runs through, at least as large as the paper
 needs, instead of numbering only the regions roomy enough at their middle.
+And ``build_regions`` takes ``detail``, where a region may be half as large:
+each of its pixels there counts twice towards the smallest size.
 """
 
 from __future__ import annotations
@@ -38,17 +40,19 @@ _NEIGHBOR_KERNEL = np.ones((3, 3), np.uint8)
 
 
 def build_regions(
-    labels: np.ndarray, num_colors: int, min_area_px: int, min_width_px: float = 0.0
+    labels: np.ndarray, num_colors: int, min_area_px: int, min_width_px: float = 0.0, detail: np.ndarray | None = None
 ) -> tuple[np.ndarray, np.ndarray]:
-    region_id_map, region_color = _regions_from_labels(labels, num_colors, min_area_px)
+    region_id_map, region_color = _regions_from_labels(labels, num_colors, min_area_px, detail)
     if min_width_px > 0 and region_color.size:
         widened = _absorb_thin_parts(region_id_map, region_color, labels, min_width_px)
         if widened is not None:
-            region_id_map, region_color = _regions_from_labels(widened, num_colors, min_area_px)
+            region_id_map, region_color = _regions_from_labels(widened, num_colors, min_area_px, detail)
     return region_id_map, region_color
 
 
-def _regions_from_labels(labels: np.ndarray, num_colors: int, min_area_px: int) -> tuple[np.ndarray, np.ndarray]:
+def _regions_from_labels(
+    labels: np.ndarray, num_colors: int, min_area_px: int, detail: np.ndarray | None = None
+) -> tuple[np.ndarray, np.ndarray]:
     h, w = labels.shape
     region_id_map = np.full((h, w), -1, dtype=np.int32)
     region_color: list[int] = []
@@ -69,7 +73,10 @@ def _regions_from_labels(labels: np.ndarray, num_colors: int, min_area_px: int) 
         return region_id_map, np.array([], dtype=np.int32)
 
     region_color_arr = np.array(region_color, dtype=np.int32)
-    areas = np.bincount(region_id_map.ravel()[region_id_map.ravel() >= 0], minlength=next_id).astype(np.int64)
+    # A region's size is its pixels' shares of the smallest one: a pixel in the detail counts twice.
+    weight = np.ones((h, w), dtype=np.int64) if detail is None else np.where(detail, 2, 1).astype(np.int64)
+    inside = region_id_map >= 0
+    areas = np.bincount(region_id_map[inside], weights=weight[inside], minlength=next_id).astype(np.int64)
     active = np.ones(next_id, dtype=bool)
 
     _merge_small_regions(region_id_map, areas, active, min_area_px)

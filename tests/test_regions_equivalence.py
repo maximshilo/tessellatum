@@ -77,6 +77,43 @@ def test_build_regions_matches_reference_with_unlabeled_pixels():
     np.testing.assert_array_equal(actual_map[10:30, 20:25], -1)
 
 
+def _detail(seed: int, shape: tuple[int, int]) -> np.ndarray:
+    """Where a page spends more detail, as it would on two faces: two boxes, placed at random."""
+    rng = np.random.default_rng(seed + 100)
+    h, w = shape
+    detail = np.zeros(shape, dtype=bool)
+    for _ in range(2):
+        bh, bw = max(1, int(h * rng.uniform(0.2, 0.6))), max(1, int(w * rng.uniform(0.2, 0.6)))
+        y, x = int(rng.integers(0, h - bh + 1)), int(rng.integers(0, w - bw + 1))
+        detail[y : y + bh, x : x + bw] = True
+    return detail
+
+
+@pytest.mark.parametrize("seed, shape, num_colors, blur_sigma, min_area_px, min_width_px", CASES)
+def test_build_regions_with_detail_matches_reference(seed, shape, num_colors, blur_sigma, min_area_px, min_width_px):
+    labels = _blobby_labels(seed, shape, num_colors, blur_sigma)
+    detail = _detail(seed, shape)
+
+    expected_map, expected_color = ref.build_regions(labels, num_colors, min_area_px, min_width_px, detail)
+    actual_map, actual_color = build_regions(labels, num_colors, min_area_px, min_width_px, detail)
+
+    np.testing.assert_array_equal(actual_map, expected_map)
+    np.testing.assert_array_equal(actual_color, expected_color)
+
+
+@pytest.mark.parametrize("seed, shape, num_colors, blur_sigma, min_area_px, min_width_px", CASES)
+def test_the_detail_actually_changes_the_cases(seed, shape, num_colors, blur_sigma, min_area_px, min_width_px):
+    # Guard for the comparison above: a detail that changed nothing would leave the counting untested. Without merging
+    # there is nothing for it to change, and at a smallest region of 4 px the 6 px brush takes every region under it.
+    labels = _blobby_labels(seed, shape, num_colors, blur_sigma)
+    without = build_regions(labels, num_colors, min_area_px, min_width_px)
+
+    with_detail = build_regions(labels, num_colors, min_area_px, min_width_px, _detail(seed, shape))
+
+    changed = not (np.array_equal(with_detail[0], without[0]) and np.array_equal(with_detail[1], without[1]))
+    assert changed == (min_area_px > 4)
+
+
 @pytest.mark.parametrize("seed, shape, num_colors, blur_sigma, min_area_px, min_width_px", CASES)
 def test_extract_regions_and_render_page_match_reference(
     seed, shape, num_colors, blur_sigma, min_area_px, min_width_px

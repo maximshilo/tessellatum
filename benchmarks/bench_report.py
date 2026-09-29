@@ -94,6 +94,8 @@ METRICS = (
     Metric("de00_p95", "ΔE00 p95 ↓", "{:.1f}", "resembles", "lower", sigma=0.073, sigma_export=0.12, relative=True),
     Metric("ssim", "SSIM ↑", "{:.3f}", "resembles", "higher", sigma=0.0066, sigma_export=0.0070),
     Metric("regions", "regions", "{:d}"),
+    # The regions touching no face box, found or annotated: where the page spends no more detail for its faces (T4.2).
+    Metric("background_regions", "background regions", "{:d}"),
     Metric("labeled_area_fraction", "labeled area ↑", "{:.1%}", "paintable", "higher", sigma=0.024, sigma_export=0.0064),
     Metric("unlabeled_regions", "unlabeled ↓", "{:d}", "paintable", "lower", sigma=69, sigma_export=18, target=Target(0)),
     Metric(

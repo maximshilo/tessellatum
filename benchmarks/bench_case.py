@@ -119,6 +119,9 @@ class PageData:
     printed_ink: np.ndarray | None = None
     ink_gray: int = 0  # the gray the printed ink is in, 0 black to 255 white
     faces: list | None = None  # the faces the pipeline found in the picture (``faces.Face``); None before 0.1.33
+    # HxW bool: where a region may be half as large, each of its pixels counting twice towards min_region_area_px (the
+    # faces found); None before 0.1.34, which held every region to min_region_area_px.
+    detail: np.ndarray | None = None
 
 
 def page_data_from_analysis(analysis) -> PageData:
@@ -151,6 +154,7 @@ def page_data_from_analysis(analysis) -> PageData:
         printed_ink=getattr(analysis, "printed_ink", None),  # before 0.1.28 no version printed ink
         ink_gray=int(getattr(analysis, "ink_gray", 0)),
         faces=getattr(analysis, "faces", None),  # before 0.1.33 no version looked for faces
+        detail=getattr(analysis, "detail", None),  # before 0.1.34 every region was held to one smallest size
     )
 
 
@@ -337,7 +341,9 @@ def main() -> int:
             page_data.region_id_map, page_data.region_color, page_data.palette_bgr, page_data.printed_ink, page_data.ink_gray
         )
         quality.update(bm.fidelity(reference, bm.fit_to(painted, (w, h))))
-        quality["undersized_regions"] = bm.count_undersized(page_data.region_id_map, page_data.min_region_area_px)
+        quality["undersized_regions"] = bm.count_undersized(
+            page_data.region_id_map, page_data.min_region_area_px, page_data.detail
+        )
         # The share of the area to paint, the regions: what the page prints, line art's ink, carries no number, but its
         # thin parts lie in the regions whose paint goes over them (from 0.1.30).
         quality.update(
@@ -412,6 +418,9 @@ def main() -> int:
             face_features = [{"part": feature.part, **score} for feature, score in zip(features, scores)]
         face_quality, found_faces, face_matches = found_face_scores(page_data, faces)
         quality.update(face_quality)
+        # The regions away from every face, found or annotated: where more detail for the faces should add none.
+        face_boxes = [_xywh(face.box) for face in faces] + [tuple(face.box) for face in page_data.faces or ()]
+        quality["background_regions"] = bm.background_regions(page_data.region_id_map, face_boxes)
         # Text is read by OCR inside the manifest's text boxes, on the source, the page and the painting.
         blocks = annotations.text if annotations else ()
         reader = bm.text_reader() if blocks else None

@@ -33,6 +33,77 @@ def test_large_regions_survive_merging():
     assert {r.area for r in regions} == {200, 200}
 
 
+def test_a_region_in_the_detail_may_be_half_as_large():
+    # A 5x5 speckle (25 px) in a field: under a smallest region of 40 px it merges away, unless it lies in the detail,
+    # where it counts 50.
+    labels = np.zeros((30, 30), dtype=np.int32)
+    labels[10:15, 10:15] = 1
+    detail = np.zeros(labels.shape, dtype=bool)
+    detail[5:20, 5:20] = True
+
+    def speckle_kept(min_area_px, detail=None):
+        ids, color = build_regions(labels, 2, min_area_px=min_area_px, detail=detail)
+        return color[ids[12, 12]] == 1
+
+    assert not speckle_kept(40)
+    assert speckle_kept(40, detail)
+    assert speckle_kept(50, detail)
+    assert not speckle_kept(51, detail)
+
+
+def test_a_region_partly_in_the_detail_counts_its_pixels_there_twice():
+    # A 4x10 bar (40 px) whose last three columns (12 px) lie in the detail: it counts 52.
+    labels = np.zeros((30, 30), dtype=np.int32)
+    labels[10:14, 10:20] = 1
+    detail = np.zeros(labels.shape, dtype=bool)
+    detail[5:25, 17:25] = True
+
+    for min_area_px, kept in [(52, True), (53, False)]:
+        ids, color = build_regions(labels, 2, min_area_px=min_area_px, detail=detail)
+        assert (color[ids[11, 11]] == 1) == kept
+
+
+def test_the_detail_decides_which_small_region_merges_first():
+    # A 3x3 square (color 1) wrapped on three sides by a 16 px shape (color 2), in a field (color 0); the smallest
+    # region is 20 px. Alone, the square is smaller and merges into the shape that wraps it, which then has 25 px and
+    # stays. With the square in the detail it counts 18, so the shape merges first, into the field, and the square after.
+    labels = np.zeros((25, 25), dtype=np.int32)
+    labels[10:13, 10:13] = 1
+    labels[9, 9:14] = 2
+    labels[13, 9:17] = 2
+    labels[10:13, 13] = 2
+    assert (labels == 2).sum() == 16
+    detail = np.zeros(labels.shape, dtype=bool)
+    detail[10:13, 10:13] = True
+
+    plain_ids, plain_color = build_regions(labels, 3, min_area_px=20)
+    fine_ids, fine_color = build_regions(labels, 3, min_area_px=20, detail=detail)
+
+    assert plain_color[plain_ids[11, 11]] == 2
+    assert (fine_color[fine_ids] == 0).all()
+
+
+def test_an_empty_detail_changes_nothing():
+    labels = _blobby_labels(4, 6, shape=(60, 80))
+
+    plain_ids, plain_color = build_regions(labels, 6, 60, 5.0)
+    ids, color = build_regions(labels, 6, 60, 5.0, detail=np.zeros(labels.shape, dtype=bool))
+
+    np.testing.assert_array_equal(ids, plain_ids)
+    np.testing.assert_array_equal(color, plain_color)
+
+
+def test_the_brush_is_the_same_in_the_detail():
+    # A 3 px stripe, 120 px in all, well over the smallest region, still goes to its neighbors under a 5 px brush.
+    labels = np.zeros((40, 40), dtype=np.int32)
+    labels[:, 19:22] = 1
+    labels[:, 22:] = 2
+
+    ids, color = build_regions(labels, 3, min_area_px=4, min_width_px=5.0, detail=np.ones(labels.shape, dtype=bool))
+
+    assert sorted(color[np.unique(ids)]) == [0, 2]
+
+
 def test_regions_have_valid_interior_points():
     labels = np.zeros((30, 30), dtype=np.int32)
     labels[:, 15:] = 1

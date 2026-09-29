@@ -1116,6 +1116,35 @@ def test_undersized_regions_are_those_with_a_neighbor_to_merge_into():
     assert bm.count_undersized(np.where(ids == 2, 0, ids), 10) == 1
 
 
+def test_a_region_in_the_detail_counts_its_pixels_there_twice_towards_the_threshold():
+    ids = np.zeros((10, 20), dtype=np.int64)
+    ids[2:5, 8:10] = 1  # 6 px beside region 0
+    detail = np.zeros(ids.shape, dtype=bool)
+    assert bm.count_undersized(ids, 10, detail) == 1
+
+    detail[2:5, 8:10] = True  # it counts 12
+    assert bm.count_undersized(ids, 12, detail) == 0
+    assert bm.count_undersized(ids, 13, detail) == 1
+
+    detail[2:5, 8] = False  # half of it in the detail: 3 + 2 * 3 = 9
+    assert bm.count_undersized(ids, 9, detail) == 0
+    assert bm.count_undersized(ids, 10, detail) == 1
+
+
+def test_background_regions_are_those_with_no_pixel_in_any_face_box():
+    ids = np.full((10, 25), -1)
+    for region in range(4):
+        ids[:, 5 * region : 5 * region + 5] = region  # columns 20-24 in no region
+
+    assert bm.background_regions(ids, []) == 4
+    assert bm.background_regions(ids, [(4, 0, 2, 3)]) == 2  # columns 4 and 5: regions 0 and 1
+    assert bm.background_regions(ids, [(4, 0, 2, 3), (21, 5, 3, 3)]) == 2  # a box over no region takes none
+    # A fractional box holds the pixels whose middle it holds: [9.6, 10.4) holds neither 9.5 nor 10.5, [9.4, 9.6) holds 9.5.
+    assert bm.background_regions(ids, [(9.6, 0.0, 0.8, 10.0)]) == 4
+    assert bm.background_regions(ids, [(9.4, 0.0, 0.2, 10.0)]) == 3
+    assert bm.background_regions(np.full((4, 4), -1), [(0, 0, 2, 2)]) == 0
+
+
 def test_printed_ink_is_matched_to_the_artworks_lines_for_recall_and_to_all_its_ink_for_precision():
     lines = np.zeros((60, 80), dtype=bool)
     lines[20:26, 10:70] = True  # an ink line 6 px wide and 60 long
