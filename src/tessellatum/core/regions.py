@@ -1068,8 +1068,9 @@ def extract_regions(
     can affect its contour or distance transform), spread over worker threads.
     Regions come back in region-id order.
 
-    ``printed`` (HxW bool), line art's printed ink, is where no number can go,
-    even where a region's paint goes over it (see ``paint_over_thin_ink``): a
+    ``printed`` (HxW bool), the ink the page prints -- line art's own, or the
+    detail marks in a face (see ``marks``) -- is where no number can go,
+    even where it lies in a region (see ``paint_over_thin_ink``): a
     region's label point is the one of its unprinted pixels farthest from
     everything else, as if the ink were in no region.
     """

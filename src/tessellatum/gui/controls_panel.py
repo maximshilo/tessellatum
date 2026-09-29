@@ -77,7 +77,8 @@ class ControlsPanel(QWidget):
             "How many colors to look for. Colors too alike to tell apart are merged, so a page can keep fewer."
         )
         self.min_region_slider.setToolTip(
-            "The smallest area a region may have on the printed A4 page. Smaller ones merge into a neighbor."
+            "The smallest area a region may have on the printed A4 page, half that in a photographed or painted face. "
+            "Smaller ones merge into a neighbor."
         )
         custom_form = QFormLayout()
         custom_form.addRow("Colors", colors_row)

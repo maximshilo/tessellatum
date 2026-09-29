@@ -115,7 +115,8 @@ class PageData:
     ink_lines: np.ndarray | None = None  # HxW bool: the ink lines the pipeline found; None before 0.1.27
     line_art: object | None = None  # the pipeline's ``ink.LineArt`` decision; None before 0.1.27
     # HxW bool: the ink the page prints; None before 0.1.28. In no region before 0.1.30; from then on, thin ink is in the
-    # regions whose paint goes over it.
+    # regions whose paint goes over it. From 0.1.35 also the thin dark marks printed in the faces found on a picture that
+    # isn't line art, which lie in the regions around them.
     printed_ink: np.ndarray | None = None
     ink_gray: int = 0  # the gray the printed ink is in, 0 black to 255 white
     faces: list | None = None  # the faces the pipeline found in the picture (``faces.Face``); None before 0.1.33
