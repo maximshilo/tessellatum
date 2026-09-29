@@ -76,11 +76,33 @@ def test_marks_are_looked_for_only_where_asked():
 
 
 def test_a_mark_as_wide_as_the_brush_is_printed_and_a_wider_one_is_not():
-    # A band as wide as the brush (13 px, 2.99 mm): the 15 px element fits in no part of it, so the closing lifts it to the
-    # paper. At 20 px (4.6 mm) the element fits, and the band is a dark area, which the regions keep if it is large enough.
+    # A band as wide as the brush (13 px, 2.99 mm): the 15 px element fits in no part of it, so the closing lifts it
+    # towards the paper beside it, 0.65 of its depth. At 15 px (3.45 mm) the element just fits, lifting its middle only
+    # to the band's own blurred edge, 0.35 of its depth (10.4 L*): a dark area, which the regions keep if it is large
+    # enough.
     brush_wide = find(page((DARKER, 300, 300, 313, 400)))
     assert brush_wide[330:370, 303:310].all()
-    assert not find(page((DARKER, 300, 300, 320, 400))).any()
+    assert not find(page((DARKER, 300, 300, 315, 400))).any()
+
+
+def test_a_mark_s_width_is_judged_in_every_direction():
+    # A band at 45 degrees, the pixels with |x - y - c| <= k: (2k + 1) / sqrt(2) px across. At k = 12 (17.7 px) the round
+    # element fits, as it does in a straight band that wide; at k = 4 (6.4 px) it doesn't. Only the band's middle is
+    # looked at: where it ends, the element fits into neither of its corners.
+    y, x = np.mgrid[: SIZE[1], : SIZE[0]]
+    where = np.zeros((SIZE[1], SIZE[0]), dtype=bool)
+    where[350:450, 450:550] = True
+    for k, is_mark in ((12, False), (4, True)):
+        image = page()
+        image[np.abs(x - y - 100) <= k] = DARKER
+        found = find(image, where)
+        assert found[(np.abs(x - y - 100) <= k - 2) & where].all() if is_mark else not found.any()
+
+
+def test_single_hairs_are_smoothed_away():
+    # The smoothing leaves a line one pixel wide at 0.31 of its depth (9.1 L* here), and one three pixels wide at 0.75.
+    assert not find(page((DARKER, 300, 300, 301, 380))).any()
+    assert find(page((DARKER, 300, 300, 303, 380)))[310:370, 301].all()
 
 
 def test_a_mark_must_be_at_least_the_contrast_darker():
@@ -116,6 +138,18 @@ def test_pixels_in_no_region_are_never_marks():
 def test_nothing_is_looked_for_without_where():
     found = find(page(LINE), np.zeros((SIZE[1], SIZE[0]), dtype=bool))
     assert found.shape == (SIZE[1], SIZE[0]) and not found.any()
+
+
+def test_the_window_reaches_as_far_as_a_closing_reads():
+    # A band 14 px wide, one under the element, whose left column is the last of ``where``: the closing lifts that column
+    # only through the paper 14 px to its right, past the band, which a window reaching less far would not see -- or,
+    # 20 px out, would see blurred as if the band went on. That column is a mark: 0.3 of the band's depth, 25 L*.
+    image = page((20, 600, 350, 614, 450), paper=230)
+    where = np.zeros((SIZE[1], SIZE[0]), dtype=bool)
+    where[300:500, 550:601] = True
+    found = find(image, where, palette=(230,))
+    assert found[352:448, 600].all()
+    assert not found[:, :599].any()  # nor anything more than a pixel off the band
 
 
 def whole_picture_marks(image, where, ids, colors, palette_bgr, scale):
@@ -167,12 +201,12 @@ def test_the_window_judges_every_pixel_as_the_whole_picture_would(boxes):
 def test_a_photographed_face_prints_its_marks_and_keeps_its_regions(monkeypatch):
     # Q27: inside the faces found on a photograph, thin dark marks are printed, in their own tone; the regions stay.
     pipeline.clear_cache()
-    image = pipeline.load_image_bgr(SAMPLES / "l-photo-cats-face.jpg")
+    image = pipeline.load_image_bgr(SAMPLES / "l-photo-lion.jpg")
     params = params_for_preset("Medium")
     result = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     analysis = result.analysis
     printed = analysis.printed_ink
-    assert printed.sum() > 200 and not printed[~analysis.detail].any()
+    assert printed.sum() > 5000 and not printed[~analysis.detail].any()
     resized = pipeline.resize_to_long_edge(image, pipeline.PREVIEW_LONG_EDGE)
     assert analysis.ink_gray == ink.ink_gray(resized, printed) and 0 < analysis.ink_gray < 128
     page = np.asarray(result.page.convert("L"))
@@ -181,6 +215,9 @@ def test_a_photographed_face_prints_its_marks_and_keeps_its_regions(monkeypatch)
     for label in analysis.labels:  # no number on a mark
         x0, y0, x1, y1 = (int(v) for v in label.box)
         assert not printed[y0:y1, x0:x1].any()
+    for region in analysis.regions:  # nor a region's label point, where its number is tried first
+        x, y = region.interior_point
+        assert not printed[y, x]
 
     pipeline.clear_cache()
     monkeypatch.setattr(marks, "detail_marks", lambda image, where, *args: np.zeros(where.shape, dtype=bool))
