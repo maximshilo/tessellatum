@@ -53,7 +53,9 @@ images x presets x output sizes:
   - whether the picture is line art, and the ink lines it was drawn with;
   - the ink the page prints (from 0.1.28: line art's own ink, printed solid,
     in no region; from 0.1.30 its thin parts lie in the regions whose paint
-    goes over them) and the gray it prints in;
+    goes over them; from 0.1.35 also the thin dark marks printed in the faces
+    found on a picture that isn't line art, which lie in the regions around
+    them) and the gray it prints in;
   - the faces the pipeline finds in the picture (from 0.1.33), with each one's
     box on the page, score and detector;
   - where a region may be half the difficulty's smallest, each of its pixels
@@ -212,7 +214,8 @@ than a pixel wide.
 
 Absolute metrics, per result. Fidelity is scored on the *finished painting*
 (every region filled with its legend color, and what the page prints kept as it
-is: line art's printed ink in its gray, bare paper white) against the source
+is: the printed ink -- line art's, and from 0.1.35 the detail marks in a face --
+in its gray, bare paper white) against the source
 image at output size. Paintability is scored on the region map and the numbers, at print size
 (see "Print scale" above). Line quality is scored on the lines drawn, the region
 map and the source image, and the palette on the legend's colors. Line art, faces
@@ -526,7 +529,8 @@ How the found-faces metrics are defined:
 - From 0.1.33 the pipeline looks for faces (`src/tessellatum/core/faces.py`), once per
   picture, on it at preview size, and reports them in its analysis payload
   (`PageAnalysis.faces`) as boxes on the page. From 0.1.34 a picture that isn't line art
-  lets a region inside them be half the difficulty's smallest (`PageAnalysis.detail`).
+  lets a region inside them be half the difficulty's smallest (`PageAnalysis.detail`),
+  and from 0.1.35 prints the thin dark marks there (`PageAnalysis.printed_ink`).
   Older versions get no value.
 - **Face found recall** reads the image's manifest `faces`, scaled to the page. An
   annotated face is found if at least 90% of its box lies inside one face found, and it
@@ -557,7 +561,9 @@ How the face metrics are defined:
 - **Features lost.** A feature survives if the page still shows it, as lines or as a
   shape:
   - lines: at least 30% of the source's edges inside its box (found as for edge F1)
-    lie within 0.5 mm of a drawn line. This share is the feature's edge recall;
+    lie within 0.5 mm of a drawn line or of the ink the page prints (line art's
+    from 0.1.28, the detail marks in a face from 0.1.35). This share is the
+    feature's edge recall;
   - a shape: a drawn region lying at least half inside the box covers at least a
     quarter of it. Edges in a textured box include the texture's: an eye outlined
     as a region of its own can still leave most of the fur's edges around it

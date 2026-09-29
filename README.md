@@ -156,9 +156,15 @@ are in `src/tessellatum/resources/MODELS.md`.
 On a photograph or a painting, a region inside a face found may be half the
 difficulty's smallest area — each of its pixels there counts twice — so eyes,
 a nose or a mouth that would merge into the skin keep regions of their own.
-The rest of the page is drawn as before, and the brush is 3 mm everywhere: a
-feature narrower than that is still lost. A drawing's faces are its ink's, so
-line art's page doesn't use them.
+The rest of the page is drawn as before, and the brush is 3 mm everywhere, so
+a feature no wider than that would still merge away. Those thin dark marks
+inside a face — pupils, the lines of the eyelids and lips, a nose's rim, the
+dots whiskers grow from — are printed on the page instead, solid, in their own
+tone, as line art's ink is: part of the picture, not something to paint. A mark
+is no wider than the brush, at least 12 L* darker than what lies around it,
+at least 2 mm long, and no lighter than the paint that would cover it (see
+`src/tessellatum/core/marks.py`). A drawing's faces are its ink's, so line
+art's page doesn't use them.
 
 ### Performance
 
