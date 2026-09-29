@@ -35,6 +35,7 @@ FACE_KEYS = ("face_de00_mean", "face_ssim", "features_lost", "labels_on_features
 TEXT_KEYS = ("text_cer_source", "text_cer_page", "text_cer_painting", "labels_on_text")
 FOUND_INK_KEYS = ("ink_found_fraction", "stray_ink_fraction")
 FOUND_FACE_KEYS = ("faces_found", "face_found_recall", "stray_faces")
+DETAIL_KEYS = ("background_regions",)
 METRICS = bench_report.METRICS_BY_KEY
 
 
@@ -57,6 +58,7 @@ def _case(image: str, categories: list[str], de00: float, preset: str = "Easy", 
             "de00_p95": 10.0,
             "ssim": 0.8,
             "regions": 100,
+            "background_regions": 90,
             "labeled_area_fraction": 0.5,
             "unlabeled_regions": 3,
             "sliver_area_fraction": 0.1,
@@ -469,7 +471,7 @@ def test_noise_pairs_resized_pages_by_their_own_size_and_leaves_out_pages_at_the
 
 def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path):
     before = _case("lion.jpg", ["photo"], 5.0)
-    for key in PAINTABILITY_KEYS + LINE_KEYS + PALETTE_KEYS + LINE_ART_KEYS + FOUND_INK_KEYS + FOUND_FACE_KEYS + FACE_KEYS + TEXT_KEYS:
+    for key in PAINTABILITY_KEYS + LINE_KEYS + PALETTE_KEYS + LINE_ART_KEYS + FOUND_INK_KEYS + FOUND_FACE_KEYS + FACE_KEYS + TEXT_KEYS + DETAIL_KEYS:
         del before["quality"][key]
     old = _write_set(tmp_path / "old", [before])
     new = _write_set(tmp_path / "new", [_case("lion.jpg", ["photo"], 5.0)])
@@ -478,7 +480,7 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
     old_vs_new = bench_report.build_report([old, new], bench_report.Tolerances())
 
     header = (
-        "| case | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | regions | labeled area ↑ | unlabeled ↓ | slivers ↓ | labels < 6 pt ↓ "
+        "| case | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | regions | background regions | labeled area ↑ | unlabeled ↓ | slivers ↓ | labels < 6 pt ↓ "
         "| labels on lines ↓ | overlapping labels ↓ | leaders | compactness p10 ↑ | compactness median ↑ | lines per boundary | lines per boundary (clear) "
         "| unenclosed ↓ | same-color boundary ↓ | jaggedness ↓ "
         "| edge F1 ↑ | colors | palette min ΔE00 ↑ | color pairs < 10 ΔE00 ↓ | ink line F1 ↑ "
@@ -490,12 +492,12 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
     )
     assert header in old_alone
     assert (
-        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
+        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | – | 50.0% | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
         "| – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | 0 | 10.0% | – |"
     ) in old_alone
     assert "| all | 1 | 1 | no targets | no targets | no targets | no targets |" in old_alone
     assert (
-        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 50.0% | 3 | 10.0% | 0.0% | 0 | 0 | 0 | 0.10 | 0.40 | 2.00 | 1.90 "
+        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 90 | 50.0% | 3 | 10.0% | 0.0% | 0 | 0 | 0 | 0.10 | 0.40 | 2.00 | 1.90 "
         "| 0.0% | 1.0% | 1.100 | 0.50 | 8 | 4.5 | 2 | 0.25 | – | – | 2 | 60.0% | 3.50 | – | 0.0% | – | – | 0.0% | 1 | 1.00 "
         "| 0 | 7.50 | 0.600 | 1 | 2 | 0.10 | 0.95 | 0.98 | 1 | 0 | 10.0% | – → 10/17 | ok |"
     ) in old_vs_new

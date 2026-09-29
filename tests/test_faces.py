@@ -19,6 +19,8 @@ import bench_metrics as bm  # noqa: E402
 
 SAMPLES = Path(__file__).resolve().parent / "sample_images"
 CASCADE = faces.load_cascade(faces.RESOURCES_DIR / faces.CASCADE_MODEL)
+# The SHA-1 of scene.png's page at Medium, at preview size, as v0.1.33 drew it (benchmark result set T4.1-candidate).
+SCENE_MEDIUM_PAGE_SHA1 = "e8c9a24bb35bb3bc6d1d0b5e099c8d7200ae56af"
 
 
 def gray_input(name: str, factor: int, pad: int) -> np.ndarray:
@@ -484,12 +486,13 @@ def test_the_pipeline_reports_the_faces_on_the_page_and_finds_them_once_per_pict
     pipeline.clear_cache()
 
 
-def test_faces_are_looked_for_only_when_analysis_is_collected_and_change_nothing_on_the_page(monkeypatch):
+def test_line_art_looks_for_faces_only_when_analysis_is_collected_and_its_page_never_uses_them(monkeypatch):
     pipeline.clear_cache()
-    image = pipeline.load_image_bgr(SAMPLES / "scene.png")
-    params = params_for_preset("Medium")
+    image = pipeline.load_image_bgr(SAMPLES / "m-cartoon-bold-lines-girl.png")
+    params = params_for_preset("Easy")
     with_faces = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
-    assert with_faces.analysis.faces == []
+    assert len(with_faces.analysis.faces) == 1
+    assert not with_faces.analysis.detail.any()
     pipeline.clear_cache()
 
     def refuse(picture):
@@ -499,3 +502,80 @@ def test_faces_are_looked_for_only_when_analysis_is_collected_and_change_nothing
     without = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE)
     assert without.page.tobytes() == with_faces.page.tobytes()
     pipeline.clear_cache()
+
+
+def test_a_picture_drawn_from_its_colors_looks_for_faces_on_the_page_s_path_and_details_them(monkeypatch):
+    # D-043, Q26: inside the faces found a region may be half the difficulty's smallest, on photographs and paintings.
+    pipeline.clear_cache()
+    calls = []
+    find = faces.find_faces
+    monkeypatch.setattr(faces, "find_faces", lambda picture: calls.append(picture.shape) or find(picture))
+    image = pipeline.load_image_bgr(SAMPLES / "l-photo-cats-face.jpg")
+    params = params_for_preset("Medium")
+    page = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE)
+    assert len(calls) == 1  # without analysis, on the page's path
+    analysis = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True).analysis
+    assert len(calls) == 1  # and once per picture
+    size = (analysis.region_id_map.shape[1], analysis.region_id_map.shape[0])
+    assert len(analysis.faces) == 1
+    np.testing.assert_array_equal(analysis.detail, faces.mask(analysis.faces, size))
+
+    # Every region another touches counts at least the smallest region, its pixels in the face twice; some count only
+    # because of that.
+    ids, area = analysis.region_id_map, analysis.min_region_area_px
+    assert bm.count_undersized(ids, area, analysis.detail) == 0
+    assert bm.count_undersized(ids, area) > 0
+
+    pipeline.clear_cache()
+    monkeypatch.setattr(faces, "find_faces", lambda picture: [])
+    plain = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
+    assert not plain.analysis.detail.any()
+    assert plain.page.tobytes() != page.page.tobytes()
+    assert plain.num_regions < page.num_regions
+    pipeline.clear_cache()
+
+
+def test_a_picture_without_faces_is_drawn_as_before():
+    pipeline.clear_cache()
+    image = pipeline.load_image_bgr(SAMPLES / "scene.png")
+    params = params_for_preset("Medium")
+    page = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
+    assert page.analysis.faces == [] and not page.analysis.detail.any()
+    # Its page as v0.1.33 drew it, before faces were given more detail.
+    assert hashlib.sha1(page.page.tobytes()).hexdigest() == SCENE_MEDIUM_PAGE_SHA1
+    pipeline.clear_cache()
+
+
+def test_the_mask_of_whole_pixel_boxes_is_the_pixels_they_span():
+    face = faces.Face(box=(2.0, 1.0, 3.0, 2.0), score=1.0, detector="yunet")
+    other = faces.Face(box=(6.0, 3.0, 1.0, 1.0), score=1.0, detector="cascade")
+    expected = np.zeros((5, 8), dtype=bool)
+    expected[1:3, 2:5] = True
+    expected[3, 6] = True
+    np.testing.assert_array_equal(faces.mask([face, other], (8, 5)), expected)
+    assert not faces.mask([], (8, 5)).any()
+
+
+def test_the_mask_of_a_fractional_box_is_the_pixels_whose_middle_it_holds():
+    # From x = 1.4 to 3.6 the middles 1.5, 2.5 and 3.5 are inside; from y = 0.6 to 2.5, 1.5 only (2.5 is its far edge).
+    face = faces.Face(box=(1.4, 0.6, 2.2, 1.9), score=1.0, detector="yunet")
+    expected = np.zeros((4, 6), dtype=bool)
+    expected[1, 1:4] = True
+    np.testing.assert_array_equal(faces.mask([face], (6, 4)), expected)
+    # From x = 1.6 to 3.8, 1.5 is left out; from y = 1.7 to 3.4, only 2.5.
+    face = faces.Face(box=(1.6, 1.7, 2.2, 1.7), score=1.0, detector="yunet")
+    expected = np.zeros((4, 6), dtype=bool)
+    expected[2, 2:4] = True
+    np.testing.assert_array_equal(faces.mask([face], (6, 4)), expected)
+    # From x = 1.6 to 3.3, only 2.5 (3.3 falls short of 3.5).
+    face = faces.Face(box=(1.6, 1.7, 1.7, 1.7), score=1.0, detector="yunet")
+    expected = np.zeros((4, 6), dtype=bool)
+    expected[2, 2] = True
+    np.testing.assert_array_equal(faces.mask([face], (6, 4)), expected)
+
+
+def test_the_mask_stops_at_the_picture_s_edge():
+    face = faces.Face(box=(-3.0, -2.0, 5.0, 10.0), score=1.0, detector="yunet")
+    expected = np.zeros((4, 6), dtype=bool)
+    expected[:, :2] = True
+    np.testing.assert_array_equal(faces.mask([face], (6, 4)), expected)

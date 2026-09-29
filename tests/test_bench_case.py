@@ -39,6 +39,9 @@ def test_probe_fallback_reads_the_same_page_data_as_the_analysis(speckled_image_
         bm.paint(from_probe.region_id_map, from_probe.region_color, from_probe.palette_bgr),
     )
     assert from_analysis.min_region_area_px == from_probe.min_region_area_px
+    # Where regions may be half as large: the faces found, none here; versions without it held every region to one size.
+    assert from_analysis.detail is result.analysis.detail and not from_analysis.detail.any()
+    assert from_probe.detail is None
     assert [r.region_id for r in from_analysis.regions] == [r.region_id for r in from_probe.regions]
     # So are the numbers: the payload numbers every region, clear of the lines, while the rebuild numbers only the
     # regions those versions did, where they put them (see test_probe_fallback_rebuilds_font_sizes_without_the_render_module).
@@ -81,6 +84,31 @@ def test_label_scores_read_the_leaders_ink_and_count_the_numbers_with_a_leader()
     scores = bench_case.label_scores(bench_case.page_data_from_analysis(analysis), bm.print_size.print_scale((60, 40)))
 
     assert (scores["labels_on_lines"], scores["overlapping_labels"], scores["leader_labels"]) == (1, 0, 1)
+
+
+def test_background_regions_leave_out_the_regions_on_any_face_annotated_or_found():
+    ids = np.repeat(np.arange(4, dtype=np.int32), 5)[None, :].repeat(10, axis=0)  # four regions, 5 columns each
+    analysis = SimpleNamespace(
+        region_id_map=ids,
+        region_color=np.zeros(4, dtype=np.int32),
+        palette_bgr=np.zeros((1, 3), dtype=np.uint8),
+        legend_size=1,
+        min_region_area_px=4,
+        regions=[],
+        labels=[],
+        strokes=[],
+        outlines=None,
+        faces=[SimpleNamespace(box=(15.2, 1.0, 2.0, 2.0))],  # found on region 3
+    )
+    annotated = [SimpleNamespace(box=SimpleNamespace(x=6, y=0, w=2, h=3))]  # on region 1
+
+    page_data = bench_case.page_data_from_analysis(analysis)
+
+    assert bench_case.background_region_count(page_data, annotated) == 2
+    assert bench_case.background_region_count(page_data, []) == 3
+    page_data.faces = None  # a version that doesn't look for faces
+    assert bench_case.background_region_count(page_data, annotated) == 3
+    assert bench_case.background_region_count(page_data, []) == 4
 
 
 def test_probe_fallback_rebuilds_font_sizes_without_the_render_module():
@@ -209,6 +237,7 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
         "labels_on_lines",
         "overlapping_labels",
         "leader_labels",
+        "background_regions",
     } <= case["quality"].keys()
     # The settings the case ran with, under the version's own field names.
     assert case["params"] == dataclasses.asdict(difficulty.params_for_preset("Hard"))
@@ -241,6 +270,8 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
     assert case["quality"]["faces_found"] == 0 and case["found_faces"] == []
     assert case["quality"]["face_found_recall"] == 0.0 and case["quality"]["stray_faces"] == 0
     assert [(m["kind"], m["found"]) for m in case["face_matches"]] == [("cartoon", False)]
+    # Every region reaches into the annotated face's box, the paper round the drawing too: none is background.
+    assert case["quality"]["background_regions"] == 0
     # The text box holds no text; with the OCR package installed, it is read on the source, the page and the painting.
     assert isinstance(case["quality"]["labels_on_text"], int)
     if importlib.util.find_spec("rapidocr"):

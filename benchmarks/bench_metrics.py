@@ -241,21 +241,47 @@ def fidelity(source_bgr: np.ndarray, painted_bgr: np.ndarray) -> dict[str, float
     }
 
 
-def count_undersized(region_id_map: np.ndarray, min_area_px: int) -> int:
+def count_undersized(region_id_map: np.ndarray, min_area_px: int, detail: np.ndarray | None = None) -> int:
     """Regions still smaller than the merge threshold (should be none) that another region touches.
 
     A region no other region touches, diagonals included, has nothing to merge
     into: on line art, a shape the ink encloses on its own, whose size is the
     artwork's.
+
+    ``detail`` (HxW bool) is where the page lets a region be half as large, its
+    faces (``PageAnalysis.detail``, from 0.1.34): a pixel there counts twice
+    towards the threshold, as the pipeline counts it.
     """
     ids = np.asarray(region_id_map)
-    areas = np.bincount(ids[ids >= 0].ravel())
-    touched = np.zeros(areas.size, dtype=bool)
+    inside = ids >= 0
+    pixels = np.bincount(ids[inside].ravel())
+    sizes = pixels
+    if detail is not None:
+        sizes = pixels + np.bincount(ids[inside & np.asarray(detail, dtype=bool)].ravel(), minlength=pixels.size)
+    touched = np.zeros(pixels.size, dtype=bool)
     for a, b, _spacing in _neighbor_pairs(ids):
         differ = (a != b) & (a >= 0) & (b >= 0)
         touched[a[differ]] = True
         touched[b[differ]] = True
-    return int(((areas > 0) & (areas < min_area_px) & touched).sum())
+    return int(((pixels > 0) & (sizes < min_area_px) & touched).sum())
+
+
+def background_regions(region_id_map: np.ndarray, boxes) -> int:
+    """How many regions have no pixel inside any of the (x, y, width, height) ``boxes``: the regions away from the faces.
+
+    A box's corner is a pixel's corner, as in OpenCV, and a pixel is inside
+    when its middle is: a box of whole pixels covers exactly the pixels it
+    spans, and one found at another size (in fractions of a pixel) the pixels
+    it mostly covers. Without boxes, every region counts.
+    """
+    ids = np.asarray(region_id_map)
+    inside = ids >= 0
+    if not inside.any():
+        return 0
+    present = np.bincount(ids[inside].ravel()) > 0
+    touched = np.zeros(present.size, dtype=bool)
+    touched[ids[inside & _pixels_in_boxes(ids.shape, boxes)]] = True
+    return int((present & ~touched).sum())
 
 
 def label_coverage(regions, labeled_region_ids, total_px: int) -> dict[str, float]:
@@ -1365,6 +1391,18 @@ def _box_mask(shape: tuple[int, int], boxes) -> np.ndarray:
     mask = np.zeros(shape, dtype=bool)
     for x, y, w, h in boxes:
         mask[y : y + h, x : x + w] = True
+    return mask
+
+
+def _pixels_in_boxes(shape: tuple[int, int], boxes) -> np.ndarray:
+    """The pixels whose middle lies inside any of the (x, y, width, height) ``boxes``, which may be fractional."""
+    height, width = shape
+    mask = np.zeros(shape, dtype=bool)
+    for x, y, w, h in boxes:
+        # Pixel c's middle is at c + 0.5: inside when x <= c + 0.5 < x + w.
+        x0, x1 = max(math.ceil(x - 0.5), 0), min(math.ceil(x + w - 0.5), width)
+        y0, y1 = max(math.ceil(y - 0.5), 0), min(math.ceil(y + h - 0.5), height)
+        mask[y0:y1, x0:x1] = True
     return mask
 
 

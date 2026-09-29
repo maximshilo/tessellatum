@@ -146,13 +146,19 @@ a patch takes its color from the fill nearest it beyond its strokes.
 
 People notice a wrong face far more than a wrong patch of grass, so the
 pipeline also looks for faces, to give them more detail than the rest of the
-page — which nothing on the page does yet. Two small detectors ship with the
-app and run offline: YuNet, a network for photographed and painted faces
-(trained on people, it finds a cat's or a lion's face too), and
-lbpcascade_animeface, a cascade for drawn ones. A face narrower than 15 mm on
-paper is left out: its eyes would be narrower than the brush. See
-`src/tessellatum/core/faces.py`; the models' sources and licenses are in
-`src/tessellatum/resources/MODELS.md`.
+page. Two small detectors ship with the app and run offline: YuNet, a network
+for photographed and painted faces (trained on people, it finds a cat's or a
+lion's face too), and lbpcascade_animeface, a cascade for drawn ones. A face
+narrower than 15 mm on paper is left out: its eyes would be narrower than the
+brush. See `src/tessellatum/core/faces.py`; the models' sources and licenses
+are in `src/tessellatum/resources/MODELS.md`.
+
+On a photograph or a painting, a region inside a face found may be half the
+difficulty's smallest area — each of its pixels there counts twice — so eyes,
+a nose or a mouth that would merge into the skin keep regions of their own.
+The rest of the page is drawn as before, and the brush is 3 mm everywhere: a
+feature narrower than that is still lost. A drawing's faces are its ink's, so
+line art's page doesn't use them.
 
 ### Performance
 
