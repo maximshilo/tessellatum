@@ -79,11 +79,11 @@ class PageStyle:
 @dataclass
 class RenderedPage:
     image: Image.Image  # RGB: outlines + numbers
-    outlines: Image.Image  # "L": the ink the lines and line art's printed ink put on the page, 0 = solid, 255 = bare paper
+    outlines: Image.Image  # "L": the ink the lines and the printed ink put on the page, 0 = solid, 255 = bare paper
     labels: list[Label]  # every number on the page, in drawing order
     strokes: list[np.ndarray]  # every line drawn, in drawing order: Nx2 float64 (x, y); a closed one returns to its first point
     leaders: Image.Image  # "L": the ink the numbers' leader lines put on the page, as in ``outlines``
-    # HxW bool: line art's ink as printed, less the detail ink cleared behind numbers written on hatching; None without.
+    # HxW bool: the ink as printed, less the detail ink cleared behind numbers written on hatching; None without.
     printed_ink: np.ndarray | None = None
 
 
@@ -105,9 +105,10 @@ def render_page(
     runs through it (see ``labels.place_labels``). ``style`` says how wide the
     lines print and how dark they and the numbers are.
 
-    ``ink`` (HxW bool) is line art's own ink, printed solid in ``ink_gray``,
-    the artwork's own tone (see ``ink.ink_gray``): part of the drawing, not
-    something to paint. It is the line wherever it runs, so no line is drawn
+    ``ink`` (HxW bool) is line art's own ink, or the detail marks in a
+    photograph's or a painting's faces (see ``marks``), printed solid in
+    ``ink_gray``, their own tone (see ``ink.ink_gray``): part of the drawing,
+    not something to paint. It is the line wherever it runs, so no line is drawn
     along it, and no number goes on it. ``clearable`` is the part of it a
     region's paint goes over whole, hatching (see ``regions.detail_ink``): a
     number with no room near its region but on that ink is written in the

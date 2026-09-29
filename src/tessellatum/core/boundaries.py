@@ -118,7 +118,8 @@ def trace_boundaries(
     twice or left out. A boundary that meets no junction comes back as a
     closed line, repeating its first point at the end.
 
-    ``ink`` (HxW bool) is line art's printed ink, which is a line already: no
+    ``ink`` (HxW bool) is the ink the page prints -- line art's own, or the
+    detail marks in a face (see ``marks``) -- which is a line already: no
     line is drawn along it, and a boundary between two regions ends where it
     meets it, as at any junction.
 

@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from tessellatum.core import faces, ink, kernels
+from tessellatum.core import faces, ink, kernels, marks
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import render_legend
 from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, MIN_REGION_AREA_MM2, print_scale
@@ -89,7 +89,7 @@ class PageAnalysis:
     min_paintable_width_px: float  # brush width: narrower parts of a region are given to a neighbor
     regions: list[Region]  # regions drawn on the page, in region-id order
     labels: list[Label]  # numbers drawn on the page
-    # HxW uint8: the ink the lines and line art's printed ink put on the page, 0 = solid ink, 255 = bare paper.
+    # HxW uint8: the ink the lines and the printed ink put on the page, 0 = solid ink, 255 = bare paper.
     outlines: np.ndarray
     # Every line drawn, in drawing order: Nx2 float64 (x, y) points with pixel centers at integer coordinates.
     # One line per boundary between two regions, traced along the pixel cracks and smoothed off them
@@ -104,9 +104,10 @@ class PageAnalysis:
     ink_lines: np.ndarray
     # HxW bool: the ink printed on the page, solid, in the gray ``ink_gray`` (0 black, 255 white): line art's ink lines,
     # and the patches in the ink's own color taken for it where it runs wider than a line (see ``regions.join_ink`` and
-    # ``regions.settle_enclosed``), less the hatching cleared behind numbers written on it. All False unless the picture
-    # is line art. Bold printed ink is in no region, nor is bare paper the ink encloses too small to paint; thin printed
-    # ink is in the regions whose paint goes over it.
+    # ``regions.settle_enclosed``), less the hatching cleared behind numbers written on it. Bold printed ink is in no
+    # region, nor is bare paper the ink encloses too small to paint; thin printed ink is in the regions whose paint goes
+    # over it. On a picture drawn from its colors, the detail marks printed in its faces, in their own gray (see
+    # ``marks``), which lie in the regions around them; all False without faces.
     printed_ink: np.ndarray
     ink_gray: int
     # The faces in the picture (see ``faces``), found on it at preview size and given in the page's pixels. On a picture
@@ -285,7 +286,9 @@ def generate(
     middle -- but never over bold ink. Every other picture is drawn from its
     colors alone, with more detail in its faces: a region inside a face the
     pipeline finds may be half the difficulty's smallest (see ``faces`` and
-    ``regions.build_regions``). The brush is the same everywhere.
+    ``regions.build_regions``), and the thin dark marks there that no region
+    keeps -- pupils, eyelid and lip lines, whisker dots -- are printed, in
+    their own tone (see ``marks``). The brush is the same everywhere.
 
     Resizing, finding the ink and quantization results are cached per image
     object, so regenerating the same image with a different minimum region
@@ -349,6 +352,11 @@ def generate(
         if found:
             detail = faces.mask(found, (w, h))
     region_id_map, region_color = build_regions(region_labels, len(palette_bgr), min_area_px, min_width_px, detail)
+    if detail is not None:
+        # The thin dark marks in a face that no brush can paint -- pupils, eyelid and lip lines, whisker dots -- merge into
+        # the regions around them. They are printed instead, in their own tone, and the regions' paint goes round them.
+        printed_ink = marks.detail_marks(resized, detail, region_id_map, region_color, palette_bgr, print_scale((w, h)))
+        ink_gray = ink.ink_gray(resized, printed_ink)
     clearable = None
     if ink_mask is not None:
         region_id_map, inked = settle_enclosed(
@@ -372,7 +380,9 @@ def generate(
     report("regions")
 
     def numbered(region_id_map: np.ndarray) -> tuple[list[Region], list[int], dict[int, int]]:
-        regions = extract_regions(region_id_map, region_color, printed=printed_ink if ink_mask is not None else None)
+        regions = extract_regions(
+            region_id_map, region_color, printed=printed_ink if ink_mask is not None or printed_ink.any() else None
+        )
         # Quantizing to more colors than the image actually has can leave some
         # k-means clusters with no (or a merged-away) region. Drop those from the
         # legend and renumber the rest contiguously so "1..N" always matches what
