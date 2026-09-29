@@ -562,6 +562,11 @@ def test_the_mask_of_a_fractional_box_is_the_pixels_whose_middle_it_holds():
     expected = np.zeros((4, 6), dtype=bool)
     expected[1, 1:4] = True
     np.testing.assert_array_equal(faces.mask([face], (6, 4)), expected)
+    # From x = 1.6 to 3.8, 1.5 is left out; from y = 1.7 to 3.4, only 2.5.
+    face = faces.Face(box=(1.6, 1.7, 2.2, 1.7), score=1.0, detector="yunet")
+    expected = np.zeros((4, 6), dtype=bool)
+    expected[2, 2:4] = True
+    np.testing.assert_array_equal(faces.mask([face], (6, 4)), expected)
 
 
 def test_the_mask_stops_at_the_picture_s_edge():

@@ -86,6 +86,31 @@ def test_label_scores_read_the_leaders_ink_and_count_the_numbers_with_a_leader()
     assert (scores["labels_on_lines"], scores["overlapping_labels"], scores["leader_labels"]) == (1, 0, 1)
 
 
+def test_background_regions_leave_out_the_regions_on_any_face_annotated_or_found():
+    ids = np.repeat(np.arange(4, dtype=np.int32), 5)[None, :].repeat(10, axis=0)  # four regions, 5 columns each
+    analysis = SimpleNamespace(
+        region_id_map=ids,
+        region_color=np.zeros(4, dtype=np.int32),
+        palette_bgr=np.zeros((1, 3), dtype=np.uint8),
+        legend_size=1,
+        min_region_area_px=4,
+        regions=[],
+        labels=[],
+        strokes=[],
+        outlines=None,
+        faces=[SimpleNamespace(box=(15.2, 1.0, 2.0, 2.0))],  # found on region 3
+    )
+    annotated = [SimpleNamespace(box=SimpleNamespace(x=6, y=0, w=2, h=3))]  # on region 1
+
+    page_data = bench_case.page_data_from_analysis(analysis)
+
+    assert bench_case.background_region_count(page_data, annotated) == 2
+    assert bench_case.background_region_count(page_data, []) == 3
+    page_data.faces = None  # a version that doesn't look for faces
+    assert bench_case.background_region_count(page_data, annotated) == 3
+    assert bench_case.background_region_count(page_data, []) == 4
+
+
 def test_probe_fallback_rebuilds_font_sizes_without_the_render_module():
     dot = np.array([[[2, 3]]], dtype=np.int32)
     regions = [

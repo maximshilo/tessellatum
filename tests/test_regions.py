@@ -83,6 +83,19 @@ def test_the_detail_decides_which_small_region_merges_first():
     assert (fine_color[fine_ids] == 0).all()
 
 
+def test_pixels_in_no_region_count_for_nothing_in_the_detail():
+    # A 2x4 patch of color 0 (8 px; region 0, counting 16 in the detail) and a 5x6 block in no region, all in the detail;
+    # the smallest region is 20 px. The block counts towards no region, so the patch still merges away.
+    labels = np.ones((20, 20), dtype=np.int32)
+    labels[2:4, 2:6] = 0
+    labels[8:13, 8:14] = -1
+
+    ids, color = build_regions(labels, 2, min_area_px=20, detail=np.ones(labels.shape, dtype=bool))
+
+    assert (color[ids[ids >= 0]] == 1).all()
+    assert (ids[8:13, 8:14] == -1).all()
+
+
 def test_an_empty_detail_changes_nothing():
     labels = _blobby_labels(4, 6, shape=(60, 80))
 

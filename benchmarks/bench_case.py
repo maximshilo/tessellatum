@@ -418,9 +418,7 @@ def main() -> int:
             face_features = [{"part": feature.part, **score} for feature, score in zip(features, scores)]
         face_quality, found_faces, face_matches = found_face_scores(page_data, faces)
         quality.update(face_quality)
-        # The regions away from every face, found or annotated: where more detail for the faces should add none.
-        face_boxes = [_xywh(face.box) for face in faces] + [tuple(face.box) for face in page_data.faces or ()]
-        quality["background_regions"] = bm.background_regions(page_data.region_id_map, face_boxes)
+        quality["background_regions"] = background_region_count(page_data, faces)
         # Text is read by OCR inside the manifest's text boxes, on the source, the page and the painting.
         blocks = annotations.text if annotations else ()
         reader = bm.text_reader() if blocks else None
@@ -536,6 +534,19 @@ def found_face_scores(page_data: PageData, faces) -> tuple[dict, list | None, li
     }
     matches = [{"kind": face.kind, **scores} for face, scores in zip(faces, match["matches"])] if faces else None
     return quality, found, matches
+
+
+def background_region_count(page_data: PageData, faces) -> int:
+    """The regions away from every face: those with no pixel in a face box, annotated or found.
+
+    ``faces`` are the manifest's faces at the page's size. The faces the
+    pipeline found count too, because they are where it spends more detail,
+    and a detector's box can reach past the annotated face.
+    """
+    import bench_metrics as bm  # imported late in this module, after the measured version's package
+
+    boxes = [_xywh(face.box) for face in faces] + [tuple(face.box) for face in page_data.faces or ()]
+    return bm.background_regions(page_data.region_id_map, boxes)
 
 
 def text_scores(blocks, layers: dict, label_boxes, reader) -> tuple[dict, list | None]:
