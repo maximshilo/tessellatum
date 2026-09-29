@@ -36,8 +36,9 @@ images x presets x output sizes:
 - Per-stage timings come from wrapping the stage functions that
   `tessellatum.core.pipeline.generate` calls: `resize_to_long_edge`,
   `detect_ink` (from 0.1.28), `quantize`, `build_regions`, `extract_regions`,
-  `render_page`, `render_legend`, and `detect_faces` (from 0.1.33, which runs only
-  when the analysis below is collected, so no timed run reaches it). Keep those names
+  `render_page`, `render_legend`, and `detect_faces` (from 0.1.33; until 0.1.33 it ran
+  only when the analysis below is collected, so no timed run reached it; from 0.1.34
+  it is on the page's path for every picture but line art). Keep those names
   if you restructure the pipeline, or update `PROBED_STAGES` in `bench_case.py`.
 - Quality metrics read what the page is made of from the pipeline itself.
   `generate(..., collect_analysis=True)` returns it as `GeneratedPage.analysis`
@@ -54,7 +55,10 @@ images x presets x output sizes:
     in no region; from 0.1.30 its thin parts lie in the regions whose paint
     goes over them) and the gray it prints in;
   - the faces the pipeline finds in the picture (from 0.1.33), with each one's
-    box on the page, score and detector.
+    box on the page, score and detector;
+  - where a region may be half the difficulty's smallest, each of its pixels
+    there counting twice towards it (from 0.1.34: the faces found, on a picture
+    that isn't line art).
 
   The timed runs don't collect it, as in the app. One more run after them
   does, and its page must match theirs for the case to count as
@@ -252,8 +256,9 @@ and whether their features survive, and on whether OCR still reads the text:
 | labels on features | numbers overlapping a feature box | lower (0) |
 | text CER source / page / painting | character error rate of OCR inside the image's text boxes, against their annotated text: on the source (how much OCR reads there at all), the page and the painting; `case.json` records the OCR engine under `ocr`, and what it read in each block under `text_blocks` | lower (0) |
 | labels on text | numbers overlapping a text box | lower (0) |
-| undersized | regions still below the difficulty's minimum size that another region touches, so that they had a neighbor to merge into | lower (0) |
+| undersized | regions still below the difficulty's minimum size that another region touches, so that they had a neighbor to merge into; from 0.1.34 a pixel in a face found counts twice towards it, as the pipeline counts it | lower (0) |
 | colors, regions, ink | how many colors the legend lists, which is fewer than the difficulty asked for wherever colors had to be merged to keep the palette apart; the region count; and how much of the page the lines and numbers cover in ink (a pixel counts by how far it is from bare paper) | informational |
+| background regions | regions with no pixel inside a face box, the image's annotated faces' or the faces the pipeline found: where the page's detail for its faces should add nothing; every region on an image without faces | informational |
 
 How the paintability metrics are defined:
 
@@ -520,8 +525,9 @@ How the found-faces metrics are defined:
 
 - From 0.1.33 the pipeline looks for faces (`src/tessellatum/core/faces.py`), once per
   picture, on it at preview size, and reports them in its analysis payload
-  (`PageAnalysis.faces`) as boxes on the page. Nothing on the page uses them yet. Older
-  versions get no value.
+  (`PageAnalysis.faces`) as boxes on the page. From 0.1.34 a picture that isn't line art
+  lets a region inside them be half the difficulty's smallest (`PageAnalysis.detail`).
+  Older versions get no value.
 - **Face found recall** reads the image's manifest `faces`, scaled to the page. An
   annotated face is found if at least 90% of its box lies inside one face found, and it
   is at least a third of that face's box. A detector may frame more than the face -- the
@@ -535,6 +541,11 @@ How the found-faces metrics are defined:
   it counts as found by, if any, else the one overlapping it most, with the share of the
   face it covers (`cover`), the share of its box that is the face (`share`), and their
   IoU.
+- **Background regions** count the regions with no pixel inside a face box, annotated or
+  found: a pixel is inside where its middle is, so a box found at another size covers the
+  pixels it mostly covers. The faces found count too, because the page spends its detail
+  on those, and a detector's box can reach past the annotated face (YuNet's on the lion
+  does). A region straddling a box's edge is not background.
 
 How the face metrics are defined:
 
@@ -666,7 +677,7 @@ page of 1100 px, and **export**, a page at the image's own size (see
 | color pairs < 10 ΔE00 | palette | 3.2 | 3.1 | – |
 | flat colors ΔE00 | palette | 1.2 | 0.81 | ≤ flat colors ΔE00 best + 2.5 on exact colors |
 
-Colors, regions, ink, text CER source and flat colors ΔE00 best only inform. The per-case tables add the
+Colors, regions, background regions, ink, text CER source and flat colors ΔE00 best only inform. The per-case tables add the
 number of targets each case misses.
 
 The printed-ink metrics' tolerances come from 48 pairs at each size, the four line-art

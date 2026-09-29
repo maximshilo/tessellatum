@@ -101,6 +101,22 @@ def test_build_regions_with_detail_matches_reference(seed, shape, num_colors, bl
     np.testing.assert_array_equal(actual_color, expected_color)
 
 
+def test_build_regions_with_detail_matches_reference_with_unlabeled_pixels():
+    # The detail can lie over pixels in no region; they count towards nothing.
+    labels = _blobby_labels(7, (45, 55), 4, 1.0)
+    labels[10:30, 20:25] = -1
+    labels[0, :] = 4
+    detail = np.zeros(labels.shape, dtype=bool)
+    detail[:25, 10:40] = True
+
+    expected_map, expected_color = ref.build_regions(labels, 4, 12, 5.0, detail)
+    actual_map, actual_color = build_regions(labels, 4, 12, 5.0, detail)
+
+    np.testing.assert_array_equal(actual_map, expected_map)
+    np.testing.assert_array_equal(actual_color, expected_color)
+    np.testing.assert_array_equal(actual_map[10:30, 20:25], -1)
+
+
 @pytest.mark.parametrize("seed, shape, num_colors, blur_sigma, min_area_px, min_width_px", CASES)
 def test_the_detail_actually_changes_the_cases(seed, shape, num_colors, blur_sigma, min_area_px, min_width_px):
     # Guard for the comparison above: a detail that changed nothing would leave the counting untested. Without merging
