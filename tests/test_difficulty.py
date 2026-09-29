@@ -60,7 +60,8 @@ def test_unknown_presets_are_refused():
 
 def test_describe_speaks_in_print_units():
     assert difficulty.describe(difficulty.params_for_preset("Easy")) == (
-        "Up to 6 colors. Regions of at least 300 mm² (about 17 × 17 mm) and 3 mm wide on the printed A4 page."
+        "Up to 6 colors. Regions of at least 300 mm² (about 17 × 17 mm; half that in a photographed or painted face) "
+        "and 3 mm wide on the printed A4 page."
     )
 
 
