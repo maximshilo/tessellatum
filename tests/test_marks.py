@@ -142,8 +142,10 @@ def test_nothing_is_looked_for_without_where():
 
 def test_the_window_reaches_as_far_as_a_closing_reads():
     # A band 14 px wide, one under the element, whose left column is the last of ``where``: the closing lifts that column
-    # only through the paper 14 px to its right, past the band, which a window reaching less far would not see -- or,
-    # 20 px out, would see blurred as if the band went on. That column is a mark: 0.3 of the band's depth, 25 L*.
+    # only through the paper 14 px to its right, past the band. A window reaching less far would not see it, and one
+    # reaching only that far, with no room for the blur, would see it blurred as if the band went on (the blur mirrors
+    # the picture at the window's edge); the whole window reaches 20 px. That column is a mark: 0.3 of the band's depth,
+    # 25 L*.
     image = page((20, 600, 350, 614, 450), paper=230)
     where = np.zeros((SIZE[1], SIZE[0]), dtype=bool)
     where[300:500, 550:601] = True
