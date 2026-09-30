@@ -117,12 +117,15 @@ def test_the_picture_s_own_edges_hold():
     np.testing.assert_array_equal(vote(picture, labels, paints=(0, 255)), labels)
 
 
+@pytest.mark.parametrize("turned", [False, True])
 @pytest.mark.parametrize("picture_edge, settled_edge", [(34, 34), (27, 27), (42, 42), (46, 42), (12, 18)])
-def test_an_edge_moves_onto_the_picture_s_as_far_as_the_vote_reaches(picture_edge, settled_edge):
+def test_an_edge_moves_onto_the_picture_s_as_far_as_the_vote_reaches(picture_edge, settled_edge, turned):
     # The regions' edge is at column 30, the picture's a few columns off. The pixels between take the color the picture
-    # shows them in, if it is painted within 12 columns of them: three sigmas.
-    picture = shown(halves(picture_edge), 0, 255)
-    np.testing.assert_array_equal(vote(picture, halves(), paints=(0, 255)), halves(settled_edge))
+    # shows them in, if it is painted within 12 columns of them: three sigmas. Across rows as across columns: an edge
+    # along a row is one where only rows differ.
+    turn = (lambda array: np.ascontiguousarray(np.swapaxes(array, 0, 1))) if turned else (lambda array: array)
+    picture = turn(shown(halves(picture_edge), 0, 255))
+    np.testing.assert_array_equal(vote(picture, turn(halves()), paints=(0, 255)), turn(halves(settled_edge)))
 
 
 @pytest.mark.parametrize("gray, columns_taken", [(122, 0), (123, 1), (127, 1), (128, 2)])
