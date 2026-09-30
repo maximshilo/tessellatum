@@ -32,6 +32,7 @@ from tessellatum.core.regions import (
     split_areas,
 )
 from tessellatum.core.render import Label, PageStyle, render_page
+from tessellatum.core.texture import smooth_regions
 
 PREVIEW_LONG_EDGE = 1100
 EXPORT_LONG_EDGE = 2400
@@ -285,7 +286,9 @@ def generate(
     from the fills without the ink or its anti-aliased edge. Their paint goes
     over the ink's thin parts -- hatching, and fine lines as far as their
     middle -- but never over bold ink. Every other picture is drawn from its
-    colors alone, with more detail in its faces: a region inside a face the
+    colors alone. Its regions' edges are settled by a vote that smooths them
+    where the picture is textured and keeps them on its own edges (see
+    ``texture``), and its faces get more detail: a region inside a face the
     pipeline finds may be half the difficulty's smallest (see ``faces`` and
     ``regions.build_regions``), its regions there are painted in the palette
     colors nearest them, those a faint step in tone from a neighbor joined to
@@ -355,6 +358,12 @@ def generate(
         if found:
             detail = faces.mask(found, (w, h))
     region_id_map, region_color = build_regions(region_labels, len(palette_bgr), min_area_px, min_width_px, detail)
+    if ink_mask is None:
+        # Fur, foliage and stone leave the regions ragged edges no brush can follow: they are settled by a vote of
+        # the page around each pixel, held to the picture's own edges. Line art's edges are its ink.
+        region_id_map, region_color = smooth_regions(
+            resized, region_id_map, region_color, palette_bgr, min_area_px, min_width_px, detail
+        )
     if detail is not None:
         # A face's skin or fur is painted in a few large tones: each region there in the color nearest it, and the ones
         # a faint step from a neighbor joined to it.

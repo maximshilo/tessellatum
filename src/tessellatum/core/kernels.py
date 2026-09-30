@@ -11,8 +11,9 @@ their searches along paths, and the passes over the page that compare each
 pixel with its neighbors, which NumPy would make one whole-page array per
 neighbor for. Those give exactly what the NumPy code they replace gave
 (``tests/reference_line_art.py`` keeps it). So does the window search of the
-cascade that finds drawn faces (see ``faces``), and the count of a face's
-regions' pixels by color, with what each region touches (see ``tones``).
+cascade that finds drawn faces (see ``faces``), the count of a face's
+regions' pixels by color, with what each region touches (see ``tones``), and
+the vote that settles the regions' edges (see ``texture``).
 Arrays are passed flattened (row-major) with explicit ``height``/``width``,
 but for the cascade's integral images.
 
@@ -920,6 +921,107 @@ def _tones_touch(r, t, slot, region_color, touching, beside):
 
 
 @njit(cache=True, nogil=True)
+def run_ends(labels, height, width, out_ends):
+    """For every pixel, the column just past the end of its row's run of one label, to ``out_ends``.
+
+    A row of ``labels`` (flat, any values) is runs of equal labels; a walk
+    along it can then step from run to run instead of pixel to pixel (see
+    ``vote_rows``).
+    """
+    for y in range(height):
+        row = y * width
+        end = width
+        out_ends[row + width - 1] = width
+        for x in range(width - 2, -1, -1):
+            if labels[row + x] != labels[row + x + 1]:
+                end = x + 1
+            out_ends[row + x] = end
+
+
+@njit(cache=True, nogil=True)
+def vote_rows(
+    labels, ends, near, pixels_lab, colors_lab, cumulative, row_weight, radius, color_step, y_start, y_stop, height,
+    width, out_labels,
+):
+    """Rows ``[y_start, y_stop)`` of the vote that settles the regions' edges (see ``texture.smooth_regions``).
+
+    ``labels`` is the flat map of each pixel's color (-1 for none), ``ends``
+    its ``run_ends``, and ``near`` (flat bool) the pixels that vote; the rest
+    keep their color, as do pixels without one. A voting pixel looks at the
+    window of ``radius`` pixels round it, less what falls off the page. A
+    color's share of the window is the sum over its pixels there of
+    ``row_weight[dy + radius]`` times the column weight, which is given summed:
+    ``cumulative[i]`` is the weight of the ``i`` leftmost columns of a window,
+    so a run of one color in a row costs one subtraction however long it is.
+    Pixels without a color count for nobody.
+
+    The pixel takes the color with the largest share times
+    ``exp(-distance / color_step)``, the distance being from its own color,
+    ``pixels_lab`` (flat Nx3 uint8, OpenCV's 8-bit Lab), to the color's,
+    ``colors_lab`` (Kx3 float64 in the same scale), in L*a*b*: L rescaled to
+    0-100. Only a color with a pixel in the window can win. On a tie the
+    pixel keeps its own color if that is one of the best, else takes the
+    lowest.
+
+    Nothing is checked: every label must be below K, and the arrays as long as
+    the page. Rows can be voted in any order and from several threads: a vote
+    reads only ``labels``, never ``out_labels``.
+    """
+    count = colors_lab.shape[0]
+    share = np.zeros(count, np.float64)
+    seen = np.empty(count, np.int32)
+    lightness = 100.0 / 255.0
+    for y in range(y_start, y_stop):
+        row = y * width
+        y0 = max(y - radius, 0)
+        y1 = min(y + radius + 1, height)
+        for x in range(width):
+            p = row + x
+            own = labels[p]
+            out_labels[p] = own
+            if own < 0 or not near[p]:
+                continue
+            x0 = max(x - radius, 0)
+            x1 = min(x + radius + 1, width)
+            shift = radius - x  # a column's place in the window
+            num_seen = 0
+            for yy in range(y0, y1):
+                weight = row_weight[yy - y + radius]
+                q = yy * width
+                xx = x0
+                while xx < x1:
+                    end = min(ends[q + xx], x1)
+                    c = labels[q + xx]
+                    if c >= 0:
+                        if share[c] == 0.0:
+                            seen[num_seen] = c
+                            num_seen += 1
+                        share[c] += weight * (cumulative[end + shift] - cumulative[xx + shift])
+                    xx = end
+
+            l0 = pixels_lab[p, 0] * lightness
+            a0 = np.float64(pixels_lab[p, 1])
+            b0 = np.float64(pixels_lab[p, 2])
+            dl = l0 - colors_lab[own, 0] * lightness
+            da = a0 - colors_lab[own, 1]
+            db = b0 - colors_lab[own, 2]
+            best = own
+            best_score = share[own] * np.exp(-np.sqrt(dl * dl + da * da + db * db) / color_step)
+            for k in range(num_seen):
+                c = seen[k]
+                if c != own:
+                    dl = l0 - colors_lab[c, 0] * lightness
+                    da = a0 - colors_lab[c, 1]
+                    db = b0 - colors_lab[c, 2]
+                    score = share[c] * np.exp(-np.sqrt(dl * dl + da * da + db * db) / color_step)
+                    if score > best_score or (score == best_score and best != own and c < best):
+                        best = c
+                        best_score = score
+                share[c] = 0.0
+            out_labels[p] = best
+
+
+@njit(cache=True, nogil=True)
 def white_pieces(ids, height, width, out_piece):
     """4-connected runs of one id in ``ids`` (-1 for none): each pixel's piece to ``out_piece``, -1 where it has no id.
 
@@ -1600,6 +1702,13 @@ def warm_up() -> None:
     regions_inside(ids, labels >= 0, 3, 3, int(ids.max()) + 1)
     slot = np.zeros(int(ids.max()) + 1, dtype=np.int32)
     tone_census(ids, np.zeros((9, 3), dtype=np.uint8), slot, region_color, 3, 0, 0, 3, 3, 5, 1, 3)
+    # The vote that settles the regions' edges (see ``texture``).
+    ends = np.empty(9, dtype=np.int32)
+    run_ends(labels, 3, 3, ends)
+    vote_rows(
+        labels, ends, np.ones(9, dtype=np.bool_), np.zeros((9, 3), dtype=np.uint8), np.zeros((3, 3), dtype=np.float64),
+        np.arange(4, dtype=np.float64), np.ones(3, dtype=np.float64), 1, 10.0, 0, 3, 3, 3, np.empty(9, dtype=np.int32),
+    )
 
     # Line art's region steps.
     count = int(ids.max()) + 1

@@ -34,6 +34,7 @@ PROBED_STAGES = (
     "detect_faces",
     "quantize",
     "build_regions",
+    "smooth_regions",
     "extract_regions",
     "render_page",
     "render_legend",
