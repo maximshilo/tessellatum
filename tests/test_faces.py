@@ -535,10 +535,12 @@ def test_a_picture_drawn_from_its_colors_looks_for_faces_on_the_page_s_path_and_
     pipeline.clear_cache()
 
 
-def test_a_picture_without_faces_is_drawn_as_before():
+def test_a_picture_without_faces_is_drawn_as_before(monkeypatch):
     pipeline.clear_cache()
     image = pipeline.load_image_bgr(SAMPLES / "scene.png")
     params = params_for_preset("Medium")
+    # The regions' edges are settled since v0.1.37 (see ``texture``), which is not about faces: that is left out here.
+    monkeypatch.setattr(pipeline, "smooth_regions", lambda picture, ids, colors, *rest: (ids, colors))
     page = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     assert page.analysis.faces == [] and not page.analysis.detail.any()
     # Its page as v0.1.33 drew it, before faces were given more detail.
