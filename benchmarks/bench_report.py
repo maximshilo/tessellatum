@@ -291,6 +291,9 @@ METRICS = (
     Metric("face_ssim", "face SSIM ↑", "{:.3f}", "resembles", "higher", sigma=0.016, sigma_export=0.038),
     Metric("features_lost", "features lost ↓", "{:d}", "resembles", "lower", sigma=0.35, sigma_export=0.29, target=Target(0)),
     Metric("labels_on_features", "labels on features ↓", "{:d}", "clean drawing", "lower", sigma=1.6, sigma_export=3.6),
+    # The regions lying mostly inside the image's annotated faces: what a face is painted in (T4.4). `case.json` also
+    # has them per 100 cm² of face on paper, as `face_regions_per_dm2`.
+    Metric("face_regions", "face regions", "{:d}"),
     Metric("text_cer_source", "text CER source", "{:.2f}"),
     Metric(
         "text_cer_page",

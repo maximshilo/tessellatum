@@ -284,6 +284,28 @@ def background_regions(region_id_map: np.ndarray, boxes) -> int:
     return int((present & ~touched).sum())
 
 
+def face_regions(region_id_map: np.ndarray, boxes, px_per_mm: float) -> dict[str, float | int | None]:
+    """How many regions lie mostly inside the (x, y, width, height) ``boxes``, the image's faces.
+
+    A region lies mostly inside with more than half its pixels there, a pixel
+    being inside when its middle is (see ``background_regions``): the regions
+    that are the face's own, without the large ones around it that only reach
+    into its box. ``face_regions`` counts them, and ``face_regions_per_dm2`` is
+    that count per 100 cm² of the boxes on paper, at ``px_per_mm`` pixels a
+    millimeter, which is comparable between faces of different sizes. Both
+    None without boxes on the page.
+    """
+    ids = np.asarray(region_id_map)
+    inside = _pixels_in_boxes(ids.shape, boxes)
+    if not inside.any():
+        return {"face_regions": None, "face_regions_per_dm2": None}
+    in_region = ids >= 0
+    pixels = np.bincount(ids[in_region].ravel())
+    within = np.bincount(ids[in_region & inside].ravel(), minlength=pixels.size)
+    count = int((2 * within > pixels).sum())
+    return {"face_regions": count, "face_regions_per_dm2": count / (int(inside.sum()) / px_per_mm**2 / 10_000)}
+
+
 def label_coverage(regions, labeled_region_ids, total_px: int) -> dict[str, float]:
     """Share of drawn regions, and of the area to paint (``total_px``: the page less what it prints), that carry a number."""
     labeled = [r for r in regions if r.region_id in labeled_region_ids]

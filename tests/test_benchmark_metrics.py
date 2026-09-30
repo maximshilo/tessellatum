@@ -1145,6 +1145,32 @@ def test_background_regions_are_those_with_no_pixel_in_any_face_box():
     assert bm.background_regions(np.full((4, 4), -1), [(0, 0, 2, 2)]) == 0
 
 
+def test_face_regions_are_those_lying_mostly_inside_a_face_box():
+    ids = np.full((10, 25), -1)
+    for region in range(4):
+        ids[:, 5 * region : 5 * region + 5] = region  # columns 20-24 in no region
+
+    # Columns 3 to 12: two of region 0's five columns, all of region 1's, three of region 2's.
+    scores = bm.face_regions(ids, [(3, 0, 10, 10)], px_per_mm=2.0)
+    assert scores["face_regions"] == 2
+    # 10 x 10 px is 5 x 5 mm of paper, 0.0025 of 100 cm².
+    assert scores["face_regions_per_dm2"] == pytest.approx(2 / 0.0025)
+    # Half a region inside is not most of it: rows 0-4 of region 0 are 25 of its 50 pixels, rows 0-5 are 30.
+    assert bm.face_regions(ids, [(0, 0, 5, 5)], px_per_mm=1.0)["face_regions"] == 0
+    assert bm.face_regions(ids, [(0, 0, 5, 6)], px_per_mm=1.0)["face_regions"] == 1
+    # Two boxes count as the pixels either holds: a region mostly in both together is a face's, and the paper they
+    # cover counts once.
+    scores = bm.face_regions(ids, [(0, 0, 5, 3), (0, 3, 5, 3), (0, 0, 5, 6)], px_per_mm=1.0)
+    assert scores == {"face_regions": 1, "face_regions_per_dm2": pytest.approx(1 / (30 / 10_000))}
+    # A box holds the pixels whose middle it holds, as for the background regions.
+    assert bm.face_regions(ids, [(0.0, 0.0, 5.0, 5.4)], px_per_mm=1.0)["face_regions"] == 0
+    assert bm.face_regions(ids, [(0.0, 0.0, 5.0, 5.6)], px_per_mm=1.0)["face_regions"] == 1
+    # A face on pixels in no region has no regions; without a face on the page there is nothing to count.
+    assert bm.face_regions(ids, [(21, 5, 3, 3)], px_per_mm=1.0) == {"face_regions": 0, "face_regions_per_dm2": 0.0}
+    assert bm.face_regions(ids, [], px_per_mm=1.0) == {"face_regions": None, "face_regions_per_dm2": None}
+    assert bm.face_regions(ids, [(30, 0, 5, 5)], px_per_mm=1.0) == {"face_regions": None, "face_regions_per_dm2": None}
+
+
 def test_printed_ink_is_matched_to_the_artworks_lines_for_recall_and_to_all_its_ink_for_precision():
     lines = np.zeros((60, 80), dtype=bool)
     lines[20:26, 10:70] = True  # an ink line 6 px wide and 60 long

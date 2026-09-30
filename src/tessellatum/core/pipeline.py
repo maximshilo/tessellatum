@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from tessellatum.core import faces, ink, kernels, marks
+from tessellatum.core import faces, ink, kernels, marks, tones
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import render_legend
 from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, MIN_REGION_AREA_MM2, print_scale
@@ -83,8 +83,9 @@ class PageAnalysis:
     legend_size: int
     min_region_area_px: int  # merge threshold: smaller regions merge into a neighbor, if they have one
     # HxW bool: where a region may be half as large, each of its pixels there counting twice towards
-    # min_region_area_px (see ``regions.build_regions``): the faces found, on a picture drawn from its colors. All False
-    # on line art, and on a picture without faces.
+    # min_region_area_px (see ``regions.build_regions``): the faces found, on a picture drawn from its colors. The
+    # regions lying mostly there are the ones whose tones are settled (see ``tones``). All False on line art, and on a
+    # picture without faces.
     detail: np.ndarray
     min_paintable_width_px: float  # brush width: narrower parts of a region are given to a neighbor
     regions: list[Region]  # regions drawn on the page, in region-id order
@@ -286,9 +287,11 @@ def generate(
     middle -- but never over bold ink. Every other picture is drawn from its
     colors alone, with more detail in its faces: a region inside a face the
     pipeline finds may be half the difficulty's smallest (see ``faces`` and
-    ``regions.build_regions``), and the thin dark marks there that no region
-    keeps -- pupils, eyelid and lip lines, whisker dots -- are printed, in
-    their own tone (see ``marks``). The brush is the same everywhere.
+    ``regions.build_regions``), its regions there are painted in the palette
+    colors nearest them, those a faint step in tone from a neighbor joined to
+    it (see ``tones``), and the thin dark marks there that no region keeps --
+    pupils, eyelid and lip lines, whisker dots -- are printed, in their own
+    tone (see ``marks``). The brush is the same everywhere.
 
     Resizing, finding the ink and quantization results are cached per image
     object, so regenerating the same image with a different minimum region
@@ -353,6 +356,9 @@ def generate(
             detail = faces.mask(found, (w, h))
     region_id_map, region_color = build_regions(region_labels, len(palette_bgr), min_area_px, min_width_px, detail)
     if detail is not None:
+        # A face's skin or fur is painted in a few large tones: each region there in the color nearest it, and the ones
+        # a faint step from a neighbor joined to it.
+        region_id_map, region_color = tones.settle_tones(resized, detail, region_id_map, region_color, palette_bgr)
         # The thin dark marks in a face that no brush can paint -- pupils, eyelid and lip lines, whisker dots -- merge into
         # the regions around them. They are printed instead, in their own tone, and the regions' paint goes round them.
         printed_ink = marks.detail_marks(resized, detail, region_id_map, region_color, palette_bgr, print_scale((w, h)))

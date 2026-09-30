@@ -163,8 +163,18 @@ dots whiskers grow from — are printed on the page instead, solid, in their own
 tone, as line art's ink is: part of the picture, not something to paint. A mark
 is no wider than the brush, at least 12 L* darker than what lies around it,
 at least 2 mm long, and no lighter than the paint that would cover it (see
-`src/tessellatum/core/marks.py`). A drawing's faces are its ink's, so line
-art's page doesn't use them.
+`src/tessellatum/core/marks.py`).
+
+A face's skin or fur should read as a few large tones rather than blotches, so
+the regions lying mostly inside a face found are also settled (see
+`src/tessellatum/core/tones.py`). Each takes the palette color nearest its own
+pixels: a region is otherwise painted the color of the part of it a brush
+fits in, whatever has merged into it since. Then a region joins a neighbor
+wherever painting it in that neighbor's color would put it less than 1 ΔE00 a
+pixel further from the picture, the faintest step first. An eye, a lip or a
+nostril is far from the color beside it, and keeps its region.
+
+A drawing's faces are its ink's, so line art's page doesn't use them.
 
 ### Performance
 
