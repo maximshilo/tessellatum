@@ -20,6 +20,16 @@ import bench_metrics as bm  # noqa: E402
 from tessellatum.core import difficulty, pipeline, render  # noqa: E402
 
 
+def test_the_probe_times_the_vote_that_settles_a_picture_s_edges(sample_image_bgr, monkeypatch):
+    for name in bench_case.PROBED_STAGES:
+        monkeypatch.setattr(pipeline, name, getattr(pipeline, name))  # undoes the probe's wrapping afterwards
+    probe = bench_case.Probe(pipeline)
+    pipeline.clear_cache()
+    pipeline.generate(sample_image_bgr, difficulty.params_for_preset("Medium"), long_edge=200)
+    pipeline.clear_cache()
+    assert {"build_regions", "smooth_regions", "extract_regions"} <= probe.timings.keys()
+
+
 def test_probe_fallback_reads_the_same_page_data_as_the_analysis(speckled_image_bgr, monkeypatch):
     for name in bench_case.PROBED_STAGES:
         monkeypatch.setattr(pipeline, name, getattr(pipeline, name))  # undoes the probe's wrapping afterwards
