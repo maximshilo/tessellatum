@@ -257,6 +257,7 @@ and whether their features survive, and on whether OCR still reads the text:
 | face ΔE00, face SSIM | ΔE00 mean and SSIM inside the image's face boxes | lower, higher |
 | features lost | annotated eyes, noses and mouths the page no longer shows, as lines along their edges or as a region of their own; `case.json` also records the mean share of their edges drawn, as `feature_edge_recall`, and each feature's scores under `face_features` | lower (0) |
 | labels on features | numbers overlapping a feature box | lower (0) |
+| face regions | regions lying mostly inside the image's face boxes: what a face is painted in; `case.json` also records that count per 100 cm² of face on paper, as `face_regions_per_dm2` | informational |
 | text CER source / page / painting | character error rate of OCR inside the image's text boxes, against their annotated text: on the source (how much OCR reads there at all), the page and the painting; `case.json` records the OCR engine under `ocr`, and what it read in each block under `text_blocks` | lower (0) |
 | labels on text | numbers overlapping a text box | lower (0) |
 | undersized | regions still below the difficulty's minimum size that another region touches, so that they had a neighbor to merge into; from 0.1.34 a pixel in a face found counts twice towards it, as the pipeline counts it | lower (0) |
@@ -530,7 +531,9 @@ How the found-faces metrics are defined:
   picture, on it at preview size, and reports them in its analysis payload
   (`PageAnalysis.faces`) as boxes on the page. From 0.1.34 a picture that isn't line art
   lets a region inside them be half the difficulty's smallest (`PageAnalysis.detail`),
-  and from 0.1.35 prints the thin dark marks there (`PageAnalysis.printed_ink`).
+  from 0.1.35 prints the thin dark marks there (`PageAnalysis.printed_ink`), and from
+  0.1.36 paints the regions lying mostly there in the palette colors nearest them,
+  joining those a faint step in tone from a neighbor to it (`tones.py`).
   Older versions get no value.
 - **Face found recall** reads the image's manifest `faces`, scaled to the page. An
   annotated face is found if at least 90% of its box lies inside one face found, and it
@@ -571,6 +574,14 @@ How the face metrics are defined:
   - On today's pages of the face images, the features that are gone score an edge
     recall of at most 0.182, with no region of their own; those still there score
     at least 0.411, or have a region covering at least 27.7% of their box.
+- **Face regions** counts the regions with more than half their pixels inside the
+  image's annotated face boxes (a pixel is inside where its middle is): the face's own
+  regions, without the large ones around it that only reach into its box. A face should
+  be a few large tones rather than blotches, so fewer is better as long as the face's
+  fidelity and features hold, which is why it only informs. `face_regions_per_dm2`
+  divides the count by the boxes' area on paper, in units of 100 cm², so that faces of
+  different sizes compare: over the benchmark's three photographed and painted faces
+  at 0.1.35, 6 to 51 per 100 cm².
 - **Labels on features** counts the numbers whose text box overlaps a feature box. A
   number across two features counts once. Versions before 0.1.10 don't report where
   their numbers are, so the harness rebuilds each box as the renderer placed it: the
@@ -683,7 +694,7 @@ page of 1100 px, and **export**, a page at the image's own size (see
 | color pairs < 10 ΔE00 | palette | 3.2 | 3.1 | – |
 | flat colors ΔE00 | palette | 1.2 | 0.81 | ≤ flat colors ΔE00 best + 2.5 on exact colors |
 
-Colors, regions, background regions, ink, text CER source and flat colors ΔE00 best only inform. The per-case tables add the
+Colors, regions, background regions, face regions, ink, text CER source and flat colors ΔE00 best only inform. The per-case tables add the
 number of targets each case misses.
 
 The printed-ink metrics' tolerances come from 48 pairs at each size, the four line-art

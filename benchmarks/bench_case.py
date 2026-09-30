@@ -54,7 +54,15 @@ PRINTED_INK_KEYS = ("ink_print_precision", "ink_print_recall", "ink_print_f1")
 # the version finds ink lines (from 0.1.27). ``ink_reference_exact`` says whether the manifest's colors are the file's own.
 FOUND_INK_KEYS = ("ink_found_precision", "ink_found_recall", "ink_found_f1", "ink_reference_exact")
 # Face fields, None unless the image's manifest entry has faces.
-FACE_KEYS = ("face_de00_mean", "face_ssim", "features_lost", "feature_edge_recall", "labels_on_features")
+FACE_KEYS = (
+    "face_de00_mean",
+    "face_ssim",
+    "features_lost",
+    "feature_edge_recall",
+    "labels_on_features",
+    "face_regions",
+    "face_regions_per_dm2",
+)
 # The faces the pipeline found: None for versions that don't look for faces (before 0.1.33), and the recall also
 # unless the image's manifest entry has faces.
 FOUND_FACE_KEYS = ("faces_found", "face_found_recall", "stray_faces")
@@ -403,6 +411,9 @@ def main() -> int:
         faces = annotations.faces if annotations else ()
         if faces:
             quality.update(bm.face_fidelity(source, painted, [_xywh(face.box) for face in faces]))
+            quality.update(
+                bm.face_regions(page_data.region_id_map, [_xywh(face.box) for face in faces], print_scale.px_per_mm)
+            )
             features = [feature for face in faces for feature in face.features]
             feature_boxes = [_xywh(feature.box) for feature in features]
             scores = bm.feature_survival(

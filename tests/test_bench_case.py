@@ -230,6 +230,8 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
         "features_lost",
         "feature_edge_recall",
         "labels_on_features",
+        "face_regions",
+        "face_regions_per_dm2",
         "text_cer_source",
         "text_cer_page",
         "text_cer_painting",
@@ -266,6 +268,10 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
     assert case["quality"]["face_de00_mean"] is not None and case["quality"]["labels_on_features"] is not None
     assert case["quality"]["features_lost"] == 0
     assert [feature["part"] for feature in case["face_features"]] == ["eye"]
+    # The fill and the eye lie in the face's box, 140 px square; the paper round the drawing mostly doesn't.
+    assert case["quality"]["face_regions"] == 2
+    face_dm2 = 140 * 140 / case["print"]["px_per_mm"] ** 2 / 10_000
+    assert case["quality"]["face_regions_per_dm2"] == pytest.approx(2 / face_dm2)
     # The pipeline looks for faces, and finds none in a square with an eye.
     assert case["quality"]["faces_found"] == 0 and case["found_faces"] == []
     assert case["quality"]["face_found_recall"] == 0.0 and case["quality"]["stray_faces"] == 0
