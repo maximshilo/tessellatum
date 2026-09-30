@@ -153,7 +153,7 @@ def _settle(
 
     leader = rows.copy()  # the region each has joined, itself until it does
     open_ = np.ones(count, dtype=bool)  # still looked at: not joined to another, nor to a region outside
-    while True:
+    for _ in rows:  # every join closes a region, so there are at most as many as regions
         own = error[rows, colors]
         # What a pixel of each region would lose in each neighbor's color: the other settled regions', then the rest's.
         to_region = np.where(touching & open_[:, None] & open_[None, :], error[:, colors] - own[:, None], np.inf)
