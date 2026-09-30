@@ -11,9 +11,10 @@ their searches along paths, and the passes over the page that compare each
 pixel with its neighbors, which NumPy would make one whole-page array per
 neighbor for. Those give exactly what the NumPy code they replace gave
 (``tests/reference_line_art.py`` keeps it). So does the window search of the
-cascade that finds drawn faces (see ``faces``). Arrays are passed flattened
-(row-major) with explicit ``height``/``width``, but for the cascade's
-integral images.
+cascade that finds drawn faces (see ``faces``), and the count of a face's
+regions' pixels by color, with what each region touches (see ``tones``).
+Arrays are passed flattened (row-major) with explicit ``height``/``width``,
+but for the cascade's integral images.
 
 Kernels compile on first call and are cached on disk (``cache=True``), so only
 the first run after an install pays the compile cost; ``warm_up`` pays it
@@ -801,6 +802,120 @@ def region_color_sums(ids, pixels, asked, own):
 
 
 @njit(cache=True, nogil=True)
+def regions_inside(ids, inside, height, width, num_regions):
+    """Per region id: inclusive bounding box, pixel count, and how many of its pixels are in ``inside`` (flat bool).
+
+    Returns ``(bounds, areas, areas_inside)``, the first two as ``region_bounds`` gives them.
+    """
+    bounds = np.empty((num_regions, 4), np.int32)
+    bounds[:, 0] = width
+    bounds[:, 1] = height
+    bounds[:, 2] = -1
+    bounds[:, 3] = -1
+    areas = np.zeros(num_regions, np.int64)
+    areas_inside = np.zeros(num_regions, np.int64)
+    for y in range(height):
+        row = y * width
+        for x in range(width):
+            r = ids[row + x]
+            if r < 0:
+                continue
+            if x < bounds[r, 0]:
+                bounds[r, 0] = x
+            if x > bounds[r, 2]:
+                bounds[r, 2] = x
+            if y < bounds[r, 1]:
+                bounds[r, 1] = y
+            bounds[r, 3] = y
+            areas[r] += 1
+            if inside[row + x]:
+                areas_inside[r] += 1
+    return bounds, areas, areas_inside
+
+
+@njit(cache=True, nogil=True)
+def tone_census(ids, pixels, slot, region_color, width, x0, y0, x1, y1, bits, num_slots, num_colors):
+    """For the regions with a ``slot``: their pixels counted by color, and what they touch.
+
+    ``ids`` is the flat region map (-1 for no region), ``pixels`` the flat Nx3
+    uint8 image, ``slot`` a row per region id (-1 for a region not asked
+    about, ``num_slots`` rows in all) and ``region_color`` each region's color,
+    one of ``num_colors``. Only the box of columns ``x0`` to ``x1`` and rows
+    ``y0`` to ``y1`` (ends excluded) is read: it must hold the regions asked
+    about and a pixel's margin round them.
+
+    A pixel's color is counted by its cell of the color cube, ``bits`` bits a
+    channel across; the cells holding a pixel of a region asked about are
+    numbered in the order they are met.
+
+    Returns ``(cells, held, touching, beside)``: each numbered cell's code
+    (its channels' top ``bits`` bits, the first channel highest); slots x
+    cells int64, a region's pixels in each cell; slots x slots bool, the
+    regions asked about that are 8-adjacent; slots x colors bool, the colors
+    of the other regions each is 8-adjacent to.
+    """
+    shift = 8 - bits
+    place = np.full(1 << (3 * bits), -1, np.int32)
+    found = 0
+    for y in range(y0, y1):
+        row = y * width
+        for x in range(x0, x1):
+            p = row + x
+            r = ids[p]
+            if r < 0 or slot[r] < 0:
+                continue
+            cell = ((pixels[p, 0] >> shift) << (2 * bits)) | ((pixels[p, 1] >> shift) << bits) | (pixels[p, 2] >> shift)
+            if place[cell] < 0:
+                place[cell] = found
+                found += 1
+    cells = np.empty(found, np.int64)
+    for cell in range(place.shape[0]):
+        if place[cell] >= 0:
+            cells[place[cell]] = cell
+
+    held = np.zeros((num_slots, found), np.int64)
+    touching = np.zeros((num_slots, num_slots), np.bool_)
+    beside = np.zeros((num_slots, num_colors), np.bool_)
+    for y in range(y0, y1):
+        row = y * width
+        below = y + 1 < y1
+        for x in range(x0, x1):
+            p = row + x
+            r = ids[p]
+            if r >= 0 and slot[r] >= 0:
+                cell = ((pixels[p, 0] >> shift) << (2 * bits)) | ((pixels[p, 1] >> shift) << bits) | (pixels[p, 2] >> shift)
+                held[slot[r], place[cell]] += 1
+            # The pixel to the right and the three below: every 8-adjacent pair is looked at once.
+            if x + 1 < x1 and ids[p + 1] != r:
+                _tones_touch(r, ids[p + 1], slot, region_color, touching, beside)
+            if below:
+                q = p + width
+                if ids[q] != r:
+                    _tones_touch(r, ids[q], slot, region_color, touching, beside)
+                if x > x0 and ids[q - 1] != r:
+                    _tones_touch(r, ids[q - 1], slot, region_color, touching, beside)
+                if x + 1 < x1 and ids[q + 1] != r:
+                    _tones_touch(r, ids[q + 1], slot, region_color, touching, beside)
+    return cells, held, touching, beside
+
+
+@njit(cache=True, nogil=True)
+def _tones_touch(r, t, slot, region_color, touching, beside):
+    """Note that regions ``r`` and ``t``, which differ, are neighbors (see ``tone_census``)."""
+    if r < 0 or t < 0:
+        return
+    s = slot[r]
+    u = slot[t]
+    if s >= 0 and u >= 0:
+        touching[s, u] = True
+        touching[u, s] = True
+    elif s >= 0:
+        beside[s, region_color[t]] = True
+    elif u >= 0:
+        beside[u, region_color[r]] = True
+
+
+@njit(cache=True, nogil=True)
 def white_pieces(ids, height, width, out_piece):
     """4-connected runs of one id in ``ids`` (-1 for none): each pixel's piece to ``out_piece``, -1 where it has no id.
 
@@ -1477,6 +1592,10 @@ def warm_up() -> None:
     region_bounds(ids, 3, 3, int(ids.max()) + 1)
     nearest_seed_within(labels - 1, labels >= 0, 3, 3)
     region_color_sums(ids, np.zeros((9, 3), dtype=np.uint8), np.ones(int(ids.max()) + 1, dtype=np.bool_), labels >= 0)
+    # A face's tones (see ``tones``).
+    regions_inside(ids, labels >= 0, 3, 3, int(ids.max()) + 1)
+    slot = np.zeros(int(ids.max()) + 1, dtype=np.int32)
+    tone_census(ids, np.zeros((9, 3), dtype=np.uint8), slot, region_color, 3, 0, 0, 3, 3, 5, 1, 3)
 
     # Line art's region steps.
     count = int(ids.max()) + 1
