@@ -60,6 +60,14 @@ def test_the_vote_reaches_a_third_of_the_brush_and_weighs_a_palette_step():
     assert (lab[:, 1:] == 128).all()
 
 
+def test_run_ends_gives_each_pixel_the_end_of_its_run():
+    # First: every vote below walks its rows by these, and would never end on a run that ends where it starts.
+    labels = np.array([[3, 3, 3, 1, 1, 3], [0, 0, 0, 0, 0, 0], [5, 4, 4, -1, -1, 2]], dtype=np.int32)
+    ends = np.empty(18, dtype=np.int32)
+    kernels.run_ends(labels.reshape(-1), 3, 6, ends)
+    assert ends.reshape(3, 6).tolist() == [[3, 3, 3, 5, 5, 6], [6, 6, 6, 6, 6, 6], [1, 3, 3, 5, 5, 6]]
+
+
 def test_a_straight_edge_stays_where_it_is_out_to_the_page_s_edge():
     labels = halves()
     np.testing.assert_array_equal(vote(flat(EVEN), labels), labels)
@@ -252,13 +260,6 @@ def _kernel_vote(labels, pixels_lab, colors_lab, cumulative, row_weight, radius,
         np.asarray(row_weight, dtype=np.float64), radius, 10.0, 0, height, height, width, out,
     )
     return out.reshape(height, width)
-
-
-def test_run_ends_gives_each_pixel_the_end_of_its_run():
-    labels = np.array([[3, 3, 3, 1, 1, 3], [0, 0, 0, 0, 0, 0], [5, 4, 4, -1, -1, 2]], dtype=np.int32)
-    ends = np.empty(18, dtype=np.int32)
-    kernels.run_ends(labels.reshape(-1), 3, 6, ends)
-    assert ends.reshape(3, 6).tolist() == [[3, 3, 3, 5, 5, 6], [6, 6, 6, 6, 6, 6], [1, 3, 3, 5, 5, 6]]
 
 
 @pytest.mark.parametrize("row, winner", [([1, 2, 2], 2), ([0, 2, 2], 2), ([1, 2, 0], 0), ([0, 2, 1], 0), ([1, 2, 1], 1)])
