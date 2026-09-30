@@ -287,11 +287,13 @@ def merge_same_color_neighbors(ids, height, width, region_color, areas, diagonal
     Without ``diagonals``, only 4-adjacent ones: two regions touching at a
     corner stay apart.
 
-    Components start out one color each, so only ``merge_small_regions`` can
-    leave two neighbors sharing a color: a small region merges into whichever
-    neighbor shares the most boundary, whatever its color, and the grown
-    region can end up touching another region of its own color. Those pairs
-    would be drawn with a line between them that no painter should see.
+    Components start out one color each, so in the region stage only
+    ``merge_small_regions`` can leave two neighbors sharing a color: a small
+    region merges into whichever neighbor shares the most boundary, whatever
+    its color, and the grown region can end up touching another region of its
+    own color. Those pairs would be drawn with a line between them that no
+    painter should see. Repainting a face's regions does the same on purpose
+    (see ``tones``): a region given its neighbor's color joins it here.
 
     A group of regions connected by such contacts becomes one region, keeping
     the group's lowest id (so its color and its place in the numbering are
@@ -842,7 +844,9 @@ def tone_census(ids, pixels, slot, region_color, width, x0, y0, x1, y1, bits, nu
     about, ``num_slots`` rows in all) and ``region_color`` each region's color,
     one of ``num_colors``. Only the box of columns ``x0`` to ``x1`` and rows
     ``y0`` to ``y1`` (ends excluded) is read: it must hold the regions asked
-    about and a pixel's margin round them.
+    about and a pixel's margin round them. Nothing is checked: the box must
+    lie on the page, every id on the map have its ``slot`` and its color, and
+    every color be under ``num_colors`` (``tones.settle_tones`` sees to it).
 
     A pixel's color is counted by its cell of the color cube, ``bits`` bits a
     channel across; the cells holding a pixel of a region asked about are

@@ -271,6 +271,30 @@ def test_nothing_is_settled_without_where_and_what_is_passed_in_is_left_alone():
     np.testing.assert_array_equal(colors, kept_colors)
 
 
+def test_arrays_that_would_send_the_kernels_astray_are_refused():
+    # The kernels read and write unchecked: a picture or a mask of another size, a region without a color, or a color
+    # off the palette must not reach them.
+    ids, image = strips((0, 30, 196), (1, 30, 20))
+    colors = np.array([0, 1], dtype=np.int32)
+    palette = gray_bgr(60, 20, 200)
+    where = everywhere(ids)
+    with pytest.raises(ValueError, match="size"):
+        tones.settle_tones(image[:, :-1], where, ids, colors, palette)
+    with pytest.raises(ValueError, match="size"):
+        tones.settle_tones(image[:, :, :2], where, ids, colors, palette)
+    with pytest.raises(ValueError, match="size"):
+        tones.settle_tones(image, where[:-1], ids, colors, palette)
+    with pytest.raises(ValueError, match="region 1 is on the map"):
+        tones.settle_tones(image, where, ids, colors[:1], palette)
+    with pytest.raises(ValueError, match="palette has 3"):
+        tones.settle_tones(image, where, ids, np.array([0, 3], dtype=np.int32), palette)
+    with pytest.raises(ValueError, match="palette has 3"):
+        tones.settle_tones(image, where, ids, np.array([-1, 1], dtype=np.int32), palette)
+    # Refused even where nothing would be settled: the check is of what is handed over, not of what is reached.
+    with pytest.raises(ValueError, match="palette has 3"):
+        tones.settle_tones(image, np.zeros(ids.shape, dtype=bool), ids, np.array([0, 3], dtype=np.int32), palette)
+
+
 def test_the_census_counts_pixels_by_cell_and_finds_every_neighbor():
     rng = np.random.default_rng(7)
     height, width = 24, 31

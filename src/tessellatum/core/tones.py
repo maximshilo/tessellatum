@@ -64,7 +64,8 @@ def settle_tones(
     more. Neighbors are 8-connected, as everywhere in the region stage. On a
     tie the region with the lowest id goes first, to another of the regions
     being settled before one that isn't, by lowest id among the first and by
-    lowest color among the rest.
+    lowest color among the rest; regions that have joined go by the id of the
+    one the others joined.
 
     No two neighbors are left sharing a color anywhere on the page: regions
     that come to touch one of their own color become one, under the lowest of
@@ -74,17 +75,28 @@ def settle_tones(
 
     Returns new arrays: (region_id_map, region_color), as ``build_regions``
     returns them. Pixels in no region (-1) stay in none.
+
+    Raises ValueError if the picture or ``where`` is not the region map's
+    size, if a region on the map has no entry in ``region_color``, or if a
+    region's color is not one of ``palette_bgr``.
     """
     ids = np.array(region_id_map, dtype=np.int32)  # a copy: the regions are joined in it
     colors = np.array(region_color, dtype=np.int32)
     height, width = ids.shape
-    where = np.asarray(where, dtype=bool)
+    where = np.ascontiguousarray(where, dtype=bool)
+    image = np.ascontiguousarray(image_bgr, dtype=np.uint8)
+    # The kernels below read and write where these arrays send them, unchecked: they are checked here.
+    if image.shape != (height, width, 3) or where.shape != (height, width):
+        raise ValueError(f"picture {image.shape} and mask {where.shape} must be the region map's size, {ids.shape}")
+    if ids.size and int(ids.max()) >= colors.size:
+        raise ValueError(f"region {int(ids.max())} is on the map, which has colors for {colors.size} regions")
+    if colors.size and not 0 <= int(colors.min()) <= int(colors.max()) < len(palette_bgr):
+        low, high = int(colors.min()), int(colors.max())
+        raise ValueError(f"region colors run from {low} to {high}, the palette has {len(palette_bgr)}")
     if colors.size == 0 or not where.any():
         return ids, colors
 
-    bounds, pixels, inside = kernels.regions_inside(
-        ids.reshape(-1), np.ascontiguousarray(where).reshape(-1), height, width, colors.size
-    )
+    bounds, pixels, inside = kernels.regions_inside(ids.reshape(-1), where.reshape(-1), height, width, colors.size)
     settled = np.flatnonzero(2 * inside > pixels)  # the regions mostly in ``where``, by id
     if settled.size == 0:
         return ids, colors
@@ -96,7 +108,7 @@ def settle_tones(
     slot[settled] = np.arange(settled.size, dtype=np.int32)
     cells, held, touching, beside = kernels.tone_census(
         ids.reshape(-1),
-        np.ascontiguousarray(image_bgr, dtype=np.uint8).reshape(-1, 3),
+        image.reshape(-1, 3),
         slot,
         colors,
         width,
