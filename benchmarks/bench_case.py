@@ -32,6 +32,7 @@ PROBED_STAGES = (
     "resize_to_long_edge",
     "detect_ink",
     "detect_faces",
+    "detect_subject",
     "quantize",
     "build_regions",
     "smooth_regions",

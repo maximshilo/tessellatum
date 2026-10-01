@@ -50,8 +50,10 @@ def test_probe_fallback_reads_the_same_page_data_as_the_analysis(speckled_image_
         bm.paint(from_probe.region_id_map, from_probe.region_color, from_probe.palette_bgr),
     )
     assert from_analysis.min_region_area_px == from_probe.min_region_area_px
-    # Where regions may be half as large: the faces found, none here; versions without it held every region to one size.
-    assert from_analysis.detail is result.analysis.detail and not from_analysis.detail.any()
+    # Where regions may be half as large: the faces found and the subject, here the subject alone (the speckles fill the
+    # picture); versions without it held every region to one size.
+    assert from_analysis.detail is result.analysis.detail
+    assert result.analysis.faces == [] and np.array_equal(from_analysis.detail, result.analysis.subject)
     assert from_probe.detail is None
     assert [r.region_id for r in from_analysis.regions] == [r.region_id for r in from_probe.regions]
     # So are the numbers: the payload numbers every region, clear of the lines, while the rebuild numbers only the

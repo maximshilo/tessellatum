@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from tessellatum.core import faces, ink, kernels, marks, tones
+from tessellatum.core import faces, ink, kernels, marks, subject, tones
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import render_legend
 from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, MIN_REGION_AREA_MM2, print_scale
@@ -84,10 +84,13 @@ class PageAnalysis:
     legend_size: int
     min_region_area_px: int  # merge threshold: smaller regions merge into a neighbor, if they have one
     # HxW bool: where a region may be half as large, each of its pixels there counting twice towards
-    # min_region_area_px (see ``regions.build_regions``): the faces found, on a picture drawn from its colors. The
-    # regions lying mostly there are the ones whose tones are settled (see ``tones``). All False on line art, and on a
-    # picture without faces.
+    # min_region_area_px (see ``regions.build_regions``): the faces found and the subject, on a picture drawn from its
+    # colors. The regions lying mostly in the faces are the ones whose tones are settled (see ``tones``). All False on
+    # line art, and on a picture with neither.
     detail: np.ndarray
+    # HxW bool: the picture's subject, found on it at preview size (see ``subject``), on a picture drawn from its colors;
+    # all False on line art, where it isn't looked for.
+    subject: np.ndarray
     min_paintable_width_px: float  # brush width: narrower parts of a region are given to a neighbor
     regions: list[Region]  # regions drawn on the page, in region-id order
     labels: list[Label]  # numbers drawn on the page
@@ -245,6 +248,20 @@ def detect_faces(image_bgr: np.ndarray, resized: np.ndarray) -> list[faces.Face]
     return faces.scaled(found, picture.shape[1::-1], resized.shape[1::-1])
 
 
+def detect_subject(image_bgr: np.ndarray, resized: np.ndarray) -> np.ndarray:
+    """The picture's subject, as the pixels of ``resized``, its page (see ``subject``).
+
+    It is found once per picture, on it at preview size, so a preview and an
+    export always agree; that is cached per image object, as the other stages
+    are.
+    """
+    picture = _cache.get_or_compute(
+        image_bgr, ("resize", PREVIEW_LONG_EDGE), lambda: resize_to_long_edge(image_bgr, PREVIEW_LONG_EDGE)
+    )
+    probability = _cache.get_or_compute(image_bgr, ("subject",), lambda: subject.find_subject(picture))
+    return subject.mask(probability, resized.shape[1::-1])
+
+
 def warm_up() -> None:
     """Pay one-time start-up costs before the first real generation.
 
@@ -288,9 +305,10 @@ def generate(
     middle -- but never over bold ink. Every other picture is drawn from its
     colors alone. Its regions' edges are settled by a vote that smooths them
     where the picture is textured and keeps them on its own edges (see
-    ``texture``), and its faces get more detail: a region inside a face the
-    pipeline finds may be half the difficulty's smallest (see ``faces`` and
-    ``regions.build_regions``), its regions there are painted in the palette
+    ``texture``), and its subject and faces get more detail: a region inside
+    the subject or a face the pipeline finds may be half the difficulty's
+    smallest (see ``subject``, ``faces`` and ``regions.build_regions``). A
+    face's regions are painted in the palette
     colors nearest them, those a faint step in tone from a neighbor joined to
     it (see ``tones``), and the thin dark marks there that no region keeps --
     pupils, eyelid and lip lines, whisker dots -- are printed, in their own
@@ -351,12 +369,18 @@ def generate(
     # difficulty asked for gives the same regions -- the labeling only needs an
     # upper bound -- but not the same meaning, and it sizes its arrays for
     # colors that do not exist.
-    # A picture drawn from its colors spends more detail on its faces. Line art's faces are drawn by its own ink.
-    detail = None
+    # A picture drawn from its colors spends more detail on its subject and its faces. Line art's are drawn by its own
+    # ink.
+    detail = in_faces = None
+    in_subject = np.zeros((h, w), dtype=bool)
     if ink_mask is None:
         found = detect_faces(image_bgr, resized)
         if found:
-            detail = faces.mask(found, (w, h))
+            in_faces = faces.mask(found, (w, h))
+        in_subject = detect_subject(image_bgr, resized)
+        detail = in_subject | in_faces if in_faces is not None else in_subject
+        if not detail.any():
+            detail = None
     region_id_map, region_color = build_regions(region_labels, len(palette_bgr), min_area_px, min_width_px, detail)
     if ink_mask is None:
         # Fur, foliage and stone leave the regions ragged edges no brush can follow: they are settled by a vote of
@@ -364,13 +388,15 @@ def generate(
         region_id_map, region_color = smooth_regions(
             resized, region_id_map, region_color, palette_bgr, min_area_px, min_width_px, detail
         )
-    if detail is not None:
+    if in_faces is not None:
         # A face's skin or fur is painted in a few large tones: each region there in the color nearest it, and the ones
         # a faint step from a neighbor joined to it.
-        region_id_map, region_color = tones.settle_tones(resized, detail, region_id_map, region_color, palette_bgr)
+        region_id_map, region_color = tones.settle_tones(resized, in_faces, region_id_map, region_color, palette_bgr)
         # The thin dark marks in a face that no brush can paint -- pupils, eyelid and lip lines, whisker dots -- merge into
         # the regions around them. They are printed instead, in their own tone, and the regions' paint goes round them.
-        printed_ink = marks.detail_marks(resized, detail, region_id_map, region_color, palette_bgr, print_scale((w, h)))
+        printed_ink = marks.detail_marks(
+            resized, in_faces, region_id_map, region_color, palette_bgr, print_scale((w, h))
+        )
         ink_gray = ink.ink_gray(resized, printed_ink)
     clearable = None
     if ink_mask is not None:
@@ -447,6 +473,7 @@ def generate(
             legend_size=len(used_color_indices),
             min_region_area_px=min_area_px,
             detail=detail if detail is not None else np.zeros((h, w), dtype=bool),
+            subject=in_subject,
             min_paintable_width_px=min_width_px,
             regions=regions,
             labels=rendered.labels,

@@ -1025,8 +1025,9 @@ def test_todays_pipeline_loses_small_face_features_at_a_coarse_setting():
         survival = bm.feature_survival(features, analysis.region_id_map, drawn, analysis.strokes, edges, 2.0)
         return [feature["survived"] for feature in survival], bm.face_fidelity(image, painted, [face])["face_de00_mean"]
 
-    # Regions under 576 px merge into a neighbor: the eyes and the nose melt into the skin. Under 58 px, they keep their shapes.
-    coarse, coarse_de00 = score(576)
+    # The face is the picture's subject, where a pixel counts twice (D-048). Regions under 1,152 px counted -- 576 px of
+    # the picture -- merge into a neighbor: the eyes and the nose melt into the skin. Under 58 px, they keep their shapes.
+    coarse, coarse_de00 = score(1152)
     fine, fine_de00 = score(58)
     assert coarse == [False, False, False, True]
     assert fine == [True, True, True, True]

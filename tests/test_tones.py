@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tessellatum.core import kernels, marks, pipeline, tones
+from tessellatum.core import faces, kernels, marks, pipeline, tones
 from tessellatum.core.color import bgr_to_lab, ciede2000
 from tessellatum.core.difficulty import params_for_preset
 
@@ -414,7 +414,11 @@ def test_a_photographed_face_is_painted_in_fewer_tones_no_further_from_it(monkey
     monkeypatch.setattr(marks, "detail_marks", marks_spy)
     analysis = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True).analysis
     assert len(seen) == 1
-    np.testing.assert_array_equal(seen[0], analysis.detail)
+    # The faces found, not all the detail: the subject's regions may be smaller too, but only a face's are settled.
+    size = analysis.region_id_map.shape[::-1]
+    in_faces = faces.mask(analysis.faces, size)
+    np.testing.assert_array_equal(seen[0], in_faces)
+    assert (analysis.detail & ~in_faces).any()
     # The marks printed in the face are judged against its settled paint (see ``marks``).
     assert len(marked) == 1 and marked[0][0] is settled[0][0] and marked[0][1] is settled[0][1]
     monkeypatch.setattr(marks, "detail_marks", real_marks)
@@ -433,11 +437,11 @@ def test_a_photographed_face_is_painted_in_fewer_tones_no_further_from_it(monkey
     changed = (before != after).any(axis=2)
     assert changed.any()
     ids = plain.region_id_map
-    mostly_inside = 2 * np.bincount(ids[plain.detail], minlength=ids.max() + 1) > np.bincount(ids.ravel())
+    mostly_inside = 2 * np.bincount(ids[in_faces], minlength=ids.max() + 1) > np.bincount(ids.ravel())
     assert not changed[~mostly_inside[ids]].any()
     # The face is no further from the picture, and no two neighbors share a color.
     resized = pipeline.resize_to_long_edge(image, pipeline.PREVIEW_LONG_EDGE)
-    assert _mean_distance(resized, after, analysis.detail) < _mean_distance(resized, before, analysis.detail)
+    assert _mean_distance(resized, after, in_faces) < _mean_distance(resized, before, in_faces)
     new_ids = analysis.region_id_map
     for first, second in (
         (new_ids[:, :-1], new_ids[:, 1:]),
