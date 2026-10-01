@@ -292,8 +292,9 @@ How the paintability metrics are defined:
     pixel counting once however many areas hold it, and inside where its middle
     is, as for the faces' boxes. Images without gradient areas get no value.
     T1.8's baseline, whose gradients broke into thin concentric bands, scores up
-    to 26% in one of the sunset's areas (its sky at Max) and 23% in another (its
-    lit water); the pages of 0.1.37 at most 0.47%.
+    to 26% in one of the sunset's areas (its sky at Max) and 22% in another (its
+    lit water); the pages of 0.1.37 at most 0.47% in any area, and 0.30% over a
+    page's areas together.
 - **Bands** are regions shaped like the bands a gradient breaks into. A
   region's width is the widest brush that fits in it, as a brush fits for
   slivers: twice the largest distance from one of its pixels' middles to the

@@ -273,6 +273,10 @@ def test_a_band_is_a_region_no_wide_brush_fits_in_and_long_for_its_width():
     assert bm.band_regions(_strip(5, 29), 6.0)["band_regions"] == 1
     assert bm.band_regions(_strip(5, 28), 6.0)["band_regions"] == 0
     assert bm.band_regions(_strip(5, 28), 6.0, min_elongation=3.8)["band_regions"] == 1  # 140 >= 3.8 x 36
+    # A strip of 4 rows: its middle two are 2 px from the rows outside, so it is 4 px wide, and a band from an area of
+    # exactly 4 x 4² = 64 px on: 16 columns, and not 15.
+    assert bm.band_regions(_strip(4, 16), 4.0)["band_regions"] == 1
+    assert bm.band_regions(_strip(4, 15), 4.0)["band_regions"] == 0
     # The page around the strip is 36 px wide below it (rows 25-59 are 18 px from row 24 and from the row off the
     # page), and long enough for that: a band too from 36 px on.
     assert bm.band_regions(strip, 35.9)["band_regions"] == 1
