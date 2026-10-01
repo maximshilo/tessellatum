@@ -248,8 +248,9 @@ def test_gradient_slivers_are_the_share_of_the_gradient_areas_in_slivers():
     # A box holds the pixels whose middle it holds: [0.6, 1.6) holds column 1 (1.5), [1.6, 2.6) column 2 (2.5).
     assert bm.gradient_slivers(slivers, [(0.6, 0.0, 1.0, 10.0)])["gradient_sliver_fraction"] == 1.0
     assert bm.gradient_slivers(slivers, [(1.6, 0.0, 1.0, 10.0)])["gradient_sliver_fraction"] == 0.0
-    # A box off the page holds nothing, and does not count towards the largest share.
+    # A box off the page holds nothing, and does not count towards the largest share, listed first or last.
     assert bm.gradient_slivers(slivers, [(0, 0, 4, 10), (30, 0, 5, 5)])["gradient_sliver_fraction_max"] == 0.5
+    assert bm.gradient_slivers(slivers, [(30, 0, 5, 5), (0, 0, 4, 10)])["gradient_sliver_fraction_max"] == 0.5
     none = {"gradient_sliver_fraction": None, "gradient_sliver_fraction_max": None}
     assert bm.gradient_slivers(slivers, []) == none
     assert bm.gradient_slivers(slivers, [(30, 0, 5, 5)]) == none
