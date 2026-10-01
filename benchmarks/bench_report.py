@@ -19,8 +19,10 @@ STAGE_ORDER = (
     "resize_to_long_edge",
     "detect_ink",
     "detect_faces",
+    "detect_subject",
     "quantize",
     "build_regions",
+    "smooth_regions",
     "extract_regions",
     "render_page",
     "render_legend",
@@ -310,6 +312,14 @@ METRICS = (
     # The regions lying mostly inside the image's annotated faces: what a face is painted in (T4.4). `case.json` also
     # has them per 100 cm² of face on paper, as `face_regions_per_dm2`.
     Metric("face_regions", "face regions", "{:d}"),
+    # The picture's subject, as its manifest entry outlines it (T5.3): how closely it is painted, and how much denser its
+    # regions are than the background's, per area on paper. `case.json` also has both densities, as `subject_density`
+    # and `background_density` (regions per 100 cm²). The ratio follows the picture as much as the page -- a subject in
+    # front of a plain wall is many times denser on any page -- so it only informs. The tolerances were measured on
+    # 0.1.39 (`T5.3-sizes`, `T5.3-export-sizes`), 60 pairs at each size: the five outlined images at every preset.
+    Metric("subject_de00_mean", "subject ΔE00 ↓", "{:.2f}", "resembles", "lower", sigma=0.054, sigma_export=0.041, relative=True),
+    Metric("subject_ssim", "subject SSIM ↑", "{:.3f}", "resembles", "higher", sigma=0.0047, sigma_export=0.010),
+    Metric("subject_density_ratio", "subject detail", "{:.1f}"),
     Metric("text_cer_source", "text CER source", "{:.2f}"),
     Metric(
         "text_cer_page",

@@ -469,7 +469,8 @@ def test_a_photograph_s_edges_are_settled_and_its_page_is_easier_to_paint_and_no
     resized = pipeline.resize_to_long_edge(image, pipeline.PREVIEW_LONG_EDGE)
     np.testing.assert_array_equal(picture, resized)  # the picture itself, not the smoothed one the colors came from
     assert min_area_px == analysis.min_region_area_px and min_width_px == analysis.min_paintable_width_px
-    np.testing.assert_array_equal(detail, analysis.detail)  # the face keeps its smaller regions through the rebuild
+    # The subject and the face keep their smaller regions through the rebuild.
+    np.testing.assert_array_equal(detail, analysis.detail)
     assert len(palette) >= analysis.legend_size
 
     pipeline.clear_cache()

@@ -1025,8 +1025,9 @@ def test_todays_pipeline_loses_small_face_features_at_a_coarse_setting():
         survival = bm.feature_survival(features, analysis.region_id_map, drawn, analysis.strokes, edges, 2.0)
         return [feature["survived"] for feature in survival], bm.face_fidelity(image, painted, [face])["face_de00_mean"]
 
-    # Regions under 576 px merge into a neighbor: the eyes and the nose melt into the skin. Under 58 px, they keep their shapes.
-    coarse, coarse_de00 = score(576)
+    # The face is the picture's subject, where a pixel counts twice (D-048). Regions under 1,152 px counted -- 576 px of
+    # the picture -- merge into a neighbor: the eyes and the nose melt into the skin. Under 58 px, they keep their shapes.
+    coarse, coarse_de00 = score(1152)
     fine, fine_de00 = score(58)
     assert coarse == [False, False, False, True]
     assert fine == [True, True, True, True]
@@ -1350,3 +1351,107 @@ def test_a_bold_outline_that_prints_as_a_line_is_printed_and_is_no_tube():
     assert paper.sum() == sum(corner.sum() for corner in corners) == 12
     line_match = bm.ink_line_match(analysis.strokes, ink, scale.mm_to_px(0.5), analysis.printed_ink)
     assert line_match["ink_line_recall"] == 1.0 and line_match["ink_line_f1"] > 0.99
+
+
+# --- the subject (T5.3) -----------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_a_box_as_an_outline_marks_the_pixels_the_box_does(seed):
+    # Either way round, partly or wholly off the page, at fractions of a pixel or on whole ones.
+    rng = np.random.default_rng(seed)
+    for _ in range(500):
+        h, w = (int(v) for v in rng.integers(1, 30, 2))
+        if rng.random() < 0.3:
+            x, y = (float(v) for v in rng.integers(-5, 35, 2))
+            bw, bh = (float(v) for v in rng.integers(1, 20, 2))
+        else:
+            (x, y), (bw, bh) = rng.uniform(-10, 40, 2), rng.uniform(0.1, 25, 2)
+        corners = [(x, y), (x + bw, y), (x + bw, y + bh), (x, y + bh)]
+        expected = bm._pixels_in_boxes((h, w), [(x, y, bw, bh)])
+        np.testing.assert_array_equal(bm.outline_pixels((h, w), [corners]), expected)
+        np.testing.assert_array_equal(bm.outline_pixels((h, w), [corners[::-1]]), expected)
+
+
+def test_an_outline_holds_the_pixels_whose_middle_it_holds_its_left_and_top_edges_included():
+    # A right triangle: middles on the long edge, a right-hand edge, are out (c + r = 3); its legs hold row and column 0.
+    expected = np.add.outer(np.arange(5), np.arange(5)) <= 2
+    np.testing.assert_array_equal(bm.outline_pixels((5, 5), [[(0, 0), (4, 0), (0, 4)]]), expected)
+    np.testing.assert_array_equal(bm.outline_pixels((5, 5), [[(0, 4), (4, 0), (0, 0)]]), expected)
+    # A U, concave, is the three boxes it is made of; two outlines that overlap mark their union, not what only one holds.
+    u = [(0, 0), (6, 0), (6, 6), (4, 6), (4, 2), (2, 2), (2, 6), (0, 6)]
+    np.testing.assert_array_equal(
+        bm.outline_pixels((7, 7), [u]), bm._pixels_in_boxes((7, 7), [(0, 0, 6, 2), (0, 0, 2, 6), (4, 0, 2, 6)])
+    )
+    squares = [[(0, 0), (4, 0), (4, 4), (0, 4)], [(2, 2), (6, 2), (6, 6), (2, 6)]]
+    np.testing.assert_array_equal(
+        bm.outline_pixels((7, 7), squares), bm._pixels_in_boxes((7, 7), [(0, 0, 4, 4), (2, 2, 4, 4)])
+    )
+    # Fewer than three points hold nothing.
+    assert not bm.outline_pixels((5, 5), [[(0, 0), (4, 4)]]).any() and not bm.outline_pixels((5, 5), []).any()
+
+
+def test_an_outline_s_vertex_on_a_row_of_middles_is_crossed_once():
+    # A diamond with its four corners on pixel middles. Each edge holds its upper end and not its lower one, so the row
+    # through the left and right corners is crossed twice, not four times: its middles from the left corner on, up to
+    # the right one, are in. The top and bottom corners hold no pixel: the top one is crossed twice at one point, the
+    # bottom one not at all. On the slanted edges the upper left and lower left ones hold their middles, the others not.
+    expected = np.zeros((5, 5), dtype=bool)
+    expected[1, 1:3] = expected[3, 1:3] = True
+    expected[2, 0:4] = True
+    diamond = [(2.5, 0.5), (4.5, 2.5), (2.5, 4.5), (0.5, 2.5)]
+    np.testing.assert_array_equal(bm.outline_pixels((5, 5), [diamond]), expected)
+    np.testing.assert_array_equal(bm.outline_pixels((5, 5), [diamond[::-1]]), expected)
+
+
+def test_subject_detail_counts_each_region_by_its_share_of_each_part_per_area_on_paper():
+    ids = np.array([[0, 0, 1, 1], [0, 0, 2, 2]], dtype=np.int32)
+    px_per_mm = 0.01  # a pixel is 100 cm² on paper: a density is regions per pixel
+    left = np.zeros(ids.shape, dtype=bool)
+    left[:, :2] = True
+    # Region 0 wholly in the subject; regions 1 and 2 wholly in the background.
+    assert bm.subject_detail(ids, left, px_per_mm) == {
+        "subject_density": pytest.approx(1 / 4),
+        "background_density": pytest.approx(2 / 4),
+        "subject_density_ratio": pytest.approx(0.5),
+    }
+    # Regions 1 and 2 half in each: the subject holds 1 + 1/2 + 1/2 regions in 6 px, the background 1/2 + 1/2 in 2 px.
+    wider = np.zeros(ids.shape, dtype=bool)
+    wider[:, :3] = True
+    assert bm.subject_detail(ids, wider, px_per_mm) == {
+        "subject_density": pytest.approx(2 / 6),
+        "background_density": pytest.approx(1 / 2),
+        "subject_density_ratio": pytest.approx(2 / 3),
+    }
+    # Pixels in no region count in neither part, nor in its area; and on paper, 100 cm² is 10,000 mm².
+    holed = ids.copy()
+    holed[0, 0] = -1
+    assert bm.subject_detail(holed, left, 1.0)["subject_density"] == pytest.approx(1.0 / (3 / 10_000))
+    # A part with no region's pixel has no density, and then there is no ratio.
+    assert bm.subject_detail(ids, np.zeros(ids.shape, dtype=bool), px_per_mm) == {
+        "subject_density": None,
+        "background_density": pytest.approx(3 / 8),
+        "subject_density_ratio": None,
+    }
+    assert bm.subject_detail(ids, np.ones(ids.shape, dtype=bool), px_per_mm)["subject_density_ratio"] is None
+    only_ink = np.full(ids.shape, -1, dtype=np.int32)
+    only_ink[:, 2:] = ids[:, 2:]
+    assert bm.subject_detail(only_ink, left, px_per_mm)["subject_density"] is None
+
+
+def test_subject_fidelity_scores_the_subject_as_face_fidelity_scores_a_box():
+    rng = np.random.default_rng(3)
+    source = rng.integers(0, 256, (40, 60, 3), dtype=np.uint8)
+    painted = np.clip(source.astype(np.int16) + rng.integers(-30, 30, source.shape), 0, 255).astype(np.uint8)
+    box = (12, 5, 30, 20)
+    face = bm.face_fidelity(source, painted, [box])
+    subject = bm.subject_fidelity(source, painted, bm._box_mask((40, 60), [box]))
+    assert subject == {"subject_de00_mean": face["face_de00_mean"], "subject_ssim": face["face_ssim"]}
+    assert bm.subject_fidelity(source, source, np.ones((40, 60), dtype=bool)) == {
+        "subject_de00_mean": 0.0,
+        "subject_ssim": pytest.approx(1.0),
+    }
+    assert bm.subject_fidelity(source, painted, np.zeros((40, 60), dtype=bool)) == {
+        "subject_de00_mean": None,
+        "subject_ssim": None,
+    }

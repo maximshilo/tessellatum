@@ -208,7 +208,8 @@ def test_a_photographed_face_prints_its_marks_and_keeps_its_regions(monkeypatch)
     result = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     analysis = result.analysis
     printed = analysis.printed_ink
-    assert printed.sum() > 5000 and not printed[~analysis.detail].any()
+    in_faces = faces.mask(analysis.faces, analysis.region_id_map.shape[::-1])
+    assert printed.sum() > 5000 and not printed[~in_faces].any()
     resized = pipeline.resize_to_long_edge(image, pipeline.PREVIEW_LONG_EDGE)
     assert analysis.ink_gray == ink.ink_gray(resized, printed) and 0 < analysis.ink_gray < 128
     page = np.asarray(result.page.convert("L"))

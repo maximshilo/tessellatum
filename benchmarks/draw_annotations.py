@@ -5,7 +5,8 @@
   python benchmarks/draw_annotations.py tests/sample_images/scene.png --out some/dir
 
 Faces are red, features yellow, text green (with its ground truth), gradient
-areas cyan, texture areas magenta; flat and ink colors are swatches under the image.
+areas cyan, texture areas magenta, subject outlines orange; flat and ink colors
+are swatches under the image.
 Writes ``<image stem>.annotated.png`` into --out (default: the git-ignored
 benchmarks/results/annotations).
 """
@@ -29,6 +30,7 @@ FACE_COLOR = (255, 48, 48)
 FEATURE_COLOR = (255, 214, 0)
 TEXT_COLOR = (0, 220, 110)
 AREA_COLORS = {"gradient": (0, 200, 255), "texture": (255, 0, 220)}
+SUBJECT_COLOR = (255, 140, 0)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -63,6 +65,9 @@ def draw(image_path: Path, info: bench_manifest.ImageInfo) -> Image.Image:
     small = ImageFont.load_default(size=max(10, round(long_edge / 140)))
     canvas = ImageDraw.Draw(image)
 
+    for subject in info.subjects:
+        canvas.line([*subject.outline, subject.outline[0]], fill=SUBJECT_COLOR, width=width, joint="curve")
+        _label(canvas, subject.outline[0], "subject", SUBJECT_COLOR, font)
     for area in info.areas:
         color = AREA_COLORS[area.kind]
         _rect(canvas, area.box, color, width)

@@ -45,6 +45,7 @@ def test_parses_every_kind_of_annotation():
                 flat_colors=["#ffffff", "#FF0000"],
                 ink_colors=["#000000"],
                 areas=[{"kind": "gradient", "box": [0, 70, 200, 30]}],
+                subjects=[{"outline": [[0, 0], [200, 0], [100, 100]]}, {"outline": [[5, 5], [9, 5], [9, 9], [5, 9]]}],
                 notes="synthetic",
             )
         }
@@ -56,6 +57,10 @@ def test_parses_every_kind_of_annotation():
     assert info.flat_colors == ((255, 255, 255), (255, 0, 0))
     assert info.ink_colors == ((0, 0, 0),)
     assert info.areas_of("gradient") == (manifest.Area("gradient", manifest.Box(0, 70, 200, 30)),)
+    assert info.subjects == (
+        manifest.Subject(((0, 0), (200, 0), (100, 100))),
+        manifest.Subject(((5, 5), (9, 5), (9, 9), (5, 9))),
+    )
     assert info.missing_annotations() == []
     assert not info.exact_colors  # unless the entry says so, colors are cluster centers of printed colors
 
@@ -93,6 +98,17 @@ def test_exact_colors_are_the_files_own_and_stay_exact_at_any_size():
         (_entry(flat_colors=["#000000"], ink_colors=["#000000"]), "both a flat color and an ink color"),
         (_entry(flat_colors=["#000000"], exact_colors="yes"), "exact_colors must be true or false"),
         (_entry(exact_colors=True), "exact_colors says the colors are exact, but there are none"),
+        (_entry(subjects=[{"outline": [[0, 0], [10, 0]]}]), "a list of at least 3 [x, y] points in integer pixels"),
+        (_entry(subjects=[{"outline": [[0, 0], [10, 0], [10.5, 5]]}]), "at least 3 [x, y] points in integer pixels"),
+        (_entry(subjects=[{"outline": [[0, 0], [10, 0], [True, 5]]}]), "at least 3 [x, y] points in integer pixels"),
+        (_entry(subjects=[{"outline": [[0, 0], [10, 0], [5]]}]), "at least 3 [x, y] points in integer pixels"),
+        (_entry(subjects=[{"outline": [[0, 0], [201, 0], [5, 5]]}]), "point [201, 0] is outside the 200x100 image"),
+        (_entry(subjects=[{"outline": [[0, 0], [10, 0], [5, -1]]}]), "point [5, -1] is outside the 200x100 image"),
+        (_entry(subjects=[{"outline": [[0, 0], [10, 0], [20, 0]]}]), "the outline encloses no area"),
+        (_entry(subjects=[{"outline": [[3, 4], [3, 4], [3, 4]]}]), "the outline encloses no area"),
+        (_entry(subjects=[{"outline": [[0, 0], [0, 0], [6, 3], [2, 1]]}]), "the outline encloses no area"),
+        (_entry(subjects=[{"box": [0, 0, 10, 10]}]), "unknown key(s) box"),
+        (_entry(subjects=[{}]), "missing key(s) outline"),
     ],
 )
 def test_rejects_entries_that_break_the_schema(entry, message):
@@ -140,6 +156,7 @@ def test_scaled_annotations_round_outward_and_stay_inside_the_image():
                 text=[{"box": [101, 50, 999, 949], "string": "x"}],
                 faces=[{"kind": "animal", "box": [0, 0, 2000, 1000], "features": [{"part": "nose", "box": [1998, 998, 2, 2]}]}],
                 areas=[{"kind": "texture", "box": [3, 3, 1, 1]}],
+                subjects=[{"outline": [[0, 0], [2000, 0], [1000, 1000], [3, 999]]}],
             )
         }
     )["a.png"]
@@ -153,6 +170,8 @@ def test_scaled_annotations_round_outward_and_stay_inside_the_image():
     assert small.areas[0].box == manifest.Box(1, 1, 2, 2)  # 1.65..2.2 covers pixels 1 and 2
     assert info.scaled_to((20, 10)).areas[0].box == manifest.Box(0, 0, 1, 1)  # never shrinks to nothing
     assert np.zeros((550, 1100))[small.text[0].box.slices].shape == (523, 550)
+    # An outline isn't rounded: its points scale with the image, to fractions of a pixel.
+    np.testing.assert_allclose(small.subjects[0].outline, [(0, 0), (1100, 0), (550, 550), (1.65, 549.45)], rtol=1e-12)
 
 
 def test_local_manifest_adds_and_replaces_entries(tmp_path):
@@ -210,6 +229,7 @@ def test_drawing_outlines_boxes_without_covering_them_and_adds_swatches(tmp_path
                 text=[{"box": [120, 20, 60, 20], "string": "HI\nTHERE", "rotation": 180}],
                 flat_colors=["#ffffff", "#ff0000"],
                 ink_colors=["#000000"],
+                subjects=[{"outline": [[100, 60], [190, 60], [190, 95], [100, 95]]}],
             )
         }
     )["a.png"]
@@ -221,6 +241,8 @@ def test_drawing_outlines_boxes_without_covering_them_and_adds_swatches(tmp_path
     assert tuple(out[50, 20]) == (128, 128, 128)  # the box's own pixels stay visible
     assert tuple(out[130, 37]) == (255, 0, 0)  # second swatch: flat red
     assert tuple(out[130, 62]) == (0, 0, 0)  # third swatch: the ink color comes after the flat colors
+    assert tuple(out[95, 150]) == draw_annotations.SUBJECT_COLOR  # the subject's outline is drawn along its edge
+    assert tuple(out[80, 150]) == (128, 128, 128)  # and its inside left alone
 
 
 # -- the committed sample images ----------------------------------------------

@@ -58,8 +58,8 @@ def test_the_custom_sliders_start_at_medium_and_show_their_units(panel):
     labels = [label.text() for label in panel.custom_group.findChildren(controls_panel.QLabel)]
     assert f"up to {medium.num_colors}" in labels
     assert f"{params.min_region_area_mm2:.0f} mm²" in labels
-    # A face found on a photograph or a painting may have regions half as large (D-043).
-    assert "half that in a photographed or painted face" in panel.min_region_slider.toolTip()
+    # The subject and the faces found on a photograph or a painting may have regions half as large (D-043, D-048).
+    assert "half that on a photograph's or painting's subject and faces" in panel.min_region_slider.toolTip()
     assert f"{medium.blur_sigma:.1f}" in labels
 
 

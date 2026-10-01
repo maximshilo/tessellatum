@@ -310,6 +310,38 @@ def face_regions(region_id_map: np.ndarray, boxes, px_per_mm: float) -> dict[str
     return {"face_regions": count, "face_regions_per_dm2": count / (int(inside.sum()) / px_per_mm**2 / 10_000)}
 
 
+def subject_detail(region_id_map: np.ndarray, subject: np.ndarray, px_per_mm: float) -> dict[str, float | None]:
+    """How much detail the page spends on the picture's subject, against its background: regions per 100 cm² on paper.
+
+    ``subject`` (HxW bool) is the subject's pixels (see ``outline_pixels``),
+    and the background the rest of the page. A pixel counts one over the size
+    of its region, so a part of the page holds as many regions as lie wholly
+    in it, plus each region it shares by the share of it there; pixels in no
+    region count in neither. ``subject_density`` and ``background_density``
+    are those counts per 100 cm² of each part on paper, at ``px_per_mm``
+    pixels a millimeter, and ``subject_density_ratio`` the first over the
+    second. A density is None where its part holds no region's pixel, and so
+    is the ratio then.
+    """
+    ids = np.asarray(region_id_map)
+    inside = ids >= 0
+    share = np.zeros(ids.shape)
+    share[inside] = 1.0 / np.bincount(ids[inside].ravel())[ids[inside]]
+    px_per_dm2 = px_per_mm**2 * 10_000
+
+    def density(part: np.ndarray) -> float | None:
+        part = part & inside
+        return float(share[part].sum() / (part.sum() / px_per_dm2)) if part.any() else None
+
+    subject = np.asarray(subject, dtype=bool)
+    on_subject, on_background = density(subject), density(~subject)
+    return {
+        "subject_density": on_subject,
+        "background_density": on_background,
+        "subject_density_ratio": on_subject / on_background if on_subject and on_background else None,
+    }
+
+
 def label_coverage(regions, labeled_region_ids, total_px: int) -> dict[str, float]:
     """Share of drawn regions, and of the area to paint (``total_px``: the page less what it prints), that carry a number."""
     labeled = [r for r in regions if r.region_id in labeled_region_ids]
@@ -1010,6 +1042,21 @@ def face_fidelity(source_bgr: np.ndarray, painted_bgr: np.ndarray, face_boxes) -
     return {"face_de00_mean": float(de.mean()), "face_ssim": float(ssim_map(source_bgr, painted_bgr)[inside].mean())}
 
 
+def subject_fidelity(source_bgr: np.ndarray, painted_bgr: np.ndarray, subject: np.ndarray) -> dict[str, float | None]:
+    """How closely the finished painting matches the source on the picture's subject, ``subject`` (HxW bool).
+
+    The mean CIEDE2000 error (``subject_de00_mean``) and the mean SSIM
+    (``subject_ssim``) over the subject's pixels, as ``face_fidelity`` scores a
+    face; a pixel's SSIM comes from the window centered on it, which reaches
+    5 px past the outline. Both None without a pixel in the subject.
+    """
+    subject = np.asarray(subject, dtype=bool)
+    if not subject.any():
+        return {"subject_de00_mean": None, "subject_ssim": None}
+    de = ciede2000(bgr_to_lab(source_bgr)[subject], bgr_to_lab(painted_bgr)[subject])
+    return {"subject_de00_mean": float(de.mean()), "subject_ssim": float(ssim_map(source_bgr, painted_bgr)[subject].mean())}
+
+
 def feature_survival(
     feature_boxes,
     region_id_map: np.ndarray,
@@ -1463,6 +1510,38 @@ def _pixels_in_boxes(shape: tuple[int, int], boxes) -> np.ndarray:
         y0, y1 = max(math.ceil(y - 0.5), 0), min(math.ceil(y + h - 0.5), height)
         if x1 > x0 and y1 > y0:  # an end before the page's start would count from its far side
             mask[y0:y1, x0:x1] = True
+    return mask
+
+
+def outline_pixels(shape: tuple[int, int], outlines) -> np.ndarray:
+    """The pixels whose middle lies inside any of ``outlines``, polygons of (x, y) points with a pixel's corner at whole numbers.
+
+    Inside is by the even-odd rule: a middle is inside when the ray from it to
+    the left crosses its polygon's edges an odd number of times, an edge it
+    lies on included. An edge holds its upper end (the smaller y) and not its
+    lower one, so a ray through a vertex counts it once. A middle on an edge is
+    then inside on a left or top edge and outside on a right or bottom one, as
+    a box holds its left and top edges and not the others (see
+    ``background_regions``): a box's four corners as an outline mark the
+    pixels ``_pixels_in_boxes`` marks. Points may lie off the page; only the
+    pixels on it are marked.
+    """
+    height, width = shape
+    mask = np.zeros(shape, dtype=bool)
+    middles = np.arange(height, dtype=np.float64)[:, None] + 0.5
+    for outline in outlines:
+        points = np.asarray(outline, dtype=np.float64).reshape(-1, 2)
+        if len(points) < 3:
+            continue
+        (x0, y0), (x1, y1) = points.T, np.roll(points, -1, axis=0).T
+        crossing = ((y0 <= middles) & (middles < y1)) | ((y1 <= middles) & (middles < y0))
+        rows, edges = np.nonzero(crossing)
+        x = x0[edges] + (middles[rows, 0] - y0[edges]) * (x1[edges] - x0[edges]) / (y1[edges] - y0[edges])
+        # A crossing at x is at or left of pixel c's middle, c + 0.5, from c = ceil(x - 0.5) on.
+        first = np.clip(np.ceil(x - 0.5), 0, width).astype(np.int64)
+        toggles = np.zeros((height, width + 1), dtype=np.int64)
+        np.add.at(toggles, (rows, first), 1)
+        mask |= np.cumsum(toggles[:, :width], axis=1) % 2 == 1
     return mask
 
 

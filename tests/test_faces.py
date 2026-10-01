@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from tessellatum.core import faces, pipeline
+from tessellatum.core import faces, pipeline, subject
 from tessellatum.core.difficulty import params_for_preset
 from tessellatum.core.print_size import print_scale
 
@@ -504,9 +504,15 @@ def test_line_art_looks_for_faces_only_when_analysis_is_collected_and_its_page_n
     pipeline.clear_cache()
 
 
+def _no_subject(picture):
+    """``subject.find_subject`` on a picture with no subject: the face rule alone (the subject's own is D-048's)."""
+    return np.zeros((subject.INPUT_SIZE, subject.INPUT_SIZE), dtype=np.float32)
+
+
 def test_a_picture_drawn_from_its_colors_looks_for_faces_on_the_page_s_path_and_details_them(monkeypatch):
     # D-043, Q26: inside the faces found a region may be half the difficulty's smallest, on photographs and paintings.
     pipeline.clear_cache()
+    monkeypatch.setattr(subject, "find_subject", _no_subject)
     calls = []
     find = faces.find_faces
     monkeypatch.setattr(faces, "find_faces", lambda picture: calls.append(picture.shape) or find(picture))
@@ -539,8 +545,10 @@ def test_a_picture_without_faces_is_drawn_as_before(monkeypatch):
     pipeline.clear_cache()
     image = pipeline.load_image_bgr(SAMPLES / "scene.png")
     params = params_for_preset("Medium")
-    # The regions' edges are settled since v0.1.37 (see ``texture``), which is not about faces: that is left out here.
+    # The regions' edges are settled since v0.1.37 (see ``texture``), and its subject has more detail since v0.1.39
+    # (see ``subject``), neither of them about faces: they are left out here.
     monkeypatch.setattr(pipeline, "smooth_regions", lambda picture, ids, colors, *rest: (ids, colors))
+    monkeypatch.setattr(subject, "find_subject", _no_subject)
     page = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     assert page.analysis.faces == [] and not page.analysis.detail.any()
     # Its page as v0.1.33 drew it, before faces were given more detail.
