@@ -300,8 +300,9 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
         assert [(block["string"], sorted(block["read"])) for block in case["text_blocks"]] == [("INK", ["page", "painting", "source"])]
         assert case["quality"]["text_cer_source"] is not None
     assert (out / "painted.png").is_file() and (out / "regions.npz").is_file()
-    # The drawing has no gradient areas.
+    # The drawing has no gradient areas, and no subject outlined.
     assert case["quality"]["gradient_sliver_fraction"] is None and case["quality"]["gradient_sliver_fraction_max"] is None
+    assert all(case["quality"][key] is None for key in bench_case.SUBJECT_KEYS)
 
 
 def _dusk(tmp_path: Path) -> Path:
@@ -361,6 +362,55 @@ def test_case_runner_scores_the_slivers_in_the_gradient_areas_and_the_page_s_ban
     assert quality["band_area_fraction"] == pytest.approx(bands["band_area_fraction"], rel=1e-12)
     assert np.unique(ids[189:193, 50:350]).size == 1  # the stripe (rows 187.5-193.75 once scaled) is one region
 
+
+
+def _still_life(tmp_path: Path) -> tuple[Path, list[list[int]]]:
+    """640 x 480, not line art: a mottled orange disk on a mottled gray ground, its manifest outlining it as a 16-gon.
+
+    The outline lies just inside the disk, so the subject's density counts the regions along the disk's edge in part.
+    """
+    rng = np.random.default_rng(1)
+    mottle = cv2.GaussianBlur(rng.random((480, 640)).astype(np.float32), (0, 0), 4)
+    picture = np.clip(np.full((480, 640, 3), 120, np.float32) + 600 * (mottle - mottle.mean())[..., None], 0, 255)
+    disk = np.zeros((480, 640), dtype=np.uint8)
+    cv2.circle(disk, (320, 240), 150, 1, -1)
+    orange = np.clip(np.array([40, 120, 230], np.float32) + 1500 * (mottle - mottle.mean())[..., None], 0, 255)
+    picture[disk == 1] = orange[disk == 1]
+    image = tmp_path / "still_life.png"
+    cv2.imwrite(str(image), picture.astype(np.uint8))
+    angles = np.arange(16) * 2 * np.pi / 16
+    outline = [[int(round(320 + 140 * np.cos(a))), int(round(240 + 140 * np.sin(a)))] for a in angles]
+    manifest = {"size": [640, 480], "categories": ["photo"], "subjects": [{"outline": outline}]}
+    (tmp_path / "manifest.json").write_text(json.dumps({"schema": 1, "images": {"still_life.png": manifest}}), encoding="utf-8")
+    return image, outline
+
+
+def test_case_runner_scores_the_subject_its_manifest_outlines(tmp_path):
+    image, outline = _still_life(tmp_path)
+    out = tmp_path / "case"
+    arguments = _case_arguments(image, out, repeats=1)
+    arguments[arguments.index("--preset") + 1], arguments[arguments.index("--long-edge") + 1] = "Max", "400"
+
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "benchmarks" / "bench_case.py"), *arguments],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    quality = json.loads((out / "case.json").read_text(encoding="utf-8"))["quality"]
+    ids = np.load(out / "regions.npz")["region_id_map"]
+    assert ids.shape == (300, 400)  # the outline scales by 5/8
+    subject = bm.outline_pixels(ids.shape, [[(x * 0.625, y * 0.625) for x, y in outline]])
+    scale = bm.print_size.print_scale((400, 300))
+    detail = bm.subject_detail(ids, subject, scale.px_per_mm)
+    painted = np.asarray(Image.open(out / "painted.png").convert("RGB"))[:, :, ::-1]
+    source = bm.reference_resize(cv2.imread(str(image)), 400)
+    fidelity = bm.subject_fidelity(source, np.ascontiguousarray(painted), subject)
+    for key in bench_case.SUBJECT_KEYS:
+        assert quality[key] == pytest.approx({**detail, **fidelity}[key], rel=1e-12), key
+    assert quality["subject_density_ratio"] > 1  # the disk is busier than the ground, and it is the subject
 
 
 def _hatched_drawing(tmp_path: Path) -> tuple[Path, np.ndarray]:

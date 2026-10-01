@@ -30,7 +30,18 @@ AREA_KINDS = ("gradient", "texture")
 TEXT_ROTATIONS = (0, 90, 180, 270)  # quarter turns: slanted lettering isn't annotated
 
 _TOP_KEYS = {"schema", "images"}
-_IMAGE_KEYS = {"size", "categories", "notes", "faces", "text", "flat_colors", "ink_colors", "exact_colors", "areas"}
+_IMAGE_KEYS = {
+    "size",
+    "categories",
+    "notes",
+    "faces",
+    "text",
+    "flat_colors",
+    "ink_colors",
+    "exact_colors",
+    "areas",
+    "subjects",
+}
 _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
@@ -100,6 +111,17 @@ class Area:
 
 
 @dataclass(frozen=True)
+class Subject:
+    """What the picture is of, as an outline: a polygon of (x, y) points in pixels, a pixel's corner at whole numbers.
+
+    A pixel belongs to the subject when its middle lies inside the outline
+    (see ``bench_metrics.outline_pixels``); the rest of the page is background.
+    """
+
+    outline: tuple[tuple[float, float], ...]
+
+
+@dataclass(frozen=True)
 class ImageInfo:
     name: str
     size: tuple[int, int]  # (width, height) of the source file
@@ -111,6 +133,7 @@ class ImageInfo:
     # The flat and ink colors are the file's own pixel values, as in digital artwork, not cluster centers of printed colors.
     exact_colors: bool = False
     areas: tuple[Area, ...] = ()
+    subjects: tuple[Subject, ...] = ()
     notes: str = ""
 
     @property
@@ -158,6 +181,7 @@ class ImageInfo:
             ink_colors=self.ink_colors,
             exact_colors=self.exact_colors,
             areas=tuple(Area(a.kind, box(a.box)) for a in self.areas),
+            subjects=tuple(Subject(tuple((x * sx, y * sy) for x, y in s.outline)) for s in self.subjects),
             notes=self.notes,
         )
 
@@ -252,6 +276,20 @@ def _parse_box(value: object, size: tuple[int, int], where: str) -> Box:
     return box
 
 
+def _parse_outline(value: object, size: tuple[int, int], where: str) -> tuple[tuple[int, int], ...]:
+    points = _list(value, where)
+    if len(points) < 3 or not all(isinstance(p, list) and len(p) == 2 and all(_is_int(v) for v in p) for p in points):
+        raise ManifestError(f"{where}: an outline is a list of at least 3 [x, y] points in integer pixels")
+    for x, y in points:
+        if not (0 <= x <= size[0] and 0 <= y <= size[1]):
+            raise ManifestError(f"{where}: point [{x}, {y}] is outside the {size[0]}x{size[1]} image")
+    # Points all on one line enclose nothing, so the outline would hold no pixel.
+    (x0, y0), other = points[0], [p for p in points if p != points[0]]
+    if not other or all((x1 - x0) * (y - y0) == (x - x0) * (y1 - y0) for (x1, y1) in other[:1] for x, y in other):
+        raise ManifestError(f"{where}: the outline encloses no area")
+    return tuple((x, y) for x, y in points)
+
+
 def _parse_colors(value: object, where: str) -> tuple[tuple[int, int, int], ...]:
     colors = []
     for i, color in enumerate(_list(value, where)):
@@ -321,6 +359,12 @@ def _parse_image(name: str, entry: object, where: str) -> ImageInfo:
         raw = _object(raw, at, required={"kind", "box"})
         areas.append(Area(_choice(raw["kind"], AREA_KINDS, f"{at}.kind"), _parse_box(raw["box"], size, f"{at}.box")))
 
+    subjects = []
+    for i, raw in enumerate(_list(entry.get("subjects", []), f"{where}: subjects")):
+        at = f"{where}: subjects[{i}]"
+        raw = _object(raw, at, required={"outline"})
+        subjects.append(Subject(_parse_outline(raw["outline"], size, f"{at}.outline")))
+
     notes = entry.get("notes", "")
     if not isinstance(notes, str):
         raise ManifestError(f"{where}: notes must be text")
@@ -335,5 +379,6 @@ def _parse_image(name: str, entry: object, where: str) -> ImageInfo:
         ink_colors=ink_colors,
         exact_colors=exact_colors,
         areas=tuple(areas),
+        subjects=tuple(subjects),
         notes=notes,
     )

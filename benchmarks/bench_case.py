@@ -64,6 +64,8 @@ FACE_KEYS = (
     "face_regions",
     "face_regions_per_dm2",
 )
+# Subject fields, None unless the image's manifest entry outlines its subject.
+SUBJECT_KEYS = ("subject_density", "background_density", "subject_density_ratio", "subject_de00_mean", "subject_ssim")
 # The faces the pipeline found: None for versions that don't look for faces (before 0.1.33), and the recall also
 # unless the image's manifest entry has faces.
 FOUND_FACE_KEYS = ("faces_found", "face_found_recall", "stray_faces")
@@ -415,6 +417,13 @@ def main() -> int:
         # gradient areas.
         gradients = annotations.areas_of("gradient") if annotations else ()
         quality.update(bm.gradient_slivers(slivers, [_xywh(area.box) for area in gradients]))
+        # The picture's subject should get more of the page's detail than its background, and be painted closely.
+        quality.update(dict.fromkeys(SUBJECT_KEYS))
+        subjects = annotations.subjects if annotations else ()
+        if subjects:
+            subject = bm.outline_pixels(page_data.region_id_map.shape, [s.outline for s in subjects])
+            quality.update(bm.subject_detail(page_data.region_id_map, subject, print_scale.px_per_mm))
+            quality.update(bm.subject_fidelity(source, painted, subject))
         faces = annotations.faces if annotations else ()
         if faces:
             quality.update(bm.face_fidelity(source, painted, [_xywh(face.box) for face in faces]))
