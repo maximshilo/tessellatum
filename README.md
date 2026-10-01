@@ -201,6 +201,19 @@ little or no subject, and its page is the one it would be without. See
 
 A drawing's faces and subject are its ink's, so line art's page uses neither.
 
+Signs, titles and captions should still read on the page, so the pipeline also
+finds the lines of text in a picture, drawn or photographed. A fourth network
+ships with the app for that: PP-OCRv6-small, PaddleOCR's text detector (9.9 MB),
+run by [ONNX Runtime](https://onnxruntime.ai/). It looks at the picture at
+preview size, which finds lettering whose lines print about 2 mm tall or more,
+and where that finds any, again at twice that size from the source's own pixels,
+which finds the small print beside it. A line is kept only if it looks like one:
+at most 15 mm tall on paper (bigger lettering is shapes to paint) and at least
+half again as long as tall, which an eye, a window or a disc mostly isn't. See
+`src/tessellatum/core/text.py`. Nothing on the page uses the lines yet: the
+benchmark measures how well they are found, and printing the lettering as ink
+and keeping numbers off it are next.
+
 ### Performance
 
 Previews are meant to be quick enough to tweak difficulty interactively:

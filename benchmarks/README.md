@@ -40,8 +40,10 @@ images x presets x output sizes:
   the region stage run again on its result), `extract_regions`, `render_page`,
   `render_legend`, `detect_faces` (from 0.1.33; until 0.1.33 it ran
   only when the analysis below is collected, so no timed run reached it; from 0.1.34
-  it is on the page's path for every picture but line art) and `detect_subject`
-  (from 0.1.39, on the page's path for every picture but line art). Keep those names
+  it is on the page's path for every picture but line art), `detect_subject`
+  (from 0.1.39, on the page's path for every picture but line art) and `detect_text`
+  (from 0.1.40; it runs only when the analysis below is collected, so no timed run
+  reaches it). Keep those names
   if you restructure the pipeline, or update `PROBED_STAGES` in `bench_case.py`.
 - Quality metrics read what the page is made of from the pipeline itself.
   `generate(..., collect_analysis=True)` returns it as `GeneratedPage.analysis`
@@ -63,6 +65,8 @@ images x presets x output sizes:
     box on the page, score and detector;
   - the picture's subject, as the pipeline finds it (from 0.1.39, on a picture
     that isn't line art);
+  - the lines of text the pipeline finds in the picture (from 0.1.40), each a box
+    turned to its line, on the page, with the network's score;
   - where a region may be half the difficulty's smallest, each of its pixels
     there counting twice towards it (from 0.1.34: the faces found, on a picture
     that isn't line art; from 0.1.39 the subject too).
@@ -280,6 +284,9 @@ whether a brush can paint the bands a gradient breaks into:
 | features lost | annotated eyes, noses and mouths the page no longer shows, as lines along their edges or as a region of their own; `case.json` also records the mean share of their edges drawn, as `feature_edge_recall`, and each feature's scores under `face_features` | lower (0) |
 | labels on features | numbers overlapping a feature box | lower (0) |
 | face regions | regions lying mostly inside the image's face boxes: what a face is painted in; `case.json` also records that count per 100 cm² of face on paper, as `face_regions_per_dm2` | informational |
+| text lines found | how many lines of text the pipeline finds in the picture (from 0.1.40); `case.json` lists them under `found_text` | informational |
+| text found recall | share of the pixels in the image's text boxes that lie in the text found; `case.json` gives each block's own share under `text_matches` | higher |
+| stray text lines | lines of text found on an image without annotated text | lower (0) |
 | subject ΔE00, subject SSIM | ΔE00 mean and SSIM on the image's subject, inside its outlines (from the manifest's `subjects`) | lower, higher |
 | subject detail | how many times denser the subject's regions are than the background's, per area on paper, each region counted by its share of each; `case.json` also records both, as `subject_density` and `background_density` (regions per 100 cm²), and the ratio as `subject_density_ratio`. A subject in front of a plain wall is many times denser on any page, so it only informs | informational |
 | text CER source / page / painting | character error rate of OCR inside the image's text boxes, against their annotated text: on the source (how much OCR reads there at all), the page and the painting; `case.json` records the OCR engine under `ocr`, and what it read in each block under `text_blocks` | lower (0) |
@@ -638,7 +645,8 @@ How the text metrics are defined:
 - They read the image's manifest entry: its `text` blocks, scaled to output size.
   Images without text get no value.
 - **OCR** is RapidOCR on ONNX Runtime, with the PP-OCRv6 recognition model its
-  wheel ships (Apache-2.0). Both install with the `dev` extra, and nothing is
+  wheel ships (Apache-2.0). RapidOCR installs with the `dev` extra and ONNX Runtime
+  with the app itself (from 0.1.40, which finds text with it), and nothing is
   downloaded at run time. `rapidocr` is pinned, because its models are the
   yardstick. Without them, the character error rates are blank and labels on text
   are still counted.
@@ -667,6 +675,31 @@ How the text metrics are defined:
   tall. A page can't be expected to read better.
 - **Labels on text** counts the numbers whose text box overlaps a text box, as
   labels on features does.
+
+How the found-text metrics are defined:
+
+- From 0.1.40 the pipeline finds the lines of text in a picture
+  (`src/tessellatum/core/text.py`): PP-OCRv6-small looks at it at preview size, and
+  where that finds text, again at twice that size from the source's own pixels; a
+  line is kept if its box is at most 15 mm tall on paper and at least 1.5 times as
+  long as tall. They are found once per picture, scaled to the page, and reported in
+  its analysis payload (`PageAnalysis.text`), each as the four corners of its box.
+  Nothing on the page uses them yet. Older versions get no value.
+- **Text found recall** reads the image's manifest `text` blocks, scaled to the page:
+  the share of the pixels inside any block's box that lie inside the box of a line
+  found, each pixel by where its middle is (a line's box as an outline, see
+  `subjects`). A pixel inside two blocks counts once. `text_matches` in `case.json`
+  gives each block's own share, as `cover`. Images without text get no value.
+- It reads boxes, not letters: a block's box takes in the space between its words and
+  lines, and a line found a margin round its letters, so a block need not score 1 to
+  be found whole, and one found in part scores less.
+- **Stray text lines** counts the lines found on an image without annotated text,
+  where every one is a mistake. On an image with text it gets no value: its lettering
+  is annotated only where it reads clearly at full size, so a line found away from
+  the blocks may well be text -- Times Square has dozens of signs the manifest leaves
+  out. Two images without text do have small lettering, noted in the manifest: the
+  license plate on Palermo's car, the reaper's signature. A line found on either
+  counts as stray all the same.
 
 How the report judges these metrics, with their targets and tolerances, is under
 "Scorecard and verdict" below.
@@ -787,11 +820,26 @@ same reason (faces found only informs):
 Faces are found once per picture, on it at preview size, and scaled to the page, so they
 are the same at every size and preset, and any change is a regression.
 
+Two more score the lines of text the pipeline finds (from 0.1.40), outside the scorecard
+for the same reason (text lines found only informs):
+
+| metric | σ preview | σ export | target |
+|---|---|---|---|
+| text found recall | 0.0023 | 0.00073 | ≥ 0.9 |
+| stray text lines | 0 | 0 | 0 |
+
+Text is found once per picture and scaled to the page too, so text found recall moves
+with the page's size only as the annotated boxes round to its pixels: its tolerances come
+from 9 pairs at each size, the three text images at Easy (`T6.1-sizes`,
+`T6.1-export-sizes`), since finding text doesn't depend on the difficulty. On an image
+without text, no line is found at any size or preset.
+
 ### Targets
 
 A target applies to a case where its metric has a value: the printed ink and tubes on
-line art, features lost and face found recall on faces, the text targets on images
-with text, and gradient slivers on images with gradient areas. They
+line art, features lost and face found recall on faces, the text targets and text found
+recall on images with text, stray text lines on images without, and gradient slivers on
+images with gradient areas. They
 spell out the four jobs:
 - **paintable:** no slivers, on the page and in its gradients alike, a number on every
   region, and every number legible at print size, with no line and no other number
