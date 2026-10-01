@@ -29,8 +29,9 @@ class DifficultyParams:
         min_region_area_mm2: the smallest region on the printed page, in square
             millimeters; smaller regions are merged into a neighbor. Never
             below ``print_size.MIN_REGION_AREA_MM2``, the brush's footprint.
-            Inside a face found in a photograph or painting, a region may be
-            half as large (see ``regions.build_regions``).
+            Inside the subject or a face found in a photograph or painting, a
+            region may be half as large (see ``subject``, ``faces`` and
+            ``regions.build_regions``).
         blur_sigma: bilateral-filter smoothing strength applied before
             quantization. Higher = smoother/simpler source, fewer stray
             regions.
@@ -104,6 +105,6 @@ def describe(params: DifficultyParams) -> str:
     side_mm = math.sqrt(params.min_region_area_mm2)
     return (
         f"Up to {params.num_colors} colors. Regions of at least {params.min_region_area_mm2:.0f} mm² "
-        f"(about {side_mm:.0f} × {side_mm:.0f} mm; half that in a photographed or painted face) "
+        f"(about {side_mm:.0f} × {side_mm:.0f} mm; half that on a photograph's or painting's subject and faces) "
         f"and {params.min_width_mm:g} mm wide on the printed A4 page."
     )
