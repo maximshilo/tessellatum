@@ -1451,14 +1451,18 @@ def _box_mask(shape: tuple[int, int], boxes) -> np.ndarray:
 
 
 def _pixels_in_boxes(shape: tuple[int, int], boxes) -> np.ndarray:
-    """The pixels whose middle lies inside any of the (x, y, width, height) ``boxes``, which may be fractional."""
+    """The pixels whose middle lies inside any of the (x, y, width, height) ``boxes``, which may be fractional.
+
+    A box reaching past the page holds the pixels it covers on it, and one wholly off the page none.
+    """
     height, width = shape
     mask = np.zeros(shape, dtype=bool)
     for x, y, w, h in boxes:
         # Pixel c's middle is at c + 0.5: inside when x <= c + 0.5 < x + w.
         x0, x1 = max(math.ceil(x - 0.5), 0), min(math.ceil(x + w - 0.5), width)
         y0, y1 = max(math.ceil(y - 0.5), 0), min(math.ceil(y + h - 0.5), height)
-        mask[y0:y1, x0:x1] = True
+        if x1 > x0 and y1 > y0:  # an end before the page's start would count from its far side
+            mask[y0:y1, x0:x1] = True
     return mask
 
 

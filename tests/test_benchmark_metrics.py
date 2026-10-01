@@ -254,6 +254,10 @@ def test_gradient_slivers_are_the_share_of_the_gradient_areas_in_slivers():
     none = {"gradient_sliver_fraction": None, "gradient_sliver_fraction_max": None}
     assert bm.gradient_slivers(slivers, []) == none
     assert bm.gradient_slivers(slivers, [(30, 0, 5, 5)]) == none
+    # Wholly above or left of the page too, however far: an end before the page's start holds nothing.
+    assert bm.gradient_slivers(slivers, [(0, -3, 5, 2), (-4, 0, 2, 3), (-1.2, 2, 1.6, 3)]) == none
+    # A box reaching past the page's start holds what it covers of it: [-3, 1.6) holds columns 0 and 1.
+    assert bm.gradient_slivers(slivers, [(-3.0, 0.0, 4.6, 10.0)])["gradient_sliver_fraction"] == 1.0
 
 
 def _strip(rows: int, length: int, top: int = 20) -> np.ndarray:
@@ -1229,6 +1233,8 @@ def test_background_regions_are_those_with_no_pixel_in_any_face_box():
     assert bm.background_regions(ids, [(9.6, 0.0, 0.8, 10.0)]) == 4
     assert bm.background_regions(ids, [(9.4, 0.0, 0.2, 10.0)]) == 3
     assert bm.background_regions(np.full((4, 4), -1), [(0, 0, 2, 2)]) == 0
+    # A box wholly above or left of the page touches no region.
+    assert bm.background_regions(ids, [(0, -5, 25, 3), (-6, 0, 4, 10)]) == 4
 
 
 def test_face_regions_are_those_lying_mostly_inside_a_face_box():
