@@ -65,6 +65,14 @@ def test_the_map_is_the_network_s_square_view_of_the_whole_picture_and_the_same_
     np.testing.assert_array_equal(subject.find_subject(picture), first)
 
 
+def test_the_network_sees_a_picture_scaled_to_its_brightest_value():
+    # As U²-Net's own code feeds it: a dim picture is seen as the same picture at full brightness. At the network's own
+    # size nothing is resampled, and halving even values is exact.
+    full = _disk((160, 150), radius=70, size=(subject.INPUT_SIZE, subject.INPUT_SIZE))
+    full[:20] = 254
+    np.testing.assert_array_equal(subject.find_subject(full // 2), subject.find_subject(full))
+
+
 def test_two_threads_find_what_one_finds():
     pictures = [_disk((140, 160)), _disk((260, 120), radius=40)]
     alone = [subject.find_subject(p) for p in pictures]

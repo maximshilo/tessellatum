@@ -1391,6 +1391,19 @@ def test_an_outline_holds_the_pixels_whose_middle_it_holds_its_left_and_top_edge
     assert not bm.outline_pixels((5, 5), [[(0, 0), (4, 4)]]).any() and not bm.outline_pixels((5, 5), []).any()
 
 
+def test_an_outline_s_vertex_on_a_row_of_middles_is_crossed_once():
+    # A diamond with its four corners on pixel middles. Each edge holds its upper end and not its lower one, so the row
+    # through the left and right corners is crossed twice, not four times: its middles from the left corner on, up to
+    # the right one, are in. The top and bottom corners hold no pixel: the top one is crossed twice at one point, the
+    # bottom one not at all. On the slanted edges the upper left and lower left ones hold their middles, the others not.
+    expected = np.zeros((5, 5), dtype=bool)
+    expected[1, 1:3] = expected[3, 1:3] = True
+    expected[2, 0:4] = True
+    diamond = [(2.5, 0.5), (4.5, 2.5), (2.5, 4.5), (0.5, 2.5)]
+    np.testing.assert_array_equal(bm.outline_pixels((5, 5), [diamond]), expected)
+    np.testing.assert_array_equal(bm.outline_pixels((5, 5), [diamond[::-1]]), expected)
+
+
 def test_subject_detail_counts_each_region_by_its_share_of_each_part_per_area_on_paper():
     ids = np.array([[0, 0, 1, 1], [0, 0, 2, 2]], dtype=np.int32)
     px_per_mm = 0.01  # a pixel is 100 cm² on paper: a density is regions per pixel
