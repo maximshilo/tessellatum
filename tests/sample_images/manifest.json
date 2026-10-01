@@ -67,8 +67,10 @@
       "areas": [
         {"kind": "gradient", "box": [0, 0, 2048, 200]},
         {"kind": "gradient", "box": [1400, 200, 648, 330]},
+        {"kind": "gradient", "box": [900, 1090, 1148, 140]},
         {"kind": "gradient", "box": [0, 1230, 2048, 127]}
-      ]
+      ],
+      "notes": "The third gradient area is the lit water below the trees' reflections, fading from beige to dark blue."
     },
     "l-photo-switzerland-castle.jpg": {
       "size": [2048, 1536],

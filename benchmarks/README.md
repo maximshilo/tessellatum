@@ -171,7 +171,8 @@ primary one: the report's per-case tables list the image under it.
   81–100% of their pixels are exactly one of them). Scans leave it out, which
   means `false`.
 - **`areas`** are boxes lying inside a gradient or a textured part of the
-  image.
+  image. Gradient slivers score the gradient areas; no metric reads the
+  texture areas yet.
 
 Code reads the manifest with `bench_manifest.load_directory(images_dir)` or
 `bench_manifest.find_image(path)`; `ImageInfo.scaled_to((width, height))`
@@ -220,10 +221,11 @@ is: the printed ink -- line art's, and from 0.1.35 the detail marks in a face --
 in its gray, bare paper white) against the source
 image at output size. Paintability is scored on the region map and the numbers, at print size
 (see "Print scale" above). Line quality is scored on the lines drawn, the region
-map and the source image, and the palette on the legend's colors. Line art, faces
-and text are also scored against the image's manifest entry: on how the page keeps
+map and the source image, and the palette on the legend's colors. Line art, faces,
+text and gradients are also scored against the image's manifest entry: on how the page keeps
 the artwork's ink lines and flat colors, on how the painting matches inside the faces
-and whether their features survive, and on whether OCR still reads the text:
+and whether their features survive, on whether OCR still reads the text, and on
+whether a brush can paint the bands a gradient breaks into:
 
 | metric | meaning | better |
 |---|---|---|
@@ -232,6 +234,8 @@ and whether their features survive, and on whether OCR still reads the text:
 | labeled area | share of the area to paint (the regions: the page less what it prints, but for the thin ink paint goes over from 0.1.30) inside regions that carry a number | higher |
 | unlabeled | regions without a number | lower (0) |
 | slivers | share of the page a round brush 3 mm wide can't paint without crossing into another region | lower |
+| gradient slivers | the same share of the image's gradient areas, where a gradient breaking into thin bands would show; `case.json` also records the largest share inside one area, as `gradient_sliver_fraction_max` | lower |
+| bands | regions no brush 6 mm wide fits in, and at least 4 times as long as they are wide: the shape of the bands a gradient breaks into; `case.json` also records their share of the page, as `band_area_fraction` | informational |
 | labels < 6 pt | share of numbers printing smaller than 6 pt; `case.json` also records the smallest, as `min_label_pt` | lower (0) |
 | labels on lines | numbers with any ink of a line in their box: of the page's lines, or of the leader lines that point a number into its region | lower (0) |
 | overlapping labels | numbers whose box overlaps another number's | lower (0) |
@@ -283,6 +287,27 @@ How the paintability metrics are defined:
     and a thin line between two is shared down its middle with a seam a pixel
     wide in no region, as a page's own lines are on any other picture. Bold ink
     is still in no region.
+  - **Gradient slivers** read the image's manifest `areas` of kind `gradient`,
+    scaled to the page: the share of the pixels inside them that are slivers, a
+    pixel counting once however many areas hold it, and inside where its middle
+    is, as for the faces' boxes. Images without gradient areas get no value.
+    T1.8's baseline, whose gradients broke into thin concentric bands, scores up
+    to 26% in one of the sunset's areas (its sky at Max) and 22% in another (its
+    lit water); the pages of 0.1.37 at most 0.47% in any area, and 0.30% over a
+    page's areas together.
+- **Bands** are regions shaped like the bands a gradient breaks into. A
+  region's width is the widest brush that fits in it, as a brush fits for
+  slivers: twice the largest distance from one of its pixels' middles to the
+  middle of a pixel outside it (another region's, one in no region, or one just
+  off the page). A band is a region 6 mm wide at most -- no brush twice the
+  paintable width fits -- whose area is at least 4 times its width squared, as a
+  strip at least 4 times as long as it is wide. They only inform, since a thin
+  streak of cloud is rightly a band too: over the 56 pages of the six
+  photographs and the Vermeer, T1.8's baseline has 1,904 and the pages of 0.1.37
+  have 28. A gradient broken into bands lays them side by side; of those 28,
+  only three pairs touch, and they are things the picture shows: a castle's
+  ledge and the pole on it, and at two presets a billboard's lit edge and the
+  phone pictured beside it.
 - **Unlabeled** regions are counted from the region map, so a region too small
   to get an outline counts too.
 - **Label size** is each number's em size in points. Versions before 0.1.10
@@ -672,6 +697,7 @@ page of 1100 px, and **export**, a page at the image's own size (see
 | labeled area | paintable | 2.4 points | 0.64 points | – |
 | unlabeled | paintable | 69 | 18 | 0 |
 | slivers | paintable | 1.5 points | 1.4 points | ≤ 1% |
+| gradient slivers | paintable | 0.017 points | 0.014 points | ≤ 1% |
 | labels < 6 pt | paintable | 2.1 points | 2.2 points | 0 |
 | labels on lines | paintable | 0 | 0 | 0 |
 | overlapping labels | paintable | 0 | 0 | 0 |
@@ -696,12 +722,17 @@ page of 1100 px, and **export**, a page at the image's own size (see
 | color pairs < 10 ΔE00 | palette | 3.2 | 3.1 | – |
 | flat colors ΔE00 | palette | 1.2 | 0.81 | ≤ flat colors ΔE00 best + 2.5 on exact colors |
 
-Colors, regions, background regions, face regions, ink, text CER source and flat colors ΔE00 best only inform. The per-case tables add the
+Colors, regions, bands, background regions, face regions, ink, text CER source and flat colors ΔE00 best only inform. The per-case tables add the
 number of targets each case misses.
 
 The printed-ink metrics' tolerances come from 48 pairs at each size, the four line-art
 images at every preset, measured on 0.1.28. On the same pages ink line F1 moved by 0.0051
 and 0.019, under the 0.021 and 0.023 it was given on stroke pages, which it keeps.
+
+Gradient slivers' tolerances come from 24 pairs at each size, the two images with gradient
+areas at every preset, measured on 0.1.38. They are far tighter than the page's slivers',
+which were measured on T1.8's pages, 12.9% slivers on average and up to 53% (0.27% and
+0.8% at 0.1.37): on the same pairs today the page's slivers move by 0.053 and 0.048 points.
 
 Three more metrics score the ink lines the pipeline finds (from 0.1.27; ink found itself
 only informs). They score the finding itself rather than a job of the page -- the page's
@@ -732,11 +763,12 @@ are the same at every size and preset, and any change is a regression.
 ### Targets
 
 A target applies to a case where its metric has a value: the printed ink and tubes on
-line art, features lost and face found recall on faces, and the text targets on images
-with text. They
+line art, features lost and face found recall on faces, the text targets on images
+with text, and gradient slivers on images with gradient areas. They
 spell out the four jobs:
-- **paintable:** no slivers, a number on every region, and every number legible
-  at print size, with no line and no other number drawn through it;
+- **paintable:** no slivers, on the page and in its gradients alike, a number on every
+  region, and every number legible at print size, with no line and no other number
+  drawn through it;
 - **clean drawing:**
   - one smooth line per boundary, and no line between neighbors of the same color;
   - every region enclosed, so no two regions' paint can run together;

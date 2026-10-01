@@ -55,6 +55,10 @@ JUNCTION_CLEARANCE_PX = 2.5
 EDGE_SMOOTHING_MM = 0.5
 EDGE_TOLERANCE_MM = 0.5
 EDGE_THRESHOLDS = (5.0, 10.0)
+# Bands, as a gradient breaks into. A region is one where no brush BAND_MAX_WIDTH_MM wide, twice the paintable width,
+# fits anywhere in it, and it is at least BAND_MIN_ELONGATION times as long as it is wide.
+BAND_MAX_WIDTH_MM = 6.0
+BAND_MIN_ELONGATION = 4.0
 # Palette. Colors should differ from each other by a clear margin: at least PALETTE_MIN_DE00 (CIEDE2000).
 PALETTE_MIN_DE00 = 10.0
 # How many legends of one size ``best_flat_color_match`` tries before falling back to a greedy search, and how many
@@ -394,22 +398,8 @@ def sliver_mask(region_id_map: np.ndarray, min_width_px: float) -> np.ndarray:
         return np.zeros(ids.shape, dtype=bool)
     radius_sq = (min_width_px / 2) ** 2
 
-    # A brush fits where the nearest pixel of another region is farther than
-    # its radius. A distance transform measures the distance to one set of
-    # pixels, so regions are split into classes in which no two regions share
-    # an edge. The nearest pixel of another region always shares an edge with
-    # this region (one step from it towards the center lands inside), so it
-    # is in another class: one distance transform per class finds it for all
-    # of the class's regions at once.
-    region_class = _edge_adjacency_classes(ids, areas.size)
-    classes = np.where(ids >= 0, region_class[ids], -1)
-    fits = np.zeros(ids.shape, dtype=bool)
-    for cls in range(int(region_class.max()) + 1):
-        in_class = classes == cls
-        padded = np.pad(in_class, 1).astype(np.uint8)  # the padding is outside the page
-        distance = cv2.distanceTransform(padded, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)[1:-1, 1:-1]
-        fits |= in_class & (_squared_distance(distance) > radius_sq)
-
+    # A brush fits where the nearest pixel of another region is farther than its radius.
+    fits = (ids >= 0) & (_out_of_region_distance_sq(ids, areas.size) > radius_sq)
     if not fits.any():
         return ids >= 0
     to_brush = cv2.distanceTransform((~fits).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
@@ -419,6 +409,50 @@ def sliver_mask(region_id_map: np.ndarray, min_width_px: float) -> np.ndarray:
 def sliver_share(region_id_map: np.ndarray, min_width_px: float) -> float:
     """Share of page area in slivers (see ``sliver_mask``)."""
     return float(sliver_mask(region_id_map, min_width_px).mean()) if region_id_map.size else 0.0
+
+
+def gradient_slivers(slivers: np.ndarray, boxes) -> dict[str, float | None]:
+    """How much of the image's gradient areas, the (x, y, width, height) ``boxes``, is slivers.
+
+    ``slivers`` is the page's ``sliver_mask``. A pixel is inside a box when its
+    middle is (see ``background_regions``), and counts once however many boxes
+    hold it: ``gradient_sliver_fraction`` is the share of the pixels inside any
+    box that are slivers, and ``gradient_sliver_fraction_max`` the largest share
+    inside one box. Both None without a box on the page.
+    """
+    slivers = np.asarray(slivers, dtype=bool)
+    inside = _pixels_in_boxes(slivers.shape, boxes)
+    if not inside.any():
+        return {"gradient_sliver_fraction": None, "gradient_sliver_fraction_max": None}
+    each = (_pixels_in_boxes(slivers.shape, [box]) for box in boxes)
+    return {
+        "gradient_sliver_fraction": float(slivers[inside].mean()),
+        "gradient_sliver_fraction_max": max(float(slivers[box].mean()) for box in each if box.any()),
+    }
+
+
+def band_regions(
+    region_id_map: np.ndarray, max_width_px: float, min_elongation: float = BAND_MIN_ELONGATION
+) -> dict[str, float | int]:
+    """Regions shaped like the bands a gradient breaks into: narrow and long.
+
+    A region's width is the widest round brush that fits in it, as
+    ``sliver_mask`` fits one: twice the largest distance from one of its
+    pixels' middles to the middle of a pixel outside it, of another region, in
+    no region or just off the page. It is a band where no brush ``max_width_px``
+    wide fits (its width is at most that) and its area is at least
+    ``min_elongation`` times its width squared, as a strip that many times as
+    long as it is wide. ``band_regions`` counts them, and ``band_area_fraction``
+    is the share of the page in them.
+    """
+    ids, areas = _renumbered_regions(region_id_map)
+    if areas.size == 0:
+        return {"band_regions": 0, "band_area_fraction": 0.0}
+    inside = ids >= 0
+    half_width_sq = np.zeros(areas.size)
+    np.maximum.at(half_width_sq, ids[inside], _out_of_region_distance_sq(ids, areas.size)[inside])
+    band = (half_width_sq <= (max_width_px / 2) ** 2) & (areas >= min_elongation * 4 * half_width_sq)
+    return {"band_regions": int(band.sum()), "band_area_fraction": float(areas[band].sum() / ids.size)}
 
 
 def compactness(region_id_map: np.ndarray) -> np.ndarray:
@@ -1417,14 +1451,18 @@ def _box_mask(shape: tuple[int, int], boxes) -> np.ndarray:
 
 
 def _pixels_in_boxes(shape: tuple[int, int], boxes) -> np.ndarray:
-    """The pixels whose middle lies inside any of the (x, y, width, height) ``boxes``, which may be fractional."""
+    """The pixels whose middle lies inside any of the (x, y, width, height) ``boxes``, which may be fractional.
+
+    A box reaching past the page holds the pixels it covers on it, and one wholly off the page none.
+    """
     height, width = shape
     mask = np.zeros(shape, dtype=bool)
     for x, y, w, h in boxes:
         # Pixel c's middle is at c + 0.5: inside when x <= c + 0.5 < x + w.
         x0, x1 = max(math.ceil(x - 0.5), 0), min(math.ceil(x + w - 0.5), width)
         y0, y1 = max(math.ceil(y - 0.5), 0), min(math.ceil(y + h - 0.5), height)
-        mask[y0:y1, x0:x1] = True
+        if x1 > x0 and y1 > y0:  # an end before the page's start would count from its far side
+            mask[y0:y1, x0:x1] = True
     return mask
 
 
@@ -1496,6 +1534,29 @@ def _edge_adjacency_classes(ids: np.ndarray, count: int) -> np.ndarray:
             cls += 1
         region_class[region] = cls
     return np.asarray(region_class, dtype=np.int32)
+
+
+def _out_of_region_distance_sq(ids: np.ndarray, count: int) -> np.ndarray:
+    """Each pixel's squared distance to the nearest pixel outside its region, 0 for the pixels in no region.
+
+    ``ids`` are numbered 0 to ``count`` - 1, as ``_renumbered_regions`` numbers
+    them. Pixels in no region, and those just off the page, are outside every
+    region. A distance transform measures the distance to one set of pixels, so
+    regions are split into classes in which no two regions share an edge. The
+    nearest pixel of another region always shares an edge with this region (one
+    step from it towards the center lands inside), so it is in another class:
+    one distance transform per class finds it for all of the class's regions at
+    once.
+    """
+    region_class = _edge_adjacency_classes(ids, count)
+    classes = np.where(ids >= 0, region_class[ids], -1)
+    distance_sq = np.zeros(ids.shape)
+    for cls in range(int(region_class.max()) + 1):
+        in_class = classes == cls
+        padded = np.pad(in_class, 1).astype(np.uint8)  # the padding is outside the page
+        distance = cv2.distanceTransform(padded, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)[1:-1, 1:-1]
+        distance_sq[in_class] = _squared_distance(distance[in_class])
+    return distance_sq
 
 
 def _squared_distance(distance: np.ndarray) -> np.ndarray:

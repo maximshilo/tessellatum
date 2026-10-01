@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import cv2
 import numpy as np
 import pytest
 from PIL import Image
@@ -209,6 +210,10 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
         "unlabeled_regions",
         "unlabeled_area_fraction",
         "sliver_area_fraction",
+        "gradient_sliver_fraction",
+        "gradient_sliver_fraction_max",
+        "band_regions",
+        "band_area_fraction",
         "small_label_fraction",
         "min_label_pt",
         "compactness_median",
@@ -295,6 +300,66 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
         assert [(block["string"], sorted(block["read"])) for block in case["text_blocks"]] == [("INK", ["page", "painting", "source"])]
         assert case["quality"]["text_cer_source"] is not None
     assert (out / "painted.png").is_file() and (out / "regions.npz").is_file()
+    # The drawing has no gradient areas.
+    assert case["quality"]["gradient_sliver_fraction"] is None and case["quality"]["gradient_sliver_fraction_max"] is None
+
+
+def _dusk(tmp_path: Path) -> Path:
+    """640 x 480, not line art: a sky darkening downwards in mottled clumps, crossed by a green stripe 10 px wide.
+
+    Its manifest has two gradient areas, overlapping in the top left corner,
+    and a texture area apart from both.
+    """
+    h, w = 480, 640
+    shade = np.linspace(0.0, 1.0, h, dtype=np.float32)[:, None]
+    sky = np.stack([200 - 160 * shade, 150 - 60 * shade, 90 + 140 * shade], axis=-1) * np.ones((1, w, 1), np.float32)
+    clumps = cv2.GaussianBlur(np.random.default_rng(0).random((h, w)).astype(np.float32), (0, 0), 6)
+    dusk = np.clip(sky + 900 * (clumps - clumps.mean())[..., None], 0, 255).astype(np.uint8)
+    dusk[300:310, 40:600] = (60, 220, 60)
+    image = tmp_path / "dusk.png"
+    cv2.imwrite(str(image), dusk)
+    manifest = {
+        "size": [w, h],
+        "categories": ["photo", "gradient", "texture"],
+        "areas": [
+            {"kind": "gradient", "box": [0, 0, 640, 160]},
+            {"kind": "gradient", "box": [0, 0, 160, 480]},
+            {"kind": "texture", "box": [320, 240, 320, 240]},
+        ],
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps({"schema": 1, "images": {"dusk.png": manifest}}), encoding="utf-8")
+    return image
+
+
+def test_case_runner_scores_the_slivers_in_the_gradient_areas_and_the_page_s_bands(tmp_path):
+    out = tmp_path / "case"
+    arguments = _case_arguments(_dusk(tmp_path), out, repeats=1)
+    arguments[arguments.index("--preset") + 1], arguments[arguments.index("--long-edge") + 1] = "Max", "400"
+
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "benchmarks" / "bench_case.py"), *arguments],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    quality = json.loads((out / "case.json").read_text(encoding="utf-8"))["quality"]
+    ids = np.load(out / "regions.npz")["region_id_map"]
+    assert ids.shape == (300, 400)  # the boxes scale by 5/8: rows 0-99, and columns 0-99
+    scale = bm.print_size.print_scale((400, 300))
+    slivers = bm.sliver_mask(ids, scale.mm_to_px(bm.print_size.MIN_PAINTABLE_WIDTH_MM))
+    gradient = np.zeros(ids.shape, dtype=bool)
+    gradient[:100], gradient[:, :100] = True, True
+    # Slivers in the gradient areas, their overlap counted once and the texture area not at all; and in the one most.
+    assert quality["gradient_sliver_fraction"] == pytest.approx(slivers[gradient].mean(), rel=1e-12)
+    assert quality["gradient_sliver_fraction"] > 0
+    assert quality["gradient_sliver_fraction_max"] == pytest.approx(max(slivers[:100].mean(), slivers[:, :100].mean()))
+    # The stripe is the page's one band: too narrow for a brush 6 mm wide, and running most of the way across.
+    bands = bm.band_regions(ids, scale.mm_to_px(bm.BAND_MAX_WIDTH_MM))
+    assert quality["band_regions"] == bands["band_regions"] == 1
+    assert quality["band_area_fraction"] == pytest.approx(bands["band_area_fraction"], rel=1e-12)
+    assert np.unique(ids[189:193, 50:350]).size == 1  # the stripe (rows 187.5-193.75 once scaled) is one region
 
 
 

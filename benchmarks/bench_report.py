@@ -101,6 +101,22 @@ METRICS = (
     Metric(
         "sliver_area_fraction", "slivers ↓", "{:.1%}", "paintable", "lower", sigma=0.015, sigma_export=0.014, target=Target(0.01)
     ),
+    # The same inside the manifest's gradient areas, such as a sky, where a gradient breaking into thin bands would show
+    # (T5.2); `case.json` also has the largest share inside one area, as `gradient_sliver_fraction_max`. Its tolerances
+    # were measured on 0.1.38, 24 pairs at each size: the two images with gradient areas at every preset.
+    Metric(
+        "gradient_sliver_fraction",
+        "gradient slivers ↓",
+        "{:.1%}",
+        "paintable",
+        "lower",
+        sigma=0.00017,
+        sigma_export=0.00014,
+        target=Target(0.01),
+    ),
+    # Regions as narrow and long as the bands a gradient breaks into; `case.json` also has their share of the page, as
+    # `band_area_fraction`. A thin streak of cloud is one too, rightly, so they only inform.
+    Metric("band_regions", "bands", "{:d}"),
     Metric(
         "small_label_fraction",
         f"labels < {bm.print_size.MIN_LABEL_SIZE_PT:g} pt ↓",
@@ -685,7 +701,9 @@ def _quality_section(
         "reads it, as the image manifest gives them. "
         "**labeled area**: share of the area to paint inside regions that carry a number. **unlabeled**: regions without a "
         f"number. **slivers**: share of the page a round brush {bm.print_size.MIN_PAINTABLE_WIDTH_MM:g} mm wide can't "
-        "paint without crossing into another region. "
+        "paint without crossing into another region. **gradient slivers**: the same share of the image's gradient areas. "
+        f"**bands**: regions no brush {bm.BAND_MAX_WIDTH_MM:g} mm wide fits in, and at least "
+        f"{bm.BAND_MIN_ELONGATION:g} times as long as wide, as a gradient's bands. "
         f"**labels < {bm.print_size.MIN_LABEL_SIZE_PT:g} pt**: share of numbers printing smaller than that. "
         "**compactness**: 4πA/P² of the regions (1 = disk), 10th percentile and median. "
         "**lines per boundary**: lines drawn along each boundary between regions (1 = one line per boundary), and "

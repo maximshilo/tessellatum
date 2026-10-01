@@ -14,6 +14,7 @@ import bench_report  # noqa: E402
 PAINTABILITY_KEYS = (
     "unlabeled_regions",
     "sliver_area_fraction",
+    "band_regions",
     "small_label_fraction",
     "labels_on_lines",
     "overlapping_labels",
@@ -62,6 +63,7 @@ def _case(image: str, categories: list[str], de00: float, preset: str = "Easy", 
             "labeled_area_fraction": 0.5,
             "unlabeled_regions": 3,
             "sliver_area_fraction": 0.1,
+            "band_regions": 4,
             "small_label_fraction": 0.0,
             "labels_on_lines": 0,
             "overlapping_labels": 0,
@@ -195,11 +197,11 @@ def test_scorecard_scores_each_job_per_category_and_over_all_cases(tmp_path):
     assert "| all | 3 | **4.00 → 5.00** | 10.0 | 0.800 | 7.50 | 0.600 | 0.7 → 1.0 | 0.98 | 1/3 → 0/3 |" in resembles
     paintable = _section(scorecard, "#### paintable", "#### clean drawing")
     assert (
-        "| category | cases | labeled area ↑ | unlabeled ↓ (0) | slivers ↓ (≤ 1%) | labels < 6 pt ↓ (0) "
+        "| category | cases | labeled area ↑ | unlabeled ↓ (0) | slivers ↓ (≤ 1%) | gradient slivers ↓ (≤ 1%) | labels < 6 pt ↓ (0) "
         "| labels on lines ↓ (0) | overlapping labels ↓ (0) | compactness p10 ↑ | compactness median ↑ | undersized ↓ "
         "| targets met |"
     ) in paintable
-    assert "| cartoon | 1 | 50.0% | 3.0 | 10.0% → 0.5% | 0.0% | 0.0 | 0.0 | 0.10 | 0.40 | 0.0 | 0/1 |" in paintable
+    assert "| cartoon | 1 | 50.0% | 3.0 | 10.0% → 0.5% | – | 0.0% | 0.0 | 0.0 | 0.10 | 0.40 | 0.0 | 0/1 |" in paintable
     drawing = _section(scorecard, "#### clean drawing", "#### palette")
     assert (
         "| category | cases | lines per boundary | lines per boundary (clear) (1 ± 0.05) | unenclosed ↓ (0) "
@@ -355,6 +357,11 @@ def test_a_case_misses_a_target_on_its_worse_side_where_it_has_a_value():
 
     assert miss("sliver_area_fraction", sliver_area_fraction=0.01) is False
     assert miss("sliver_area_fraction", sliver_area_fraction=0.0101) is True
+    # Inside a gradient as on the whole page; only an image with gradient areas has a value.
+    assert miss("gradient_sliver_fraction", gradient_sliver_fraction=0.01) is False
+    assert miss("gradient_sliver_fraction", gradient_sliver_fraction=0.0101) is True
+    assert miss("gradient_sliver_fraction", gradient_sliver_fraction=None) is None
+    assert miss("band_regions", band_regions=12) is None  # bands only inform
     assert miss("palette_min_de00", palette_min_de00=10.0) is False
     assert miss("palette_min_de00", palette_min_de00=9.99) is True
     assert miss("jaggedness", jaggedness=1.02) is False
@@ -481,7 +488,8 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
     old_vs_new = bench_report.build_report([old, new], bench_report.Tolerances())
 
     header = (
-        "| case | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | regions | background regions | labeled area ↑ | unlabeled ↓ | slivers ↓ | labels < 6 pt ↓ "
+        "| case | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | regions | background regions | labeled area ↑ | unlabeled ↓ | slivers ↓ "
+        "| gradient slivers ↓ | bands | labels < 6 pt ↓ "
         "| labels on lines ↓ | overlapping labels ↓ | leaders | compactness p10 ↑ | compactness median ↑ | lines per boundary | lines per boundary (clear) "
         "| unenclosed ↓ | same-color boundary ↓ | jaggedness ↓ "
         "| edge F1 ↑ | colors | palette min ΔE00 ↑ | color pairs < 10 ΔE00 ↓ | ink line F1 ↑ "
@@ -493,12 +501,12 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
     )
     assert header in old_alone
     assert (
-        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | – | 50.0% | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
+        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | – | 50.0% | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
         "| – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | 0 | 10.0% | – |"
     ) in old_alone
     assert "| all | 1 | 1 | no targets | no targets | no targets | no targets |" in old_alone
     assert (
-        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 90 | 50.0% | 3 | 10.0% | 0.0% | 0 | 0 | 0 | 0.10 | 0.40 | 2.00 | 1.90 "
+        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 90 | 50.0% | 3 | 10.0% | – | 4 | 0.0% | 0 | 0 | 0 | 0.10 | 0.40 | 2.00 | 1.90 "
         "| 0.0% | 1.0% | 1.100 | 0.50 | 8 | 4.5 | 2 | 0.25 | – | – | 2 | 60.0% | 3.50 | – | 0.0% | – | – | 0.0% | 1 | 1.00 "
         "| 0 | 7.50 | 0.600 | 1 | 2 | 12 | 0.10 | 0.95 | 0.98 | 1 | 0 | 10.0% | – → 10/17 | ok |"
     ) in old_vs_new

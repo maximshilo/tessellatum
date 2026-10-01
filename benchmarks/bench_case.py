@@ -361,7 +361,9 @@ def main() -> int:
         )
         quality.update(bm.unlabeled_regions(page_data.region_id_map, page_data.labeled_region_ids))
         brush_px = print_scale.mm_to_px(bm.print_size.MIN_PAINTABLE_WIDTH_MM)
-        quality["sliver_area_fraction"] = bm.sliver_share(page_data.region_id_map, brush_px)
+        slivers = bm.sliver_mask(page_data.region_id_map, brush_px)
+        quality["sliver_area_fraction"] = float(slivers.mean()) if slivers.size else 0.0  # bm.sliver_share
+        quality.update(bm.band_regions(page_data.region_id_map, print_scale.mm_to_px(bm.BAND_MAX_WIDTH_MM)))
         quality.update(label_scores(page_data, print_scale))
         quality.update(bm.compactness_stats(page_data.region_id_map))
         quality.update(bm.boundary_lines(page_data.region_id_map, page_data.strokes, printed=page_data.printed_ink))
@@ -409,6 +411,10 @@ def main() -> int:
         # Faces are scored inside the manifest's face boxes, and on whether their features survive on the page.
         quality.update(dict.fromkeys(FACE_KEYS))
         annotations = image_info.scaled_to(source.shape[1::-1]) if image_info else None
+        # Gradients, such as a sky, should break into broad bands a brush can paint: slivers inside the manifest's
+        # gradient areas.
+        gradients = annotations.areas_of("gradient") if annotations else ()
+        quality.update(bm.gradient_slivers(slivers, [_xywh(area.box) for area in gradients]))
         faces = annotations.faces if annotations else ()
         if faces:
             quality.update(bm.face_fidelity(source, painted, [_xywh(face.box) for face in faces]))
