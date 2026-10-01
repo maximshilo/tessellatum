@@ -304,7 +304,10 @@ How the paintability metrics are defined:
   strip at least 4 times as long as it is wide. They only inform, since a thin
   streak of cloud is rightly a band too: over the 56 pages of the six
   photographs and the Vermeer, T1.8's baseline has 1,904 and the pages of 0.1.37
-  have 28, none of them in rings round one another.
+  have 28. A gradient broken into bands lays them side by side; of those 28,
+  only three pairs touch, and they are things the picture shows: a castle's
+  ledge and the pole on it, and at two presets a billboard's lit edge and the
+  phone pictured beside it.
 - **Unlabeled** regions are counted from the region map, so a region too small
   to get an outline counts too.
 - **Label size** is each number's em size in points. Versions before 0.1.10
