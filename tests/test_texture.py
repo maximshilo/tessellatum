@@ -411,6 +411,28 @@ def test_arrays_that_would_send_the_kernel_astray_are_refused():
         texture.smooth_regions(picture, ids, np.array([-1, 1], dtype=np.int32), paints, 20, 12.0)
 
 
+def test_the_vote_refuses_what_would_send_its_kernel_astray():
+    # settle_edges is called on its own too: a picture of another size, a label past the palette or a sigma of 0 must
+    # not reach the kernel, which reads where they send it.
+    labels = halves()
+    paints = gray_bgr(*EVEN_PAINTS)
+    with pytest.raises(ValueError, match="size"):
+        texture.settle_edges(flat(EVEN)[:, :-1], labels, paints, SIGMA)
+    with pytest.raises(ValueError, match="size"):
+        texture.settle_edges(flat(EVEN)[:, :, :2], labels, paints, SIGMA)
+    with pytest.raises(ValueError, match="size"):
+        texture.settle_edges(flat(EVEN)[0], labels[0], paints, SIGMA)
+    with pytest.raises(ValueError, match="palette has 2"):
+        texture.settle_edges(flat(EVEN), np.where(labels == 1, 2, 0).astype(np.int32), paints, SIGMA)
+    for sigma in (0.0, -1.0, float("nan")):
+        with pytest.raises(ValueError, match="sigma"):
+            texture.settle_edges(flat(EVEN), labels, paints, sigma)
+    # Pixels without a color are allowed, and a picture of floats is read as 8-bit.
+    labels[:, :3] = -1
+    expected = vote(flat(EVEN), labels)
+    np.testing.assert_array_equal(texture.settle_edges(flat(EVEN).astype(np.float32), labels, paints, SIGMA), expected)
+
+
 def test_warming_up_compiles_the_vote_as_the_pipeline_calls_it():
     kernels.warm_up()
     compiled = len(kernels.run_ends.signatures), len(kernels.vote_rows.signatures)

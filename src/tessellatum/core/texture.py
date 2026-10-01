@@ -115,7 +115,20 @@ def settle_edges(image_bgr: np.ndarray, labels: np.ndarray, palette_bgr: np.ndar
     pixel keeps its color if it is among the best, else takes the lowest.
     Every pixel votes on the page as it was, so the result does not depend on
     the order they are taken in. Returns a new array.
+
+    Raises ValueError if the picture is not the map's size, if a label is
+    past the palette, or if ``sigma_px`` is not positive.
     """
+    labels = np.asarray(labels)
+    image_bgr = np.ascontiguousarray(image_bgr, dtype=np.uint8)
+    palette = np.ascontiguousarray(palette_bgr, dtype=np.uint8).reshape(-1, 3)
+    # The kernel reads where these arrays send it, unchecked: they are checked here.
+    if labels.ndim != 2 or image_bgr.shape != labels.shape + (3,):
+        raise ValueError(f"picture {image_bgr.shape} must be the map's size, {labels.shape}")
+    if labels.size and int(labels.max()) >= len(palette):
+        raise ValueError(f"label {int(labels.max())} is on the map, the palette has {len(palette)}")
+    if not sigma_px > 0:
+        raise ValueError(f"sigma must be positive, not {sigma_px}")
     height, width = labels.shape
     flat = np.ascontiguousarray(labels, dtype=np.int32).reshape(-1)
     radius = max(1, int(np.ceil(_CUTOFF_SIGMAS * sigma_px)))
@@ -139,8 +152,7 @@ def settle_edges(image_bgr: np.ndarray, labels: np.ndarray, palette_bgr: np.ndar
     ends = np.empty(height * width, dtype=np.int32)
     kernels.run_ends(flat, height, width, ends)
     pixels_lab = np.ascontiguousarray(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2LAB)).reshape(-1, 3)
-    palette = np.ascontiguousarray(palette_bgr, dtype=np.uint8).reshape(-1, 1, 3)
-    colors_lab = cv2.cvtColor(palette, cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(np.float64)
+    colors_lab = cv2.cvtColor(palette.reshape(-1, 1, 3), cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(np.float64)
     out = np.empty(height * width, dtype=np.int32)
 
     def vote(y_start: int, y_stop: int) -> None:

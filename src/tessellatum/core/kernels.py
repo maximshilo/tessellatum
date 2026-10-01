@@ -964,8 +964,9 @@ def vote_rows(
     lowest.
 
     Nothing is checked: every label must be below K, and the arrays as long as
-    the page. Rows can be voted in any order and from several threads: a vote
-    reads only ``labels``, never ``out_labels``.
+    the page (``texture.settle_edges`` sees to it). Rows can be voted in any
+    order and from several threads: a vote reads only ``labels``, never
+    ``out_labels``.
     """
     count = colors_lab.shape[0]
     share = np.zeros(count, np.float64)
