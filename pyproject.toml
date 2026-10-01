@@ -1,6 +1,6 @@
 [project]
 name = "tessellatum"
-version = "0.1.39"
+version = "0.1.40"
 description = "Generate paint-by-numbers style coloring pages from any image."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -10,16 +10,17 @@ dependencies = [
     "numpy>=1.26",
     "Pillow>=10.2",
     "numba>=0.61",
+    # Runs the bundled text detection network (core/text.py). From 1.20: 1.30 needs Python 3.11, and 3.10 is supported.
+    "onnxruntime>=1.20",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pyinstaller>=6.4",
-    # OCR for the benchmark's text metrics. rapidocr ships its models in the wheel and runs offline; it is pinned
-    # because those models are the yardstick.
+    # OCR for the benchmark's text metrics. rapidocr ships its models in the wheel and runs offline, on onnxruntime (a
+    # dependency of the app itself); it is pinned because those models are the yardstick.
     "rapidocr==3.9.2",
-    "onnxruntime>=1.20",
 ]
 
 [project.scripts]

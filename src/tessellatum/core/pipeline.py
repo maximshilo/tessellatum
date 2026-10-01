@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from tessellatum.core import faces, ink, kernels, marks, subject, tones
+from tessellatum.core import faces, ink, kernels, marks, subject, text, tones
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import render_legend
 from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, MIN_REGION_AREA_MM2, print_scale
@@ -118,6 +118,9 @@ class PageAnalysis:
     # The faces in the picture (see ``faces``), found on it at preview size and given in the page's pixels. On a picture
     # drawn from its colors, they are ``detail``; line art's page doesn't use them.
     faces: list[faces.Face]
+    # The lines of text in the picture (see ``text``), found on it once and given in the page's pixels, on every picture;
+    # nothing on the page uses them yet.
+    text: list[text.TextLine]
 
 
 @dataclass
@@ -262,6 +265,21 @@ def detect_subject(image_bgr: np.ndarray, resized: np.ndarray) -> np.ndarray:
     return subject.mask(probability, resized.shape[1::-1])
 
 
+def detect_text(image_bgr: np.ndarray, resized: np.ndarray) -> list[text.TextLine]:
+    """The lines of text in the picture, in the pixels of ``resized``, its page (see ``text``).
+
+    They are found once per picture -- on it at preview size, and where that
+    finds text, again at twice that size from the source's own pixels -- so a
+    preview and an export always agree; that is cached per image object, as the
+    other stages are.
+    """
+    picture = _cache.get_or_compute(
+        image_bgr, ("resize", PREVIEW_LONG_EDGE), lambda: resize_to_long_edge(image_bgr, PREVIEW_LONG_EDGE)
+    )
+    found = _cache.get_or_compute(image_bgr, ("text",), lambda: text.find_text(picture, image_bgr))
+    return text.scaled(found, picture.shape[1::-1], resized.shape[1::-1])
+
+
 def warm_up() -> None:
     """Pay one-time start-up costs before the first real generation.
 
@@ -293,8 +311,9 @@ def generate(
     True, ``PipelineCancelled`` is raised and no more work is done.
     ``collect_analysis`` also returns what the page is made of in
     ``GeneratedPage.analysis`` (see ``PageAnalysis``), for benchmarks and
-    tests, with the faces in the picture, which on line art are looked for
-    only then. The page itself is the same either way. ``style`` says how the page
+    tests, with the faces in the picture (on line art, looked for only then)
+    and the lines of text in it (looked for only then: nothing on the page
+    uses them yet). The page itself is the same either way. ``style`` says how the page
     is drawn -- line width and the tone of the ink (see ``PageStyle``); it
     changes nothing about which regions the page has.
 
@@ -485,6 +504,7 @@ def generate(
             printed_ink=printed_ink,
             ink_gray=ink_gray,
             faces=detect_faces(image_bgr, resized),
+            text=detect_text(image_bgr, resized),
         )
 
     return GeneratedPage(
