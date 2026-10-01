@@ -301,6 +301,10 @@ def test_case_runner_scores_the_current_pipeline_from_its_analysis(tmp_path):
         assert case["ocr"].startswith("rapidocr ")
         assert [(block["string"], sorted(block["read"])) for block in case["text_blocks"]] == [("INK", ["page", "painting", "source"])]
         assert case["quality"]["text_cer_source"] is not None
+    # The pipeline looks for text, and finds none: none of the empty box is found, and with a box no line is stray.
+    assert case["quality"]["text_lines_found"] == 0 and case["found_text"] == []
+    assert case["quality"]["text_found_recall"] == 0.0 and case["quality"]["stray_text_lines"] is None
+    assert case["text_matches"] == [{"string": "INK", "cover": 0.0}]
     assert (out / "painted.png").is_file() and (out / "regions.npz").is_file()
     # The drawing has no gradient areas, and no subject outlined.
     assert case["quality"]["gradient_sliver_fraction"] is None and case["quality"]["gradient_sliver_fraction_max"] is None

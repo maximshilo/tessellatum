@@ -173,7 +173,7 @@ def test_a_core_is_grown_out_to_its_line_and_given_in_the_picture_s_pixels(monke
     monkeypatch.setattr(text, "_probability", answer)
     lines = text._lines(np.zeros((640, 960, 3), dtype=np.uint8), (1920, 1280))
     assert len(lines) == 1
-    grow = 40 * 8 * text.UNCLIP / (2 * (40 + 8))
+    grow = 40 * 8 * 2.0 / (2 * (40 + 8))  # UNCLIP = 2.0 (D-049)
     height, length = lines[0].sides
     assert height == pytest.approx(2 * (8 + 2 * grow), abs=1e-3)
     assert length == pytest.approx(2 * (40 + 2 * grow), abs=1e-3)
@@ -182,16 +182,78 @@ def test_a_core_is_grown_out_to_its_line_and_given_in_the_picture_s_pixels(monke
     assert lines[0].score == pytest.approx(0.9 * 40 * 8 / (41 * 9), abs=1e-6)  # the box filled as PaddleOCR fills it
 
 
+def test_the_network_is_fed_the_picture_as_paddleocr_feeds_it(monkeypatch):
+    # BGR, scaled to [0, 1] and standardized by ImageNet's statistics channel by channel, as the model's own
+    # inference.yml has it (D-049); not RapidOCR's (x - 0.5) / 0.5.
+    seen = []
+
+    class Session:
+        def get_inputs(self):
+            return [type("Input", (), {"name": "x"})()]
+
+        def run(self, outputs, feed):
+            seen.append(feed["x"])
+            return [np.zeros((1, 1) + feed["x"].shape[2:], dtype=np.float32)]
+
+    monkeypatch.setattr(text, "_session", Session())
+    rng = np.random.default_rng(3)
+    view = rng.integers(0, 256, (64, 96, 3), dtype=np.uint8)
+    text._probability(view)
+    expected = (view.astype(np.float64) / 255 - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]
+    np.testing.assert_allclose(seen[0][0].transpose(1, 2, 0), expected, atol=1e-5)
+    assert seen[0].dtype == np.float32 and seen[0].shape == (1, 3, 64, 96)
+
+
+def test_the_session_gives_its_memory_back_and_uses_the_pipeline_s_threads(monkeypatch):
+    # ONNX Runtime's arena would keep ~1 GB after a few pictures of different sizes (D-049).
+    import onnxruntime
+
+    from tessellatum.core import parallel
+
+    made = []
+    real = onnxruntime.InferenceSession
+
+    def session(model, options, providers):
+        made.append(options)
+        return real(model, options, providers=providers)
+
+    monkeypatch.setattr(onnxruntime, "InferenceSession", session)
+    monkeypatch.setattr(text, "_session", None)
+    monkeypatch.setenv("TESSELLATUM_THREADS", "3")
+    text._probability(np.zeros((32, 32, 3), dtype=np.uint8))
+    (options,) = made
+    assert options.enable_cpu_mem_arena is False
+    assert options.intra_op_num_threads == parallel.worker_count() == 3
+
+
+def test_the_core_is_where_the_map_is_above_its_threshold(monkeypatch):
+    # A faint ring at 0.25 round a strong core is part of it at THRESHOLD = 0.2: the core is 12 x 44, not 8 x 40.
+    def answer(view):
+        probability = np.zeros((640, 960), dtype=np.float32)
+        probability[298:310, 98:142] = 0.25
+        probability[300:308, 100:140] = 0.9
+        return probability
+
+    monkeypatch.setattr(text, "_probability", answer)
+    (line,) = text._lines(np.zeros((640, 960, 3), dtype=np.uint8), (960, 640))
+    grow = 44 * 12 * 2.0 / (2 * (44 + 12))
+    assert line.sides == pytest.approx((12 + 2 * grow, 44 + 2 * grow), abs=1e-3)
+
+
 @pytest.mark.parametrize(
     "core, value, kept",
     [
         ((slice(300, 308), slice(100, 140)), 0.9, True),
+        ((slice(300, 308), slice(100, 140)), 0.55, True),  # a middling core: its mean probability 0.48, over MIN_SCORE
         ((slice(300, 308), slice(100, 140)), 0.3, False),  # a faint core: its mean probability under MIN_SCORE
         ((slice(300, 302), slice(100, 140)), 0.9, False),  # a core 2 px tall is noise
         ((slice(300, 312), slice(100, 112)), 0.9, False),  # as tall as it is long, if short enough: not a line
-        ((slice(200, 290), slice(100, 600)), 0.9, False),  # a line over MAX_BOX_HEIGHT_MM tall: shapes to paint
+        ((slice(300, 312), slice(100, 120)), 0.9, False),  # grown to 27 x 35, 1.3 times as long as tall: not a line
+        ((slice(300, 314), slice(100, 500)), 0.9, True),  # grown to 41 px, 11.8 mm on paper: a line
+        ((slice(300, 320), slice(100, 500)), 0.9, False),  # grown to 58 px, 16.8 mm: over MAX_BOX_HEIGHT_MM
+        ((slice(200, 290), slice(100, 600)), 0.9, False),  # far over it: shapes to paint
     ],
-    ids=["line", "faint", "thin", "square", "tall"],
+    ids=["line", "middling", "faint", "thin", "square", "stubby", "under-15mm", "over-15mm", "tall"],
 )
 def test_only_cores_that_look_like_a_line_of_text_are_kept(monkeypatch, core, value, kept):
     def answer(view):
@@ -230,11 +292,13 @@ def test_the_mask_holds_the_pixels_whose_middle_lies_in_a_box():
         inside = np.all([s >= -1e-9 for s in sides], axis=0) | np.all([s <= 1e-9 for s in sides], axis=0)
         mismatched = got != inside
         assert mismatched.sum() <= 1  # a middle within rounding of an edge may go either way
-    # A box of whole pixels covers exactly the pixels it spans, and one off the page none.
-    box = text.TextLine(quad=((2.0, 3.0), (6.0, 3.0), (6.0, 8.0), (2.0, 8.0)), score=1.0)
+    # A box of whole pixels covers exactly the pixels it spans, whichever way round its corners go, and one off the page
+    # none.
+    corners = ((2.0, 3.0), (6.0, 3.0), (6.0, 8.0), (2.0, 8.0))
     expected = np.zeros((10, 10), dtype=bool)
     expected[3:8, 2:6] = True
-    np.testing.assert_array_equal(text.mask([box], (10, 10)), expected)
+    for quad in (corners, corners[::-1]):
+        np.testing.assert_array_equal(text.mask([text.TextLine(quad=quad, score=1.0)], (10, 10)), expected)
     off = text.TextLine(quad=((-9.0, -9.0), (-2.0, -9.0), (-2.0, -2.0), (-9.0, -2.0)), score=1.0)
     assert not text.mask([off], (10, 10)).any()
 
@@ -283,7 +347,7 @@ def test_text_is_found_once_per_picture_for_the_analysis_only(monkeypatch):
     real = text.find_text
 
     def counting(picture, source=None):
-        calls.append(picture.shape)
+        calls.append((picture.shape, None if source is None else source.shape))
         return real(picture, source)
 
     monkeypatch.setattr(text, "find_text", counting)
@@ -293,7 +357,7 @@ def test_text_is_found_once_per_picture_for_the_analysis_only(monkeypatch):
     assert calls == []
     preview = pipeline.generate(picture, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     export = pipeline.generate(picture, params, pipeline.EXPORT_LONG_EDGE, collect_analysis=True)
-    assert calls == [(733, 1100, 3)]  # once, on the picture at preview size
+    assert calls == [((733, 1100, 3), (933, 1400, 3))]  # once, on the picture at preview size, with its source
     assert plain.page.tobytes() == preview.page.tobytes()
     assert len(preview.analysis.text) == len(WORDS)
     expected = text.scaled(preview.analysis.text, preview.page.size, export.page.size)
@@ -322,6 +386,21 @@ def test_text_found_recall_is_the_share_of_the_annotated_boxes_in_text_found():
     assert match["stray_text_lines"] is None
     # Overlapping boxes count their shared pixels once.
     assert bm.found_text_match(found, [(0, 0, 10, 10), (0, 0, 20, 10)], shape)["text_found_recall"] == 0.5
+    # A line's box turned to it covers what it covers, not its bounding box: a diamond 10 across holds half of it.
+    diamond = [((10, 5), (15, 10), (10, 15), (5, 10))]
+    assert bm.found_text_match(diamond, [(5, 5, 10, 10)], shape)["text_found_recall"] == pytest.approx(0.5, abs=0.05)
+
+
+def test_the_report_holds_text_found_recall_to_0_9_and_stray_lines_to_none():
+    import bench_report
+
+    recall, stray = bench_report.METRICS_BY_KEY["text_found_recall"], bench_report.METRICS_BY_KEY["stray_text_lines"]
+    assert bench_report.misses_target(recall, {"text_found_recall": 0.899}) is True
+    assert bench_report.misses_target(recall, {"text_found_recall": 0.9}) is False
+    assert bench_report.misses_target(recall, {"text_found_recall": None}) is None
+    assert bench_report.misses_target(stray, {"stray_text_lines": 1}) is True
+    assert bench_report.misses_target(stray, {"stray_text_lines": 0}) is False
+    assert recall.job is None and stray.job is None  # the finding itself, outside the scorecard
 
 
 def test_lines_found_without_annotated_text_are_stray():

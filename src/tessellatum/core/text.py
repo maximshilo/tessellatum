@@ -166,6 +166,9 @@ def _probability(view: np.ndarray) -> np.ndarray:
 
             options = onnxruntime.SessionOptions()
             options.intra_op_num_threads = parallel.worker_count()
+            # Memory goes back after each look rather than staying in ONNX Runtime's arena, which grows to ~1 GB over
+            # pictures of a few sizes and keeps it; it costs ~10% of the time.
+            options.enable_cpu_mem_arena = False
             options.log_severity_level = 3  # errors only
             _session = onnxruntime.InferenceSession(
                 (RESOURCES_DIR / MODEL).read_bytes(), options, providers=["CPUExecutionProvider"]
