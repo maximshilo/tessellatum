@@ -301,6 +301,11 @@ def test_the_mask_holds_the_pixels_whose_middle_lies_in_a_box():
         np.testing.assert_array_equal(text.mask([text.TextLine(quad=quad, score=1.0)], (10, 10)), expected)
     off = text.TextLine(quad=((-9.0, -9.0), (-2.0, -9.0), (-2.0, -2.0), (-9.0, -2.0)), score=1.0)
     assert not text.mask([off], (10, 10)).any()
+    # A middle on a box's edge is in it: a box through the middles of pixels 2 and 6 holds both.
+    edges = text.TextLine(quad=((2.5, 3.5), (6.5, 3.5), (6.5, 7.5), (2.5, 7.5)), score=1.0)
+    expected = np.zeros((10, 10), dtype=bool)
+    expected[3:8, 2:7] = True
+    np.testing.assert_array_equal(text.mask([edges], (10, 10)), expected)
 
 
 def test_two_threads_find_what_one_finds():
@@ -411,10 +416,11 @@ def test_lines_found_without_annotated_text_are_stray():
 
 
 def test_the_case_runner_scores_the_text_found_and_lists_it():
-    line = _rect_line((15, 5), (20, 6))
+    # A page 40 wide and 20 tall; the line covers the left half of the block, which reaches the page's right edge.
+    line = _rect_line((10, 5), (20, 10))
     page = bench_case.PageData(
         source="analysis",
-        region_id_map=np.zeros((20, 30), dtype=np.int32),
+        region_id_map=np.zeros((20, 40), dtype=np.int32),
         region_color=np.zeros(1, dtype=np.int32),
         palette_bgr=np.zeros((1, 3), dtype=np.uint8),
         legend_bgr=np.zeros((1, 3), dtype=np.uint8),
@@ -429,11 +435,11 @@ def test_the_case_runner_scores_the_text_found_and_lists_it():
         leader_labels=0,
         text=[line],
     )
-    block = bench_manifest.TextBlock(box=bench_manifest.Box(5, 2, 20, 6), string="HELLO")
+    block = bench_manifest.TextBlock(box=bench_manifest.Box(0, 0, 40, 10), string="HELLO")
     quality, found, matches = bench_case.found_text_scores(page, [block])
-    assert quality == {"text_lines_found": 1, "text_found_recall": 1.0, "stray_text_lines": None}
+    assert quality == {"text_lines_found": 1, "text_found_recall": 0.5, "stray_text_lines": None}
     assert found == [{"quad": [list(p) for p in line.quad], "score": 0.9}]
-    assert matches == [{"string": "HELLO", "cover": 1.0}]
+    assert matches == [{"string": "HELLO", "cover": 0.5}]
     quality, _, matches = bench_case.found_text_scores(page, [])
     assert quality == {"text_lines_found": 1, "text_found_recall": None, "stray_text_lines": 1} and matches is None
     page.text = None  # a version that doesn't look for text
