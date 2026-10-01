@@ -35,8 +35,10 @@ images x presets x output sizes:
   image, so caching inside the pipeline can't turn repeats into cache hits.
 - Per-stage timings come from wrapping the stage functions that
   `tessellatum.core.pipeline.generate` calls: `resize_to_long_edge`,
-  `detect_ink` (from 0.1.28), `quantize`, `build_regions`, `extract_regions`,
-  `render_page`, `render_legend`, and `detect_faces` (from 0.1.33; until 0.1.33 it ran
+  `detect_ink` (from 0.1.28), `quantize`, `build_regions`, `smooth_regions` (from
+  0.1.37: the vote that settles the regions' edges on every picture but line art, and
+  the region stage run again on its result), `extract_regions`, `render_page`,
+  `render_legend`, and `detect_faces` (from 0.1.33; until 0.1.33 it ran
   only when the analysis below is collected, so no timed run reached it; from 0.1.34
   it is on the page's path for every picture but line art). Keep those names
   if you restructure the pipeline, or update `PROBED_STAGES` in `bench_case.py`.

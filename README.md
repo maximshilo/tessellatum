@@ -52,19 +52,31 @@ run the binary from a terminal to see the error.
    region whose paint reaches it first, and a region thinner than that
    everywhere disappears into its neighbors, so the page asks for no stroke
    too fine to make.
-4. **Draw**: the boundaries between regions are traced from the region map
+4. **Settle**: where a photograph is textured — fur, foliage, stone — its
+   colors alternate faster than a brush is wide, and the edges between its
+   regions come out ragged, with bumps and notches the brush can't paint
+   into. So every pixel near an edge votes: it takes the color that holds the
+   most of the page around it, weighted over about a brush's reach (a
+   Gaussian of a third of the brush's width, 1 mm), with each color counting
+   less the further it is from the pixel's own color in the picture (e-fold
+   per 10 L\*a\*b\* units, the palette's margin). Where the picture has an
+   edge of its own the pixels on each side suit their own color far better,
+   and the edge stays on it; in fur, where they suit both alike, the edge runs
+   smooth. The regions are then rebuilt by steps 2 and 3, so everything they
+   promise still holds. See `src/tessellatum/core/texture.py`.
+5. **Draw**: the boundaries between regions are traced from the region map
    and each one is drawn once, as a single line its two regions share, so no
    boundary is doubled or left out. Each line is then smoothed along its
    length to take the pixel grid's staircase off it, but never by more than a
    pixel, so it stays on the boundary it draws and the page still closes.
-5. **Ink**: the lines go down as a round pen 0.3 mm across — a size on paper,
+6. **Ink**: the lines go down as a round pen 0.3 mm across — a size on paper,
    so a preview and an export of one image print the same line — laid on a
    grid four times finer than the page and averaged back down, which
    anti-aliases it and lets it be thinner than a pixel. Lines and numbers
    print gray rather than black, so they vanish under the paint meant to
    cover them and a number is not mistaken for writing in the picture. Width
    and tone are `PageStyle` in `src/tessellatum/core/render.py`.
-6. **Number**: every region gets its number (matched to a legend swatch),
+7. **Number**: every region gets its number (matched to a legend swatch),
    never smaller than 6 pt on paper (nor than 10 px), and never where any of
    a line's ink falls, however faint. It goes at the region's most interior
    point if it fits there; otherwise wherever in the region it keeps farthest
@@ -81,8 +93,11 @@ much smoothing is applied before quantizing — see
 Custom. So a preview and an export of one image get regions of the same
 size, and a long, narrow picture, which prints smaller, gets fewer regions
 rather than smaller ones. Custom stops at 30 mm²: with smaller regions, a
-detailed photograph at the finest setting gets so many that a 3 mm brush
-can't reach into their corners over more than 1% of an A4 page.
+detailed page at the finest setting gets so many that a 3 mm brush can't reach
+into their corners over more than 1% of an A4 page, or, on a scanned drawing,
+that the numbers of its hatched areas find no room off its lines. (Settling a
+photograph's edges, step 4, would keep it under 1% down to 15 mm²; the scanned
+drawing is what holds the floor.)
 The brush width comes from the printed page instead, along with the smallest
 region any setting can keep and how wide a line prints — see
 `src/tessellatum/core/print_size.py`.
@@ -193,6 +208,9 @@ Previews are meant to be quick enough to tweak difficulty interactively:
   pockets as paper, giving every white area its own region — which search
   every area at once, in one pass over the page, rather than one area at a
   time. Their output is pixel-identical to the NumPy code they replaced.
+- The vote that settles a photograph's edges looks only at the pixels near
+  an edge, and walks each row of its window run by run rather than pixel by
+  pixel, in parallel over the page's rows.
 - Resizing and quantization results are cached per image, so changing only
   the region size skips straight to the region stages.
 - The compiled kernels are built on the very first launch (a few seconds, in

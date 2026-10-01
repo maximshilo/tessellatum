@@ -57,14 +57,16 @@ PRESETS: dict[str, DifficultyParams] = {
 # Bounds used by the "Custom" UI sliders.
 CUSTOM_COLORS_RANGE = (4, 40)
 # A round brush can't reach into a region's corners, and every region has
-# some: with the smallest regions under 30 mm², a detailed photograph gets so
-# many that more than 1% of an A4 page is paint the 3 mm brush can't put down
-# without crossing a line. Of 10, 15, 20, 25 and 30 mm², only 30 keeps every
+# some: with the smallest regions under 30 mm², a detailed photograph got so
+# many that more than 1% of an A4 page was paint the 3 mm brush can't put down
+# without crossing a line. Of 10, 15, 20, 25 and 30 mm², only 30 kept every
 # benchmark page, preview or export, under 1% at the Custom sliders' finest
-# setting (25 leaves one at 1.01%). That bounds the finest setting and the
-# presets, not every mix of the sliders: slivers don't simply fall as the
-# settings coarsen, and at 30 mm² a few other mixes (fewer colors, or a little
-# smoothing) leave the most textured photograph at 1.03-1.10%.
+# setting (25 left one at 1.01%). Since a photograph's edges are settled (see
+# ``texture``) it keeps under 1% down to 15 mm² (0.94% at worst), and the
+# mixes of the sliders that put the most textured one over 1% at 30 mm² (fewer
+# colors, or a little smoothing) are down to 0.79% at worst. What holds the
+# floor now is line art: at 20 mm² the scanned postcard's hatched areas get
+# numbers with no room off its lines.
 CUSTOM_MIN_REGION_AREA_MM2_RANGE = (30.0, 500.0)
 CUSTOM_BLUR_RANGE = (0.0, 12.0)
 
