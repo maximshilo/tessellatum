@@ -231,6 +231,87 @@ def test_sliver_mask_matches_trying_the_brush_at_every_pixel(seed):
         np.testing.assert_array_equal(bm.sliver_mask(region_id_map, width), _brute_force_slivers(region_id_map, width))
 
 
+def test_gradient_slivers_are_the_share_of_the_gradient_areas_in_slivers():
+    slivers = np.zeros((10, 20), dtype=bool)
+    slivers[:, :2] = True  # 20 sliver pixels, in columns 0 and 1
+
+    # Columns 0-3 hold all 20 of them in 40 pixels, columns 10-19 none in 100: 20 of 140 over both, half in the first.
+    assert bm.gradient_slivers(slivers, [(0, 0, 4, 10), (10, 0, 10, 10)]) == {
+        "gradient_sliver_fraction": pytest.approx(20 / 140),
+        "gradient_sliver_fraction_max": 0.5,
+    }
+    # A pixel two boxes hold counts once over all of them, and in each box it is in.
+    assert bm.gradient_slivers(slivers, [(0, 0, 4, 10), (0, 0, 2, 10)]) == {
+        "gradient_sliver_fraction": 0.5,
+        "gradient_sliver_fraction_max": 1.0,
+    }
+    # A box holds the pixels whose middle it holds: [0.6, 1.6) holds column 1 (1.5), [1.6, 2.6) column 2 (2.5).
+    assert bm.gradient_slivers(slivers, [(0.6, 0.0, 1.0, 10.0)])["gradient_sliver_fraction"] == 1.0
+    assert bm.gradient_slivers(slivers, [(1.6, 0.0, 1.0, 10.0)])["gradient_sliver_fraction"] == 0.0
+    # A box off the page holds nothing, and does not count towards the largest share.
+    assert bm.gradient_slivers(slivers, [(0, 0, 4, 10), (30, 0, 5, 5)])["gradient_sliver_fraction_max"] == 0.5
+    none = {"gradient_sliver_fraction": None, "gradient_sliver_fraction_max": None}
+    assert bm.gradient_slivers(slivers, []) == none
+    assert bm.gradient_slivers(slivers, [(30, 0, 5, 5)]) == none
+
+
+def _strip(rows: int, length: int, top: int = 20) -> np.ndarray:
+    """A strip ``rows`` x ``length`` (region 1) lying in a 60 x 100 page of region 0, 10 px from its left edge."""
+    page = np.zeros((60, 100), dtype=np.int32)
+    page[top : top + rows, 10 : 10 + length] = 1
+    return page
+
+
+def test_a_band_is_a_region_no_wide_brush_fits_in_and_long_for_its_width():
+    # The middle row of a 5-row strip lies 3 px from the rows outside it: a brush fits up to 6 px wide, as in
+    # sliver_mask, where a brush covers the pixels within half its width of its middle.
+    strip = _strip(5, 80)
+    assert bm.band_regions(strip, 6.0) == {"band_regions": 1, "band_area_fraction": 400 / 6000}
+    assert bm.band_regions(strip, 5.99) == {"band_regions": 0, "band_area_fraction": 0.0}
+    assert bm.sliver_mask(strip, 6.0)[strip == 1].all() and not bm.sliver_mask(strip, 5.99)[strip == 1].all()
+    # Four times as long as it is wide: an area of at least 4 x 6² = 144 px, 29 columns of 5 and not 28.
+    assert bm.band_regions(_strip(5, 29), 6.0)["band_regions"] == 1
+    assert bm.band_regions(_strip(5, 28), 6.0)["band_regions"] == 0
+    assert bm.band_regions(_strip(5, 28), 6.0, min_elongation=3.8)["band_regions"] == 1  # 140 >= 3.8 x 36
+    # The page around the strip is 36 px wide below it (rows 25-59 are 18 px from row 24 and from the row off the
+    # page), and long enough for that: a band too from 36 px on.
+    assert bm.band_regions(strip, 35.9)["band_regions"] == 1
+    assert bm.band_regions(strip, 36.0) == {"band_regions": 2, "band_area_fraction": 1.0}
+
+
+def test_a_band_s_width_runs_to_the_page_edge_and_to_pixels_in_no_region():
+    # A 3-row strip along the top edge: its middle row is 2 px from the row off the page and from the row below.
+    top = _strip(3, 80, top=0)
+    assert bm.band_regions(top, 4.0)["band_regions"] == 1
+    assert bm.band_regions(top, 3.99)["band_regions"] == 0
+    # The same strip walled by pixels in no region rather than by another region.
+    walled = np.full((60, 100), -1, dtype=np.int32)
+    walled[20:23, 10:90] = 1
+    assert bm.band_regions(walled, 4.0) == {"band_regions": 1, "band_area_fraction": 240 / 6000}
+    assert bm.band_regions(walled, 3.99)["band_regions"] == 0
+    assert bm.band_regions(np.full((5, 5), -1, dtype=np.int32), 4.0) == {"band_regions": 0, "band_area_fraction": 0.0}
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_a_region_is_narrow_for_bands_where_the_brush_paints_none_of_it(seed):
+    # With no length asked of it, a band is a region all slivers to a brush that wide: the brush sliver_mask tries.
+    rng = np.random.default_rng(seed)
+    field = cv2.GaussianBlur(rng.random((30, 40)).astype(np.float32), (0, 0), 1.5)
+    levels = np.digitize(field, np.quantile(field, [0.2, 0.4, 0.6, 0.8])).astype(np.int32)
+    count, region_id_map = 0, np.full(levels.shape, -1, dtype=np.int32)
+    for level in range(5):  # each connected patch of a level is a region of its own
+        n, labels = cv2.connectedComponents((levels == level).astype(np.uint8), connectivity=4)
+        region_id_map[labels > 0] = labels[labels > 0] - 1 + count
+        count += n - 1
+    region_id_map[rng.random(region_id_map.shape) < 0.02] = -1  # pixels in no region
+
+    for width in (3.0, 5.0, rng.uniform(2.0, 9.0)):
+        slivers = bm.sliver_mask(region_id_map, width)
+        ids = region_id_map[region_id_map >= 0]
+        all_sliver = sum(slivers[region_id_map == r].all() for r in np.unique(ids))
+        assert bm.band_regions(region_id_map, width, min_elongation=0)["band_regions"] == all_sliver
+
+
 def test_compactness_of_rectangles_uses_the_crofton_perimeter():
     page = np.zeros((20, 30), dtype=np.int32)
     page[2:15, 2:15] = 1  # a 13 x 13 square
