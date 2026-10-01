@@ -38,9 +38,10 @@ images x presets x output sizes:
   `detect_ink` (from 0.1.28), `quantize`, `build_regions`, `smooth_regions` (from
   0.1.37: the vote that settles the regions' edges on every picture but line art, and
   the region stage run again on its result), `extract_regions`, `render_page`,
-  `render_legend`, and `detect_faces` (from 0.1.33; until 0.1.33 it ran
+  `render_legend`, `detect_faces` (from 0.1.33; until 0.1.33 it ran
   only when the analysis below is collected, so no timed run reached it; from 0.1.34
-  it is on the page's path for every picture but line art). Keep those names
+  it is on the page's path for every picture but line art) and `detect_subject`
+  (from 0.1.39, on the page's path for every picture but line art). Keep those names
   if you restructure the pipeline, or update `PROBED_STAGES` in `bench_case.py`.
 - Quality metrics read what the page is made of from the pipeline itself.
   `generate(..., collect_analysis=True)` returns it as `GeneratedPage.analysis`
@@ -60,9 +61,11 @@ images x presets x output sizes:
     them) and the gray it prints in;
   - the faces the pipeline finds in the picture (from 0.1.33), with each one's
     box on the page, score and detector;
+  - the picture's subject, as the pipeline finds it (from 0.1.39, on a picture
+    that isn't line art);
   - where a region may be half the difficulty's smallest, each of its pixels
     there counting twice towards it (from 0.1.34: the faces found, on a picture
-    that isn't line art).
+    that isn't line art; from 0.1.39 the subject too).
 
   The timed runs don't collect it, as in the app. One more run after them
   does, and its page must match theirs for the case to count as
@@ -131,6 +134,7 @@ with `x, y` its top-left corner.
       "ink_colors": ["#000000"],
       "exact_colors": true,
       "areas": [{"kind": "gradient", "box": [0, 0, 997, 200]}],
+      "subjects": [{"outline": [[120, 250], [870, 250], [900, 1600], [100, 1600]]}],
       "notes": "free text"
     }
   }
@@ -173,6 +177,18 @@ primary one: the report's per-case tables list the image under it.
 - **`areas`** are boxes lying inside a gradient or a textured part of the
   image. Gradient slivers score the gradient areas; no metric reads the
   texture areas yet.
+- **`subjects`** outline what the picture is of -- a person, an animal, a
+  building -- as polygons of `[x, y]` points (at least 3, integers, on or
+  inside the image's edge; a pixel's corner at whole numbers). A pixel is the
+  subject's when its middle lies inside an outline by the even-odd rule, on a
+  left or top edge included, as a box holds its left and top edges; the rest of
+  the page is background. Only pictures with one clear subject have them: the
+  Vermeer, the cat, the lion (its mane too; its background is the ground), the
+  palace in Palermo (to the tops of the cars parked before it) and the Swiss
+  castle (its buildings and the trees between them). The sunset and Times
+  Square have no one subject, and line art's background is bare paper. The
+  outlines were traced by GrabCut from a rough polygon drawn by hand at 800 px,
+  simplified to within 1.5 px there, and checked by eye.
 
 Code reads the manifest with `bench_manifest.load_directory(images_dir)` or
 `bench_manifest.find_image(path)`; `ImageInfo.scaled_to((width, height))`
@@ -264,6 +280,8 @@ whether a brush can paint the bands a gradient breaks into:
 | features lost | annotated eyes, noses and mouths the page no longer shows, as lines along their edges or as a region of their own; `case.json` also records the mean share of their edges drawn, as `feature_edge_recall`, and each feature's scores under `face_features` | lower (0) |
 | labels on features | numbers overlapping a feature box | lower (0) |
 | face regions | regions lying mostly inside the image's face boxes: what a face is painted in; `case.json` also records that count per 100 cm² of face on paper, as `face_regions_per_dm2` | informational |
+| subject ΔE00, subject SSIM | ΔE00 mean and SSIM on the image's subject, inside its outlines (from the manifest's `subjects`) | lower, higher |
+| subject detail | how many times denser the subject's regions are than the background's, per area on paper, each region counted by its share of each; `case.json` also records both, as `subject_density` and `background_density` (regions per 100 cm²), and the ratio as `subject_density_ratio`. A subject in front of a plain wall is many times denser on any page, so it only informs | informational |
 | text CER source / page / painting | character error rate of OCR inside the image's text boxes, against their annotated text: on the source (how much OCR reads there at all), the page and the painting; `case.json` records the OCR engine under `ocr`, and what it read in each block under `text_blocks` | lower (0) |
 | labels on text | numbers overlapping a text box | lower (0) |
 | undersized | regions still below the difficulty's minimum size that another region touches, so that they had a neighbor to merge into; from 0.1.34 a pixel in a face found counts twice towards it, as the pipeline counts it | lower (0) |
@@ -693,6 +711,8 @@ page of 1100 px, and **export**, a page at the image's own size (see
 | face ΔE00 | resembles | 7.8% of the value | 8.2% of the value | – |
 | face SSIM | resembles | 0.016 | 0.038 | – |
 | features lost | resembles | 0.35 | 0.29 | 0 |
+| subject ΔE00 | resembles | 5.4% of the value | 4.1% of the value | – |
+| subject SSIM | resembles | 0.0047 | 0.010 | – |
 | text CER painting | resembles | 0.0096 | 0.017 | – |
 | labeled area | paintable | 2.4 points | 0.64 points | – |
 | unlabeled | paintable | 69 | 18 | 0 |
@@ -722,7 +742,8 @@ page of 1100 px, and **export**, a page at the image's own size (see
 | color pairs < 10 ΔE00 | palette | 3.2 | 3.1 | – |
 | flat colors ΔE00 | palette | 1.2 | 0.81 | ≤ flat colors ΔE00 best + 2.5 on exact colors |
 
-Colors, regions, bands, background regions, face regions, ink, text CER source and flat colors ΔE00 best only inform. The per-case tables add the
+Colors, regions, bands, background regions, face regions, subject detail, ink, text CER source and flat colors ΔE00 best
+only inform. The per-case tables add the
 number of targets each case misses.
 
 The printed-ink metrics' tolerances come from 48 pairs at each size, the four line-art
@@ -733,6 +754,12 @@ Gradient slivers' tolerances come from 24 pairs at each size, the two images wit
 areas at every preset, measured on 0.1.38. They are far tighter than the page's slivers',
 which were measured on T1.8's pages, 12.9% slivers on average and up to 53% (0.27% and
 0.8% at 0.1.37): on the same pairs today the page's slivers move by 0.053 and 0.048 points.
+
+The subject's tolerances come from 60 pairs at each size, the five images with outlined
+subjects at every preset, measured on 0.1.39 (`T5.3-sizes`, `T5.3-export-sizes`). They are
+tighter than the face's because today's pages move less between two sizes than T1.8's, on
+which the face's were measured: on the same pairs the face's ΔE00 moves by 4.6% and 4.8%
+(tolerance 7.8% and 8.2%), and the page's by 4.6% and 3.2% (6.9% and 7.3%).
 
 Three more metrics score the ink lines the pipeline finds (from 0.1.27; ink found itself
 only informs). They score the finding itself rather than a job of the page -- the page's

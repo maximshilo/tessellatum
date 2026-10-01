@@ -229,6 +229,7 @@ def test_drawing_outlines_boxes_without_covering_them_and_adds_swatches(tmp_path
                 text=[{"box": [120, 20, 60, 20], "string": "HI\nTHERE", "rotation": 180}],
                 flat_colors=["#ffffff", "#ff0000"],
                 ink_colors=["#000000"],
+                subjects=[{"outline": [[100, 60], [190, 60], [190, 95], [100, 95]]}],
             )
         }
     )["a.png"]
@@ -240,6 +241,8 @@ def test_drawing_outlines_boxes_without_covering_them_and_adds_swatches(tmp_path
     assert tuple(out[50, 20]) == (128, 128, 128)  # the box's own pixels stay visible
     assert tuple(out[130, 37]) == (255, 0, 0)  # second swatch: flat red
     assert tuple(out[130, 62]) == (0, 0, 0)  # third swatch: the ink color comes after the flat colors
+    assert tuple(out[95, 150]) == draw_annotations.SUBJECT_COLOR  # the subject's outline is drawn along its edge
+    assert tuple(out[80, 150]) == (128, 128, 128)  # and its inside left alone
 
 
 # -- the committed sample images ----------------------------------------------

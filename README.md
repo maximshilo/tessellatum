@@ -189,7 +189,17 @@ wherever painting it in that neighbor's color would put it less than 1 ΔE00 a
 pixel further from the picture, the faintest step first. An eye, a lip or a
 nostril is far from the color beside it, and keeps its region.
 
-A drawing's faces are its ink's, so line art's page doesn't use them.
+A page should also spend its detail on what the picture is of — the person,
+animal or building — rather than the wall, sky or grass behind it. A third small
+network ships with the app for that: U²-Net-p (4.6 MB), which looks at the whole
+picture squeezed to 320 px square and says where its one salient object is. On
+a photograph or a painting, a region inside that subject may be half the
+difficulty's smallest area too, as inside a face; the background is drawn as
+before. A picture with no one thing to look at, such as a crowded street, has
+little or no subject, and its page is the one it would be without. See
+`src/tessellatum/core/subject.py`.
+
+A drawing's faces and subject are its ink's, so line art's page uses neither.
 
 ### Performance
 
