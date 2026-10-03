@@ -95,6 +95,8 @@ def render_page(
     ink: np.ndarray | None = None,
     ink_gray: int = 0,
     clearable: np.ndarray | None = None,
+    lettering: np.ndarray | None = None,
+    lettering_area: np.ndarray | None = None,
 ) -> RenderedPage:
     """Draw the boundaries of ``region_id_map`` + numbers for ``regions`` onto a white ``size`` canvas.
 
@@ -115,6 +117,14 @@ def render_page(
     region with the ink under it, and a line's width round it, left unprinted
     (see ``labels.place_labels``).
 
+    ``lettering`` (HxW uint8, 0 bare paper to 255 solid) is the lettering in
+    the lines of text found, printed in ``ink_gray`` as it looks (see
+    ``text.lettering``), and ``lettering_area`` (HxW bool) the lines' boxes:
+    there the page prints the lettering, and the lines running through,
+    in place of any other ink. No number goes on any of its ink. The part of it
+    inked enough to read as ink is in ``ink`` as well, which ends the lines
+    crossing it and keeps label points off it.
+
     Returns the page, plus what it was built from: the ink the lines and the
     printed ink put on it, the geometry each line was drawn from, where each
     number went, the ink of the leader lines that point a number written
@@ -123,10 +133,17 @@ def render_page(
     inked = ink is not None and bool(ink.any())
     strokes = trace_boundaries(region_id_map, ink=ink if inked else None)
     line_width = style.line_width_px(size)
-    coverage = ink_coverage(size, strokes, line_width)
-    lines_only = coverage
-    if inked:
-        coverage = np.where(ink, np.uint8(PAPER), coverage)
+    lines_only = ink_coverage(size, strokes, line_width)
+    lettered = lettering is not None and lettering_area is not None and bool(lettering_area.any())
+
+    def all_ink(printed: np.ndarray | None) -> np.ndarray:
+        """The ink the page puts down: the lines, the printed ink solid, and inside the lines of text their lettering."""
+        coverage = np.where(printed, np.uint8(PAPER), lines_only) if inked else lines_only
+        if lettered:
+            coverage = np.where(lettering_area, np.maximum(lines_only, lettering), coverage)
+        return coverage
+
+    coverage = all_ink(ink)
 
     spacing = LabelSpacing(
         min_font_size=min_font_size(size),
@@ -141,13 +158,17 @@ def render_page(
     labels = place_labels(regions, seen, coverage == 0, spacing, detail)
     if detail is not None and any(label.clears for label in labels):
         ink = ink & ~cleared(labels, detail, spacing.label_gap_px)
-        coverage = np.where(ink, np.uint8(PAPER), lines_only)
+        coverage = all_ink(ink)
     outlines = Image.fromarray(PAPER - coverage, "L")
     leader_coverage = _leader_coverage(size, labels, line_width, spacing.leader_dot_px)
 
     paper = _paper_under(lines_only, style.line_gray)
+    lines_paper = paper.copy() if lettered else None
     if inked:
         paper[ink] = min(int(ink_gray), PAPER)
+    if lettered:
+        letters = np.minimum(lines_paper, _paper_under(lettering, ink_gray))
+        paper[lettering_area] = letters[lettering_area]
     if any(label.leader is not None for label in labels):  # most pages have none, and white paper changes nothing
         np.minimum(paper, _paper_under(leader_coverage, style.label_gray), out=paper)
     page = Image.fromarray(paper, "L").convert("RGB")

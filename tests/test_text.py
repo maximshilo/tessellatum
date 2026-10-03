@@ -135,13 +135,13 @@ def _core_map(view, rows=(0.4, 0.42), cols=(0.2, 0.6), value=0.9):
     return probability
 
 
-def test_a_picture_without_text_at_preview_size_is_looked_at_once(monkeypatch):
+def test_a_picture_without_text_at_half_its_preview_size_is_looked_at_once(monkeypatch):
     network = _Network(_blank_map)
     monkeypatch.setattr(text, "_probability", network)
     picture = np.full((600, 900, 3), 200, dtype=np.uint8)
     assert text.find_text(picture) == []
     assert len(network.views) == 1
-    assert network.views[0].shape[:2] == (608, 896)  # each side the nearest multiple of 32
+    assert network.views[0].shape[:2] == (288, 448)  # half of each side, to the nearest multiple of 32
 
 
 def test_where_text_is_found_the_second_look_sees_the_source_at_twice_the_preview_s_size(monkeypatch):
@@ -155,7 +155,7 @@ def test_where_text_is_found_the_second_look_sees_the_source_at_twice_the_previe
         network.views.clear()
         assert text.find_text(picture, source)
         assert len(network.views) == 2
-        np.testing.assert_array_equal(network.views[0], cv2.resize(picture, (896, 608)))
+        np.testing.assert_array_equal(network.views[0], cv2.resize(picture, (448, 288)))
         np.testing.assert_array_equal(network.views[1], cv2.resize(source, (1792, 1216), interpolation=interpolation))
     network.views.clear()
     text.find_text(picture)  # without a source, the picture itself
@@ -350,8 +350,9 @@ def test_the_text_of_times_square_is_found_and_the_cat_has_none():
     assert text.find_text(cat) == []
 
 
-def test_text_is_found_once_per_picture_for_the_analysis_only(monkeypatch):
-    # Nothing on the page uses it yet (T6.2 will): the page is the same, and the app doesn't pay for it.
+def test_text_is_found_once_per_picture_and_the_analysis_changes_nothing(monkeypatch):
+    # The page prints the lettering (T6.2), so every page looks for it; a preview, an export and the analysis share one
+    # look at the picture.
     pipeline.clear_cache()
     calls = []
     real = text.find_text
@@ -364,7 +365,6 @@ def test_text_is_found_once_per_picture_for_the_analysis_only(monkeypatch):
     picture, _ = _lettering(size=(1400, 933))
     params = params_for_preset("Easy")
     plain = pipeline.generate(picture, params, pipeline.PREVIEW_LONG_EDGE)
-    assert calls == []
     preview = pipeline.generate(picture, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     export = pipeline.generate(picture, params, pipeline.EXPORT_LONG_EDGE, collect_analysis=True)
     assert calls == [((733, 1100, 3), (933, 1400, 3))]  # once, on the picture at preview size, with its source
