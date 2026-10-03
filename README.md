@@ -226,8 +226,8 @@ pixels (a sign's panel can shade from light to dark behind its letters), and
 printed as it looks it reads either way. Inside a line the lettering takes the
 place of a scan's own ink lying in its regions, so the scan doesn't print its
 letters a second time, binarized and twice as bold; the lines between regions
-still run through it, and ink that keeps two regions apart -- bold ink, the
-seam down a line two regions share -- still prints solid. The regions and
+still run through it, and ink that keeps two regions apart — bold ink, the
+seam down a line two regions share — still prints solid. The regions and
 the palette are left as they are: the lettering darker than halfway is printed
 ink, painted round, which ends the lines crossing it, and no number goes on any
 of its ink. A line whose lettering stands out from its ground by less than 20
