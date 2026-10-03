@@ -114,12 +114,15 @@ def scaled(lines: list[TextLine], from_size: tuple[int, int], to_size: tuple[int
 def mask(lines: list[TextLine], size: tuple[int, int]) -> np.ndarray:
     """HxW bool for a picture of ``size`` (width, height): the pixels whose middle lies in the box of a line.
 
-    A middle on a box's edge is in it.
+    A middle on a box's edge is in it; a box of no area holds none.
     """
     width, height = size
     covered = np.zeros((height, width), dtype=bool)
     for line in lines:
         quad = np.asarray(line.quad, dtype=np.float64)
+        rolled = np.roll(quad, -1, axis=0)
+        if abs(float(np.sum(quad[:, 0] * rolled[:, 1] - rolled[:, 0] * quad[:, 1]))) <= 1e-9:
+            continue  # every middle would lie on the same side of all its edges, or on them
         x0, x1 = max(int(np.floor(quad[:, 0].min() - 0.5)), 0), min(int(np.ceil(quad[:, 0].max() - 0.5)) + 1, width)
         y0, y1 = max(int(np.floor(quad[:, 1].min() - 0.5)), 0), min(int(np.ceil(quad[:, 1].max() - 0.5)) + 1, height)
         if x1 <= x0 or y1 <= y0:
@@ -127,9 +130,7 @@ def mask(lines: list[TextLine], size: tuple[int, int]) -> np.ndarray:
         xs = np.arange(x0, x1, dtype=np.float64)[None, :] + 0.5
         ys = np.arange(y0, y1, dtype=np.float64)[:, None] + 0.5
         # Inside a convex polygon: on the same side of every edge (or on it).
-        sides = [
-            (b[0] - a[0]) * (ys - a[1]) - (b[1] - a[1]) * (xs - a[0]) for a, b in zip(quad, np.roll(quad, -1, axis=0))
-        ]
+        sides = [(b[0] - a[0]) * (ys - a[1]) - (b[1] - a[1]) * (xs - a[0]) for a, b in zip(quad, rolled)]
         inside = np.logical_and.reduce([s >= 0 for s in sides]) | np.logical_and.reduce([s <= 0 for s in sides])
         covered[y0:y1, x0:x1] |= inside
     return covered

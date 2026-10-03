@@ -301,6 +301,11 @@ def test_the_mask_holds_the_pixels_whose_middle_lies_in_a_box():
         np.testing.assert_array_equal(text.mask([text.TextLine(quad=quad, score=1.0)], (10, 10)), expected)
     off = text.TextLine(quad=((-9.0, -9.0), (-2.0, -9.0), (-2.0, -2.0), (-9.0, -2.0)), score=1.0)
     assert not text.mask([off], (10, 10)).any()
+    # A box of no area holds no pixel, though every middle lies on the same side of all its edges: a point, and a flat
+    # box along a row of middles (whose line runs past its ends).
+    point = text.TextLine(quad=((5.0, 5.0),) * 4, score=1.0)
+    flat = text.TextLine(quad=((2.0, 5.5), (8.0, 5.5), (8.0, 5.5), (2.0, 5.5)), score=1.0)
+    assert not text.mask([point], (10, 10)).any() and not text.mask([flat], (10, 10)).any()
     # A middle on a box's edge is in it: a box through the middles of pixels 2 and 6 holds both.
     edges = text.TextLine(quad=((2.5, 3.5), (6.5, 3.5), (6.5, 7.5), (2.5, 7.5)), score=1.0)
     expected = np.zeros((10, 10), dtype=bool)
