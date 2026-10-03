@@ -22,8 +22,8 @@ from tessellatum.core.render import PAPER, PageDrawing, number_origin, paper_und
 LEGEND_GAP_MM = 6.0
 
 _PT_PER_MM = PT_PER_INCH / MM_PER_INCH
-# The size Pillow's measurements of a number's ink are taken at, in pixels an em: large enough that rounding them to
-# whole pixels is a thousandth of the em.
+# The size Pillow's measurements of a number's text box are taken at, in pixels an em: large enough that rounding them
+# to whole pixels is a thousandth of the em.
 _MEASURING_EM_PX = 1000
 
 
@@ -147,11 +147,12 @@ def _legend_sheet(document: _Document, palette_rgb: Sequence[tuple[int, int, int
             f"0 G {_num(SWATCH_BORDER_MM)} w {_num(x + inset)} {_num(y + inset)} "
             f"{_num(SWATCH_MM - SWATCH_BORDER_MM)} {_num(SWATCH_MM - SWATCH_BORDER_MM)} re S"
         )
-        # The number's ink is centered on the swatch, as on the page's legend.
+        # The number's text box is centered on the swatch, as on the page's legend: Pillow's box, which runs across from
+        # where the pen starts to where it ends, and up and down over the ink.
         text = str(index + 1)
-        ink_x0, ink_y0, ink_x1, ink_y1 = (v / _MEASURING_EM_PX for v in baseline_bbox(text, _MEASURING_EM_PX))
-        origin_x = x + SWATCH_MM / 2 - (ink_x0 + ink_x1) / 2 * em
-        origin_y = y + SWATCH_MM / 2 - (ink_y0 + ink_y1) / 2 * em
+        box_x0, box_y0, box_x1, box_y1 = (v / _MEASURING_EM_PX for v in baseline_bbox(text, _MEASURING_EM_PX))
+        origin_x = x + SWATCH_MM / 2 - (box_x0 + box_x1) / 2 * em
+        origin_y = y + SWATCH_MM / 2 - (box_y0 + box_y1) / 2 * em
         ops.append(
             f"{_gray(number_fill(rgb)[0])} g BT /F1 {_num(em)} Tf 1 0 0 -1 {_num(origin_x)} {_num(origin_y)} Tm "
             f"{_text(text)} Tj ET"

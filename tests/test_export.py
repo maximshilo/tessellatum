@@ -275,8 +275,13 @@ def test_a_page_without_numbers_ink_or_lettering_still_makes_a_valid_file(tmp_pa
     path, (first, second) = _save(tmp_path, rendered.drawing, [])
     assert "XObject" not in first["resources"] and "f*" not in first["content"] and "BT" not in first["content"]
     assert len(trace_boundaries(ids)) == 1  # the page edge, the one line, half of it off the paper
-    back = pdf_reading.render(path, 0, 1.0)
-    assert back.min() >= 0  # the renderer read it
+    # Read back, the frame is drawn round the page and nothing else is; the legend's sheet is blank paper.
+    back = pdf_reading.render(path, 0, 4.0).mean(axis=2)
+    width, height = print_scale((400, 300)).printed_size_mm  # on a landscape sheet
+    left, top = round((297 - width) / 2 * 4), round((210 - height) / 2 * 4)
+    assert back[top + 4 : top + round(height * 4) - 4, left + 4 : left + round(width * 4) - 4].min() == 255
+    assert back[top + 40, left - 1 : left + 2].min() < 255  # the frame's half that is on the paper
+    assert pdf_reading.render(path, 1, 1.0).min() == 255
 
 
 def test_qt_s_pdf_reader_opens_it_as_two_a4_sheets_with_the_page_in_place(tmp_path):
