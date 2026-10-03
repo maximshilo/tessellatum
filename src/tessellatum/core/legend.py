@@ -38,7 +38,7 @@ def render_legend(palette_bgr: np.ndarray, width: int, px_per_mm: float) -> Imag
         draw.rectangle([x0, y0, x1, y1], fill=rgb, outline="black", width=border)
 
         text = str(index + 1)
-        text_color = "white" if _luminance(rgb) < 140 else "black"
+        text_color = number_fill(rgb)
         bbox = draw.textbbox((0, 0), text, font=font)
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
         draw.text(
@@ -49,6 +49,11 @@ def render_legend(palette_bgr: np.ndarray, width: int, px_per_mm: float) -> Imag
         )
 
     return legend
+
+
+def number_fill(rgb: tuple[int, int, int]) -> tuple[int, int, int]:
+    """What a swatch of ``rgb`` has its number written in: white on a dark swatch, black on a light one."""
+    return (255, 255, 255) if _luminance(rgb) < 140 else (0, 0, 0)
 
 
 def _luminance(rgb: tuple[int, int, int]) -> float:

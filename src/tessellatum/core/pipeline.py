@@ -31,7 +31,7 @@ from tessellatum.core.regions import (
     settle_enclosed,
     split_areas,
 )
-from tessellatum.core.render import PAPER, Label, PageStyle, render_page
+from tessellatum.core.render import PAPER, Label, PageDrawing, PageStyle, render_page
 from tessellatum.core.texture import smooth_regions
 
 PREVIEW_LONG_EDGE = 1100
@@ -166,6 +166,7 @@ class GeneratedPage:
     num_colors_used: int
     num_regions: int
     analysis: PageAnalysis | None = None  # only with generate(..., collect_analysis=True)
+    drawing: PageDrawing | None = None  # what ``page`` was drawn from, to draw it again off the pixel grid (see ``export``)
 
 
 class _StageCache:
@@ -585,4 +586,5 @@ def generate(
         num_colors_used=len(used_color_indices),
         num_regions=len(regions),
         analysis=analysis,
+        drawing=rendered.drawing,
     )

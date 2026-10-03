@@ -510,3 +510,9 @@ _MEASURING_DRAW = ImageDraw.Draw(Image.new("RGB", (1, 1)))
 def text_bbox(text: str, font_size: int) -> tuple[int, int, int, int]:
     """``textbbox`` of ``text`` at the origin, as measured on an RGB page."""
     return _MEASURING_DRAW.textbbox((0, 0), text, font=font(font_size))
+
+
+@lru_cache(maxsize=4096)
+def baseline_bbox(text: str, font_size: int) -> tuple[int, int, int, int]:
+    """``text_bbox`` measured from the start of the text's baseline instead of from the top of its line."""
+    return _MEASURING_DRAW.textbbox((0, 0), text, font=font(font_size), anchor="ls")

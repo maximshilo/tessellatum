@@ -167,7 +167,7 @@ class MainWindow(QMainWindow):
             if fmt == "PNG":
                 export.save_png(page.page, page.legend, path)
             else:
-                export.save_pdf(page.page, page.palette_rgb, path)
+                export.save_pdf(page.drawing, page.palette_rgb, path)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Export failed", str(exc))
             self.statusBar().showMessage("Export failed.")

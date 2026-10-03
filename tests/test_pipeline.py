@@ -722,3 +722,30 @@ def test_with_text_off_no_text_is_looked_for_and_no_lettering_is_printed(monkeyp
     nothing = generate(picture, params, long_edge=400)
     pipeline.clear_cache()
     assert off.page.tobytes() == nothing.page.tobytes()
+
+
+def test_the_page_comes_with_what_it_was_drawn_from_to_draw_it_again_off_the_pixel_grid(monkeypatch):
+    # T7.3: the vector PDF draws the page again from these (see export.save_pdf).
+    style = render.PageStyle.from_settings(0.45, "Dark")
+    drawing, _ = _outlined_shapes()
+    result = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True, style=style)
+    drawn, analysis = result.drawing, result.analysis
+    assert drawn.size == result.page.size and drawn.style == style
+    assert drawn.strokes is analysis.strokes and drawn.labels is analysis.labels
+    np.testing.assert_array_equal(drawn.ink, analysis.printed_ink)  # line art's ink, all of it printed solid
+    assert drawn.ink_gray == analysis.ink_gray == 0 and drawn.lettering is None and drawn.lettering_area is None
+
+    # On a picture with a line of text, the lettering is printed in its own tones there, in place of the printed ink
+    # lying in a region.
+    picture = np.full((300, 400, 3), 235, dtype=np.uint8)
+    picture[140:150, 60:340:6] = 30
+    line = text.TextLine(quad=((50.0, 130.0), (350.0, 130.0), (350.0, 160.0), (50.0, 160.0)), score=0.9)
+    monkeypatch.setattr(text, "find_text", lambda picture, source=None: [line])
+    pipeline.clear_cache()
+    result = generate(picture, difficulty.params_for_preset("Easy"), long_edge=400, collect_analysis=True)
+    drawn, analysis = result.drawing, result.analysis
+    np.testing.assert_array_equal(drawn.lettering_area, analysis.lettering_area)
+    np.testing.assert_array_equal(drawn.lettering, render.PAPER - analysis.lettering)  # the analysis has it as paper
+    assert analysis.printed_ink.any() and analysis.lettering_area.any()
+    in_region = (analysis.region_id_map >= 0) & analysis.lettering_area
+    np.testing.assert_array_equal(drawn.ink, analysis.printed_ink & ~in_region)

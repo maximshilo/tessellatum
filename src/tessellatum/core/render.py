@@ -16,6 +16,7 @@ from tessellatum.core.labels import (
     TEXT_GAP_MM,
     Label,
     LabelSpacing,
+    baseline_bbox,
     cleared,
     font,
     min_font_size,
@@ -97,6 +98,30 @@ class PageStyle:
 
 
 @dataclass
+class PageDrawing:
+    """What a page is drawn from, for drawing it again off the pixel grid (see ``export.save_pdf``).
+
+    In the page's pixels, ``size`` (width, height) of them, with pixel centers
+    at integer coordinates, as ``render_page`` draws it, in this order: the
+    lines, in ``style.line_gray``; inside ``lettering_area``, the lettering
+    (0 bare paper to 255 solid, in ``ink_gray``), darkening what is under it;
+    the printed ink, solid in ``ink_gray`` over what is under it; the leaders,
+    in ``style.label_gray``, darkening what is under them; and the numbers, in
+    ``style.label_gray``, at the size and the place ``number_origin`` gives.
+    ``ink``, ``lettering`` and ``lettering_area`` are None where the page has none.
+    """
+
+    size: tuple[int, int]
+    style: PageStyle
+    strokes: list[np.ndarray]
+    labels: list[Label]
+    ink: np.ndarray | None
+    ink_gray: int
+    lettering: np.ndarray | None
+    lettering_area: np.ndarray | None
+
+
+@dataclass
 class RenderedPage:
     image: Image.Image  # RGB: outlines + numbers
     outlines: Image.Image  # "L": the ink the lines and the printed ink put on the page, 0 = solid, 255 = bare paper
@@ -105,6 +130,7 @@ class RenderedPage:
     leaders: Image.Image  # "L": the ink the numbers' leader lines put on the page, as in ``outlines``
     # HxW bool: the ink as printed, less the detail ink cleared behind numbers written on hatching; None without.
     printed_ink: np.ndarray | None = None
+    drawing: PageDrawing | None = None  # what the page was drawn from
 
 
 def render_page(
@@ -196,14 +222,14 @@ def render_page(
     outlines = Image.fromarray(PAPER - coverage, "L")
     leader_coverage = _leader_coverage(size, labels, line_width, spacing.leader_dot_px)
 
-    paper = _paper_under(lines_only, style.line_gray)
+    paper = paper_under(lines_only, style.line_gray)
     if lettered:
-        letters = np.minimum(paper, _paper_under(lettering, ink_gray))
+        letters = np.minimum(paper, paper_under(lettering, ink_gray))
         paper[lettering_area] = letters[lettering_area]
     if inked:
         paper[solid(ink)] = min(int(ink_gray), PAPER)
     if any(label.leader is not None for label in labels):  # most pages have none, and white paper changes nothing
-        np.minimum(paper, _paper_under(leader_coverage, style.label_gray), out=paper)
+        np.minimum(paper, paper_under(leader_coverage, style.label_gray), out=paper)
     page = Image.fromarray(paper, "L").convert("RGB")
     draw = ImageDraw.Draw(page)
     label_fill = (style.label_gray,) * 3
@@ -212,6 +238,16 @@ def render_page(
         left, top = label.box[0], label.box[1]
         draw.text((left - bbox[0], top - bbox[1]), label.text, fill=label_fill, font=font(label.font_size))
 
+    drawing = PageDrawing(
+        size=size,
+        style=style,
+        strokes=strokes,
+        labels=labels,
+        ink=solid(ink) if inked else None,
+        ink_gray=min(int(ink_gray), PAPER),
+        lettering=lettering if lettered else None,
+        lettering_area=lettering_area if lettered else None,
+    )
     return RenderedPage(
         image=page,
         outlines=outlines,
@@ -219,7 +255,18 @@ def render_page(
         strokes=strokes,
         leaders=Image.fromarray(PAPER - leader_coverage, "L"),
         printed_ink=ink if inked else None,
+        drawing=drawing,
     )
+
+
+def number_origin(label: Label) -> tuple[float, float]:
+    """Where ``render_page`` puts the start of a number's baseline, in the page's pixels.
+
+    It writes the number with its ink box at the top-left of ``label.box``, in
+    ``labels.font`` at ``label.font_size``, an em of that many pixels.
+    """
+    bbox = baseline_bbox(label.text, label.font_size)
+    return label.box[0] - bbox[0], label.box[1] - bbox[1]
 
 
 def _leader_coverage(size: tuple[int, int], labels: list[Label], width_px: float, dot_px: float) -> np.ndarray:
@@ -325,6 +372,6 @@ def _pen(diameter: int) -> tuple[np.ndarray, tuple[int, int]]:
     return (dx * dx + dy * dy <= half * half).astype(np.uint8), (half - 1, half - 1)
 
 
-def _paper_under(coverage: np.ndarray, gray: int) -> np.ndarray:
+def paper_under(coverage: np.ndarray, gray: int) -> np.ndarray:
     """White paper with ``gray`` ink laid on it as thickly as ``coverage`` says."""
     return np.rint(PAPER - coverage * ((PAPER - gray) / PAPER)).astype(np.uint8)
