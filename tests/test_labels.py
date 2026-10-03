@@ -558,9 +558,9 @@ def test_numbers_see_the_ink_a_region_s_paint_goes_over_as_in_no_region(monkeypa
     seen = {}
     real = render_module.place_labels
 
-    def spy(regions, region_id_map, free, spacing, clearable=None):
+    def spy(regions, region_id_map, free, spacing, clearable=None, text=None):
         seen["ids"], seen["clearable"] = region_id_map, clearable
-        return real(regions, region_id_map, free, spacing, clearable)
+        return real(regions, region_id_map, free, spacing, clearable, text=text)
 
     monkeypatch.setattr(render_module, "place_labels", spy)
     regions = extract_regions(ids, np.arange(2, dtype=np.int32), printed=printed)
