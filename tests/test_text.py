@@ -513,7 +513,7 @@ def test_text_is_found_once_per_picture_and_the_analysis_changes_nothing(monkeyp
     params = params_for_preset("Easy")
     plain = pipeline.generate(picture, params, pipeline.PREVIEW_LONG_EDGE)
     preview = pipeline.generate(picture, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
-    export = pipeline.generate(picture, params, pipeline.EXPORT_LONG_EDGE, collect_analysis=True)
+    export = pipeline.generate(picture, params, pipeline.export_long_edge(picture), collect_analysis=True)
     assert calls == [((733, 1100, 3), (933, 1400, 3))]  # once, on the picture at preview size, with its source
     assert plain.page.tobytes() == preview.page.tobytes()
     assert len(preview.analysis.text) == len(WORDS)

@@ -32,6 +32,19 @@ from tessellatum.core.regions import Region
 LINE_GRAY = 0x59
 LABEL_GRAY = 0x8C
 
+# The tones the app offers for the lines and the numbers, (line gray, number gray), lightest first. Medium is the pair
+# above; Light and Dark are 15 L* lighter and darker, both grays alike, so the numbers stay as much lighter than the
+# lines (20 L*) in every tone.
+TONES = {
+    "Light": (0x7E, 0xB4),
+    "Medium": (LINE_GRAY, LABEL_GRAY),
+    "Dark": (0x36, 0x66),
+}
+DEFAULT_TONE = "Medium"
+# The line widths the app offers, in mm on paper, and its step.
+LINE_WIDTH_MM_RANGE = (0.2, 0.5)
+LINE_WIDTH_MM_STEP = 0.05
+
 # A line is never drawn thinner than this, whatever the paper asks for. The
 # pipeline never upscales, so a small source prints at a low resolution -- 60
 # dpi for a 600 px image -- where 0.3 mm is less than a pixel and the line
@@ -75,6 +88,12 @@ class PageStyle:
     def line_width_px(self, size: tuple[int, int]) -> float:
         """How wide a line is on a page of ``size`` (width, height) pixels."""
         return max(self.min_line_width_px, print_scale(size).mm_to_px(self.line_width_mm))
+
+    @classmethod
+    def from_settings(cls, line_width_mm: float = OUTLINE_WIDTH_MM, tone: str = DEFAULT_TONE) -> PageStyle:
+        """The style for a line width in mm and one of ``TONES``, as the app offers them."""
+        line_gray, label_gray = TONES[tone]
+        return cls(line_width_mm=line_width_mm, line_gray=line_gray, label_gray=label_gray)
 
 
 @dataclass

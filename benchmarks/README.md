@@ -101,6 +101,11 @@ which is what they get. So a comparison at `Max` compares each version's own
 finest page. `case.json` records the settings a case ran with under `params`,
 with the version's own field names.
 
+Every case is drawn as the app draws a page by default: in the default
+`PageStyle` (0.3 mm lines, D-030's grays) and with every step of the pipeline's
+`Handling` on -- line art, the detail on faces and the subject, the text. From
+0.1.43 the app lets the user change both; the harness measures the defaults.
+
 ## Image manifest
 
 `tests/sample_images/manifest.json` records what each benchmark image is and
@@ -237,6 +242,14 @@ versions older than the model.
 The pipeline never upscales, so a small source prints at a low resolution:
 `scene.png` (600 × 450 px) comes out at 60 dpi, where a 0.3 mm line is less
 than a pixel wide.
+
+From 0.1.43 the app exports at 300 dpi on A4: at the long edge that fills the
+printable area at 300 dpi, 2244–3272 px by the image's shape
+(`print_size.long_edge_at_dpi`), or at the image's own size where that is less
+(`pipeline.export_long_edge`). Every benchmark image is at most 2048 px, under
+its 300 dpi size, so the app exports each at its own size: the page the
+harness's export cases (2400 px asked for) measure. Until 0.1.42 the app
+exported at 2400 px, which for these images was the same page.
 
 ## Quality metrics
 

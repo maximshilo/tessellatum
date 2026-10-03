@@ -1,4 +1,4 @@
-"""The difficulty controls speak in the printed page's units and ask the pipeline for what they show."""
+"""The controls speak in the printed page's units and ask the pipeline for what they show."""
 
 import os
 
@@ -11,6 +11,8 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tessellatum.core import difficulty  # noqa: E402
+from tessellatum.core.pipeline import Handling  # noqa: E402
+from tessellatum.core.render import TONES, PageStyle  # noqa: E402
 from tessellatum.gui import controls_panel  # noqa: E402
 from tessellatum.gui.controls_panel import ControlsPanel  # noqa: E402
 
@@ -70,3 +72,37 @@ def test_the_custom_sliders_finest_setting_is_the_finest_page(panel):
     panel.blur_slider.setValue(panel.blur_slider.minimum())
 
     assert panel.get_difficulty_params() == difficulty.finest_params()
+
+
+def test_the_style_controls_start_at_the_default_style_and_offer_widths_from_0_2_to_0_5_mm(panel):
+    # D-052 (Q36).
+    assert panel.get_page_style() == PageStyle()
+    slider = panel.line_width_slider
+    widths = [controls_panel.line_width_mm(position) for position in range(slider.minimum(), slider.maximum() + 1)]
+    assert widths == [0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
+    labels = [label.text() for label in panel.findChildren(controls_panel.QLabel)]
+    assert "0.30 mm" in labels
+    slider.setValue(slider.maximum())
+    assert panel.get_page_style().line_width_mm == 0.5
+    assert "0.50 mm" in [label.text() for label in panel.findChildren(controls_panel.QLabel)]
+
+
+def test_a_tone_sets_both_grays(panel):
+    assert [panel.tone_combo.itemText(i) for i in range(panel.tone_combo.count())] == list(TONES)
+    assert panel.tone_combo.currentText() == "Medium"
+    for index, (name, (line_gray, label_gray)) in enumerate(TONES.items()):
+        panel.tone_combo.setCurrentText(name)
+        style = panel.get_page_style()
+        assert (style.line_gray, style.label_gray) == (line_gray, label_gray)
+        assert style.line_width_mm == PageStyle().line_width_mm
+        assert panel.tone_combo.itemData(index, Qt.ToolTipRole)
+
+
+def test_every_step_of_the_picture_handling_starts_on_and_each_box_turns_its_own_off(panel):
+    assert panel.get_handling() == Handling()
+    boxes = {"line_art": panel.line_art_check, "detail": panel.detail_check, "text": panel.text_check}
+    for name, box in boxes.items():
+        assert box.toolTip()
+        box.setChecked(False)
+        assert panel.get_handling() == Handling(**{name: False})
+        box.setChecked(True)

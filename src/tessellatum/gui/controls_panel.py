@@ -1,4 +1,4 @@
-"""Left-hand controls: open image, difficulty, output format, generate/export."""
+"""Left-hand controls: open image, difficulty, page style, picture handling, output format, generate/export."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Callable
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
@@ -23,6 +24,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from tessellatum.core import difficulty
+from tessellatum.core.pipeline import Handling
+from tessellatum.core.print_size import OUTLINE_WIDTH_MM
+from tessellatum.core.render import DEFAULT_TONE, LINE_WIDTH_MM_RANGE, LINE_WIDTH_MM_STEP, TONES, PageStyle
 
 THUMBNAIL_SIZE = 220
 
@@ -30,6 +34,12 @@ THUMBNAIL_SIZE = 220
 # largest region is about 17 times its smallest, and 30 -> 60 mm² is as big a change
 # on the page as 250 -> 500 mm².
 REGION_SLIDER_STEPS = 100
+
+TONE_TOOLTIPS = {
+    "Light": "Fainter lines and numbers, which vanish under the palest paints.",
+    "Medium": "Gray lines, and lighter gray numbers that don't read as writing in the picture.",
+    "Dark": "Darker lines and numbers, easier to follow on paper.",
+}
 
 
 class ControlsPanel(QWidget):
@@ -87,9 +97,48 @@ class ControlsPanel(QWidget):
         self.custom_group.setLayout(custom_form)
         self.custom_group.setVisible(False)
 
+        style_group = QGroupBox("Lines and numbers")
+        self.line_width_slider, line_width_row = _slider_row(
+            0,
+            line_width_position(LINE_WIDTH_MM_RANGE[1]),
+            default=line_width_position(OUTLINE_WIDTH_MM),
+            text=lambda v: f"{line_width_mm(v):.2f} mm",
+        )
+        self.line_width_slider.setToolTip("How wide the lines print on the A4 page.")
+        self.tone_combo = QComboBox()
+        self.tone_combo.addItems(list(TONES))
+        for index, name in enumerate(TONES):
+            self.tone_combo.setItemData(index, TONE_TOOLTIPS[name], Qt.ToolTipRole)
+        self.tone_combo.setCurrentText(DEFAULT_TONE)
+        style_form = QFormLayout()
+        style_form.addRow("Line width", line_width_row)
+        style_form.addRow("Tone", self.tone_combo)
+        style_group.setLayout(style_form)
+
+        handling_group = QGroupBox("Picture handling")
+        self.line_art_check = QCheckBox("Print line art's own ink")
+        self.line_art_check.setToolTip(
+            "On a cartoon or a comic, print its ink lines and paint the areas they enclose. "
+            "Off, it is drawn from its colors like a photograph."
+        )
+        self.detail_check = QCheckBox("More detail on faces and subject")
+        self.detail_check.setToolTip(
+            "On a photograph or a painting, regions in the faces and the subject found may be half the smallest size, "
+            "a face is painted in a few tones, and its thin dark marks (pupils, lip lines) are printed."
+        )
+        self.text_check = QCheckBox("Print text as it looks")
+        self.text_check.setToolTip(
+            "Print the lettering of the signs, titles and captions found in the picture, and keep the numbers off it."
+        )
+        handling_layout = QVBoxLayout()
+        for check in (self.line_art_check, self.detail_check, self.text_check):
+            check.setChecked(True)
+            handling_layout.addWidget(check)
+        handling_group.setLayout(handling_layout)
+
         format_group = QGroupBox("Output format")
         self.png_radio = QRadioButton("PNG (image)")
-        self.pdf_radio = QRadioButton("PDF (printable)")
+        self.pdf_radio = QRadioButton("PDF (A4)")
         self.png_radio.setChecked(True)
         format_layout = QHBoxLayout()
         format_layout.addWidget(self.png_radio)
@@ -123,6 +172,8 @@ class ControlsPanel(QWidget):
         layout.addWidget(QLabel("Difficulty"))
         layout.addWidget(self.preset_combo)
         layout.addWidget(self.custom_group)
+        layout.addWidget(style_group)
+        layout.addWidget(handling_group)
         layout.addWidget(format_group)
         layout.addWidget(self.generate_button)
         layout.addWidget(self.progress_row)
@@ -161,6 +212,16 @@ class ControlsPanel(QWidget):
             blur_sigma=self.blur_slider.value() / 10.0,
         )
 
+    def get_page_style(self) -> PageStyle:
+        return PageStyle.from_settings(line_width_mm(self.line_width_slider.value()), self.tone_combo.currentText())
+
+    def get_handling(self) -> Handling:
+        return Handling(
+            line_art=self.line_art_check.isChecked(),
+            detail=self.detail_check.isChecked(),
+            text=self.text_check.isChecked(),
+        )
+
     def get_output_format(self) -> str:
         return "PDF" if self.pdf_radio.isChecked() else "PNG"
 
@@ -192,6 +253,16 @@ def region_slider_position(area_mm2: float) -> int:
     lo, hi = difficulty.CUSTOM_MIN_REGION_AREA_MM2_RANGE
     area_mm2 = min(max(area_mm2, lo), hi)
     return round(REGION_SLIDER_STEPS * math.log(area_mm2 / lo) / math.log(hi / lo))
+
+
+def line_width_mm(position: int) -> float:
+    """The line width, in mm, at a position of the line-width slider."""
+    return round(LINE_WIDTH_MM_RANGE[0] + position * LINE_WIDTH_MM_STEP, 2)
+
+
+def line_width_position(width_mm: float) -> int:
+    """The line-width slider's position nearest to ``width_mm``."""
+    return round((width_mm - LINE_WIDTH_MM_RANGE[0]) / LINE_WIDTH_MM_STEP)
 
 
 def _slider_row(

@@ -111,3 +111,13 @@ def print_scale(size_px: tuple[int, int], paper: PaperFormat = A4) -> PrintScale
     area_width, area_height = paper.printable_mm(landscape)
     mm_per_px = min(area_width / width, area_height / height)
     return PrintScale(size_px=(width, height), landscape=landscape, px_per_mm=1 / mm_per_px)
+
+
+def long_edge_at_dpi(size_px: tuple[int, int], dpi: float = PRINT_DPI, paper: PaperFormat = A4) -> int:
+    """The long edge, in pixels, at which an image shaped like ``size_px`` prints at ``dpi`` on ``paper``.
+
+    The printed size depends only on the shape, so this is 2244 px for a square
+    image on A4 at 300 dpi, and 3272 px for one at least 1.46 times as long as
+    it is wide, which fills the printable area's long side.
+    """
+    return round(max(print_scale(size_px, paper).printed_size_mm) * dpi / MM_PER_INCH)

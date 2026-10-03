@@ -3,8 +3,8 @@
 Turn any image into a "paint by numbers" style coloring page: the source
 image is reduced to flat, outlined regions, each region is numbered, and a
 color legend maps each number to a color. Preview the result, tune the
-difficulty (more/smaller regions and colors = harder), and export to PNG or
-PDF.
+difficulty (more/smaller regions and colors = harder) and how the lines and
+numbers print, and export a PNG or an A4 PDF at 300 dpi.
 
 Tessellatum is a native desktop app (PySide6/Qt) — no browser, no server,
 just double-click and run.
@@ -32,6 +32,39 @@ installer, no Python required on the target machine.
 The Linux and macOS scripts are written to be portable but have only been
 built/tested on Windows so far — if something's missing on your distro,
 run the binary from a terminal to see the error.
+
+## Settings and export
+
+The panel on the left holds every setting; "Generate Preview" draws the page
+with them, and "Export…" draws it again at print resolution.
+
+- **Difficulty**: Easy, Medium or Hard, or Custom to set the colors, the
+  smallest region and the smoothing yourself (see "How it works").
+- **Lines and numbers**: how wide the lines print on the A4 page, 0.2 to
+  0.5 mm (0.3 mm by default), and their tone, Light, Medium or Dark. The
+  numbers are always a step lighter than the lines, so they read as the
+  page's own apparatus rather than as writing in the picture. Light is for
+  pale paints, under which darker lines would show.
+- **Picture handling**: three things the pipeline does on its own, each on by
+  default, to turn off when one of them gets a picture wrong:
+  - *Print line art's own ink*: a cartoon or a comic is drawn from its ink
+    lines, which are printed, and the areas they enclose; off, it is drawn
+    from its colors like a photograph;
+  - *More detail on faces and subject*: on a photograph or a painting, the
+    faces and the subject found get smaller regions than the rest, a face is
+    painted in a few tones, and its thin dark marks are printed;
+  - *Print text as it looks*: the lettering of signs, titles and captions
+    found is printed, and no number goes on it.
+- **Export** renders the page at 300 dpi on A4: a long edge of 2244 to
+  3272 px, depending on the picture's shape, or the picture's own size where
+  that is smaller, since nothing is upscaled.
+  - **PDF**: two A4 sheets. The page fills the printable area inside 10 mm
+    margins, centered, on a landscape sheet when the picture is wider than
+    tall; the legend gets a portrait sheet of its own, its swatches 12 mm
+    square. Both are stored losslessly, so the paper stays white around every
+    line and each swatch is exactly its color.
+  - **PNG**: the page above its legend in one image, which records its
+    resolution, so it prints as large as the PDF's page.
 
 ## How it works
 
@@ -69,13 +102,15 @@ run the binary from a terminal to see the error.
    boundary is doubled or left out. Each line is then smoothed along its
    length to take the pixel grid's staircase off it, but never by more than a
    pixel, so it stays on the boundary it draws and the page still closes.
-6. **Ink**: the lines go down as a round pen 0.3 mm across — a size on paper,
+6. **Ink**: the lines go down as a round pen 0.3 mm across (by default; see
+   "Settings and export") — a size on paper,
    so a preview and an export of one image print the same line — laid on a
    grid four times finer than the page and averaged back down, which
    anti-aliases it and lets it be thinner than a pixel. Lines and numbers
    print gray rather than black, so they vanish under the paint meant to
    cover them and a number is not mistaken for writing in the picture. Width
-   and tone are `PageStyle` in `src/tessellatum/core/render.py`.
+   and tone are `PageStyle` in `src/tessellatum/core/render.py`, the tones the
+   app offers its `TONES`.
 7. **Number**: every region gets its number (matched to a legend swatch),
    never smaller than 6 pt on paper (nor than 10 px), and never where any of
    a line's ink falls, however faint. It goes at the region's most interior

@@ -4,9 +4,10 @@ import cv2
 import numpy as np
 import pytest
 
-from tessellatum.core import boundaries, difficulty, ink, labels, pipeline, print_size, render
+from tessellatum.core import boundaries, difficulty, faces, ink, labels, pipeline, print_size, render, subject, text
+from tessellatum.core.legend import render_legend
 from tessellatum.core.color import MIN_PALETTE_DE00, pairwise_de00
-from tessellatum.core.pipeline import PipelineCancelled, generate
+from tessellatum.core.pipeline import Handling, PipelineCancelled, generate
 
 
 def test_generate_produces_page_and_legend(sample_image_bgr):
@@ -631,3 +632,93 @@ def test_the_pixels_splitting_takes_for_ink_are_printed(monkeypatch):
     analysis = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True).analysis
 
     assert analysis.printed_ink[taken["at"]]
+
+
+def test_an_export_renders_at_300_dpi_on_a4_and_never_upscales():
+    # D-052 (Q36): the long edge that prints at 300 dpi on A4, by the picture's shape, or the picture's own.
+    big = np.zeros((3000, 4500, 3), dtype=np.uint8)
+    assert pipeline.export_long_edge(big) == 3272
+    page = pipeline.resize_to_long_edge(big, pipeline.export_long_edge(big))
+    assert print_size.print_scale(page.shape[1::-1]).dpi == pytest.approx(300, abs=0.2)
+    assert pipeline.export_long_edge(np.zeros((2400, 2400, 3), dtype=np.uint8)) == 2244  # 300 dpi is enough
+    assert pipeline.export_long_edge(np.zeros((1000, 1500, 3), dtype=np.uint8)) == 1500  # never upscaled
+
+
+def test_the_legend_is_drawn_at_the_page_s_print_scale(sample_image_bgr):
+    result = generate(sample_image_bgr, difficulty.params_for_preset("Easy"), long_edge=200)
+
+    palette_bgr = np.array([rgb[::-1] for rgb in result.palette_rgb], dtype=np.uint8)
+    expected = render_legend(palette_bgr, result.page.width, print_size.print_scale(result.page.size).px_per_mm)
+    assert result.legend.size == expected.size and result.legend.tobytes() == expected.tobytes()
+
+
+def test_every_step_runs_by_default(sample_image_bgr):
+    assert Handling() == Handling(line_art=True, detail=True, text=True)
+    params = difficulty.params_for_preset("Medium")
+
+    plain = generate(sample_image_bgr, params, long_edge=200)
+    explicit = generate(sample_image_bgr, params, long_edge=200, handling=Handling(line_art=True, detail=True, text=True))
+    assert plain.page.tobytes() == explicit.page.tobytes()
+
+
+def test_with_line_art_off_a_drawing_is_drawn_from_its_colors_and_the_cache_keeps_the_two_apart():
+    # D-052 (Q36). Its colors are quantized without holding out the ink, so the cache must not hand back the colors
+    # taken around it: the page with line art off is the same after a page with it on as before one.
+    drawing, _shapes = _outlined_shapes()
+    params = difficulty.params_for_preset("Easy")
+    pipeline.clear_cache()
+    cold = generate(drawing, params, long_edge=800, collect_analysis=True, handling=Handling(line_art=False))
+    on = generate(drawing, params, long_edge=800, collect_analysis=True).analysis
+    off = generate(drawing, params, long_edge=800, collect_analysis=True, handling=Handling(line_art=False))
+    pipeline.clear_cache()
+
+    assert on.line_art.is_line_art and off.analysis.line_art.is_line_art  # still found, no longer used
+    assert on.printed_ink.any() and (on.region_id_map < 0).any()
+    assert not off.analysis.printed_ink.any() and (off.analysis.region_id_map >= 0).all()  # every pixel painted
+    assert off.page.tobytes() == cold.page.tobytes()
+    np.testing.assert_array_equal(off.analysis.region_id_map, cold.analysis.region_id_map)
+
+
+def test_with_detail_off_no_face_or_subject_is_looked_for_and_the_page_is_drawn_as_if_none_were_there(
+    sample_image_bgr, monkeypatch
+):
+    # D-052 (Q36).
+    calls = []
+    face = faces.Face(box=(50.0, 50.0, 100.0, 100.0), score=0.9, detector="yunet")
+    monkeypatch.setattr(faces, "find_faces", lambda picture: calls.append("faces") or [face])
+    monkeypatch.setattr(subject, "find_subject", lambda picture: calls.append("subject") or np.ones((40, 40), np.float32))
+    params = difficulty.params_for_preset("Hard")
+    pipeline.clear_cache()
+    off = generate(sample_image_bgr, params, long_edge=200, handling=Handling(detail=False))
+    assert calls == []
+    on = generate(sample_image_bgr, params, long_edge=200, collect_analysis=True).analysis
+    assert sorted(calls) == ["faces", "subject"] and on.detail.any()
+
+    monkeypatch.setattr(faces, "find_faces", lambda picture: [])
+    monkeypatch.setattr(subject, "find_subject", lambda picture: np.zeros((40, 40), np.float32))
+    pipeline.clear_cache()
+    nothing = generate(sample_image_bgr, params, long_edge=200)
+    pipeline.clear_cache()
+    assert off.page.tobytes() == nothing.page.tobytes()
+
+
+def test_with_text_off_no_text_is_looked_for_and_no_lettering_is_printed(monkeypatch):
+    # D-052 (Q36). A dark band of "lettering" the stubbed finder calls a line of text.
+    picture = np.full((300, 400, 3), 235, dtype=np.uint8)
+    picture[140:150, 60:340:6] = 30
+    line = text.TextLine(quad=((50.0, 130.0), (350.0, 130.0), (350.0, 160.0), (50.0, 160.0)), score=0.9)
+    calls = []
+    monkeypatch.setattr(text, "find_text", lambda picture, source=None: calls.append(1) or [line])
+    params = difficulty.params_for_preset("Easy")
+    pipeline.clear_cache()
+    off = generate(picture, params, long_edge=400, collect_analysis=True, handling=Handling(text=False))
+    assert calls == []
+    assert off.analysis.text == [] and not off.analysis.lettering_area.any()
+    on = generate(picture, params, long_edge=400, collect_analysis=True)
+    assert calls == [1] and on.analysis.lettering_area.any()
+
+    monkeypatch.setattr(text, "find_text", lambda picture, source=None: [])
+    pipeline.clear_cache()
+    nothing = generate(picture, params, long_edge=400)
+    pipeline.clear_cache()
+    assert off.page.tobytes() == nothing.page.tobytes()
