@@ -20,6 +20,7 @@ STAGE_ORDER = (
     "detect_ink",
     "detect_faces",
     "detect_subject",
+    "detect_text",
     "quantize",
     "build_regions",
     "smooth_regions",
@@ -320,6 +321,23 @@ METRICS = (
     Metric("subject_de00_mean", "subject ΔE00 ↓", "{:.2f}", "resembles", "lower", sigma=0.054, sigma_export=0.041, relative=True),
     Metric("subject_ssim", "subject SSIM ↑", "{:.3f}", "resembles", "higher", sigma=0.0047, sigma_export=0.010),
     Metric("subject_density_ratio", "subject detail", "{:.1f}"),
+    # The lines of text the pipeline finds (T6.1), scored as the finding itself, apart from the page's jobs, as the faces
+    # found are. They are found once per picture and scaled to the page, so the recall moves with the page's size only as
+    # the annotated boxes round to its pixels; its tolerances were measured on 0.1.40 (`T6.1-sizes`, `T6.1-export-sizes`),
+    # 9 pairs at each size: the three text images at Easy, since finding text doesn't depend on the difficulty. A
+    # picture's lettering is annotated only where it reads clearly, so stray lines are counted only on pictures without
+    # annotated text, where every line found is a mistake and none is found at any size or preset.
+    Metric("text_lines_found", "text lines found", "{:d}"),
+    Metric(
+        "text_found_recall",
+        "text found recall ↑",
+        "{:.3f}",
+        better="higher",
+        sigma=0.0023,
+        sigma_export=0.00073,
+        target=Target(0.9),
+    ),
+    Metric("stray_text_lines", "stray text lines ↓", "{:d}", better="lower", sigma=0, sigma_export=0, target=Target(0)),
     Metric("text_cer_source", "text CER source", "{:.2f}"),
     Metric(
         "text_cer_page",

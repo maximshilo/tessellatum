@@ -33,6 +33,7 @@ PROBED_STAGES = (
     "detect_ink",
     "detect_faces",
     "detect_subject",
+    "detect_text",
     "quantize",
     "build_regions",
     "smooth_regions",
@@ -70,6 +71,9 @@ SUBJECT_KEYS = ("subject_density", "background_density", "subject_density_ratio"
 # The faces the pipeline found: None for versions that don't look for faces (before 0.1.33), and the recall also
 # unless the image's manifest entry has faces.
 FOUND_FACE_KEYS = ("faces_found", "face_found_recall", "stray_faces")
+# The lines of text the pipeline found: None for versions that don't look for text (before 0.1.40); the recall also unless
+# the image's manifest entry has text, and the stray lines unless it has none.
+FOUND_TEXT_KEYS = ("text_lines_found", "text_found_recall", "stray_text_lines")
 # Text fields, None unless the image's manifest entry has text; the character error rates also without the OCR engine.
 TEXT_KEYS = ("text_cer_source", "text_cer_page", "text_cer_painting", "labels_on_text")
 # Enclosure fields, None for versions that report no line layer (before 0.1.10).
@@ -135,6 +139,7 @@ class PageData:
     # HxW bool: where a region may be half as large, each of its pixels counting twice towards min_region_area_px (the
     # faces found); None before 0.1.34, which held every region to min_region_area_px.
     detail: np.ndarray | None = None
+    text: list | None = None  # the lines of text the pipeline found in the picture (``text.TextLine``); None before 0.1.40
 
 
 def page_data_from_analysis(analysis) -> PageData:
@@ -168,6 +173,7 @@ def page_data_from_analysis(analysis) -> PageData:
         ink_gray=int(getattr(analysis, "ink_gray", 0)),
         faces=getattr(analysis, "faces", None),  # before 0.1.33 no version looked for faces
         detail=getattr(analysis, "detail", None),  # before 0.1.34 every region was held to one smallest size
+        text=getattr(analysis, "text", None),  # before 0.1.40 no version looked for text
     )
 
 
@@ -347,6 +353,7 @@ def main() -> int:
     result.page.save(args.out / "page.png")
     face_features = None
     found_faces = face_matches = None
+    found_text = text_matches = None
     ocr = text_blocks = None
 
     if page_data is not None:
@@ -455,6 +462,8 @@ def main() -> int:
         layers = {"source": source, "page": np.ascontiguousarray(page_rgb[:, :, ::-1]), "painting": painted}
         text_quality, text_blocks = text_scores(blocks, layers, page_data.label_boxes, reader)
         quality.update(text_quality)
+        found_text_quality, found_text, text_matches = found_text_scores(page_data, blocks)
+        quality.update(found_text_quality)
         Image.fromarray(np.ascontiguousarray(painted[:, :, ::-1])).save(args.out / "painted.png")
         np.savez_compressed(args.out / "regions.npz", region_id_map=page_data.region_id_map)
 
@@ -493,6 +502,8 @@ def main() -> int:
         "face_matches": face_matches,  # each annotated face's kind and its best face found (found_faces_match)
         "ocr": ocr,  # the OCR engine and version that read the text, None without text or without the engine
         "text_blocks": text_blocks,  # each annotated text block's string, and what OCR read on each layer
+        "found_text": found_text,  # the lines of text the pipeline found, on the page: box corners, score
+        "text_matches": text_matches,  # each annotated text block's string and how much of its box is text found
     }
     (args.out / "case.json").write_text(json.dumps(case, indent=2), encoding="utf-8")
     return 0
@@ -562,6 +573,33 @@ def found_face_scores(page_data: PageData, faces) -> tuple[dict, list | None, li
         "stray_faces": match["stray_faces"],
     }
     matches = [{"kind": face.kind, **scores} for face, scores in zip(faces, match["matches"])] if faces else None
+    return quality, found, matches
+
+
+def found_text_scores(page_data: PageData, blocks) -> tuple[dict, list | None, list | None]:
+    """The quality fields about the lines of text the pipeline found, the lines as ``case.json`` lists them, and the blocks.
+
+    ``blocks`` are the manifest's text blocks at the page's size.
+    ``text_lines_found`` counts the lines found; ``text_found_recall`` is the
+    share of the blocks' pixels in text found, None without blocks, and
+    ``stray_text_lines`` the lines found on a picture without blocks, None with
+    them (``bench_metrics.found_text_match``). The blocks give each one's
+    string and the share of its box in text found. Versions that don't look
+    for text get None throughout.
+    """
+    import bench_metrics as bm  # imported late in this module, after the measured version's package
+
+    if page_data.text is None:
+        return dict.fromkeys(FOUND_TEXT_KEYS), None, None
+    found = [{"quad": [[float(x), float(y)] for x, y in line.quad], "score": float(line.score)} for line in page_data.text]
+    boxes = [_xywh(block.box) for block in blocks]
+    match = bm.found_text_match([line["quad"] for line in found], boxes, page_data.region_id_map.shape)
+    quality = {
+        "text_lines_found": len(found),
+        "text_found_recall": match["text_found_recall"],
+        "stray_text_lines": match["stray_text_lines"],
+    }
+    matches = [{"string": block.string, "cover": cover} for block, cover in zip(blocks, match["covers"])] if blocks else None
     return quality, found, matches
 
 

@@ -1161,6 +1161,35 @@ def found_faces_match(found_boxes, face_boxes) -> dict:
     }
 
 
+def found_text_match(found_quads, text_boxes, shape: tuple[int, int]) -> dict:
+    """How the lines of text the pipeline found cover the image's annotated text.
+
+    ``found_quads`` are the boxes of the lines found, as polygons of (x, y)
+    points, and ``text_boxes`` the annotated blocks' (x, y, width, height)
+    boxes, both in the pixels of a page of ``shape`` (height, width). A pixel
+    is in text found when its middle lies in a line's box (``outline_pixels``),
+    and in a block when its middle lies in the block's box
+    (``_pixels_in_boxes``). ``text_found_recall`` is the share of the pixels
+    in any block that are in text found, None without blocks, and ``covers``
+    each block's own share. ``stray_text_lines`` counts the lines found on a
+    page without blocks, where every one is a mistake; it is None on a page
+    with them, whose lettering the manifest annotates only where it reads
+    clearly, so that a line found away from it may well be text.
+    """
+    found = outline_pixels(shape, found_quads)
+    covers = []
+    annotated = np.zeros(shape, dtype=bool)
+    for box in text_boxes:
+        block = _pixels_in_boxes(shape, [box])
+        annotated |= block
+        covers.append(float(found[block].mean()) if block.any() else None)
+    return {
+        "covers": covers,
+        "text_found_recall": float(found[annotated].mean()) if annotated.any() else None,
+        "stray_text_lines": None if len(text_boxes) else len(found_quads),
+    }
+
+
 def _box_overlap(a, b) -> float:
     """The area two (x, y, width, height) boxes share."""
     width = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])

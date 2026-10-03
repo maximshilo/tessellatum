@@ -117,7 +117,8 @@
             [1536, 892]
           ]
         }
-      ]
+      ],
+      "notes": "Its only lettering is the license plate of the car at the bottom right, cut off by the frame: not annotated, as the picture has no text to read. A line of text found there counts as stray all the same."
     },
     "l-photo-sunset-silhouette-reflections.jpg": {
       "size": [2048, 1357],
@@ -204,7 +205,8 @@
         "#fffaeb", "#482c1a", "#bb9f8d", "#b6b09f", "#a7a08c", "#2a7fff"
       ],
       "ink_colors": ["#000000"],
-      "exact_colors": true
+      "exact_colors": true,
+      "notes": "The artist's small signature and license marks at the bottom right ('J.E 2013' and the CC BY icons) are its only lettering: not annotated, as the picture has no text to read. A line of text found there counts as stray all the same."
     },
     "m-cartoon-complex.jpg": {
       "size": [1218, 806],
