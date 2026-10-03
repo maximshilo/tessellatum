@@ -82,8 +82,10 @@ run the binary from a terminal to see the error.
    point if it fits there; otherwise wherever in the region it keeps farthest
    from the lines, made smaller if it has to be. A region too small to hold
    even that has its number written just outside it, with a leader line in
-   the numbers' gray running to a dot inside it. See
-   `src/tessellatum/core/labels.py`.
+   the numbers' gray running to a dot inside it. No number goes in a line of
+   text found, nor within 0.5 mm of one, where it would read as part of a sign
+   or a caption; a region lying in one gets its number outside, with a leader
+   that crosses the lettering. See `src/tessellatum/core/labels.py`.
 
 Difficulty controls three things: how many colors k-means looks for, how
 small a region may be on the printed page before it is merged away, and how
@@ -229,9 +231,9 @@ letters a second time, binarized and twice as bold; the lines between regions
 still run through it, and ink that keeps two regions apart — bold ink, the
 seam down a line two regions share — still prints solid. The regions and
 the palette are left as they are: the lettering darker than halfway is printed
-ink, painted round, which ends the lines crossing it, and no number goes on any
-of its ink. A line whose lettering stands out from its ground by less than 20
-L\* prints nothing. See `src/tessellatum/core/text.py`.
+ink, painted round, which ends the lines crossing it, and no number goes within
+0.5 mm of the line's box. A line whose lettering stands out from its ground by
+less than 20 L\* prints nothing. See `src/tessellatum/core/text.py`.
 
 ### Performance
 
