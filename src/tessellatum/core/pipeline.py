@@ -116,10 +116,11 @@ class PageAnalysis:
     # ``regions.settle_enclosed``), less the hatching cleared behind numbers written on it. Bold printed ink is in no
     # region, nor is bare paper the ink encloses too small to paint; thin printed ink is in the regions whose paint goes
     # over it. On a picture drawn from its colors, the detail marks printed in its faces, in their own gray (see
-    # ``marks``), which lie in the regions around them; all False without faces. On every picture, also the lettering in
-    # the lines of text found that is inked enough to read as ink (see ``lettering``), which lies in the regions around it;
-    # inside those lines the page prints the lettering's own tone rather than ``ink_gray`` solid. On a picture drawn from
-    # its colors, ``ink_gray`` is the gray of the picture under all of it, marks and lettering alike.
+    # ``marks``), which lie in the regions around them; all False without faces. On every picture, inside the lines of text
+    # found, the printed ink lying in a region is the lettering inked enough to read as ink (see ``lettering``) and no
+    # other, printed in the lettering's own tone rather than ``ink_gray`` solid; the printed ink in no region there is kept.
+    # On a picture drawn from its colors, ``ink_gray`` is the gray of the picture under all of it, marks and lettering
+    # alike.
     printed_ink: np.ndarray
     ink_gray: int
     # The faces in the picture (see ``faces``), found on it at preview size and given in the page's pixels. On a picture
@@ -462,7 +463,11 @@ def generate(
     lettering = lettering_area = None
     if found_text:
         lettering, lettering_area = text.lettering(resized, found_text)
-        printed_ink = printed_ink | (lettering >= _LETTERING_PRINTED)
+        # Inside a line of text the lettering takes the place of the ink lying in a region, as the page prints it: what is
+        # printed there is the lettering darker than halfway, and the ink in no region, which keeps two regions apart.
+        printed_ink = np.where(
+            lettering_area, (printed_ink & (region_id_map < 0)) | (lettering >= _LETTERING_PRINTED), printed_ink
+        )
         if clearable is not None:
             clearable = clearable & ~lettering_area
         if ink_mask is None:

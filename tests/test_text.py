@@ -609,7 +609,16 @@ def test_on_line_art_no_number_clears_lettering_and_the_ink_keeps_the_artwork_s_
     for kwargs in calls:
         assert kwargs["clearable"].any()  # the comic's hatching, which a number may clear
         assert not (kwargs["clearable"] & kwargs["lettering_area"]).any()  # but never inside a line of text
+    # Inside the lines, the ink lying in a region is the lettering darker than halfway and no other, as the page prints
+    # it: the comic's own ink there, pale where the lettering is, is not printed ink any more. Its ink in no region is.
+    analysis = page.analysis
+    lettering_ink = 255 - analysis.lettering.astype(np.int64)
+    in_region = analysis.lettering_area & (analysis.region_id_map >= 0)
+    np.testing.assert_array_equal(analysis.printed_ink[in_region], lettering_ink[in_region] >= 128)
     plain = _without_text(monkeypatch, comic, params, pipeline.PREVIEW_LONG_EDGE)
+    assert (plain.analysis.printed_ink & in_region & (lettering_ink < 128)).sum() > 1000  # it was before
+    walls = analysis.lettering_area & (analysis.region_id_map < 0) & plain.analysis.printed_ink
+    assert walls.any() and analysis.printed_ink[walls].all()
     assert page.analysis.ink_gray == plain.analysis.ink_gray
     np.testing.assert_array_equal(page.analysis.region_id_map, plain.analysis.region_id_map)
 
