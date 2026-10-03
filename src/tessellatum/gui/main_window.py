@@ -6,11 +6,13 @@ import threading
 from pathlib import Path
 
 import numpy as np
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QSplitter, QWidget
+from PySide6.QtWidgets import QFileDialog, QFrame, QMainWindow, QMessageBox, QScrollArea, QSplitter, QWidget
 
 from tessellatum.core import export, pipeline
-from tessellatum.core.pipeline import GeneratedPage, PREVIEW_LONG_EDGE, EXPORT_LONG_EDGE
+from tessellatum.core.pipeline import GeneratedPage, PREVIEW_LONG_EDGE
+from tessellatum.core.print_size import print_scale
 from tessellatum.gui.controls_panel import ControlsPanel
 from tessellatum.gui.preview_widget import PreviewWidget
 from tessellatum.gui.worker import PipelineWorker
@@ -26,8 +28,19 @@ class MainWindow(QMainWindow):
         self.controls = ControlsPanel()
         self.preview = PreviewWidget()
 
+        # The panel scrolls rather than holding the window taller than a small screen.
+        controls_scroll = QScrollArea()
+        controls_scroll.setWidget(self.controls)
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setFrameShape(QFrame.NoFrame)
+        controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # As wide as the panel needs with the scroll bar beside it, so that nothing is cut off when it shows.
+        controls_scroll.setMinimumWidth(
+            self.controls.minimumSizeHint().width() + controls_scroll.verticalScrollBar().sizeHint().width()
+        )
+
         splitter = QSplitter()
-        splitter.addWidget(self.controls)
+        splitter.addWidget(controls_scroll)
         splitter.addWidget(self.preview)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -79,15 +92,11 @@ class MainWindow(QMainWindow):
         if self._worker is not None and self._worker.isRunning():
             return
 
-        params = self.controls.get_difficulty_params()
         self.controls.set_busy(True)
         self.statusBar().showMessage("Generating preview…")
 
-        self._worker = PipelineWorker(self.current_image_bgr, params, PREVIEW_LONG_EDGE)
+        self._worker = self._make_worker(PREVIEW_LONG_EDGE)
         self._worker.succeeded.connect(self._on_preview_ready)
-        self._worker.failed.connect(self._on_worker_failed)
-        self._worker.cancelled.connect(self._on_worker_cancelled)
-        self._worker.progress.connect(self.controls.set_progress)
         self._worker.start()
 
     def abort_generation(self) -> None:
@@ -135,17 +144,14 @@ class MainWindow(QMainWindow):
         if path.suffix.lower() != suffix:
             path = path.with_suffix(suffix)
 
-        params = self.controls.get_difficulty_params()
         self._pending_export_path = path
         self._pending_export_format = fmt
         self.controls.set_busy(True)
-        self.statusBar().showMessage(f"Rendering high-resolution {fmt} for export…")
+        self.statusBar().showMessage(f"Rendering the {fmt} at print resolution…")
 
-        self._worker = PipelineWorker(self.current_image_bgr, params, EXPORT_LONG_EDGE)
+        # 300 dpi on A4, or the picture's own size where that is less: the pipeline never upscales.
+        self._worker = self._make_worker(pipeline.export_long_edge(self.current_image_bgr))
         self._worker.succeeded.connect(self._on_export_ready)
-        self._worker.failed.connect(self._on_worker_failed)
-        self._worker.cancelled.connect(self._on_worker_cancelled)
-        self._worker.progress.connect(self.controls.set_progress)
         self._worker.start()
 
     def _on_export_ready(self, page: GeneratedPage) -> None:
@@ -161,14 +167,30 @@ class MainWindow(QMainWindow):
             if fmt == "PNG":
                 export.save_png(page.page, page.legend, path)
             else:
-                export.save_pdf(page.page, page.legend, path)
+                export.save_pdf(page.page, page.palette_rgb, path)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Export failed", str(exc))
             self.statusBar().showMessage("Export failed.")
             return
 
-        self.statusBar().showMessage(f"Exported to {path}")
-        QMessageBox.information(self, "Export complete", f"Saved to:\n{path}")
+        width, height = page.page.size
+        dpi = print_scale(page.page.size).dpi
+        self.statusBar().showMessage(f"Exported to {path} ({width} × {height} px, {dpi:.0f} dpi on A4)")
+        QMessageBox.information(self, "Export complete", f"Saved to:\n{path}\n\n{width} × {height} px, {dpi:.0f} dpi on A4")
+
+    def _make_worker(self, long_edge: int) -> PipelineWorker:
+        """A worker generating the current image at ``long_edge`` with the panel's settings, wired to its progress."""
+        worker = PipelineWorker(
+            self.current_image_bgr,
+            self.controls.get_difficulty_params(),
+            long_edge,
+            style=self.controls.get_page_style(),
+            handling=self.controls.get_handling(),
+        )
+        worker.failed.connect(self._on_worker_failed)
+        worker.cancelled.connect(self._on_worker_cancelled)
+        worker.progress.connect(self.controls.set_progress)
+        return worker
 
 
 def _warm_up_pipeline() -> None:

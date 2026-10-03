@@ -146,7 +146,7 @@ def test_a_picture_drawn_from_its_colors_details_its_subject(monkeypatch):
     page = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE)
     assert calls == [(736, 1100, 3)]  # on the page's path, on the picture at preview size
     analysis = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True).analysis
-    export = pipeline.generate(image, params, pipeline.EXPORT_LONG_EDGE, collect_analysis=True).analysis
+    export = pipeline.generate(image, params, pipeline.export_long_edge(image), collect_analysis=True).analysis
     assert len(calls) == 1  # once per picture, for the export too
     size = analysis.region_id_map.shape[::-1]
     resized = pipeline.resize_to_long_edge(image, pipeline.PREVIEW_LONG_EDGE)

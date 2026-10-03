@@ -7,7 +7,8 @@ from PySide6.QtCore import QThread, Signal
 
 from tessellatum.core import pipeline
 from tessellatum.core.difficulty import DifficultyParams
-from tessellatum.core.pipeline import GeneratedPage, PipelineCancelled
+from tessellatum.core.pipeline import GeneratedPage, Handling, PipelineCancelled
+from tessellatum.core.render import PageStyle
 
 
 class PipelineWorker(QThread):
@@ -16,11 +17,20 @@ class PipelineWorker(QThread):
     cancelled = Signal()
     progress = Signal(int)  # 0-100
 
-    def __init__(self, image_bgr: np.ndarray, params: DifficultyParams, long_edge: int):
+    def __init__(
+        self,
+        image_bgr: np.ndarray,
+        params: DifficultyParams,
+        long_edge: int,
+        style: PageStyle = PageStyle(),
+        handling: Handling = Handling(),
+    ):
         super().__init__()
         self._image_bgr = image_bgr
         self._params = params
         self._long_edge = long_edge
+        self._style = style
+        self._handling = handling
 
     def run(self) -> None:
         try:
@@ -30,6 +40,8 @@ class PipelineWorker(QThread):
                 self._long_edge,
                 progress_callback=self.progress.emit,
                 should_cancel=self.isInterruptionRequested,
+                style=self._style,
+                handling=self._handling,
             )
         except PipelineCancelled:
             self.cancelled.emit()

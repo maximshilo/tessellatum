@@ -10,7 +10,8 @@ from tessellatum.core import labels as labels_module
 from tessellatum.core import render as render_module
 from tessellatum.core.print_size import OUTLINE_WIDTH_MM, print_scale
 from tessellatum.core.regions import extract_regions
-from tessellatum.core.render import LINE_GRAY, PAPER, PageStyle, ink_coverage, render_page
+from tessellatum.core.color import bgr_to_lab
+from tessellatum.core.render import LABEL_GRAY, LINE_GRAY, PAPER, PageStyle, ink_coverage, render_page
 
 
 def _split_page(size: tuple[int, int]) -> np.ndarray:
@@ -237,6 +238,32 @@ def test_the_default_grays_are_gray_and_the_default_width_is_the_print_model_s()
     assert style.line_width_mm == OUTLINE_WIDTH_MM
     assert 0 < style.line_gray < PAPER and style.line_gray == LINE_GRAY
     assert style.line_gray < style.label_gray < PAPER  # a number is lighter than a line, never darker
+
+
+def _lightness(gray: int) -> float:
+    return float(bgr_to_lab(np.array([gray, gray, gray], dtype=np.uint8))[0])
+
+
+def test_the_tones_the_app_offers_step_both_grays_alike_and_keep_the_numbers_lighter():
+    # D-052 (Q36): Light / Medium / Dark, Medium being D-030's grays, the others 15 L* either side of it.
+    assert list(render_module.TONES) == ["Light", "Medium", "Dark"]
+    assert render_module.TONES["Medium"] == (LINE_GRAY, LABEL_GRAY) and render_module.DEFAULT_TONE == "Medium"
+    medium_gap = _lightness(LABEL_GRAY) - _lightness(LINE_GRAY)
+    lines = [_lightness(line) for line, _ in render_module.TONES.values()]
+    for line, label in render_module.TONES.values():
+        assert line < label < PAPER
+        assert _lightness(label) - _lightness(line) == pytest.approx(medium_gap, abs=1.0)
+    assert lines[0] - lines[1] == pytest.approx(15, abs=1.0) and lines[1] - lines[2] == pytest.approx(15, abs=1.0)
+
+
+def test_the_app_s_settings_give_the_default_style_at_their_defaults():
+    assert PageStyle.from_settings() == PageStyle()
+    assert PageStyle.from_settings(0.45, "Dark") == PageStyle(line_width_mm=0.45, line_gray=0x36, label_gray=0x66)
+    low, high = render_module.LINE_WIDTH_MM_RANGE
+    assert low < OUTLINE_WIDTH_MM < high
+    steps = (high - low) / render_module.LINE_WIDTH_MM_STEP
+    assert steps == pytest.approx(round(steps))  # the range is a whole number of steps
+    assert ((OUTLINE_WIDTH_MM - low) / render_module.LINE_WIDTH_MM_STEP) == pytest.approx(2)  # the default is one
 
 
 def test_line_art_s_ink_prints_solid_in_its_own_tone_and_carries_no_line_and_no_number():

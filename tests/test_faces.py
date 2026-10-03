@@ -476,7 +476,7 @@ def test_the_pipeline_reports_the_faces_on_the_page_and_finds_them_once_per_pict
     image = pipeline.load_image_bgr(SAMPLES / "m-cartoon-bold-lines-girl.png")
     params = params_for_preset("Easy")
     preview = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
-    export = pipeline.generate(image, params, pipeline.EXPORT_LONG_EDGE, collect_analysis=True)
+    export = pipeline.generate(image, params, pipeline.export_long_edge(image), collect_analysis=True)
     assert calls == [(1100, 685, 3)]  # once, on the picture at preview size
     assert len(preview.analysis.faces) == 1 and preview.analysis.faces[0].detector == "cascade"
     sx, sy = export.page.width / preview.page.width, export.page.height / preview.page.height

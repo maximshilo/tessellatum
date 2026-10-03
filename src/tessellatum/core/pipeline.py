@@ -16,7 +16,7 @@ from PIL import Image
 from tessellatum.core import faces, ink, kernels, marks, subject, text, tones
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import render_legend
-from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, MIN_REGION_AREA_MM2, print_scale
+from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, MIN_REGION_AREA_MM2, long_edge_at_dpi, print_scale
 from tessellatum.core.quantize import quantize
 from tessellatum.core.regions import (
     Region,
@@ -35,7 +35,6 @@ from tessellatum.core.render import PAPER, Label, PageStyle, render_page
 from tessellatum.core.texture import smooth_regions
 
 PREVIEW_LONG_EDGE = 1100
-EXPORT_LONG_EDGE = 2400
 
 # Lettering inked at least this much (of 255: darker than halfway) reads as ink: it ends the lines crossing it, and no
 # label point falls on it.
@@ -138,6 +137,27 @@ class PageAnalysis:
     lettering: np.ndarray
 
 
+@dataclass(frozen=True)
+class Handling:
+    """What the pipeline does with what it finds in a picture. Each is on by default.
+
+    Turned off, the page is drawn as if nothing of the kind had been found.
+    The subject and text are then not looked for, nor faces but by the
+    analysis (as on line art); whether the picture is line art is still
+    decided, but not used.
+
+    ``line_art``: a picture found to be line art is drawn from its own ink, printed, and its regions are the areas the
+    ink encloses (see ``ink``); off, it is drawn from its colors like any other picture. ``detail``: on a picture drawn
+    from its colors, the subject and the faces found get more detail, a face's tones are settled and its thin dark marks
+    printed (see ``subject``, ``faces``, ``tones`` and ``marks``). ``text``: the lettering in the lines of text found is
+    printed as it looks, and no number goes on it (see ``text``).
+    """
+
+    line_art: bool = True
+    detail: bool = True
+    text: bool = True
+
+
 @dataclass
 class GeneratedPage:
     page: Image.Image
@@ -211,6 +231,13 @@ def _paintable_limits(params: DifficultyParams, size: tuple[int, int]) -> tuple[
     scale = print_scale(size)
     min_area_px = max(4, int(round(scale.mm2_to_px(max(params.min_region_area_mm2, MIN_REGION_AREA_MM2)))))
     return min_area_px, scale.mm_to_px(max(params.min_width_mm, MIN_PAINTABLE_WIDTH_MM))
+
+
+def export_long_edge(image_bgr: np.ndarray) -> int:
+    """The long edge an export of ``image_bgr`` renders at: what prints at 300 dpi on A4, by the picture's shape (see
+    ``print_size``), or the picture's own long edge where that is smaller, since the pipeline never upscales."""
+    h, w = image_bgr.shape[:2]
+    return min(max(h, w), long_edge_at_dpi((w, h)))
 
 
 def load_image_bgr(path: Path) -> np.ndarray:
@@ -317,6 +344,7 @@ def generate(
     should_cancel: Callable[[], bool] | None = None,
     collect_analysis: bool = False,
     style: PageStyle = PageStyle(),
+    handling: Handling = Handling(),
 ) -> GeneratedPage:
     """Run the full pipeline on ``image_bgr`` and produce a coloring page + legend.
 
@@ -329,7 +357,10 @@ def generate(
     tests, with the faces in the picture (on line art, looked for only then).
     The page itself is the same either way. ``style`` says how the page
     is drawn -- line width and the tone of the ink (see ``PageStyle``); it
-    changes nothing about which regions the page has.
+    changes nothing about which regions the page has. ``handling`` can turn
+    off what the pipeline does with the line art, the subject and faces, and
+    the text it finds (see ``Handling``): the page is then drawn as if it had
+    found nothing of the kind.
 
     Line art (see ``ink``) is drawn from its own ink: the ink is printed, in
     the artwork's own tone, and the regions are the areas it encloses, colored
@@ -376,7 +407,7 @@ def generate(
 
     check_cancelled()
     line_art, ink_lines = detect_ink(image_bgr, resized, long_edge)
-    ink_mask = ink_lines if line_art.is_line_art and ink_lines.any() else None
+    ink_mask = ink_lines if handling.line_art and line_art.is_line_art and ink_lines.any() else None
     # An anti-aliased edge is at least the pixels right beside the ink, however fine the page.
     halo_px = max(1.0, print_scale((w, h)).mm_to_px(ink.HALO_MM))
     report("ink")
@@ -384,7 +415,8 @@ def generate(
     check_cancelled()
     labels, palette_bgr = _cache.get_or_compute(
         image_bgr,
-        ("quantize", long_edge, params.num_colors, params.blur_sigma),
+        # Line art's colors are taken around its ink, unless line art is turned off (see ``Handling``).
+        ("quantize", long_edge, params.num_colors, params.blur_sigma, ink_mask is not None),
         lambda: quantize(resized, params.num_colors, params.blur_sigma, ink=ink_mask, halo_px=halo_px),
     )
     report("quantize")
@@ -412,7 +444,7 @@ def generate(
     # ink.
     detail = in_faces = None
     in_subject = np.zeros((h, w), dtype=bool)
-    if ink_mask is None:
+    if ink_mask is None and handling.detail:
         found = detect_faces(image_bgr, resized)
         if found:
             in_faces = faces.mask(found, (w, h))
@@ -460,7 +492,7 @@ def generate(
     # Signs, titles and captions are printed as they look; the regions are painted round the lettering, and no number
     # may clear it.
     check_cancelled()
-    found_text = detect_text(image_bgr, resized)
+    found_text = detect_text(image_bgr, resized) if handling.text else []
     lettering = lettering_area = None
     if found_text:
         lettering, lettering_area = text.lettering(resized, found_text)
@@ -510,7 +542,7 @@ def generate(
     if rendered.printed_ink is not None:
         printed_ink = rendered.printed_ink  # less the hatching cleared behind numbers
     used_palette_bgr = palette_bgr[used_color_indices]
-    legend = render_legend(used_palette_bgr, width=w)
+    legend = render_legend(used_palette_bgr, width=w, px_per_mm=print_scale((w, h)).px_per_mm)
     report("render")
 
     palette_rgb = [(int(b[2]), int(b[1]), int(b[0])) for b in used_palette_bgr]

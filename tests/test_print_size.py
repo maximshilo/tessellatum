@@ -115,3 +115,27 @@ def test_the_smallest_region_is_the_brushs_own_footprint():
 
     # In pixels, it is the area of a disk as wide as the brush.
     assert disk_px == pytest.approx(math.pi * (scale.mm_to_px(ps.MIN_PAINTABLE_WIDTH_MM) / 2) ** 2)
+
+
+@pytest.mark.parametrize(
+    ("size_px", "long_edge"),
+    [
+        ((1000, 1000), 2244),  # square: 190 mm on either side
+        ((1500, 2000), 2992),  # 3:4, held by the sheet's width: 190 x 253 mm
+        ((3000, 2000), 3272),  # 3:2 on a landscape sheet, held by its length: 277 mm
+        ((2000, 3000), 3272),
+        ((5000, 1000), 3272),
+    ],
+)
+def test_the_long_edge_at_300_dpi_fills_the_printable_area_by_the_image_s_shape(size_px, long_edge):
+    # D-052 (Q36): an export renders at what prints at 300 dpi on A4.
+    assert ps.long_edge_at_dpi(size_px) == long_edge
+    assert ps.long_edge_at_dpi((size_px[0] * 3, size_px[1] * 3)) == long_edge  # the shape decides, not the pixels
+    k = long_edge / max(size_px)
+    page = (round(size_px[0] * k), round(size_px[1] * k))
+    assert ps.print_scale(page).dpi == pytest.approx(ps.PRINT_DPI, abs=0.2)
+
+
+def test_the_long_edge_follows_the_resolution_asked_for():
+    assert ps.long_edge_at_dpi((1000, 1000), dpi=150) == 1122
+    assert ps.long_edge_at_dpi((1000, 1000), dpi=600) == 4488
