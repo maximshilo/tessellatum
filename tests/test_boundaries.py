@@ -9,6 +9,7 @@ from tessellatum.core.boundaries import (
     SMOOTHING_MIN_PX,
     SMOOTHING_MM,
     crack_edges,
+    outline_rings,
     smooth_boundaries,
     smoothing_length_px,
     trace_boundaries,
@@ -401,3 +402,53 @@ def test_no_line_is_drawn_along_the_ink_and_a_boundary_ends_where_it_meets_it():
     assert any(np.array_equal(line, [[14.5, y - 0.5] for y in range(11, 21)]) for line in lines)
     # Without the ink given, the band is a region like any other, outlined along both edges.
     assert any(((line[:-1, 1] == line[1:, 1]) & (line[:-1, 1] == 8.5)).any() for line in trace_boundaries(ids, smoothing_px=0))
+
+
+def _filled_even_odd(rings: list[np.ndarray], shape: tuple[int, int]) -> np.ndarray:
+    """``rings`` filled by the even-odd rule at the pixels' middles: a pixel is inside when an odd number of the rings'
+    upright edges cross its row to its left."""
+    height, width = shape
+    crossings = np.zeros((height, width + 1), dtype=np.int64)
+    for ring in rings:
+        assert np.array_equal(ring[0], ring[-1])  # closed
+        for (xa, ya), (xb, yb) in zip(ring[:-1], ring[1:]):
+            assert xa == xb or ya == yb  # along the cracks between pixels
+            if xa == xb:
+                column = int(round(xa + 0.5))  # a crack at x = k - 0.5 lies left of pixel k
+                crossings[int(round(min(ya, yb) + 0.5)) : int(round(max(ya, yb) + 0.5)), column] += 1
+    return np.cumsum(crossings, axis=1)[:, :width] % 2 == 1
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_outline_rings_filled_even_odd_are_the_mask_exactly(seed):
+    # The vector PDF prints the printed ink as these rings, filled (T7.3, Q38): they must cover its pixels and no others,
+    # holes, pixels touching only at a corner, and pixels on the page edge included.
+    rng = np.random.default_rng(seed)
+    mask = rng.random((60, 80)) < (0.2, 0.5, 0.8)[seed % 3]
+    if seed >= 3:
+        mask = cv2.dilate(mask.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool) & ~mask  # rings and holes
+    rings = outline_rings(mask)
+    np.testing.assert_array_equal(_filled_even_odd(rings, mask.shape), mask)
+    # Each crack round the mask is on one ring, once: as many crack edges as pixel sides the mask shows.
+    padded = np.pad(mask, 1)
+    sides = np.count_nonzero(padded[1:, :] != padded[:-1, :]) + np.count_nonzero(padded[:, 1:] != padded[:, :-1])
+    assert sum(len(ring) - 1 for ring in rings) == sides
+
+
+@pytest.mark.parametrize(
+    "mask",
+    [
+        np.zeros((5, 7), dtype=bool),
+        np.ones((5, 7), dtype=bool),
+        np.eye(6, dtype=bool),  # a diagonal of pixels touching corner to corner
+        np.array([[1, 0, 1], [0, 1, 0], [1, 0, 1]], dtype=bool),  # a checkerboard: four pixels round each inner corner
+        np.pad(np.zeros((3, 3), dtype=bool), 1, constant_values=True),  # a frame round a hole
+    ],
+    ids=["empty", "full", "diagonal", "checkerboard", "hole"],
+)
+def test_outline_rings_of_small_masks(mask):
+    rings = outline_rings(mask)
+    np.testing.assert_array_equal(_filled_even_odd(rings, mask.shape), mask)
+    assert all(len(ring) >= 5 for ring in rings)  # a pixel's four sides at least, back to the start
+    if not mask.any():
+        assert rings == []

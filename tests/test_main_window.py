@@ -20,6 +20,8 @@ from tessellatum.core.render import PageStyle  # noqa: E402
 from tessellatum.gui import main_window  # noqa: E402
 from tessellatum.gui.main_window import MainWindow  # noqa: E402
 
+import pdf_reading  # noqa: E402
+
 # One application for the whole module, as in test_controls_panel.
 _app = QApplication.instance() or QApplication([])
 
@@ -151,7 +153,11 @@ def test_a_png_and_a_pdf_are_exported_at_300_dpi_on_a4(drive, tmp_path):
     assert data.startswith(b"%PDF-1.4\n") and data.endswith(b"%%EOF\n")
     boxes = re.findall(rb"/MediaBox \[0 0 (\S+) (\S+)\]", data)
     assert boxes == [(b"841.8898", b"595.2756"), (b"595.2756", b"841.8898")]  # A4 landscape, then the legend's portrait
-    assert b"/Width 3272 /Height 1636" in data
+    # The vector page (T7.3): drawn in the pixels of the page rendered at 300 dpi, mapped onto the sheet at 300 dpi.
+    page_sheet = pdf_reading.sheets(data)[0]
+    assert "0 0 3272 1636 re W n" in page_sheet["content"]
+    _left, _top, mm_per_px, _ = pdf_reading.page_transform(page_sheet["content"])
+    assert 25.4 / mm_per_px == pytest.approx(300, abs=0.2)
     assert print_scale((3272, 1636)).dpi == pytest.approx(300, abs=0.2)
     assert len(drive.dialogs) == 2 and drive.dialogs[-1][1] == "Export complete"
 

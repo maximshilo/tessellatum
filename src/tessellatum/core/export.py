@@ -2,21 +2,29 @@
 
 from __future__ import annotations
 
+import struct
 import zlib
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Sequence
 
 import numpy as np
 from PIL import Image
 
-from tessellatum.core.legend import render_legend
-from tessellatum.core.print_size import A4, MM_PER_INCH, PRINT_DPI, PT_PER_INCH, print_scale
+from tessellatum.core.boundaries import outline_rings
+from tessellatum.core.labels import baseline_bbox, font
+from tessellatum.core.legend import LABEL_FONT_RATIO, SWATCH_BORDER_MM, SWATCH_GAP_MM, SWATCH_MM, number_fill
+from tessellatum.core.print_size import A4, MM_PER_INCH, PT_PER_INCH, print_scale
+from tessellatum.core.render import PAPER, PageDrawing, number_origin, paper_under
 
 # The space between the page and the legend in a PNG, on paper.
 LEGEND_GAP_MM = 6.0
 
 _PT_PER_MM = PT_PER_INCH / MM_PER_INCH
+# The size Pillow's measurements of a number's ink are taken at, in pixels an em: large enough that rounding them to
+# whole pixels is a thousandth of the em.
+_MEASURING_EM_PX = 1000
 
 
 def save_png(page: Image.Image, legend: Image.Image, path: Path) -> None:
@@ -35,93 +43,325 @@ def save_png(page: Image.Image, legend: Image.Image, path: Path) -> None:
     combined.save(path, "PNG", dpi=(scale.dpi, scale.dpi))
 
 
-def save_pdf(page: Image.Image, palette_rgb: Sequence[tuple[int, int, int]], path: Path) -> None:
-    """Save as two A4 sheets, the coloring page and then its legend, both stored losslessly.
+def save_pdf(drawing: PageDrawing, palette_rgb: Sequence[tuple[int, int, int]], path: Path) -> None:
+    """Save as two A4 sheets of vector art: the coloring page, then its legend.
 
-    The page prints as the print model places it, at its own resolution:
-    scaled to fill the printable area inside the margins, centered, on a
-    landscape sheet when it is wider than tall. The legend is drawn again for a
-    portrait sheet of its own, across its printable width from the top margin,
-    its swatches sized in millimeters (see ``legend``), at 300 dpi whatever the
-    page's resolution: it is drawn from the palette, so a small picture's
-    legend prints as crisply as a large one's. The file carries no date, so the
+    The page prints as the print model places it: scaled to fill the printable
+    area inside the margins, centered, on a landscape sheet when it is wider
+    than tall. It is drawn again from what the page was drawn from (see
+    ``render.PageDrawing``), so that a printer draws it at its own resolution
+    rather than at the page's pixels:
+
+    - the lines as paths, stroked with a round pen of the style's width on
+      paper -- never widened to a pixel, as the page is where a pixel is
+      coarser than the line;
+    - the numbers and their leaders the same way, the numbers as text in the
+      font the page writes them in, embedded;
+    - the printed ink -- line art's own, the marks in a face, the lettering
+      inked solid -- as the outline of its pixels, filled: it has no other
+      shape than the page's pixels give it;
+    - the lettering of signs and captions, which prints in its own tones, as a
+      gray image at the page's resolution, stored losslessly.
+
+    The legend gets a portrait sheet of its own, across the printable width
+    from the top margin: its swatches, ``legend.SWATCH_MM`` squares in their
+    exact colors, numbered as the page is. The file carries no date, so the
     same page always gives the same bytes.
     """
-    scale = print_scale(page.size)
-    page_sheet = _sheet_size_mm(scale.landscape)
-    printed_w, printed_h = scale.printed_size_mm
-    sheets = [
-        _Placed(page_sheet, page, ((page_sheet[0] - printed_w) / 2, (page_sheet[1] - printed_h) / 2), (printed_w, printed_h))
-    ]
-
-    area_w, area_h = A4.printable_mm()
-    palette_bgr = np.array([rgb[::-1] for rgb in palette_rgb], dtype=np.uint8).reshape(-1, 3)
-    px_per_mm = PRINT_DPI / MM_PER_INCH
-    legend = render_legend(palette_bgr, round(area_w * px_per_mm), px_per_mm)
-    legend_w, legend_h = legend.width / px_per_mm, legend.height / px_per_mm
-    fit = min(1.0, area_h / legend_h)  # a legend never runs past the sheet; 40 colors take a quarter of it
-    sheets.append(_Placed(_sheet_size_mm(False), legend, (A4.margin_mm, A4.margin_mm), (legend_w * fit, legend_h * fit)))
-    Path(path).write_bytes(_pdf(sheets))
+    document = _Document()
+    numbers = document.font(_number_font())
+    _page_sheet(document, drawing, numbers)
+    _legend_sheet(document, palette_rgb, numbers)
+    Path(path).write_bytes(document.to_bytes())
 
 
 def _sheet_size_mm(landscape: bool) -> tuple[float, float]:
     return (A4.height_mm, A4.width_mm) if landscape else (A4.width_mm, A4.height_mm)
 
 
-@dataclass(frozen=True)
-class _Placed:
-    """An image on a sheet: the sheet's (width, height), and the image's top-left corner and (width, height), in mm."""
+def _page_sheet(document: _Document, drawing: PageDrawing, numbers: int) -> None:
+    """The coloring page's sheet, drawn in the page's pixels, y down, mapped onto where the print model puts the page."""
+    width, height = drawing.size
+    scale = print_scale(drawing.size)
+    sheet = _sheet_size_mm(scale.landscape)
+    printed_w, printed_h = scale.printed_size_mm
+    left, top = (sheet[0] - printed_w) / 2, (sheet[1] - printed_h) / 2
+    pt_per_px = _PT_PER_MM / scale.px_per_mm
+    style = drawing.style
+    line_width = style.line_width_mm * scale.px_per_mm
+    darken = document.add(b"<< /Type /ExtGState /BM /Darken >>")
+    resources = {"Font": {"F1": numbers}, "ExtGState": {"Dk": darken}}
 
-    sheet_mm: tuple[float, float]
-    image: Image.Image
-    at_mm: tuple[float, float]
-    size_mm: tuple[float, float]
+    ops = [
+        f"q {_num(pt_per_px, 8)} 0 0 {_num(-pt_per_px, 8)} {_num(left * _PT_PER_MM)} {_num((sheet[1] - top) * _PT_PER_MM)} cm",
+        # Half of a line on the page's edge falls off the paper, as on the page.
+        f"0 0 {width} {height} re W n",
+        f"1 J 1 j {_num(line_width)} w",
+    ]
+    if drawing.strokes:
+        ops += [f"{_gray(style.line_gray)} G", _path(drawing.strokes, offset=0.5), "S"]
+    if drawing.lettering_area is not None and drawing.lettering is not None:
+        # Under the lettering's box, the darker of it and the lines, as the page prints it; paper elsewhere.
+        rows = np.flatnonzero(drawing.lettering_area.any(axis=1))
+        columns = np.flatnonzero(drawing.lettering_area.any(axis=0))
+        y0, y1, x0, x1 = int(rows[0]), int(rows[-1]) + 1, int(columns[0]), int(columns[-1]) + 1
+        area = drawing.lettering_area[y0:y1, x0:x1]
+        tone = np.where(area, paper_under(drawing.lettering[y0:y1, x0:x1], drawing.ink_gray), np.uint8(PAPER))
+        resources["XObject"] = {"Lt": document.gray_image(tone)}
+        ops.append(f"q /Dk gs {x1 - x0} 0 0 {y0 - y1} {x0} {y1} cm /Lt Do Q")
+    if drawing.ink is not None and drawing.ink.any():
+        ops += [f"{_gray(drawing.ink_gray)} g", _path(outline_rings(drawing.ink), offset=0.5, places=0), "f*"]
+    leaders = [label.leader for label in drawing.labels if label.leader is not None]
+    if leaders:
+        dot = line_width * style.leader_dot_ratio / 2
+        ops += [f"q /Dk gs {_gray(style.label_gray)} G {_gray(style.label_gray)} g"]
+        ops += [_path([np.array(leader, dtype=np.float64)], offset=0.5) + " S" for leader in leaders]
+        ops += [_disk(x + 0.5, y + 0.5, dot) for _, (x, y) in leaders]
+        ops.append("Q")
+    if drawing.labels:
+        ops.append(f"{_gray(style.label_gray)} g BT")
+        for label in drawing.labels:
+            x, y = number_origin(label)
+            ops.append(f"/F1 {label.font_size} Tf 1 0 0 -1 {_num(x)} {_num(y)} Tm {_text(label.text)} Tj")
+        ops.append("ET")
+    ops.append("Q")
+    document.page(sheet, "\n".join(ops), resources)
 
 
-def _pdf(sheets: list[_Placed]) -> bytes:
-    """A PDF with one sheet per ``_Placed``, its image Flate-compressed, in gray where it has no color."""
-    # Object 1 is the catalog, 2 the page tree, and each sheet takes three more: its page, its content and its image.
-    objects: list[bytes] = [b"", b""]
-    kids = []
-    for sheet in sheets:
-        page_id, content_id, image_id = len(objects) + 1, len(objects) + 2, len(objects) + 3
-        kids.append(page_id)
-        sheet_w, sheet_h = (v * _PT_PER_MM for v in sheet.sheet_mm)
-        x, y = sheet.at_mm[0] * _PT_PER_MM, (sheet.sheet_mm[1] - sheet.at_mm[1] - sheet.size_mm[1]) * _PT_PER_MM
-        w, h = (v * _PT_PER_MM for v in sheet.size_mm)
-        objects.append(
-            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_num(sheet_w)} {_num(sheet_h)}] "
-            f"/Resources << /XObject << /Im0 {image_id} 0 R >> >> /Contents {content_id} 0 R >>".encode()
+def _legend_sheet(document: _Document, palette_rgb: Sequence[tuple[int, int, int]], numbers: int) -> None:
+    """The legend's portrait sheet, drawn in millimeters from the top-left margin, y down."""
+    area_w, area_h = A4.printable_mm()
+    cell = SWATCH_MM + SWATCH_GAP_MM
+    columns = max(1, int(area_w // cell))
+    rows = -(-len(palette_rgb) // columns)
+    fit = min(1.0, area_h / (rows * cell + SWATCH_GAP_MM))  # a legend never runs past the sheet; 40 colors take a quarter of it
+    scale = _PT_PER_MM * fit
+    em = SWATCH_MM * LABEL_FONT_RATIO
+    ops = [f"q {_num(scale, 8)} 0 0 {_num(-scale, 8)} {_num(A4.margin_mm * _PT_PER_MM)} {_num((A4.height_mm - A4.margin_mm) * _PT_PER_MM)} cm"]
+    for index, rgb in enumerate(palette_rgb):
+        row, column = divmod(index, columns)
+        x, y = SWATCH_GAP_MM + column * cell, SWATCH_GAP_MM + row * cell
+        inset = SWATCH_BORDER_MM / 2  # the frame lies inside the swatch, as on the page's legend
+        ops.append(f"{' '.join(_gray(v) for v in rgb)} rg {_num(x)} {_num(y)} {_num(SWATCH_MM)} {_num(SWATCH_MM)} re f")
+        ops.append(
+            f"0 G {_num(SWATCH_BORDER_MM)} w {_num(x + inset)} {_num(y + inset)} "
+            f"{_num(SWATCH_MM - SWATCH_BORDER_MM)} {_num(SWATCH_MM - SWATCH_BORDER_MM)} re S"
         )
-        objects.append(_stream(b"", f"q {_num(w)} 0 0 {_num(h)} {_num(x)} {_num(y)} cm /Im0 Do Q".encode()))
-        pixels = np.asarray(sheet.image.convert("RGB"))
-        gray = bool((pixels[..., 0] == pixels[..., 1]).all() and (pixels[..., 1] == pixels[..., 2]).all())
-        data = pixels[..., 0] if gray else pixels
-        objects.append(
-            _stream(
-                f"/Type /XObject /Subtype /Image /Width {sheet.image.width} /Height {sheet.image.height} "
-                f"/ColorSpace /{'DeviceGray' if gray else 'DeviceRGB'} /BitsPerComponent 8 /Filter /FlateDecode ".encode(),
-                zlib.compress(np.ascontiguousarray(data).tobytes()),
+        # The number's ink is centered on the swatch, as on the page's legend.
+        text = str(index + 1)
+        ink_x0, ink_y0, ink_x1, ink_y1 = (v / _MEASURING_EM_PX for v in baseline_bbox(text, _MEASURING_EM_PX))
+        origin_x = x + SWATCH_MM / 2 - (ink_x0 + ink_x1) / 2 * em
+        origin_y = y + SWATCH_MM / 2 - (ink_y0 + ink_y1) / 2 * em
+        ops.append(
+            f"{_gray(number_fill(rgb)[0])} g BT /F1 {_num(em)} Tf 1 0 0 -1 {_num(origin_x)} {_num(origin_y)} Tm "
+            f"{_text(text)} Tj ET"
+        )
+    ops.append("Q")
+    document.page(_sheet_size_mm(False), "\n".join(ops), {"Font": {"F1": numbers}})
+
+
+def _path(paths: list[np.ndarray], offset: float, places: int = 2) -> str:
+    """Path construction for ``paths``, Nx2 (x, y) points each, one subpath apiece, moved by ``offset`` in x and y.
+
+    The page's lines and leaders put pixel centers at integer coordinates; the
+    sheet's image of the page puts them half a pixel in, so their ``offset`` is
+    0.5. ``places`` decimals: a hundredth of a pixel is a hundredth of 0.1-0.4
+    mm, far finer than a printer's dot, and a pixel's corner needs none.
+    """
+    points = np.concatenate(paths) + offset
+    words = [f"{x:.{places}f} {y:.{places}f} l" for x, y in points.tolist()]
+    at = 0
+    for path in paths:
+        words[at] = words[at][:-1] + "m"
+        at += len(path)
+    return "\n".join(words)
+
+
+def _disk(x: float, y: float, radius: float) -> str:
+    """A filled disk of ``radius`` around (x, y), as four Bézier quarters."""
+    r, k = radius, radius * 0.5522847498  # k: the control points' distance that best fits a quarter circle
+    points = [
+        (x + r, y),
+        (x + r, y + k), (x + k, y + r), (x, y + r),
+        (x - k, y + r), (x - r, y + k), (x - r, y),
+        (x - r, y - k), (x - k, y - r), (x, y - r),
+        (x + k, y - r), (x + r, y - k), (x + r, y),
+    ]  # fmt: skip
+    words = [f"{_num(px)} {_num(py)}" for px, py in points]
+    quarters = [" ".join(words[i : i + 3]) + " c" for i in range(1, 13, 3)]
+    return f"{words[0]} m " + " ".join(quarters) + " f"
+
+
+def _gray(level: int) -> str:
+    """A level of 0-255 as a PDF color component, 0-1, to as many places as round back to the same level."""
+    return _num(int(level) / 255)
+
+
+def _text(text: str) -> str:
+    """``text`` as a PDF string: the page's numbers are digits, which the embedded font's widths cover."""
+    if not text.isdigit():
+        raise ValueError(f"the PDF writes digits only, got {text!r}")
+    return f"({text})"
+
+
+def _num(value: float, places: int = 4) -> str:
+    text = f"{value:.{places}f}".rstrip("0").rstrip(".")
+    return "0" if text == "-0" else text
+
+
+@dataclass(frozen=True)
+class _TrueType:
+    """What a PDF needs to know about a TrueType font to embed it: its bytes, metrics and the digits' advances."""
+
+    data: bytes
+    name: str  # its PostScript name
+    units_per_em: int
+    bbox: tuple[int, int, int, int]  # x0, y0, x1, y1, in font units
+    ascent: int
+    descent: int
+    cap_height: int
+    digit_advances: tuple[int, ...]  # the advance widths of "0" to "9", in font units
+
+    @classmethod
+    def parse(cls, data: bytes) -> _TrueType:
+        tables = {}
+        for i in range(struct.unpack(">H", data[4:6])[0]):
+            tag, _checksum, offset, length = struct.unpack(">4sIII", data[12 + 16 * i : 28 + 16 * i])
+            tables[tag.decode("latin-1")] = (offset, length)
+        head, hhea, hmtx, os2 = (tables[t][0] for t in ("head", "hhea", "hmtx", "OS/2"))
+        units_per_em = struct.unpack(">H", data[head + 18 : head + 20])[0]
+        bbox = struct.unpack(">4h", data[head + 36 : head + 44])
+        ascent, descent = struct.unpack(">hh", data[hhea + 4 : hhea + 8])
+        metrics = struct.unpack(">H", data[hhea + 34 : hhea + 36])[0]
+        os2_version = struct.unpack(">H", data[os2 : os2 + 2])[0]
+        cap_height = struct.unpack(">h", data[os2 + 88 : os2 + 90])[0] if os2_version >= 2 else round(0.7 * units_per_em)
+        glyphs = _cmap_bmp(data, tables["cmap"][0])
+        advances = []
+        for digit in "0123456789":
+            glyph = min(glyphs[ord(digit)], metrics - 1)  # glyphs past the last metric take its advance
+            advances.append(struct.unpack(">H", data[hmtx + 4 * glyph : hmtx + 4 * glyph + 2])[0])
+        return cls(data, _postscript_name(data, tables["name"][0]), units_per_em, bbox, ascent, descent, cap_height, tuple(advances))
+
+    def em(self, units: float) -> str:
+        """A length in font units, in the thousandths of an em a PDF gives a font's metrics in."""
+        return _num(units * 1000 / self.units_per_em, 3)
+
+
+def _cmap_bmp(data: bytes, cmap: int) -> dict[int, int]:
+    """The glyph of each character in the font's Windows Unicode (format 4) character map."""
+    for i in range(struct.unpack(">H", data[cmap + 2 : cmap + 4])[0]):
+        platform, encoding, offset = struct.unpack(">HHI", data[cmap + 4 + 8 * i : cmap + 12 + 8 * i])
+        if (platform, encoding) == (3, 1):
+            break
+    else:
+        raise ValueError("the font has no Windows Unicode character map")
+    at = cmap + offset
+    if struct.unpack(">H", data[at : at + 2])[0] != 4:
+        raise ValueError("the font's Windows Unicode character map is not format 4")
+    segments = struct.unpack(">H", data[at + 6 : at + 8])[0] // 2
+    ends_at, starts_at = at + 14, at + 16 + 2 * segments
+    deltas_at, ranges_at = starts_at + 2 * segments, starts_at + 4 * segments
+    ends = struct.unpack(f">{segments}H", data[ends_at : ends_at + 2 * segments])
+    starts = struct.unpack(f">{segments}H", data[starts_at : starts_at + 2 * segments])
+    deltas = struct.unpack(f">{segments}H", data[deltas_at : deltas_at + 2 * segments])
+    ranges = struct.unpack(f">{segments}H", data[ranges_at : ranges_at + 2 * segments])
+    glyphs = {}
+    for k in range(segments):
+        for char in range(starts[k], ends[k] + 1):
+            if char == 0xFFFF:
+                continue
+            if ranges[k] == 0:
+                glyphs[char] = (char + deltas[k]) & 0xFFFF
+            else:
+                where = ranges_at + 2 * k + ranges[k] + 2 * (char - starts[k])
+                glyph = struct.unpack(">H", data[where : where + 2])[0]
+                glyphs[char] = (glyph + deltas[k]) & 0xFFFF if glyph else 0
+    return glyphs
+
+
+def _postscript_name(data: bytes, name: int) -> str:
+    """The font's PostScript name (name ID 6), as a PDF name may hold it."""
+    count, strings = struct.unpack(">HH", data[name + 2 : name + 6])
+    for i in range(count):
+        platform, _encoding, _language, name_id, length, offset = struct.unpack(">6H", data[name + 6 + 12 * i : name + 18 + 12 * i])
+        if name_id == 6:
+            raw = data[name + strings + offset : name + strings + offset + length]
+            text = raw.decode("utf-16-be" if platform in (0, 3) else "latin-1")
+            return "".join(c for c in text if c.isascii() and c.isalnum() or c in "-_") or "Numbers"
+    return "Numbers"
+
+
+@lru_cache(maxsize=1)
+def _number_font() -> _TrueType:
+    """The font the page's numbers are written in (see ``labels.font``)."""
+    data = getattr(font(_MEASURING_EM_PX), "font_bytes", None)
+    if not data:
+        raise RuntimeError("the numbers' font is not a TrueType font Pillow loaded from bytes; it can't be embedded")
+    return _TrueType.parse(data)
+
+
+class _Document:
+    """A PDF being written: objects numbered from 1 in the order added, the catalog and page tree first."""
+
+    def __init__(self) -> None:
+        self._objects: list[bytes] = [b"", b""]  # 1 is the catalog and 2 the page tree, filled in last
+        self._pages: list[int] = []
+
+    def add(self, body: bytes) -> int:
+        self._objects.append(body)
+        return len(self._objects)
+
+    def stream(self, entries: str, data: bytes) -> int:
+        """A Flate-compressed stream; ``entries`` are its dictionary's own, each followed by a space."""
+        packed = zlib.compress(data)
+        return self.add(f"<< {entries}/Filter /FlateDecode /Length {len(packed)} >>\nstream\n".encode() + packed + b"\nendstream")
+
+    def gray_image(self, pixels: np.ndarray) -> int:
+        height, width = pixels.shape
+        return self.stream(
+            f"/Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceGray /BitsPerComponent 8 ",
+            np.ascontiguousarray(pixels, dtype=np.uint8).tobytes(),
+        )
+
+    def font(self, face: _TrueType) -> int:
+        """``face`` embedded whole, as a simple font of the digits."""
+        program = self.stream(f"/Length1 {len(face.data)} ", face.data)
+        descriptor = self.add(
+            (
+                f"<< /Type /FontDescriptor /FontName /{face.name} /Flags 32 /FontBBox [{' '.join(face.em(v) for v in face.bbox)}] "
+                f"/ItalicAngle 0 /Ascent {face.em(face.ascent)} /Descent {face.em(face.descent)} "
+                f"/CapHeight {face.em(face.cap_height)} /StemV 80 /FontFile2 {program} 0 R >>"
+            ).encode()
+        )
+        return self.add(
+            (
+                f"<< /Type /Font /Subtype /TrueType /BaseFont /{face.name} /FirstChar 48 /LastChar 57 "
+                f"/Widths [{' '.join(face.em(v) for v in face.digit_advances)}] /FontDescriptor {descriptor} 0 R "
+                "/Encoding /WinAnsiEncoding >>"
+            ).encode()
+        )
+
+    def page(self, sheet_mm: tuple[float, float], content: str, resources: dict[str, dict[str, int]]) -> None:
+        contents = self.stream("", content.encode("latin-1"))
+        listed = " ".join(f"/{kind} << {' '.join(f'/{name} {ref} 0 R' for name, ref in refs.items())} >>" for kind, refs in resources.items())
+        width, height = (v * _PT_PER_MM for v in sheet_mm)
+        self._pages.append(
+            self.add(
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_num(width)} {_num(height)}] "
+                f"/Resources << {listed} >> /Contents {contents} 0 R >>".encode()
             )
         )
-    objects[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
-    objects[1] = f"<< /Type /Pages /Kids [{' '.join(f'{k} 0 R' for k in kids)}] /Count {len(kids)} >>".encode()
 
-    out = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
-    offsets = []
-    for number, body in enumerate(objects, start=1):
-        offsets.append(len(out))
-        out += f"{number} 0 obj\n".encode() + body + b"\nendobj\n"
-    xref = len(out)
-    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
-    out += b"".join(f"{offset:010d} 00000 n \n".encode() for offset in offsets)
-    out += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
-    return bytes(out)
-
-
-def _stream(entries: bytes, data: bytes) -> bytes:
-    return b"<< " + entries + f"/Length {len(data)} >>\nstream\n".encode() + data + b"\nendstream"
-
-
-def _num(value: float) -> str:
-    return f"{value:.4f}".rstrip("0").rstrip(".")
+    def to_bytes(self) -> bytes:
+        self._objects[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
+        self._objects[1] = f"<< /Type /Pages /Kids [{' '.join(f'{k} 0 R' for k in self._pages)}] /Count {len(self._pages)} >>".encode()
+        out = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+        offsets = []
+        for number, body in enumerate(self._objects, start=1):
+            offsets.append(len(out))
+            out += f"{number} 0 obj\n".encode() + body + b"\nendobj\n"
+        xref = len(out)
+        out += f"xref\n0 {len(self._objects) + 1}\n0000000000 65535 f \n".encode()
+        out += b"".join(f"{offset:010d} 00000 n \n".encode() for offset in offsets)
+        out += f"trailer\n<< /Size {len(self._objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+        return bytes(out)
