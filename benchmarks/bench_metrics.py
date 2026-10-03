@@ -127,19 +127,30 @@ def paint(
     palette_bgr: np.ndarray,
     printed_ink: np.ndarray | None = None,
     ink_gray: int = 0,
+    lettering: np.ndarray | None = None,
+    lettering_area: np.ndarray | None = None,
 ) -> np.ndarray:
     """Fill every region with its palette color: the "finished painting".
 
-    What the page prints stays as it is: line art's ``printed_ink`` (HxW bool)
-    in its gray ``ink_gray``, and bare paper, white, wherever the page has no
-    region and no ink.
+    What the page prints stays as it is: its ``printed_ink`` (HxW bool) in its
+    gray ``ink_gray``, and bare paper, white, wherever the page has no region
+    and no ink. Inside ``lettering_area`` (HxW bool), the lines of text the page
+    prints as they look, printed ink lying in a region keeps the lettering's own
+    tone instead: ``lettering`` (HxW uint8) is its ink as the line layer gives
+    it, 0 solid in ``ink_gray`` and 255 bare paper (from 0.1.41). Printed ink in
+    no region prints solid there too.
     """
     lut = np.asarray(palette_bgr, dtype=np.uint8)[np.asarray(region_color, dtype=np.int64)]
     ids = np.asarray(region_id_map)
     painted = lut[np.clip(ids, 0, None)]
     painted[ids < 0] = BARE_PAPER
     if printed_ink is not None:
-        painted[np.asarray(printed_ink, dtype=bool)] = ink_gray
+        printed = np.asarray(printed_ink, dtype=bool)
+        painted[printed] = ink_gray
+        if lettering is not None and lettering_area is not None:
+            inside = printed & np.asarray(lettering_area, dtype=bool) & (ids >= 0)
+            ink = BARE_PAPER - np.asarray(lettering, dtype=np.float64)[inside]
+            painted[inside] = np.rint(BARE_PAPER - ink * ((BARE_PAPER - ink_gray) / BARE_PAPER)).astype(np.uint8)[:, None]
     return painted
 
 

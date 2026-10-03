@@ -132,7 +132,8 @@ class PageData:
     line_art: object | None = None  # the pipeline's ``ink.LineArt`` decision; None before 0.1.27
     # HxW bool: the ink the page prints; None before 0.1.28. In no region before 0.1.30; from then on, thin ink is in the
     # regions whose paint goes over it. From 0.1.35 also the thin dark marks printed in the faces found on a picture that
-    # isn't line art, which lie in the regions around them.
+    # isn't line art, which lie in the regions around them. From 0.1.41 also the lettering in the lines of text found that
+    # reads as ink, which lies in the regions around it.
     printed_ink: np.ndarray | None = None
     ink_gray: int = 0  # the gray the printed ink is in, 0 black to 255 white
     faces: list | None = None  # the faces the pipeline found in the picture (``faces.Face``); None before 0.1.33
@@ -140,6 +141,10 @@ class PageData:
     # faces found); None before 0.1.34, which held every region to min_region_area_px.
     detail: np.ndarray | None = None
     text: list | None = None  # the lines of text the pipeline found in the picture (``text.TextLine``); None before 0.1.40
+    # HxW bool: inside the lines of text found, where the page prints their lettering as it looks; and HxW uint8 there, its
+    # ink as ``outlines`` gives it, 0 solid in ``ink_gray``. None before 0.1.41, which printed no lettering.
+    lettering_area: np.ndarray | None = None
+    lettering: np.ndarray | None = None
 
 
 def page_data_from_analysis(analysis) -> PageData:
@@ -174,6 +179,8 @@ def page_data_from_analysis(analysis) -> PageData:
         faces=getattr(analysis, "faces", None),  # before 0.1.33 no version looked for faces
         detail=getattr(analysis, "detail", None),  # before 0.1.34 every region was held to one smallest size
         text=getattr(analysis, "text", None),  # before 0.1.40 no version looked for text
+        lettering_area=getattr(analysis, "lettering_area", None),  # before 0.1.41 no version printed lettering
+        lettering=getattr(analysis, "lettering", None),
     )
 
 
@@ -358,7 +365,13 @@ def main() -> int:
 
     if page_data is not None:
         painted = bm.paint(
-            page_data.region_id_map, page_data.region_color, page_data.palette_bgr, page_data.printed_ink, page_data.ink_gray
+            page_data.region_id_map,
+            page_data.region_color,
+            page_data.palette_bgr,
+            page_data.printed_ink,
+            page_data.ink_gray,
+            page_data.lettering,
+            page_data.lettering_area,
         )
         quality.update(bm.fidelity(reference, bm.fit_to(painted, (w, h))))
         quality["undersized_regions"] = bm.count_undersized(

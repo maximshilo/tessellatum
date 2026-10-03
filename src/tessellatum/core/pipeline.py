@@ -31,11 +31,15 @@ from tessellatum.core.regions import (
     settle_enclosed,
     split_areas,
 )
-from tessellatum.core.render import Label, PageStyle, render_page
+from tessellatum.core.render import PAPER, Label, PageStyle, render_page
 from tessellatum.core.texture import smooth_regions
 
 PREVIEW_LONG_EDGE = 1100
 EXPORT_LONG_EDGE = 2400
+
+# Lettering inked at least this much (of 255: darker than halfway) reads as ink: it ends the lines crossing it, and no
+# label point falls on it.
+_LETTERING_PRINTED = 128
 
 # Rough share of total generation time each stage takes, used to report real
 # (if coarse-grained) percentage progress rather than a fake animation.
@@ -112,15 +116,26 @@ class PageAnalysis:
     # ``regions.settle_enclosed``), less the hatching cleared behind numbers written on it. Bold printed ink is in no
     # region, nor is bare paper the ink encloses too small to paint; thin printed ink is in the regions whose paint goes
     # over it. On a picture drawn from its colors, the detail marks printed in its faces, in their own gray (see
-    # ``marks``), which lie in the regions around them; all False without faces.
+    # ``marks``), which lie in the regions around them; all False without faces. On every picture, inside the lines of text
+    # found, the printed ink lying in a region is the lettering inked enough to read as ink (see ``lettering``) and no
+    # other, printed in the lettering's own tone rather than ``ink_gray`` solid; the printed ink in no region there is kept.
+    # On a picture drawn from its colors, ``ink_gray`` is the gray of the picture under all of it, marks and lettering
+    # alike.
     printed_ink: np.ndarray
     ink_gray: int
     # The faces in the picture (see ``faces``), found on it at preview size and given in the page's pixels. On a picture
     # drawn from its colors, they are ``detail``; line art's page doesn't use them.
     faces: list[faces.Face]
-    # The lines of text in the picture (see ``text``), found on it once and given in the page's pixels, on every picture;
-    # nothing on the page uses them yet.
+    # The lines of text in the picture (see ``text``), found on it once and given in the page's pixels, on every picture.
     text: list[text.TextLine]
+    # HxW bool: the pixels inside the lines of text found, where the page prints their lettering as it looks, the lines
+    # running through, in place of the printed ink lying in a region (see ``text.lettering`` and ``render.render_page``;
+    # printed ink in no region prints solid there too); and HxW uint8 there, the ink the lettering puts
+    # on the page as ``outlines`` gives it, 0 = solid in ``ink_gray``, 255 = bare paper (255 outside). The lettering
+    # inked enough to read as ink (darker than halfway) is printed ink too: in ``printed_ink``, lying in the regions
+    # around it, which are painted round it.
+    lettering_area: np.ndarray
+    lettering: np.ndarray
 
 
 @dataclass
@@ -268,10 +283,10 @@ def detect_subject(image_bgr: np.ndarray, resized: np.ndarray) -> np.ndarray:
 def detect_text(image_bgr: np.ndarray, resized: np.ndarray) -> list[text.TextLine]:
     """The lines of text in the picture, in the pixels of ``resized``, its page (see ``text``).
 
-    They are found once per picture -- on it at preview size, and where that
-    finds text, again at twice that size from the source's own pixels -- so a
-    preview and an export always agree; that is cached per image object, as the
-    other stages are.
+    They are found once per picture -- on it at half its preview size, and
+    where that finds text, again at twice its preview size from the source's
+    own pixels -- so a preview and an export always agree; that is cached per
+    image object, as the other stages are.
     """
     picture = _cache.get_or_compute(
         image_bgr, ("resize", PREVIEW_LONG_EDGE), lambda: resize_to_long_edge(image_bgr, PREVIEW_LONG_EDGE)
@@ -311,9 +326,8 @@ def generate(
     True, ``PipelineCancelled`` is raised and no more work is done.
     ``collect_analysis`` also returns what the page is made of in
     ``GeneratedPage.analysis`` (see ``PageAnalysis``), for benchmarks and
-    tests, with the faces in the picture (on line art, looked for only then)
-    and the lines of text in it (looked for only then: nothing on the page
-    uses them yet). The page itself is the same either way. ``style`` says how the page
+    tests, with the faces in the picture (on line art, looked for only then).
+    The page itself is the same either way. ``style`` says how the page
     is drawn -- line width and the tone of the ink (see ``PageStyle``); it
     changes nothing about which regions the page has.
 
@@ -332,6 +346,11 @@ def generate(
     it (see ``tones``), and the thin dark marks there that no region keeps --
     pupils, eyelid and lip lines, whisker dots -- are printed, in their own
     tone (see ``marks``). The brush is the same everywhere.
+
+    On every picture the lettering in the lines of text found -- signs, titles,
+    captions -- is printed as it looks, in the ink's tone (see ``text``): dark
+    lettering as ink on paper, light lettering as paper letters in its dark
+    ground. The regions are left as they are, and painted round it.
 
     Resizing, finding the ink and quantization results are cached per image
     object, so regenerating the same image with a different minimum region
@@ -437,6 +456,22 @@ def generate(
         # A number may clear hatching, but no line: not half of one between two areas, nor the ink left where two
         # regions meet under the strokes, a line's width of it.
         clearable = detail_ink(region_id_map, printed_ink, thin_px / 2, style.line_width_px((w, h)))
+    # Signs, titles and captions are printed as they look; the regions are painted round the lettering, and no number
+    # may clear it.
+    check_cancelled()
+    found_text = detect_text(image_bgr, resized)
+    lettering = lettering_area = None
+    if found_text:
+        lettering, lettering_area = text.lettering(resized, found_text)
+        # Inside a line of text the lettering takes the place of the ink lying in a region, as the page prints it: what is
+        # printed there is the lettering darker than halfway, and the ink in no region, which keeps two regions apart.
+        printed_ink = np.where(
+            lettering_area, (printed_ink & (region_id_map < 0)) | (lettering >= _LETTERING_PRINTED), printed_ink
+        )
+        if clearable is not None:
+            clearable = clearable & ~lettering_area
+        if ink_mask is None:
+            ink_gray = ink.ink_gray(resized, printed_ink)  # line art prints in the artwork's own ink
     report("regions")
 
     def numbered(region_id_map: np.ndarray) -> tuple[list[Region], list[int], dict[int, int]]:
@@ -458,7 +493,8 @@ def generate(
     report("contours")
 
     check_cancelled()
-    rendered = render_page((w, h), regions, region_id_map, style, ink=printed_ink, ink_gray=ink_gray, clearable=clearable)
+    printing = dict(ink=printed_ink, ink_gray=ink_gray, lettering=lettering, lettering_area=lettering_area)
+    rendered = render_page((w, h), regions, region_id_map, style, clearable=clearable, **printing)
     cramped = sorted({label.region_id for label in rendered.labels if label.cramped}) if ink_mask is not None else []
     merged = merge_cramped(region_id_map, region_color, printed_ink, cramped, min_width_px) if cramped else None
     if merged is not None:
@@ -466,10 +502,10 @@ def generate(
         # again. Every other picture is drawn once, as it always was.
         region_id_map = merged
         clearable = detail_ink(region_id_map, printed_ink, thin_px / 2, style.line_width_px((w, h)))
+        if lettering_area is not None:
+            clearable = clearable & ~lettering_area
         regions, used_color_indices, remap = numbered(region_id_map)
-        rendered = render_page(
-            (w, h), regions, region_id_map, style, ink=printed_ink, ink_gray=ink_gray, clearable=clearable
-        )
+        rendered = render_page((w, h), regions, region_id_map, style, clearable=clearable, **printing)
     if rendered.printed_ink is not None:
         printed_ink = rendered.printed_ink  # less the hatching cleared behind numbers
     used_palette_bgr = palette_bgr[used_color_indices]
@@ -504,7 +540,9 @@ def generate(
             printed_ink=printed_ink,
             ink_gray=ink_gray,
             faces=detect_faces(image_bgr, resized),
-            text=detect_text(image_bgr, resized),
+            text=found_text,
+            lettering_area=lettering_area if lettering_area is not None else np.zeros((h, w), dtype=bool),
+            lettering=PAPER - lettering if lettering is not None else np.full((h, w), PAPER, dtype=np.uint8),
         )
 
     return GeneratedPage(

@@ -570,3 +570,42 @@ def test_found_ink_is_scored_against_the_artworks_ink_on_line_art_and_as_stray_i
     }
     # A version that doesn't look for ink lines.
     assert scores(None, artwork) == {"ink_found_fraction": None, "stray_ink_fraction": None, **dict.fromkeys(bench_case.FOUND_INK_KEYS)}
+
+
+def test_case_runner_paints_the_lettering_in_the_tone_the_page_prints_it(tmp_path):
+    picture = np.tile(np.linspace(150, 235, 900).astype(np.uint8)[None, :, None], (600, 1, 3))
+    for i, word in enumerate(("PAINT BY NUMBERS", "Hello world 2026", "quiet river")):
+        cv2.putText(picture, word, (60, 140 + 150 * i), cv2.FONT_HERSHEY_DUPLEX, 1.4, (40, 30, 30), 3, cv2.LINE_AA)
+    image = tmp_path / "lettering.png"
+    Image.fromarray(picture[:, :, ::-1]).save(image)
+    manifest = {"size": [900, 600], "categories": ["photo"]}
+    (tmp_path / "manifest.json").write_text(json.dumps({"schema": 1, "images": {"lettering.png": manifest}}), encoding="utf-8")
+    out = tmp_path / "case"
+    arguments = _case_arguments(image, out, repeats=1)
+    arguments[arguments.index("--long-edge") + 1] = "900"
+
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "benchmarks" / "bench_case.py"), *arguments], capture_output=True, text=True, timeout=300
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    pipeline.clear_cache()
+    analysis = pipeline.generate(picture, difficulty.params_for_preset("Hard"), 900, collect_analysis=True).analysis
+    page_data = bench_case.page_data_from_analysis(analysis)
+    assert page_data.lettering is analysis.lettering and page_data.lettering_area is analysis.lettering_area
+    inside = analysis.printed_ink & analysis.lettering_area
+    # Printed in a region, but lighter than solid ink: the lettering's own tone. (Printed ink in no region is solid.)
+    partly = inside & (analysis.lettering > 0) & (analysis.region_id_map >= 0)
+    assert inside.sum() > 1000 and partly.sum() > 100
+    painted = np.asarray(Image.open(out / "painted.png").convert("RGB"))[:, :, ::-1]
+    expected = bm.paint(
+        page_data.region_id_map,
+        page_data.region_color,
+        page_data.palette_bgr,
+        page_data.printed_ink,
+        page_data.ink_gray,
+        page_data.lettering,
+        page_data.lettering_area,
+    )
+    np.testing.assert_array_equal(painted, expected)
+    assert (painted[partly][:, 0] > analysis.ink_gray).all()

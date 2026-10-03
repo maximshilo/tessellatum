@@ -204,15 +204,34 @@ A drawing's faces and subject are its ink's, so line art's page uses neither.
 Signs, titles and captions should still read on the page, so the pipeline also
 finds the lines of text in a picture, drawn or photographed. A fourth network
 ships with the app for that: PP-OCRv6-small, PaddleOCR's text detector (9.9 MB),
-run by [ONNX Runtime](https://onnxruntime.ai/). It looks at the picture at
-preview size, which finds lettering whose lines print about 2 mm tall or more,
-and where that finds any, again at twice that size from the source's own pixels,
-which finds the small print beside it. A line is kept only if it looks like one:
-at most 15 mm tall on paper (bigger lettering is shapes to paint) and at least
-half again as long as tall, which an eye, a window or a disc mostly isn't. See
-`src/tessellatum/core/text.py`. Nothing on the page uses the lines yet: the
-benchmark measures how well they are found, and printing the lettering as ink
-and keeping numbers off it are next.
+run by [ONNX Runtime](https://onnxruntime.ai/). It looks at the picture at half
+its preview size, which finds lettering whose lines print about 4 mm tall or
+more, and where that finds any, again at twice its preview size from the
+source's own pixels, which finds the small print beside it, down to lines about
+1.7 mm tall. A picture with no lettering that big is taken to have none, so a
+picture without text pays only for the small first look (a few tens of
+milliseconds); one with text pays for the second too, about 0.6-0.9 s on its
+first preview, after which it is remembered. A line is kept only if it looks
+like one: at most 15 mm tall on paper (bigger lettering is shapes to paint) and
+at least half again as long as tall, which an eye, a window or a disc mostly
+isn't.
+
+The page prints the lettering in each line found as it looks: the line's own
+lightness, from bare paper to solid ink, stretched so that its lightest tones
+(the 98th percentile) are paper and its darkest (the 2nd) solid ink, in the
+ink's tone, anti-aliased. Dark lettering prints as ink on paper; light
+lettering — a lit sign, white type on a dark panel — as paper letters in its
+dark printed ground. Which of the two a line is can't be told reliably from its
+pixels (a sign's panel can shade from light to dark behind its letters), and
+printed as it looks it reads either way. Inside a line the lettering takes the
+place of a scan's own ink lying in its regions, so the scan doesn't print its
+letters a second time, binarized and twice as bold; the lines between regions
+still run through it, and ink that keeps two regions apart — bold ink, the
+seam down a line two regions share — still prints solid. The regions and
+the palette are left as they are: the lettering darker than halfway is printed
+ink, painted round, which ends the lines crossing it, and no number goes on any
+of its ink. A line whose lettering stands out from its ground by less than 20
+L\* prints nothing. See `src/tessellatum/core/text.py`.
 
 ### Performance
 
