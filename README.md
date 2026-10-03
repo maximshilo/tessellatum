@@ -4,7 +4,7 @@ Turn any image into a "paint by numbers" style coloring page: the source
 image is reduced to flat, outlined regions, each region is numbered, and a
 color legend maps each number to a color. Preview the result, tune the
 difficulty (more/smaller regions and colors = harder) and how the lines and
-numbers print, and export a PNG or an A4 PDF at 300 dpi.
+numbers print, and export a PNG at 300 dpi or an A4 PDF of vector art.
 
 Tessellatum is a native desktop app (PySide6/Qt) — no browser, no server,
 just double-click and run.
@@ -58,12 +58,16 @@ with them, and "Export…" draws it again at print resolution.
 - **Export** renders the page at 300 dpi on A4: a long edge of 2244 to
   3272 px, depending on the picture's shape, or the picture's own size where
   that is smaller, since nothing is upscaled.
-  - **PDF**: two A4 sheets. The page fills the printable area inside 10 mm
-    margins, centered, on a landscape sheet when the picture is wider than
-    tall; the legend gets a portrait sheet of its own, its swatches 12 mm
-    square, drawn at 300 dpi whatever the picture's size. Both are stored
-    losslessly, so the paper stays white around every line and each swatch is
-    exactly its color.
+  - **PDF**: two A4 sheets of vector art. The page fills the printable area
+    inside 10 mm margins, centered, on a landscape sheet when the picture is
+    wider than tall. Its lines are paths of the width asked for and its numbers
+    text, so a printer draws them at its own resolution rather than at the
+    page's pixels, however small the picture. What the page prints from the
+    picture has no other shape than its pixels: line art's ink and the marks in
+    a face are the outline of those pixels, filled, and the lettering of signs
+    and captions an image at the page's resolution, stored losslessly. The
+    legend gets a portrait sheet of its own, its swatches 12 mm squares in
+    their exact colors.
   - **PNG**: the page above its legend in one image, which records its
     resolution, so it prints as large as the PDF's page.
 

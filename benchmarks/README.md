@@ -251,6 +251,13 @@ its 300 dpi size, so the app exports each at its own size: the page the
 harness's export cases (2400 px asked for) measure. Until 0.1.42 the app
 exported at 2400 px, which for these images was the same page.
 
+From 0.1.44 the PDF draws that page again as vector art, from what it was drawn
+from (`GeneratedPage.drawing`): its lines as paths at the width asked for, never
+widened to a pixel, its numbers as text in the page's own font, the ink it prints
+as the outline of its pixels, and its lettering as an image at its resolution.
+The harness measures the raster page, which is unchanged; `tests/test_export.py`
+reads the PDF back and checks it against the raster page and the asked-for width.
+
 ## Quality metrics
 
 Absolute metrics, per result. Fidelity is scored on the *finished painting*

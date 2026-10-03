@@ -262,8 +262,9 @@ def render_page(
 def number_origin(label: Label) -> tuple[float, float]:
     """Where ``render_page`` puts the start of a number's baseline, in the page's pixels.
 
-    It writes the number with its ink box at the top-left of ``label.box``, in
-    ``labels.font`` at ``label.font_size``, an em of that many pixels.
+    It writes the number so that its text box (``labels.text_bbox``) lands on
+    ``label.box``, in ``labels.font`` at ``label.font_size``, an em of that
+    many pixels.
     """
     bbox = baseline_bbox(label.text, label.font_size)
     return label.box[0] - bbox[0], label.box[1] - bbox[1]
