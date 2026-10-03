@@ -61,8 +61,9 @@ with them, and "Export…" draws it again at print resolution.
   - **PDF**: two A4 sheets. The page fills the printable area inside 10 mm
     margins, centered, on a landscape sheet when the picture is wider than
     tall; the legend gets a portrait sheet of its own, its swatches 12 mm
-    square. Both are stored losslessly, so the paper stays white around every
-    line and each swatch is exactly its color.
+    square, drawn at 300 dpi whatever the picture's size. Both are stored
+    losslessly, so the paper stays white around every line and each swatch is
+    exactly its color.
   - **PNG**: the page above its legend in one image, which records its
     resolution, so it prints as large as the PDF's page.
 

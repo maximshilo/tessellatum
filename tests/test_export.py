@@ -10,7 +10,7 @@ from PIL import Image
 
 from tessellatum.core import export
 from tessellatum.core.legend import render_legend
-from tessellatum.core.print_size import A4, MM_PER_INCH, PT_PER_INCH, print_scale
+from tessellatum.core.print_size import A4, MM_PER_INCH, PRINT_DPI, PT_PER_INCH, print_scale
 
 PT_PER_MM = PT_PER_INCH / MM_PER_INCH
 PALETTE = [(200, 40, 40), (40, 160, 60), (230, 210, 120)]
@@ -96,21 +96,23 @@ def test_a_pdf_is_two_a4_sheets_the_page_placed_as_the_print_model_prints_it(tmp
     assert second["at_mm"] == pytest.approx((A4.margin_mm, A4.margin_mm), abs=1e-3)
 
 
-def test_the_page_is_stored_losslessly_in_gray_and_the_legend_in_color_at_the_page_s_resolution(tmp_path):
+@pytest.mark.parametrize("size", [(1600, 1000), (600, 450)])  # 147 dpi; 60 dpi, as scene.png prints
+def test_the_page_is_stored_losslessly_in_gray_at_its_resolution_and_the_legend_in_color_at_300_dpi(tmp_path, size):
     # Pillow's own PDF writer saves both as JPEG, which grays the paper around every line and moves the swatches' colors.
-    page = _page((1600, 1000))
+    page = _page(size)
     export.save_pdf(page, PALETTE, tmp_path / "page.pdf")
     first, second = _sheets((tmp_path / "page.pdf").read_bytes())
 
     assert first["gray"]
     np.testing.assert_array_equal(first["pixels"], np.asarray(page.convert("L")))
-    scale = print_scale(page.size)
+    # The legend is drawn from the palette, so it prints at 300 dpi whatever the page's resolution, across the printable
+    # width: its swatches come out their size in mm.
+    px_per_mm = PRINT_DPI / MM_PER_INCH
     palette_bgr = np.array([rgb[::-1] for rgb in PALETTE], dtype=np.uint8)
-    legend = render_legend(palette_bgr, round(scale.mm_to_px(A4.printable_mm()[0])), scale.px_per_mm)
+    legend = render_legend(palette_bgr, round(A4.printable_mm()[0] * px_per_mm), px_per_mm)
     assert not second["gray"]
     np.testing.assert_array_equal(second["pixels"], np.asarray(legend))
-    # The legend prints at the page's resolution, across the printable width: its swatches come out their size in mm.
-    assert second["image_mm"] == pytest.approx((legend.width / scale.px_per_mm, legend.height / scale.px_per_mm), abs=1e-3)
+    assert second["image_mm"] == pytest.approx((legend.width / px_per_mm, legend.height / px_per_mm), abs=1e-3)
     assert second["image_mm"][0] == pytest.approx(A4.printable_mm()[0], abs=0.1)
 
 

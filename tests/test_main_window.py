@@ -196,3 +196,18 @@ def test_nothing_is_generated_or_exported_without_a_picture(drive):
 
     assert drive.dialogs == [("warning", "No image", "Open an image first.")] * 2
     assert drive.calls == []
+
+
+def test_on_a_short_window_the_panel_scrolls_and_its_scroll_bar_covers_none_of_it(drive):
+    window = drive.window
+    window.controls.preset_combo.setCurrentText("Custom")
+    window.resize(900, 500)
+    splitter = window.centralWidget()
+    splitter.setSizes([1, 899])  # as narrow as it goes without collapsing
+    window.show()
+    _app.processEvents()
+    scroll = splitter.widget(0)
+
+    assert scroll.verticalScrollBar().maximum() > 0  # it scrolls
+    assert scroll.viewport().width() >= window.controls.minimumSizeHint().width()
+    window.hide()

@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 
 from tessellatum.core.legend import render_legend
-from tessellatum.core.print_size import A4, MM_PER_INCH, PT_PER_INCH, print_scale
+from tessellatum.core.print_size import A4, MM_PER_INCH, PRINT_DPI, PT_PER_INCH, print_scale
 
 # The space between the page and the legend in a PNG, on paper.
 LEGEND_GAP_MM = 6.0
@@ -36,14 +36,16 @@ def save_png(page: Image.Image, legend: Image.Image, path: Path) -> None:
 
 
 def save_pdf(page: Image.Image, palette_rgb: Sequence[tuple[int, int, int]], path: Path) -> None:
-    """Save as two A4 sheets, the coloring page and then its legend, both stored losslessly at the page's resolution.
+    """Save as two A4 sheets, the coloring page and then its legend, both stored losslessly.
 
-    The page prints as the print model places it: scaled to fill the printable
-    area inside the margins, centered, on a landscape sheet when it is wider
-    than tall. The legend is drawn again for a portrait sheet of its own, across
-    its printable width from the top margin, its swatches sized in millimeters
-    (see ``legend``). The file carries no date, so the same page always gives
-    the same bytes.
+    The page prints as the print model places it, at its own resolution:
+    scaled to fill the printable area inside the margins, centered, on a
+    landscape sheet when it is wider than tall. The legend is drawn again for a
+    portrait sheet of its own, across its printable width from the top margin,
+    its swatches sized in millimeters (see ``legend``), at 300 dpi whatever the
+    page's resolution: it is drawn from the palette, so a small picture's
+    legend prints as crisply as a large one's. The file carries no date, so the
+    same page always gives the same bytes.
     """
     scale = print_scale(page.size)
     page_sheet = _sheet_size_mm(scale.landscape)
@@ -54,8 +56,9 @@ def save_pdf(page: Image.Image, palette_rgb: Sequence[tuple[int, int, int]], pat
 
     area_w, area_h = A4.printable_mm()
     palette_bgr = np.array([rgb[::-1] for rgb in palette_rgb], dtype=np.uint8).reshape(-1, 3)
-    legend = render_legend(palette_bgr, round(scale.mm_to_px(area_w)), scale.px_per_mm)
-    legend_w, legend_h = scale.px_to_mm(legend.width), scale.px_to_mm(legend.height)
+    px_per_mm = PRINT_DPI / MM_PER_INCH
+    legend = render_legend(palette_bgr, round(area_w * px_per_mm), px_per_mm)
+    legend_w, legend_h = legend.width / px_per_mm, legend.height / px_per_mm
     fit = min(1.0, area_h / legend_h)  # a legend never runs past the sheet; 40 colors take a quarter of it
     sheets.append(_Placed(_sheet_size_mm(False), legend, (A4.margin_mm, A4.margin_mm), (legend_w * fit, legend_h * fit)))
     Path(path).write_bytes(_pdf(sheets))
