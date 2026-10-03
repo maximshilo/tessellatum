@@ -2,9 +2,12 @@
 
 import dataclasses
 
+import cv2
 import numpy as np
 import pytest
 
+from tessellatum.core import labels as labels_module
+from tessellatum.core import render as render_module
 from tessellatum.core.print_size import OUTLINE_WIDTH_MM, print_scale
 from tessellatum.core.regions import extract_regions
 from tessellatum.core.render import LINE_GRAY, PAPER, PageStyle, ink_coverage, render_page
@@ -389,3 +392,35 @@ def test_an_empty_line_of_lettering_changes_nothing():
     )
     assert np.array_equal(np.asarray(plain.image), np.asarray(empty.image))
     assert np.array_equal(np.asarray(plain.outlines), np.asarray(empty.outlines))
+
+
+@pytest.mark.parametrize("size", [(1100, 825), (2048, 1367)])
+def test_numbers_keep_half_a_millimeter_from_the_lines_of_text(size, monkeypatch):
+    # The gap is set on paper (D-051), so a preview and an export keep the same distance.
+    assert labels_module.TEXT_GAP_MM == 0.5
+    width, height = size
+    ids = np.zeros((height, width), dtype=np.int32)
+    regions = extract_regions(ids, np.array([0], dtype=np.int32))
+    (alone,) = render_page(size, regions, ids).labels
+    x, y = (int(v) for v in alone.box[:2])
+    area = np.zeros(ids.shape, dtype=bool)
+    area[y - 20 : y + 20, x - 150 : x + 150] = True  # a line of text where the number goes
+    seen = []
+    real = render_module.place_labels
+
+    def spy(regions, region_id_map, free, spacing, clearable=None, text=None):
+        seen.append((spacing, text))
+        return real(regions, region_id_map, free, spacing, clearable, text=text)
+
+    monkeypatch.setattr(render_module, "place_labels", spy)
+
+    rendered = render_page(size, regions, ids, lettering=np.zeros(ids.shape, dtype=np.uint8), lettering_area=area)
+    render_page(size, regions, ids)
+
+    (spacing, text), (_, no_text) = seen
+    gap = print_scale(size).mm_to_px(0.5)
+    assert spacing.text_gap_px == pytest.approx(gap) and text is area and no_text is None
+    (label,) = rendered.labels
+    away = cv2.distanceTransform((~area).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+    x0, y0, x1, y1 = (int(v) for v in label.box)
+    assert away[y0:y1, x0:x1].min() > gap

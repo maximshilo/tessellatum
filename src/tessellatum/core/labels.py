@@ -11,6 +11,12 @@ that does not fit there is moved to wherever in its region it keeps farthest
 from the lines, and made smaller, down to the smallest legible size, if it
 still does not fit. A region too small to hold even that has its number
 written just outside it, in a neighbor, with a leader line pointing in.
+
+No number goes on a line of text either, nor right beside one, where it
+would read as part of a sign or a caption: every number keeps about
+``TEXT_GAP_MM`` from the lines of text found. A region lying in one has its
+number written outside it, with a leader that crosses the lettering to reach
+it.
 """
 
 from __future__ import annotations
@@ -37,6 +43,15 @@ MIN_FONT_SIZE = 10  # px
 # How far from the region a number with a leader may be written, on paper. Any
 # farther and the line pointing back stops reading as belonging to the region.
 LEADER_REACH_MM = 8.0
+
+# How far a number keeps from a line of text found, on paper: far enough not
+# to read as one more word of it. At twice that, a number on the benchmark's
+# Times Square found no room left and landed on a line. It is measured as the
+# page's pixels see it, between the middles of the number's pixels and of the
+# pixels whose middle lies in the line's box, so the bare paper between the
+# number and the box itself can be up to about a pixel and a half less (0.14 mm
+# at the least on the benchmark's previews, where a pixel is 0.25 mm).
+TEXT_GAP_MM = 0.5
 
 
 @dataclass
@@ -66,6 +81,7 @@ class LabelSpacing:
     leader_width_px: float  # how wide a leader line is inked
     leader_dot_px: float  # how wide the dot a leader ends in, at the point of its region it points at, is inked
     leader_reach_px: float  # how far from its region a number with a leader may go
+    text_gap_px: float = 0.0  # how far a number keeps from a line of text
 
 
 def min_font_size(size: tuple[int, int]) -> int:
@@ -84,7 +100,12 @@ def min_font_size(size: tuple[int, int]) -> int:
 
 
 def place_labels(
-    regions, region_id_map: np.ndarray, free: np.ndarray, spacing: LabelSpacing, clearable: np.ndarray | None = None
+    regions,
+    region_id_map: np.ndarray,
+    free: np.ndarray,
+    spacing: LabelSpacing,
+    clearable: np.ndarray | None = None,
+    text: np.ndarray | None = None,
 ) -> list[Label]:
     """A number for every region in ``regions``, placed where no line runs through it.
 
@@ -102,9 +123,21 @@ def place_labels(
     it goes in its own region with the detail ink under it cleared (see
     ``cleared``), rather than on the ink.
 
+    ``text`` (HxW bool) is the lines of text on the page, their boxes: no
+    number goes on them, nor within ``spacing.text_gap_px`` of them (from the
+    middle of any of its pixels to the middle of any of theirs), whether in
+    its region, beside it or on hatching. A leader may cross them, to reach
+    a region lying in one. Only a number with no room anywhere, which lands
+    where lines may run through it, may land on text too.
+
     Returns the labels in drawing order: the numbers inside their regions, in
     the order of ``regions``, then the others.
     """
+    if text is not None and text.any():
+        near_text = _grown(np.asarray(text, dtype=bool), spacing.text_gap_px)
+        free = free & ~near_text
+        if clearable is not None:
+            clearable = np.where(near_text, np.int32(-1), clearable)
     ids = np.ascontiguousarray(region_id_map, dtype=np.int32)
     height, width = ids.shape
     labels: list[Label] = []

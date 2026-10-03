@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import pytest
 
-from tessellatum.core import faces, pipeline, text
+from tessellatum.core import difficulty, faces, pipeline, text
 from tessellatum.core import ink as ink_module
 from tessellatum.core.difficulty import params_for_preset
 from tessellatum.core.print_size import print_scale
@@ -722,3 +722,23 @@ def test_the_case_runner_scores_the_text_found_and_lists_it():
     assert quality == {"text_lines_found": 1, "text_found_recall": None, "stray_text_lines": 1} and matches is None
     page.text = None  # a version that doesn't look for text
     assert bench_case.found_text_scores(page, [block]) == (dict.fromkeys(bench_case.FOUND_TEXT_KEYS), None, None)
+
+
+@pytest.mark.parametrize(
+    "name, preset",
+    [("m-comics-upside-downs-writing-pig.jpg", "Hard"), ("l-photo-times-square.jpg", "Max")],
+)
+def test_every_number_keeps_half_a_millimeter_from_the_lines_of_text_found(name, preset):
+    # On v0.1.41 a number on the comic sat 0.22 mm from a caption, and two on Times Square inside lines found (D-051).
+    pipeline.clear_cache()
+    picture = pipeline.load_image_bgr(SAMPLES / name)
+    params = bench_case.preset_params(difficulty, preset)
+    page = pipeline.generate(picture, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
+    analysis = page.analysis
+    assert analysis.lettering_area.any()
+    gap = print_scale(page.page.size).mm_to_px(0.5)
+    away = cv2.distanceTransform((~analysis.lettering_area).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+    assert len(analysis.labels) == len(analysis.regions) and not any(label.cramped for label in analysis.labels)
+    for label in analysis.labels:
+        x0, y0, x1, y1 = (int(v) for v in label.box)
+        assert away[max(0, y0) : y1, max(0, x0) : x1].min() > gap, label

@@ -558,9 +558,9 @@ def test_numbers_see_the_ink_a_region_s_paint_goes_over_as_in_no_region(monkeypa
     seen = {}
     real = render_module.place_labels
 
-    def spy(regions, region_id_map, free, spacing, clearable=None):
+    def spy(regions, region_id_map, free, spacing, clearable=None, text=None):
         seen["ids"], seen["clearable"] = region_id_map, clearable
-        return real(regions, region_id_map, free, spacing, clearable)
+        return real(regions, region_id_map, free, spacing, clearable, text=text)
 
     monkeypatch.setattr(render_module, "place_labels", spy)
     regions = extract_regions(ids, np.arange(2, dtype=np.int32), printed=printed)
@@ -568,3 +568,85 @@ def test_numbers_see_the_ink_a_region_s_paint_goes_over_as_in_no_region(monkeypa
 
     assert (seen["ids"][printed] == -1).all() and (seen["ids"][~printed] == ids[~printed]).all()
     assert (seen["clearable"][printed] == 0).all() and (seen["clearable"][~printed] == -1).all()
+
+
+TEXT_SPACING = dataclasses.replace(SPACING, text_gap_px=2.0)
+
+
+def _away_from(mask: np.ndarray) -> np.ndarray:
+    """How far each pixel is from the nearest pixel of ``mask``, between pixel middles."""
+    return cv2.distanceTransform((~mask).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+
+
+def test_no_number_goes_on_a_line_of_text_nor_within_its_gap_of_one():
+    ids = np.zeros((200, 300), dtype=np.int32)
+    ids[40:160, 60:240] = 1
+    regions, free = _page(ids)
+    text = np.zeros(ids.shape, dtype=bool)
+    text[85:115, 90:210] = True  # a line of text across the region's middle, where its number goes
+    plain = {label.region_id: label for label in place_labels(regions, ids, free, TEXT_SPACING)}
+    assert text[_pixels(plain[1].box)].any()
+
+    labels = place_labels(regions, ids, free, TEXT_SPACING, text=text)
+
+    away = _away_from(text)
+    for label in labels:
+        rows, columns = _pixels(label.box)
+        assert away[rows, columns].min() > TEXT_SPACING.text_gap_px and free[rows, columns].all()
+    inner = next(label for label in labels if label.region_id == 1)
+    assert inner.leader is None and (ids[_pixels(inner.box)] == 1).all()  # still in its own region
+    assert place_labels(regions, ids, free, TEXT_SPACING, text=np.zeros_like(text)) == list(plain.values())
+
+
+def test_a_region_lying_in_a_line_of_text_gets_its_number_outside_it_with_a_leader_across_the_text():
+    ids = np.zeros((200, 300), dtype=np.int32)
+    ids[92:108, 135:165] = 1  # room enough for its own number, were it not text
+    regions, free = _page(ids)
+    text = np.zeros(ids.shape, dtype=bool)
+    text[85:115, 90:210] = True
+
+    labels = {label.region_id: label for label in place_labels(regions, ids, free, TEXT_SPACING, text=text)}
+
+    end, anchor = labels[1].leader
+    assert text[_pixels_along(anchor, end)].any()  # the leader crosses the text to reach it
+    assert _away_from(text)[_pixels(labels[1].box)].min() > TEXT_SPACING.text_gap_px
+
+
+def test_a_number_on_hatching_clears_nothing_within_its_gap_of_a_line_of_text():
+    regions, seen, free, strokes, detail = _hatched_page()
+    text = np.zeros(seen.shape, dtype=bool)
+    text[18:42, 12:48] = True  # a line of text over region 0's middle, where its number would clear the hatching
+    plain = {label.region_id: label for label in place_labels(regions, seen, free, TEXT_SPACING, detail)}
+    assert plain[0].clears and text[_pixels(plain[0].box)].any()
+
+    labels = place_labels(regions, seen, free, TEXT_SPACING, detail, text=text)
+
+    away = _away_from(text)
+    near_text = away <= TEXT_SPACING.text_gap_px
+    assert all(label.clears and not label.cramped for label in labels)
+    for label in labels:
+        assert away[_pixels(label.box)].min() > TEXT_SPACING.text_gap_px
+    assert not (cleared(labels, detail, TEXT_SPACING.label_gap_px) & near_text).any()
+
+
+def test_a_number_clearing_solid_detail_ink_keeps_its_gap_from_a_line_of_text():
+    # Ink with no paper between its strokes leaves free pixels nowhere: the detail ink a number may clear has to keep
+    # the gap from text by itself.
+    ids = np.zeros((60, 120), dtype=np.int32)
+    ids[:, 60:] = 1
+    regions, free = _page(ids)
+    solid = np.repeat((np.abs(np.arange(120) - 59.5) > 4)[None, :], 60, axis=0)  # all but 4 px each side of the line
+    detail = np.where(solid, ids, -1).astype(np.int32)
+    seen, free = np.where(solid, -1, ids), free & ~solid
+    text = np.zeros(ids.shape, dtype=bool)
+    text[18:42, 12:48] = True
+    plain = {label.region_id: label for label in place_labels(regions, seen, free, TEXT_SPACING, detail)}
+    assert plain[0].clears and text[_pixels(plain[0].box)].any()
+
+    labels = place_labels(regions, seen, free, TEXT_SPACING, detail, text=text)
+
+    away = _away_from(text)
+    assert all(label.clears for label in labels)
+    for label in labels:
+        assert away[_pixels(label.box)].min() > TEXT_SPACING.text_gap_px
+    assert not (cleared(labels, detail, TEXT_SPACING.label_gap_px) & (away <= TEXT_SPACING.text_gap_px)).any()
