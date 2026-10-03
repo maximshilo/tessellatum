@@ -303,6 +303,7 @@ def _lettered_page(size: tuple[int, int] = (120, 80)):
     """A page split down the middle, a band of solid ink across it, and a line of lettering over the crack and the band."""
     width, height = size
     ids = _split_page(size)
+    ids[:30, : width // 2] = 2  # a third region, whose boundary crosses the lettering where it is too faint to print
     ink = np.zeros((height, width), dtype=bool)
     ink[36:40, :] = True  # printed ink across the page, through the line of lettering and beside it
     area = np.zeros((height, width), dtype=bool)
@@ -324,6 +325,7 @@ def test_lettering_prints_as_it_looks_under_the_lines_in_place_of_any_other_ink(
     lines_ink, lines = _lines_of(rendered, size)
     tone = np.rint(PAPER - lettering * ((PAPER - 40) / PAPER))
     np.testing.assert_array_equal(page[area], np.minimum(lines, tone)[area])
+    assert (page[area] < tone[area]).sum() > 20  # a line runs through it, over the lettering
     # Outside it, the page is as it was: the band solid, the lines as drawn.
     np.testing.assert_array_equal(page[~area], np.asarray(plain.image.convert("L"))[~area])
     # The line layer holds the lettering's ink there, and the lines'.

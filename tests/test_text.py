@@ -399,12 +399,26 @@ def test_the_lightness_is_stretched_from_the_box_s_98th_percentile_to_its_2nd():
     assert abs(int(ink[half[0], half[1]]) - expected) <= 1
 
 
+def test_between_its_two_percentiles_the_ink_follows_the_box_s_lightness():
+    # A box of every gray from black to white: its 2nd percentile of L* and darker print solid, its 98th and lighter bare
+    # paper, and in between in proportion.
+    picture = np.tile(np.linspace(0, 255, 80).round().astype(np.uint8)[None, :, None], (30, 1, 3))
+    ink, area = text.lettering(picture, [_LINE])
+    lightness = cv2.cvtColor(picture.astype(np.float32) / 255, cv2.COLOR_BGR2Lab)[:, :, 0].astype(np.float64)
+    low, high = np.percentile(lightness[area], [2, 98])
+    expected = np.clip((high - lightness) / (high - low), 0, 1) * 255
+    assert np.abs(ink[area] - expected[area]).max() <= 0.5 + 1e-3
+    assert (ink[area & (lightness <= low)] == 255).all() and (ink[area & (lightness >= high)] == 0).all()
+    assert ((ink[area] > 0) & (ink[area] < 255)).mean() > 0.8
+
+
 def test_lettering_fainter_than_the_contrast_floor_prints_nothing():
+    # The floor is 20 L* (D-050): a box of two tones stands as far apart as they are.
     ground = 200
-    faint = min(g for g in range(ground) if _lightness(ground) - _lightness(g) < text.MIN_CONTRAST)
+    faint = min(g for g in range(ground) if _lightness(ground) - _lightness(g) < 20.0)
     strong = faint - 1
-    assert text.MIN_CONTRAST - 1 < _lightness(ground) - _lightness(faint) < text.MIN_CONTRAST
-    assert text.MIN_CONTRAST <= _lightness(ground) - _lightness(strong) < text.MIN_CONTRAST + 1
+    assert 19.0 < _lightness(ground) - _lightness(faint) < 20.0
+    assert 20.0 <= _lightness(ground) - _lightness(strong) < 21.0
     picture, strokes = _strokes(ground=ground, letters=faint)
     ink, area = text.lettering(picture, [_LINE])
     assert area.any() and not ink.any()  # the line is still there; it prints nothing
@@ -598,6 +612,31 @@ def test_on_line_art_no_number_clears_lettering_and_the_ink_keeps_the_artwork_s_
     plain = _without_text(monkeypatch, comic, params, pipeline.PREVIEW_LONG_EDGE)
     assert page.analysis.ink_gray == plain.analysis.ink_gray
     np.testing.assert_array_equal(page.analysis.region_id_map, plain.analysis.region_id_map)
+
+
+def test_after_a_merge_no_number_clears_lettering_either(monkeypatch):
+    # On line art a region whose number found no room joins the area beside it and the page is drawn again, with its
+    # hatching found again: lettering is still none of it. The comic takes that path at no preset, so a number is made
+    # to find no room, and the merge changes nothing.
+    comic = pipeline.load_image_bgr(SAMPLES / "m-comics-upside-downs-writing-pig.jpg")
+    calls = []
+    real = pipeline.render_page
+
+    def cramping(*args, **kwargs):
+        calls.append(kwargs)
+        rendered = real(*args, **kwargs)
+        if len(calls) == 1:
+            rendered.labels[0].cramped = True
+        return rendered
+
+    monkeypatch.setattr(pipeline, "render_page", cramping)
+    monkeypatch.setattr(pipeline, "merge_cramped", lambda region_id_map, *args: region_id_map.copy())
+    pipeline.clear_cache()
+    pipeline.generate(comic, params_for_preset("Hard"), pipeline.PREVIEW_LONG_EDGE)
+    assert len(calls) == 2  # drawn again after the merge
+    assert calls[1]["clearable"].any() and calls[1]["lettering_area"].any()
+    assert not (calls[1]["clearable"] & calls[1]["lettering_area"]).any()
+    pipeline.clear_cache()
 
 
 def test_a_picture_without_text_prints_no_lettering():
