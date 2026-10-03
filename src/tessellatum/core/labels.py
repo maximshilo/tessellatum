@@ -13,7 +13,7 @@ still does not fit. A region too small to hold even that has its number
 written just outside it, in a neighbor, with a leader line pointing in.
 
 No number goes on a line of text either, nor right beside one, where it
-would read as part of a sign or a caption: every number keeps
+would read as part of a sign or a caption: every number keeps about
 ``TEXT_GAP_MM`` from the lines of text found. A region lying in one has its
 number written outside it, with a leader that crosses the lettering to reach
 it.
@@ -45,8 +45,12 @@ MIN_FONT_SIZE = 10  # px
 LEADER_REACH_MM = 8.0
 
 # How far a number keeps from a line of text found, on paper: far enough not
-# to read as one more word of it. Twice that, and numbers with no room left
-# land on the page's lines.
+# to read as one more word of it. At twice that, a number on the benchmark's
+# Times Square found no room left and landed on a line. It is measured as the
+# page's pixels see it, between the middles of the number's pixels and of the
+# pixels whose middle lies in the line's box, so the bare paper between the
+# number and the box itself can be up to about a pixel and a half less (0.14 mm
+# at the least on the benchmark's previews, where a pixel is 0.25 mm).
 TEXT_GAP_MM = 0.5
 
 
@@ -120,8 +124,9 @@ def place_labels(
     ``cleared``), rather than on the ink.
 
     ``text`` (HxW bool) is the lines of text on the page, their boxes: no
-    number goes on them, nor within ``spacing.text_gap_px`` of them, whether
-    in its region, beside it or on hatching. A leader may cross them, to reach
+    number goes on them, nor within ``spacing.text_gap_px`` of them (from the
+    middle of any of its pixels to the middle of any of theirs), whether in
+    its region, beside it or on hatching. A leader may cross them, to reach
     a region lying in one. Only a number with no room anywhere, which lands
     where lines may run through it, may land on text too.
 

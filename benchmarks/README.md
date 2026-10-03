@@ -700,7 +700,10 @@ How the found-text metrics are defined:
   than halfway is printed ink, in the regions around it. The painting keeps the printed
   lettering in its own tone, as the page prints it; the text CER metrics read it.
 - From 0.1.42 no number goes in the box of a line found, nor within 0.5 mm of it
-  (`labels.TEXT_GAP_MM`); a leader may cross one, to reach a region lying in it.
+  (`labels.TEXT_GAP_MM`), measured between the middles of the page's pixels, so the
+  bare paper left between them can be up to about a pixel and a half less (0.14 mm
+  at the least on the benchmark's previews); a leader may cross one, to reach a
+  region lying in it.
   Labels on text still counts the numbers on the manifest's text boxes, not on the
   lines found.
 - **Text found recall** reads the image's manifest `text` blocks, scaled to the page:
