@@ -42,8 +42,9 @@ images x presets x output sizes:
   only when the analysis below is collected, so no timed run reached it; from 0.1.34
   it is on the page's path for every picture but line art), `detect_subject`
   (from 0.1.39, on the page's path for every picture but line art) and `detect_text`
-  (from 0.1.40; it runs only when the analysis below is collected, so no timed run
-  reaches it). Keep those names
+  (from 0.1.40; until 0.1.41 it ran only when the analysis below is collected, so no
+  timed run reached it; from 0.1.41 it is on the page's path for every picture). Keep
+  those names
   if you restructure the pipeline, or update `PROBED_STAGES` in `bench_case.py`.
 - Quality metrics read what the page is made of from the pipeline itself.
   `generate(..., collect_analysis=True)` returns it as `GeneratedPage.analysis`
@@ -60,13 +61,17 @@ images x presets x output sizes:
     in no region; from 0.1.30 its thin parts lie in the regions whose paint
     goes over them; from 0.1.35 also the thin dark marks printed in the faces
     found on a picture that isn't line art, which lie in the regions around
-    them) and the gray it prints in;
+    them; from 0.1.41 also the lettering in the lines of text found that is
+    darker than halfway, which lies in the regions around it) and the gray it
+    prints in;
   - the faces the pipeline finds in the picture (from 0.1.33), with each one's
     box on the page, score and detector;
   - the picture's subject, as the pipeline finds it (from 0.1.39, on a picture
     that isn't line art);
   - the lines of text the pipeline finds in the picture (from 0.1.40), each a box
     turned to its line, on the page, with the network's score;
+  - where the page prints those lines' lettering as it looks, and the ink it
+    puts down there, 0 solid and 255 bare paper (from 0.1.41);
   - where a region may be half the difficulty's smallest, each of its pixels
     there counting twice towards it (from 0.1.34: the faces found, on a picture
     that isn't line art; from 0.1.39 the subject too).
@@ -237,8 +242,9 @@ than a pixel wide.
 
 Absolute metrics, per result. Fidelity is scored on the *finished painting*
 (every region filled with its legend color, and what the page prints kept as it
-is: the printed ink -- line art's, and from 0.1.35 the detail marks in a face --
-in its gray, bare paper white) against the source
+is: the printed ink -- line art's, from 0.1.35 the detail marks in a face, and from
+0.1.41 the lettering -- in its gray, the lettering in its own tone, bare paper white)
+against the source
 image at output size. Paintability is scored on the region map and the numbers, at print size
 (see "Print scale" above). Line quality is scored on the lines drawn, the region
 map and the source image, and the palette on the legend's colors. Line art, faces,
@@ -679,12 +685,20 @@ How the text metrics are defined:
 How the found-text metrics are defined:
 
 - From 0.1.40 the pipeline finds the lines of text in a picture
-  (`src/tessellatum/core/text.py`): PP-OCRv6-small looks at it at preview size, and
-  where that finds text, again at twice that size from the source's own pixels; a
-  line is kept if its box is at most 15 mm tall on paper and at least 1.5 times as
-  long as tall. They are found once per picture, scaled to the page, and reported in
-  its analysis payload (`PageAnalysis.text`), each as the four corners of its box.
-  Nothing on the page uses them yet. Older versions get no value.
+  (`src/tessellatum/core/text.py`): PP-OCRv6-small looks at it at preview size (from
+  0.1.41 at half its preview size), and where that finds text, again at twice its
+  preview size from the source's own pixels; a line is kept if its box is at most 15
+  mm tall on paper and at least 1.5 times as long as tall. They are found once per
+  picture, scaled to the page, and reported in its analysis payload
+  (`PageAnalysis.text`), each as the four corners of its box. Older versions get no
+  value.
+- From 0.1.41 the page prints the lettering in them as it looks
+  (`PageAnalysis.lettering`, `.lettering_area`): each line's own lightness stretched
+  from its box's 98th percentile (bare paper) to its 2nd (solid ink), in the ink's
+  gray, under the lines, in place of the printed ink lying in a region there (printed
+  ink in no region, which keeps two regions apart, still prints solid). Its part darker
+  than halfway is printed ink, in the regions around it. The painting keeps the printed
+  lettering in its own tone, as the page prints it; the text CER metrics read it.
 - **Text found recall** reads the image's manifest `text` blocks, scaled to the page:
   the share of the pixels inside any block's box that lie inside the box of a line
   found, each pixel by where its middle is (a line's box as an outline, see

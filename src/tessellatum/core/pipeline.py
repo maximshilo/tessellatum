@@ -128,7 +128,8 @@ class PageAnalysis:
     # The lines of text in the picture (see ``text``), found on it once and given in the page's pixels, on every picture.
     text: list[text.TextLine]
     # HxW bool: the pixels inside the lines of text found, where the page prints their lettering as it looks, the lines
-    # running through, in place of any other ink (see ``text.lettering``); and HxW uint8 there, the ink the lettering puts
+    # running through, in place of the printed ink lying in a region (see ``text.lettering`` and ``render.render_page``;
+    # printed ink in no region prints solid there too); and HxW uint8 there, the ink the lettering puts
     # on the page as ``outlines`` gives it, 0 = solid in ``ink_gray``, 255 = bare paper (255 outside). The lettering
     # inked enough to read as ink (darker than halfway) is printed ink too: in ``printed_ink``, lying in the regions
     # around it, which are painted round it.

@@ -1197,6 +1197,31 @@ def test_the_painting_keeps_what_the_page_prints():
     assert bm.paint(region_id_map, region_color, palette_bgr)[0, 1].tolist() == [255, 255, 255]
 
 
+def test_the_painting_keeps_the_lettering_in_its_own_tone():
+    region_id_map = np.array([[0, 0, 0, 1], [0, 0, 0, 1]])
+    region_color = np.array([1, 0])
+    palette_bgr = np.array([[10, 20, 30], [200, 100, 50]], dtype=np.uint8)
+    printed = np.array([[True, True, False, True], [False, False, False, True]])
+    area = np.array([[True, True, True, False], [True, True, True, False]])
+    lettering = np.array([[0, 128, 200, 255], [0, 128, 200, 255]], dtype=np.uint8)  # as the line layer: 0 solid
+
+    painted = bm.paint(region_id_map, region_color, palette_bgr, printed, 40, lettering, area)
+
+    assert painted[0, 0].tolist() == [40] * 3  # solid lettering, in the ink's gray
+    assert painted[0, 1].tolist() == [round(255 - 127 * 215 / 255)] * 3  # half inked: half way to it
+    assert painted[0, 2].tolist() == [200, 100, 50]  # not printed: painted over, though the page inks it a little
+    assert painted[1, 0].tolist() == [200, 100, 50]
+    assert painted[0, 3].tolist() == [40] * 3  # printed ink outside the lettering: the ink's gray, solid
+    walled = region_id_map.copy()
+    walled[0, 1] = -1  # printed ink in no region: solid even inside the lettering, as the page prints it
+    painted = bm.paint(walled, region_color, palette_bgr, printed, 40, lettering, area)
+    assert painted[0, 1].tolist() == [40] * 3 and painted[0, 0].tolist() == [40] * 3
+    np.testing.assert_array_equal(
+        bm.paint(region_id_map, region_color, palette_bgr, printed, 40),
+        bm.paint(region_id_map, region_color, palette_bgr, printed, 40, lettering, np.zeros_like(area)),
+    )
+
+
 def test_undersized_regions_are_those_with_a_neighbor_to_merge_into():
     ids = np.full((10, 20), -1)  # ink
     ids[:, :8] = 0

@@ -183,7 +183,7 @@ def lettering(page_bgr: np.ndarray, lines: list[TextLine]) -> tuple[np.ndarray, 
         ink_level, paper_level = np.percentile(values, [INK_PERCENTILE, PAPER_PERCENTILE])
         if paper_level <= ink_level:
             continue  # all but a few specks of the box one tone: no lettering to speak of
-        line_ink =np.clip((paper_level - lightness) / (paper_level - ink_level), 0, 1).astype(np.float32)
+        line_ink = np.clip((paper_level - lightness) / (paper_level - ink_level), 0, 1).astype(np.float32)
         np.maximum(ink[y0:y1, x0:x1], np.where(inside, line_ink, np.float32(0)), out=ink[y0:y1, x0:x1])
     return np.rint(ink * 255).astype(np.uint8), area
 

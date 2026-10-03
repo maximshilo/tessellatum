@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from tessellatum.core import faces, pipeline, text
+from tessellatum.core import ink as ink_module
 from tessellatum.core.difficulty import params_for_preset
 from tessellatum.core.print_size import print_scale
 
@@ -330,6 +331,138 @@ def test_two_threads_find_what_one_finds():
     assert found == alone
 
 
+# --- the lettering ------------------------------------------------------------------------------------------------
+
+
+def _strokes(ground: int, letters: int, size: tuple[int, int] = (80, 30)) -> tuple[np.ndarray, np.ndarray]:
+    """A gray picture of ``ground`` with upright strokes of ``letters``, 2 px wide every 6 px, and where they are."""
+    width, height = size
+    picture = np.full((height, width, 3), ground, dtype=np.uint8)
+    strokes = np.zeros((height, width), dtype=bool)
+    for x in range(10, width - 10, 6):
+        strokes[10:20, x : x + 2] = True
+    picture[strokes] = letters
+    return picture, strokes
+
+
+_LINE = _rect_line((40, 15), (70, 20))  # a box over the strokes, x 5-75 and y 5-25
+
+
+def _lightness(gray: int) -> float:
+    """CIE L* of a gray, as the lettering reads it."""
+    return float(cv2.cvtColor(np.full((1, 1, 3), gray / 255, dtype=np.float32), cv2.COLOR_BGR2Lab)[0, 0, 0])
+
+
+def test_dark_lettering_prints_as_ink_on_paper():
+    picture, strokes = _strokes(ground=220, letters=30)
+    ink, area = text.lettering(picture, [_LINE])
+    np.testing.assert_array_equal(area, text.mask([_LINE], (80, 30)))
+    assert ink.dtype == np.uint8
+    assert (ink[strokes] == 255).all()  # the letters, solid
+    assert (ink[area & ~strokes] == 0).all()  # their ground, bare paper
+    assert (ink[~area] == 0).all()  # and nothing outside the line
+
+
+def test_light_lettering_prints_as_paper_letters_in_its_dark_ground():
+    # As it looks: no guess at which side is the lettering.
+    picture, strokes = _strokes(ground=30, letters=220)
+    ink, area = text.lettering(picture, [_LINE])
+    assert (ink[strokes] == 0).all()
+    assert (ink[area & ~strokes] == 255).all()
+    assert (ink[~area] == 0).all()
+
+
+def test_the_lightness_is_stretched_from_the_box_s_98th_percentile_to_its_2nd():
+    # Specks darker or lighter than the lettering and its ground, 1% of the box each, don't stretch the scale: the
+    # letters are still solid, the ground still paper, and a tone halfway between prints halfway.
+    picture, strokes = _strokes(ground=200, letters=60)
+    box = text.mask([_LINE], (80, 30))
+    ground = np.argwhere(box & ~strokes)
+    specks = len(np.argwhere(box)) // 100
+    for (y, x) in ground[:specks]:
+        picture[y, x] = 0
+    for (y, x) in ground[-specks:]:
+        picture[y, x] = 255
+    half = ground[len(ground) // 2]
+    lightness = (_lightness(200) + _lightness(60)) / 2
+    gray = min(range(256), key=lambda g: abs(_lightness(g) - lightness))
+    picture[half[0], half[1]] = gray
+    ink, _ = text.lettering(picture, [_LINE])
+    assert (ink[strokes] == 255).all()
+    rest = box & ~strokes
+    rest[half[0], half[1]] = False
+    for (y, x) in ground[:specks]:
+        rest[y, x] = False
+    assert (ink[rest] == 0).all()
+    assert all(ink[y, x] == 255 for y, x in ground[:specks])  # darker than the letters: solid all the same
+    expected = 255 * (_lightness(200) - _lightness(gray)) / (_lightness(200) - _lightness(60))
+    assert abs(int(ink[half[0], half[1]]) - expected) <= 1
+
+
+def test_lettering_fainter_than_the_contrast_floor_prints_nothing():
+    ground = 200
+    faint = min(g for g in range(ground) if _lightness(ground) - _lightness(g) < text.MIN_CONTRAST)
+    strong = faint - 1
+    assert text.MIN_CONTRAST - 1 < _lightness(ground) - _lightness(faint) < text.MIN_CONTRAST
+    assert text.MIN_CONTRAST <= _lightness(ground) - _lightness(strong) < text.MIN_CONTRAST + 1
+    picture, strokes = _strokes(ground=ground, letters=faint)
+    ink, area = text.lettering(picture, [_LINE])
+    assert area.any() and not ink.any()  # the line is still there; it prints nothing
+    picture, strokes = _strokes(ground=ground, letters=strong)
+    ink, _ = text.lettering(picture, [_LINE])
+    assert (ink[strokes] == 255).all()
+
+
+def test_a_box_all_one_tone_but_a_few_specks_prints_nothing():
+    # The specks stand far apart from the rest, but there is no lettering to stretch: its two percentiles are one tone.
+    picture = np.full((30, 80, 3), 200, dtype=np.uint8)
+    box = np.argwhere(text.mask([_LINE], (80, 30)))
+    for y, x in box[:: len(box) // 10][:10]:
+        picture[y, x] = 0
+    ink, area = text.lettering(picture, [_LINE])
+    assert area.any() and not ink.any()
+
+
+def test_where_two_lines_overlap_the_one_inking_a_pixel_more_does():
+    rng = np.random.default_rng(3)
+    picture = rng.integers(0, 256, (40, 90, 3), dtype=np.uint8)
+    picture[:, 45:] //= 3  # a darker right half, so the two boxes stretch differently
+    first, second = _rect_line((35, 20), (60, 18)), _rect_line((55, 22), (60, 14), angle=10)
+    ink_first, area_first = text.lettering(picture, [first])
+    ink_second, area_second = text.lettering(picture, [second])
+    ink, area = text.lettering(picture, [first, second])
+    np.testing.assert_array_equal(area, area_first | area_second)
+    np.testing.assert_array_equal(ink, np.maximum(ink_first, ink_second))
+    assert ((ink_first != ink_second) & area_first & area_second).any()  # the overlap does tell them apart
+
+
+def test_no_lines_print_nothing():
+    picture, _ = _strokes(ground=220, letters=30)
+    ink, area = text.lettering(picture, [])
+    assert ink.shape == area.shape == (30, 80) and not ink.any() and not area.any()
+    point = text.TextLine(quad=((40.0, 15.0),) * 4, score=1.0)
+    ink, area = text.lettering(picture, [point])
+    assert not ink.any() and not area.any()
+    with pytest.raises(ValueError):
+        text.lettering(picture.astype(np.float32), [_LINE])
+
+
+def test_the_contrast_is_the_gap_between_the_means_of_otsu_s_two_classes():
+    rng = np.random.default_rng(4)
+    for _ in range(50):
+        values = rng.normal(rng.uniform(0, 100), rng.uniform(1, 30), int(rng.integers(2, 60)))
+        ordered = np.sort(values)
+        best, gap = -1.0, 0.0
+        for k in range(1, len(ordered)):  # every split, by brute force
+            low, high = ordered[:k], ordered[k:]
+            between = len(low) * len(high) * (low.mean() - high.mean()) ** 2
+            if between > best + 1e-9:
+                best, gap = between, high.mean() - low.mean()
+        assert text._otsu_contrast(values) == pytest.approx(gap)
+    assert text._otsu_contrast(np.array([5.0])) == 0.0
+    assert text._otsu_contrast(np.array([10.0, 30.0])) == pytest.approx(20.0)
+
+
 def _recall(name: str) -> tuple[float, list]:
     """Text found recall on a sample picture at preview size, against its manifest, and the lines found."""
     source = pipeline.load_image_bgr(SAMPLES / name)
@@ -381,6 +514,98 @@ def test_line_art_has_its_text_found_too():
     page = pipeline.generate(comic, params_for_preset("Easy"), pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     assert page.analysis.line_art.is_line_art
     assert len(page.analysis.text) > 20
+
+
+def _without_text(monkeypatch, picture: np.ndarray, params, long_edge: int):
+    """The page of ``picture`` with no text found, and the text found put back after."""
+    with monkeypatch.context() as patched:
+        patched.setattr(text, "find_text", lambda picture, source=None: [])
+        pipeline.clear_cache()
+        page = pipeline.generate(picture, params, long_edge, collect_analysis=True)
+    pipeline.clear_cache()
+    return page
+
+
+def test_the_page_prints_the_lettering_found_and_leaves_the_regions_as_they_are(monkeypatch):
+    picture, _ = _lettering(size=(1400, 933))
+    params = params_for_preset("Medium")
+    pipeline.clear_cache()
+    page = pipeline.generate(picture, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
+    analysis = page.analysis
+    size = page.page.size
+    resized = pipeline.resize_to_long_edge(picture, pipeline.PREVIEW_LONG_EDGE)
+    assert len(analysis.text) == len(WORDS)
+
+    ink, area = text.lettering(resized, analysis.text)
+    assert ink.any()
+    np.testing.assert_array_equal(analysis.lettering_area, area)
+    np.testing.assert_array_equal(analysis.lettering_area, text.mask(analysis.text, size))
+    np.testing.assert_array_equal(analysis.lettering, 255 - ink)
+    # The lettering darker than halfway is printed ink -- here all of it, with no face on the page -- in the gray of
+    # the picture under it.
+    printed = ink >= 128
+    np.testing.assert_array_equal(analysis.printed_ink, printed)
+    assert analysis.ink_gray == ink_module.ink_gray(resized, printed)
+    # The page shows it in that gray, as it looks, darkened only where a line runs through.
+    gray = np.asarray(page.page.convert("L")).astype(np.float64)
+    tone = np.rint(255 - ink * ((255 - analysis.ink_gray) / 255))
+    assert (gray[area] <= tone[area]).all()
+    assert (gray[area] == tone[area]).mean() > 0.9
+    assert (gray[ink == 255] <= analysis.ink_gray).all()
+
+    plain = _without_text(monkeypatch, picture, params, pipeline.PREVIEW_LONG_EDGE)
+    assert not plain.analysis.lettering_area.any() and (plain.analysis.lettering == 255).all()
+    assert not plain.analysis.printed_ink.any()
+    np.testing.assert_array_equal(analysis.region_id_map, plain.analysis.region_id_map)
+    np.testing.assert_array_equal(analysis.region_color, plain.analysis.region_color)
+    assert analysis.legend_size == plain.analysis.legend_size
+
+
+def test_light_lettering_prints_its_ground_and_leaves_its_letters_paper():
+    picture, _ = _lettering(size=(1400, 933))
+    picture = 255 - picture  # pale words on a dark page
+    pipeline.clear_cache()
+    page = pipeline.generate(picture, params_for_preset("Easy"), pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
+    analysis = page.analysis
+    assert len(analysis.text) == len(WORDS)
+    resized = pipeline.resize_to_long_edge(picture, pipeline.PREVIEW_LONG_EDGE)
+    # The cores of the letters and of their ground; the letters' anti-aliased edges print part ink.
+    letters = analysis.lettering_area & (resized[:, :, 0] > 200)
+    ground = analysis.lettering_area & (resized[:, :, 0] < 25)
+    assert letters.sum() > 500 and ground.sum() > letters.sum()
+    assert (analysis.lettering[letters] > 220).mean() > 0.9  # the letters bare paper, or nearly
+    assert (analysis.lettering[ground] < 10).mean() > 0.95  # their ground solid, or nearly
+    assert analysis.printed_ink[ground].all() and not analysis.printed_ink[letters].any()
+
+
+def test_on_line_art_no_number_clears_lettering_and_the_ink_keeps_the_artwork_s_gray(monkeypatch):
+    comic = pipeline.load_image_bgr(SAMPLES / "m-comics-upside-downs-writing-pig.jpg")
+    params = params_for_preset("Hard")
+    calls = []
+    real = pipeline.render_page
+
+    def recording(*args, **kwargs):
+        calls.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "render_page", recording)
+    pipeline.clear_cache()
+    page = pipeline.generate(comic, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
+    assert calls and page.analysis.lettering_area.any()
+    for kwargs in calls:
+        assert kwargs["clearable"].any()  # the comic's hatching, which a number may clear
+        assert not (kwargs["clearable"] & kwargs["lettering_area"]).any()  # but never inside a line of text
+    plain = _without_text(monkeypatch, comic, params, pipeline.PREVIEW_LONG_EDGE)
+    assert page.analysis.ink_gray == plain.analysis.ink_gray
+    np.testing.assert_array_equal(page.analysis.region_id_map, plain.analysis.region_id_map)
+
+
+def test_a_picture_without_text_prints_no_lettering():
+    pipeline.clear_cache()
+    ramp = np.tile(np.linspace(40, 220, 600).astype(np.uint8)[None, :, None], (400, 1, 3))
+    page = pipeline.generate(ramp, params_for_preset("Easy"), pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
+    assert page.analysis.text == []
+    assert not page.analysis.lettering_area.any() and (page.analysis.lettering == 255).all()
 
 
 # --- the harness -------------------------------------------------------------------------------------------------

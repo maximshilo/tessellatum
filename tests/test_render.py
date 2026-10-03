@@ -291,3 +291,99 @@ def test_a_number_written_outside_its_region_goes_beside_the_ink_not_on_it():
     assert small.leader is not None
     x0, y0, x1, y1 = (int(v) for v in small.box)
     assert not ink[y0:y1, x0:x1].any()
+
+
+def _lines_of(rendered, size: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
+    """The ink a page's own lines put down (0 to 255 solid), and the paper they leave, in the default style."""
+    ink = ink_coverage(size, rendered.strokes, PageStyle().line_width_px(size)).astype(np.int64)
+    return ink, np.rint(PAPER - ink * ((PAPER - LINE_GRAY) / PAPER))
+
+
+def _lettered_page(size: tuple[int, int] = (120, 80)):
+    """A page split down the middle, a band of solid ink across it, and a line of lettering over the crack and the band."""
+    width, height = size
+    ids = _split_page(size)
+    ink = np.zeros((height, width), dtype=bool)
+    ink[36:40, :] = True  # printed ink across the page, through the line of lettering and beside it
+    area = np.zeros((height, width), dtype=bool)
+    area[20:50, 30:90] = True
+    lettering = np.zeros((height, width), dtype=np.uint8)
+    lettering[20:50, 30:90] = np.linspace(0, 255, 60).round().astype(np.uint8)[None, :]  # from paper to solid
+    return ids, ink, area, lettering
+
+
+def test_lettering_prints_as_it_looks_under_the_lines_in_place_of_any_other_ink():
+    size = (120, 80)
+    ids, ink, area, lettering = _lettered_page(size)
+    printed = ink | (area & (lettering >= 128))
+
+    rendered = render_page(size, [], ids, ink=printed, ink_gray=40, lettering=lettering, lettering_area=area)
+    plain = render_page(size, [], ids, ink=printed, ink_gray=40)
+
+    page = np.asarray(rendered.image.convert("L")).astype(np.float64)
+    lines_ink, lines = _lines_of(rendered, size)
+    tone = np.rint(PAPER - lettering * ((PAPER - 40) / PAPER))
+    np.testing.assert_array_equal(page[area], np.minimum(lines, tone)[area])
+    # Outside it, the page is as it was: the band solid, the lines as drawn.
+    np.testing.assert_array_equal(page[~area], np.asarray(plain.image.convert("L"))[~area])
+    # The line layer holds the lettering's ink there, and the lines'.
+    outlines = np.asarray(rendered.outlines).astype(np.int64)
+    np.testing.assert_array_equal((PAPER - outlines)[area], np.maximum(lines_ink, lettering.astype(np.int64))[area])
+    np.testing.assert_array_equal(outlines[~area], np.asarray(plain.outlines)[~area])
+    # The band's ink inside the line is the lettering's now: paper where the lettering is, as the picture shows.
+    assert page[37, 31] > 240 and page[37, 88] < 45
+
+
+def test_printed_ink_in_no_region_stays_solid_inside_the_lettering():
+    # Line art's bold ink, and the seam down a line two regions share, keep the regions apart: inside a line of text,
+    # where the lettering takes the place of the ink lying in a region, they still print solid, whatever the lettering
+    # says there. Otherwise a region's paint could run into them.
+    size = (120, 80)
+    ids, ink, area, lettering = _lettered_page(size)
+    ids[36:40, :] = -1  # the band of ink is in no region now: a wall
+    printed = ink | (area & (lettering >= 128))
+
+    rendered = render_page(size, [], ids, ink=printed, ink_gray=40, lettering=lettering, lettering_area=area)
+
+    page = np.asarray(rendered.image.convert("L"))
+    outlines = np.asarray(rendered.outlines)
+    assert (page[ink] == 40).all() and (outlines[ink] == 0).all()  # solid, where the lettering is paper too
+    assert lettering[36:40, 30:40].max() < 128  # (which it is, at the line's left end)
+    inside = area & ~ink
+    tone = np.rint(PAPER - lettering * ((PAPER - 40) / PAPER))
+    _, lines = _lines_of(rendered, size)
+    np.testing.assert_array_equal(page[inside], np.minimum(lines, tone)[inside])
+
+
+def test_no_number_goes_on_the_lettering():
+    # One wide region with a line of lettering across its middle, where its number would go.
+    size = (200, 120)
+    ids = np.zeros((120, 200), dtype=np.int32)
+    area = np.zeros(ids.shape, dtype=bool)
+    area[45:75, 40:160] = True
+    lettering = np.zeros(ids.shape, dtype=np.uint8)
+    lettering[50:70, 50:150:4] = 200  # strokes
+    lettering[50:70, 51:151:4] = 60  # their anti-aliased edges, too faint to count as printed
+    printed = area & (lettering >= 128)
+    regions = extract_regions(ids, np.array([0], dtype=np.int32))  # its label point at its middle, on the lettering
+    bare = render_page(size, regions, ids)
+    (alone,) = bare.labels
+    x0, y0, x1, y1 = (int(v) for v in alone.box)
+    assert (lettering[y0:y1, x0:x1] > 0).any()  # without the lettering, the number sits on it
+
+    rendered = render_page(size, regions, ids, ink=printed, ink_gray=0, lettering=lettering, lettering_area=area)
+
+    (label,) = rendered.labels
+    x0, y0, x1, y1 = (int(v) for v in label.box)
+    assert not (lettering[y0:y1, x0:x1] > 0).any()
+
+
+def test_an_empty_line_of_lettering_changes_nothing():
+    size = (60, 40)
+    ids = _split_page(size)
+    plain = render_page(size, [], ids)
+    empty = render_page(
+        size, [], ids, lettering=np.zeros((40, 60), dtype=np.uint8), lettering_area=np.zeros((40, 60), dtype=bool)
+    )
+    assert np.array_equal(np.asarray(plain.image), np.asarray(empty.image))
+    assert np.array_equal(np.asarray(plain.outlines), np.asarray(empty.outlines))
