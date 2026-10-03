@@ -350,7 +350,8 @@ def generate(
     On every picture the lettering in the lines of text found -- signs, titles,
     captions -- is printed as it looks, in the ink's tone (see ``text``): dark
     lettering as ink on paper, light lettering as paper letters in its dark
-    ground. The regions are left as they are, and painted round it.
+    ground. The regions are left as they are, and painted round it, and no
+    number is written on it or right beside it (see ``labels``).
 
     Resizing, finding the ink and quantization results are cached per image
     object, so regenerating the same image with a different minimum region

@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw
 from tessellatum.core.boundaries import trace_boundaries
 from tessellatum.core.labels import (
     LEADER_REACH_MM,
+    TEXT_GAP_MM,
     Label,
     LabelSpacing,
     cleared,
@@ -124,9 +125,11 @@ def render_page(
     place of the printed ink lying in a region -- a scan's own ink would
     print its letters twice, the second time binarized. Printed ink in no
     region, line art's bold ink and the seam down a line two regions share,
-    keeps them apart, and still prints solid. No number goes on any of the
-    lettering's ink. The part of it inked enough to read as ink is in ``ink``
-    as well, which ends the lines crossing it and keeps label points off it.
+    keeps them apart, and still prints solid. No number goes in the lines'
+    boxes, nor within ``labels.TEXT_GAP_MM`` of them (see
+    ``labels.place_labels``). The part of the lettering inked enough to read as
+    ink is in ``ink`` as well, which ends the lines crossing it and keeps label
+    points off it.
 
     Returns the page, plus what it was built from: the ink the lines and the
     printed ink put on it, the geometry each line was drawn from, where each
@@ -162,11 +165,12 @@ def render_page(
         leader_width_px=line_width,
         leader_dot_px=line_width * style.leader_dot_ratio,
         leader_reach_px=print_scale(size).mm_to_px(LEADER_REACH_MM),
+        text_gap_px=print_scale(size).mm_to_px(TEXT_GAP_MM),
     )
     # A number goes on no printed ink, and a leader runs through none, whichever region's paint goes over it.
     seen = np.where(ink, -1, region_id_map) if inked else region_id_map
     detail = np.where(clearable, region_id_map, -1).astype(np.int32) if inked and clearable is not None else None
-    labels = place_labels(regions, seen, coverage == 0, spacing, detail)
+    labels = place_labels(regions, seen, coverage == 0, spacing, detail, text=lettering_area if lettered else None)
     if detail is not None and any(label.clears for label in labels):
         ink = ink & ~cleared(labels, detail, spacing.label_gap_px)
         coverage = all_ink(ink)

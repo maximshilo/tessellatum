@@ -568,3 +568,45 @@ def test_numbers_see_the_ink_a_region_s_paint_goes_over_as_in_no_region(monkeypa
 
     assert (seen["ids"][printed] == -1).all() and (seen["ids"][~printed] == ids[~printed]).all()
     assert (seen["clearable"][printed] == 0).all() and (seen["clearable"][~printed] == -1).all()
+
+
+TEXT_SPACING = dataclasses.replace(SPACING, text_gap_px=2.0)
+
+
+def _away_from(mask: np.ndarray) -> np.ndarray:
+    """How far each pixel is from the nearest pixel of ``mask``, between pixel middles."""
+    return cv2.distanceTransform((~mask).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+
+
+def test_no_number_goes_on_a_line_of_text_nor_within_its_gap_of_one():
+    ids = np.zeros((200, 300), dtype=np.int32)
+    ids[40:160, 60:240] = 1
+    regions, free = _page(ids)
+    text = np.zeros(ids.shape, dtype=bool)
+    text[85:115, 90:210] = True  # a line of text across the region's middle, where its number goes
+    plain = {label.region_id: label for label in place_labels(regions, ids, free, TEXT_SPACING)}
+    assert text[_pixels(plain[1].box)].any()
+
+    labels = place_labels(regions, ids, free, TEXT_SPACING, text=text)
+
+    away = _away_from(text)
+    for label in labels:
+        rows, columns = _pixels(label.box)
+        assert away[rows, columns].min() > TEXT_SPACING.text_gap_px and free[rows, columns].all()
+    inner = next(label for label in labels if label.region_id == 1)
+    assert inner.leader is None and (ids[_pixels(inner.box)] == 1).all()  # still in its own region
+    assert place_labels(regions, ids, free, TEXT_SPACING, text=np.zeros_like(text)) == list(plain.values())
+
+
+def test_a_region_lying_in_a_line_of_text_gets_its_number_outside_it_with_a_leader_across_the_text():
+    ids = np.zeros((200, 300), dtype=np.int32)
+    ids[92:108, 135:165] = 1  # room enough for its own number, were it not text
+    regions, free = _page(ids)
+    text = np.zeros(ids.shape, dtype=bool)
+    text[85:115, 90:210] = True
+
+    labels = {label.region_id: label for label in place_labels(regions, ids, free, TEXT_SPACING, text=text)}
+
+    end, anchor = labels[1].leader
+    assert text[_pixels_along(anchor, end)].any()  # the leader crosses the text to reach it
+    assert _away_from(text)[_pixels(labels[1].box)].min() > TEXT_SPACING.text_gap_px
