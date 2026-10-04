@@ -75,6 +75,17 @@ with them, and "Export…" draws it again at print resolution.
 
 ## How it works
 
+Every page goes through the seven steps below
+(`src/tessellatum/core/pipeline.py`). Around them, the pipeline first decides
+whether the picture is line art. If it is, the page is drawn from the
+artwork's own ink and fills, which changes steps 1 to 4 (see "Line art"
+below). On a photograph or a painting, it looks for faces and for the
+picture's subject before step 2, which gives them smaller regions; after step
+4 it settles a face's tones and finds the thin dark marks to print in it (see
+"Faces and the subject"). On every picture it looks for lines of text before
+step 5: their lettering is printed as it looks, and step 7 keeps the numbers
+off it (see "Text").
+
 1. **Quantize**: the image is smoothed and reduced to a small palette of
    flat colors via k-means clustering in Lab color space. Colors the painter
    could not tell apart or mix — closer than 10 CIEDE2000 — are then merged
@@ -129,6 +140,8 @@ with them, and "Export…" draws it again at print resolution.
    a sign or a caption; a region lying in one gets its number outside, with a
    leader that crosses the lettering. See `src/tessellatum/core/labels.py`.
 
+### Difficulty
+
 Difficulty controls three things: how many colors k-means looks for, how
 small a region may be on the printed page before it is merged away, and how
 much smoothing is applied before quantizing — see
@@ -145,6 +158,8 @@ drawing is what holds the floor.)
 The brush width comes from the printed page instead, along with the smallest
 region any setting can keep and how wide a line prints — see
 `src/tessellatum/core/print_size.py`.
+
+### Line art
 
 Line art — a cartoon, a comic — is flat fills with dark ink lines between
 them, and those lines are printed, not painted. The pipeline tells such a
@@ -203,6 +218,8 @@ Hatching drawn finer than the ink's anti-aliased edge — gaps under about
 0.5 mm between strokes — has no pixels of its fill's own color to go by: such
 a patch takes its color from the fill nearest it beyond its strokes.
 
+### Faces and the subject
+
 People notice a wrong face far more than a wrong patch of grass, so the
 pipeline also looks for faces, to give them more detail than the rest of the
 page. Two small detectors ship with the app and run offline: YuNet, a network
@@ -244,6 +261,8 @@ little or no subject, and its page is the one it would be without. See
 `src/tessellatum/core/subject.py`.
 
 A drawing's faces and subject are its ink's, so line art's page uses neither.
+
+### Text
 
 Signs, titles and captions should still read on the page, so the pipeline also
 finds the lines of text in a picture, drawn or photographed. A fourth network
@@ -314,6 +333,18 @@ timings and output-quality metrics:
 ```
 
 See [`benchmarks/README.md`](benchmarks/README.md) for details.
+
+What a good page is, and which metric checks each part of it, is specified
+in [`benchmarks/QUALITY_BENCHMARKS.md`](benchmarks/QUALITY_BENCHMARKS.md).
+[`benchmarks/REPORT.md`](benchmarks/REPORT.md) compares today's pages with
+the pages drawn before the quality work, on the 12 benchmark images at four
+difficulties and two sizes. Every target is met on 92 of the 96 pages, and
+the other four miss only one: they lose the cat photo's mouth. Slivers fell
+from 13% of the page to 0.3%, unnumbered regions from 118 a page to none, and
+lines per boundary from 1.8 to 1.0. This costs fidelity on photographs (ΔE00
+about 12% higher), by design: detail narrower than the 3 mm brush, and colors
+closer than the palette's 10 ΔE00 margin, are given up. Previews take about
+2.2 times as long.
 
 ## Tests
 
