@@ -21,8 +21,8 @@ break. So the outline is smoothed under rules that make both impossible:
   visits to the corner keeps to its own paper pixel's side of the line
   between the two ink centers. The joint opens into a waist instead of
   pinching to a point.
-- **A stroke or gap a pixel wide keeps its width**: round a thin pixel, and
-  wherever two parts of the outline come within a pixel of each other, the
+- **A stroke or gap a pixel wide keeps its width**: round a thin pixel --
+  ink with paper on two opposite sides, or paper with ink on two -- the
   margin is ``THIN_MARGIN_MM``, so such strokes and gaps stay twice that wide
   on paper. Elsewhere it is ``MARGIN_MM``.
 
@@ -64,6 +64,8 @@ _STEP = 0.5
 # At a diagonal joint, how much of the room its box gives the waist and the paper beyond it may take: what is left
 # keeps the half-planes and the box from pinning a point to a single spot.
 _ROOM = 0.95
+# How many pixels of paper round the ink the work is done with: enough for every margin to see what it looks at.
+_AROUND = 3
 
 
 def traced_rings(mask: np.ndarray) -> list[np.ndarray]:
@@ -96,6 +98,15 @@ def ink_outline(mask: np.ndarray, px_per_mm: float | None = None) -> list[np.nda
     base = min(MAX_MARGIN_PX, MARGIN_MM * px_per_mm + tolerance)
     smoothing_px = max(SMOOTHING_MIN_PX, SMOOTHING_MM * px_per_mm)
 
+    # Only the ink and the paper a few pixels round it decide anything -- a pixel's margin looks at the pixels beside
+    # it, a corner's at the corners beside it -- so the work is done in that window: a scan's whole page, a few
+    # millimeters round a face's marks.
+    rows, columns = np.flatnonzero(mask.any(axis=1)), np.flatnonzero(mask.any(axis=0))
+    y0, y1 = max(0, rows[0] - _AROUND), min(height, rows[-1] + 1 + _AROUND)
+    x0, x1 = max(0, columns[0] - _AROUND), min(width, columns[-1] + 1 + _AROUND)
+    mask = mask[y0:y1, x0:x1]
+    page_edge = (x0 == 0, y0 == 0, x1 == width, y1 == height)  # which of the window's sides are the page's
+
     corners, joints, starts = _trace(mask)
     counts = np.diff(starts)
     ring_of = np.repeat(np.arange(counts.size), counts)
@@ -117,7 +128,7 @@ def ink_outline(mask: np.ndarray, px_per_mm: float | None = None) -> list[np.nda
     previous = new_first + (at - 1) % new_counts[new_ring_of]
     after = new_first + (at + 1) % new_counts[new_ring_of]
 
-    lo, hi = _boxes(mask, origin, corner_at, halfway_at, corners, joints, split, following, thin, base)
+    lo, hi = _boxes(mask, origin, corner_at, halfway_at, corners, joints, split, following, thin, base, page_edge)
     holds = _joint_holds(origin, corner_at, halfway_at, corners, joints, split, following, lo, hi, thin)
 
     def hold(points: np.ndarray) -> None:
@@ -149,7 +160,7 @@ def ink_outline(mask: np.ndarray, px_per_mm: float | None = None) -> list[np.nda
         kept = cv2.approxPolyDP(ring.astype(np.float32).reshape(-1, 1, 2), tolerance, True).reshape(-1, 2)
         if len(kept) >= 3:
             ring = kept.astype(np.float64)
-        rings.append(np.vstack([ring, ring[:1]]))
+        rings.append(np.vstack([ring, ring[:1]]) + (x0, y0))
     return rings
 
 
@@ -190,38 +201,19 @@ def _ring_areas(points: np.ndarray, after: np.ndarray, ring_of: np.ndarray, coun
 
 
 def _corner_margins(mask: np.ndarray, thin: float, base: float) -> np.ndarray:
-    """Each pixel corner's margin, (H + 1) x (W + 1): ``thin`` where it needs one, ``base`` elsewhere.
+    """Each pixel corner's margin, (H + 1) x (W + 1): ``thin`` where one of its four pixels is thin, ``base`` elsewhere.
 
-    A corner needs the thin margin where one of its four pixels is thin, or
-    where another part of the outline passes a pixel away from it: a corner
-    beside it, across or diagonally, lies on the outline without one or two
-    cracks of it joining the two.
+    Two parts of the outline that pass a pixel apart elsewhere -- diagonally,
+    round a pixel that is not thin -- are concave corners both, which the
+    smoothing moves apart: holding them by the thin margin too changed no
+    closest approach on the benchmark's pages (T7.4).
     """
-    padded = np.pad(np.asarray(mask, dtype=bool), 1)  # corner (i, j) touches padded[i:i + 2, j:j + 2]
-    nw, ne, sw, se = padded[:-1, :-1], padded[:-1, 1:], padded[1:, :-1], padded[1:, 1:]
-    thin_pixel = np.pad(thin_pixels(mask), 1)
-    tight = thin_pixel[:-1, :-1] | thin_pixel[:-1, 1:] | thin_pixel[1:, :-1] | thin_pixel[1:, 1:]
-    on = ~((nw == ne) & (ne == sw) & (sw == se))
-    across = ne != se  # a crack from each corner to the next on its right
-    down = sw != se  # a crack from each corner to the next below it
-    apart = on[:, :-1] & on[:, 1:] & ~across[:, :-1]
-    tight[:, :-1] |= apart
-    tight[:, 1:] |= apart
-    apart = on[:-1, :] & on[1:, :] & ~down[:-1, :]
-    tight[:-1, :] |= apart
-    tight[1:, :] |= apart
-    # Corners (i, j) and (i + 1, j + 1), joined by two cracks through (i, j + 1) or through (i + 1, j).
-    apart = on[:-1, :-1] & on[1:, 1:] & ~(across[:-1, :-1] & down[:-1, 1:]) & ~(down[:-1, :-1] & across[1:, :-1])
-    tight[:-1, :-1] |= apart
-    tight[1:, 1:] |= apart
-    # Corners (i, j + 1) and (i + 1, j), joined through (i, j) or through (i + 1, j + 1).
-    apart = on[:-1, 1:] & on[1:, :-1] & ~(across[:-1, :-1] & down[:-1, :-1]) & ~(down[:-1, 1:] & across[1:, :-1])
-    tight[:-1, 1:] |= apart
-    tight[1:, :-1] |= apart
-    return np.where(tight, thin, base)
+    thin_pixel = np.pad(thin_pixels(mask), 1)  # corner (i, j) touches thin_pixel[i:i + 2, j:j + 2]
+    near_thin = thin_pixel[:-1, :-1] | thin_pixel[:-1, 1:] | thin_pixel[1:, :-1] | thin_pixel[1:, 1:]
+    return np.where(near_thin, thin, base)
 
 
-def _boxes(mask, origin, corner_at, halfway_at, corners, joints, split, following, thin, base):
+def _boxes(mask, origin, corner_at, halfway_at, corners, joints, split, following, thin, base, page_edge):
     """Each point's box, ``(lo, hi)``: where it may move.
 
     A corner's reaches to its margin from the four pixel centers round it; a
@@ -233,8 +225,9 @@ def _boxes(mask, origin, corner_at, halfway_at, corners, joints, split, followin
     Where that paper pixel is thin too -- a diagonal stroke beside a diagonal
     gap -- the joint's half-width and the pixel's margin ask for more than the
     0.707 px between the ink's diagonal and that pixel's center, and both give
-    way alike. Points on the page edge stay where they are: the paper's edge
-    is straight.
+    way alike. Points on the page edge stay where they are -- the paper's
+    edge is straight -- where ``page_edge`` (left, top, right, bottom) says
+    the mask's side is the page's.
     """
     height, width = mask.shape
     margins = _corner_margins(mask, thin, base)
@@ -258,8 +251,9 @@ def _boxes(mask, origin, corner_at, halfway_at, corners, joints, split, followin
         lo[index] = origin[index] - np.where(towards < 0, near, far)
         hi[index] = origin[index] + np.where(towards > 0, near, far)
 
+    left, top, right, bottom = page_edge
     x, y = origin.T
-    edge = (x <= -0.5) | (y <= -0.5) | (x >= width - 0.5) | (y >= height - 0.5)
+    edge = (left & (x <= -0.5)) | (top & (y <= -0.5)) | (right & (x >= width - 0.5)) | (bottom & (y >= height - 0.5))
     lo[edge] = hi[edge] = origin[edge]
     return lo, hi
 

@@ -145,7 +145,7 @@ def test_a_speck_and_a_pinhole_come_out_round_with_their_area():
         ring = by_center[center]
         assert len(ring) - 1 >= 6  # more than a diamond of four corners
         radius = np.hypot(*(ring[:-1] - center).T)
-        assert radius.max() - radius.min() < 0.2  # round, not square
+        assert radius.max() - radius.min() < 0.1  # round: a regular octagon's corners are 0.08 further out than its sides
         assert _signed_area(ring) == pytest.approx(area, abs=0.02)  # the hole's area is negative: the ink runs round it
 
 
@@ -225,3 +225,67 @@ def test_the_same_ink_gives_the_same_outline():
     mask = _random_mask(5)
     first, second = ink_outline(mask, px_per_mm=4.0), ink_outline(mask.copy(), px_per_mm=4.0)
     assert len(first) == len(second) and all(np.array_equal(a, b) for a, b in zip(first, second))
+
+
+def _least_joint_margin(px_per_mm: float) -> float:
+    """The least a diagonal joint keeps on each side of the line through its two ink centers, its paper pixel thin."""
+    thin = min(MAX_MARGIN_PX, (THIN_MARGIN_MM + TOLERANCE_MM) * px_per_mm)
+    share = min(1.0, 0.95 * np.sqrt(0.5) / (thin * (1 + np.sqrt(2.0))))
+    room = np.sqrt(2.0) * (0.5 - thin * share)
+    return min(thin, 0.95 * room) - TOLERANCE_MM * px_per_mm
+
+
+def _inside_points(rings: list[np.ndarray], points: np.ndarray) -> np.ndarray:
+    """Whether each point is inside ``rings`` by the even-odd rule: a ray from it to the right crosses an odd number of edges."""
+    inside = np.zeros(len(points), dtype=bool)
+    x, y = points[:, 0][:, None], points[:, 1][:, None]
+    for ring in rings:
+        (xa, ya), (xb, yb) = ring[:-1].T, ring[1:].T
+        spans = (ya <= y) != (yb <= y)
+        at = xa + (y - ya) * (xb - xa) / np.where(yb == ya, 1, yb - ya)
+        inside ^= (spans & (at > x)).sum(axis=1) % 2 == 1
+    return inside
+
+
+@pytest.mark.parametrize("px_per_mm", [4.0, 12.0])
+@pytest.mark.parametrize("seed", [0, 4])
+def test_a_diagonal_joint_stays_inked_round_its_corner(seed, px_per_mm):
+    # Where two ink pixels meet only at a corner, the corner is the middle of the line between their centers: the ink
+    # holds it, with the joint's margin round it, so the joint prints as a waist rather than a pinch.
+    mask = _random_mask(seed)
+    rings = ink_outline(mask, px_per_mm=px_per_mm)
+    padded = np.pad(mask, 1)
+    nw, ne, sw, se = padded[:-1, :-1], padded[:-1, 1:], padded[1:, :-1], padded[1:, 1:]
+    rows, columns = np.nonzero((nw == se) & (ne == sw) & (nw != ne))
+    joints = np.column_stack([columns - 0.5, rows - 0.5])
+    assert len(joints) > 20
+    assert _inside_points(rings, joints).all()
+    a, b, _, _ = _segments(rings)
+    assert _distance_to_segments(joints, a, b).min() >= _least_joint_margin(px_per_mm) - 1e-6
+
+
+@pytest.mark.parametrize("px_per_mm", [4.0, 12.0])
+@pytest.mark.parametrize("seed", [0, 1, 4])
+def test_separate_pieces_stay_twice_the_thin_margin_apart(seed, px_per_mm):
+    # Two outlines that pass a pixel apart -- across a gap or a stroke a pixel wide, or round the pixel between two
+    # corners -- keep the thin margin each, whether or not a pixel there is thin.
+    mask = _random_mask(seed)
+    rings = ink_outline(mask, px_per_mm=px_per_mm)
+    a, b, ring_of, _ = _segments(rings)
+    nearest = np.inf
+    for k, ring in enumerate(rings):
+        others = ring_of != k
+        nearest = min(nearest, _distance_to_segments(_densified(ring, 0.05), a[others], b[others]).min())
+    assert nearest >= 2 * _least_joint_margin(px_per_mm) - 1e-6
+
+
+def test_a_diagonal_stroke_keeps_its_width_on_a_fine_page():
+    # A 45 degree stroke a pixel wide is 0.71 px wide on the page. At 300 dpi, where a margin is 0.4 px, each visit to a
+    # joint still reaches out to the stroke's edge, its box widened towards its own paper pixel: the waist does not
+    # narrow to what the margin round the stroke's thin pixels would leave it.
+    mask = np.zeros((60, 60), dtype=bool)
+    mask[np.arange(5, 55), np.arange(5, 55)] = True
+    ring = _densified(ink_outline(mask, px_per_mm=12.0)[0], 0.05)
+    middle = ring[(ring[:, 0] > 15) & (ring[:, 0] < 45)]
+    off_line = np.abs(middle[:, 0] - middle[:, 1]) / np.sqrt(2.0)
+    assert off_line.min() > 0.3 and off_line.max() < 0.6
