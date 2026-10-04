@@ -4,8 +4,8 @@ without changing what the ink joins or keeps apart.
 The page prints its ink -- line art's own, the thin dark marks in a face, the
 lettering inked solid -- pixel by pixel, and the PDF draws that ink again as a
 filled outline (see ``export``). Traced exactly along the cracks between its
-pixels, the outline prints their staircase: 0.17-0.21 mm steps on the
-benchmark's scans. Smoothed along its length, as the page's lines are (see
+pixels, the outline prints their staircase: 0.21-0.23 mm steps on the
+benchmark's two scans. Smoothed along its length, as the page's lines are (see
 ``boundaries``), the staircase goes; but each edge of a thin stroke then moves
 on its own, so a scan's hatching thickens into blobs and strokes a pixel wide
 break. So the outline is smoothed under rules that make both impossible:
@@ -24,7 +24,9 @@ break. So the outline is smoothed under rules that make both impossible:
 - **A stroke or gap a pixel wide keeps its width**: round a thin pixel --
   ink with paper on two opposite sides, or paper with ink on two -- the
   margin is ``THIN_MARGIN_MM``, so such strokes and gaps stay twice that wide
-  on paper. Elsewhere it is ``MARGIN_MM``.
+  on paper. Elsewhere it is ``MARGIN_MM``. On a page finer than about 225 dpi
+  a pixel is too narrow for that: there the margins stop at
+  ``MAX_MARGIN_PX``, and such strokes and gaps keep most of a pixel instead.
 
 Within those boxes the outline is smoothed along its length by a Gaussian as
 long as the page's lines' (``boundaries.smoothing_length_px``), every ring is
@@ -52,6 +54,8 @@ MARGIN_MM = 0.01
 # How far the simplified outline may lie from the smoothed one: a quarter of a 1200 dpi dot. The margins hold it.
 TOLERANCE_MM = 0.005
 # The largest margin, in pixels, however fine the page: a point keeps at least a tenth of a pixel to move in each way.
+# It holds on pages finer than about 225 dpi, where the thin margin would be more. At 300 dpi a pinhole whose four
+# sides are ink touching only at its corners shrinks to about a third of its pixel, and prints filled (T7.4's review).
 MAX_MARGIN_PX = 0.4
 
 # Rings of this many corners or fewer -- a pixel or a few -- get a point halfway along each side, so they come out

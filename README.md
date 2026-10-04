@@ -66,7 +66,8 @@ with them, and "Export…" draws it again at print resolution.
     a face are the outline of the page's pixels, filled, smoothed off their
     staircase without joining or breaking anything: every pixel's middle stays
     on its own side of the outline, and strokes and gaps a pixel wide stay at
-    least 0.08 mm wide. The lettering of signs and captions is an image at the
+    least 0.08 mm wide (most of a pixel on a page finer than about 225 dpi,
+    where a pixel is narrower). The lettering of signs and captions is an image at the
     page's resolution, stored losslessly. The legend gets a portrait sheet of
     its own, its swatches 12 mm squares in their exact colors.
   - **PNG**: the page above its legend in one image, which records its
