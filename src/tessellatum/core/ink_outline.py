@@ -1,9 +1,10 @@
 """The printed ink's outline, for drawing it as vector art: traced round its pixels, then smoothed off their staircase
 without changing what the ink joins or keeps apart.
 
-The page prints its ink -- line art's own, the thin dark marks in a face, the
-lettering inked solid -- pixel by pixel, and the PDF draws that ink again as a
-filled outline (see ``export``). Traced exactly along the cracks between its
+The page prints its ink -- line art's own, the thin dark marks in a face --
+pixel by pixel, and the PDF draws that ink again as a filled outline (see
+``export``). (The letters of signs and captions have an outline of their own,
+traced between the pixels: see ``text.lettering``.) Traced exactly along the cracks between its
 pixels, the outline prints their staircase: 0.21-0.23 mm steps on the
 benchmark's two scans. Smoothed along its length, as the page's lines are (see
 ``boundaries``), the staircase goes; but each edge of a thin stroke then moves

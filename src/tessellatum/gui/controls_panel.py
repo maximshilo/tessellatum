@@ -126,9 +126,10 @@ class ControlsPanel(QWidget):
             "On a photograph or a painting, regions in the faces and the subject found may be half the smallest size, "
             "a face is painted in a few tones, and its thin dark marks (pupils, lip lines) are printed."
         )
-        self.text_check = QCheckBox("Print text as it looks")
+        self.text_check = QCheckBox("Print text")
         self.text_check.setToolTip(
-            "Print the lettering of the signs, titles and captions found in the picture, and keep the numbers off it."
+            "Print the letters of the signs, titles and captions found in the picture, their ground left bare, "
+            "and keep the numbers off them."
         )
         handling_layout = QVBoxLayout()
         for check in (self.line_art_check, self.detail_check, self.text_check):

@@ -12,6 +12,7 @@ from tessellatum.core.print_size import OUTLINE_WIDTH_MM, print_scale
 from tessellatum.core.regions import extract_regions
 from tessellatum.core.color import bgr_to_lab
 from tessellatum.core.render import LABEL_GRAY, LINE_GRAY, PAPER, PageStyle, ink_coverage, render_page
+from tessellatum.core.text import Lettering
 
 
 def _split_page(size: tuple[int, int]) -> np.ndarray:
@@ -329,8 +330,13 @@ def _lines_of(rendered, size: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
     return ink, np.rint(PAPER - ink * ((PAPER - LINE_GRAY) / PAPER))
 
 
+def _letters(area: np.ndarray, ink: np.ndarray, outline=()) -> Lettering:
+    """Letters as ``text.lettering`` gives them: printed ``ink`` inside the lines' boxes, ``area``."""
+    return Lettering(area=area, ink=ink, outline=list(outline), dark=area & (ink >= 128))
+
+
 def _lettered_page(size: tuple[int, int] = (120, 80)):
-    """A page split down the middle, a band of solid ink across it, and a line of lettering over the crack and the band."""
+    """A page split down the middle, a band of solid ink across it, and a line of letters over the crack and the band."""
     width, height = size
     ids = _split_page(size)
     ids[:30, : width // 2] = 2  # a third region, whose boundary crosses the lettering where it is too faint to print
@@ -343,12 +349,13 @@ def _lettered_page(size: tuple[int, int] = (120, 80)):
     return ids, ink, area, lettering
 
 
-def test_lettering_prints_as_it_looks_under_the_lines_in_place_of_any_other_ink():
+def test_the_letters_print_as_they_cover_the_page_under_the_lines_in_place_of_any_other_ink():
     size = (120, 80)
     ids, ink, area, lettering = _lettered_page(size)
     printed = ink | (area & (lettering >= 128))
 
-    rendered = render_page(size, [], ids, ink=printed, ink_gray=40, lettering=lettering, lettering_area=area)
+    ring = np.array([[30.0, 20.0], [89.0, 20.0], [89.0, 49.0], [30.0, 20.0]])
+    rendered = render_page(size, [], ids, ink=printed, ink_gray=40, lettering=_letters(area, lettering, [ring]))
     plain = render_page(size, [], ids, ink=printed, ink_gray=40)
 
     page = np.asarray(rendered.image.convert("L")).astype(np.float64)
@@ -364,18 +371,22 @@ def test_lettering_prints_as_it_looks_under_the_lines_in_place_of_any_other_ink(
     np.testing.assert_array_equal(outlines[~area], np.asarray(plain.outlines)[~area])
     # The band's ink inside the line is the lettering's now: paper where the lettering is, as the picture shows.
     assert page[37, 31] > 240 and page[37, 88] < 45
+    # The PDF draws the letters' outline (see ``export``), and none without letters.
+    (drawn,) = rendered.drawing.lettering
+    np.testing.assert_array_equal(drawn, ring)
+    assert plain.drawing.lettering is None
 
 
 def test_printed_ink_in_no_region_stays_solid_inside_the_lettering():
     # Line art's bold ink, and the seam down a line two regions share, keep the regions apart: inside a line of text,
-    # where the lettering takes the place of the ink lying in a region, they still print solid, whatever the lettering
-    # says there. Otherwise a region's paint could run into them.
+    # where the letters take the place of the ink lying in a region, they still print solid, whatever the letters say
+    # there. Otherwise a region's paint could run into them.
     size = (120, 80)
     ids, ink, area, lettering = _lettered_page(size)
     ids[36:40, :] = -1  # the band of ink is in no region now: a wall
     printed = ink | (area & (lettering >= 128))
 
-    rendered = render_page(size, [], ids, ink=printed, ink_gray=40, lettering=lettering, lettering_area=area)
+    rendered = render_page(size, [], ids, ink=printed, ink_gray=40, lettering=_letters(area, lettering))
 
     page = np.asarray(rendered.image.convert("L"))
     outlines = np.asarray(rendered.outlines)
@@ -403,7 +414,7 @@ def test_no_number_goes_on_the_lettering():
     x0, y0, x1, y1 = (int(v) for v in alone.box)
     assert (lettering[y0:y1, x0:x1] > 0).any()  # without the lettering, the number sits on it
 
-    rendered = render_page(size, regions, ids, ink=printed, ink_gray=0, lettering=lettering, lettering_area=area)
+    rendered = render_page(size, regions, ids, ink=printed, ink_gray=0, lettering=_letters(area, lettering))
 
     (label,) = rendered.labels
     x0, y0, x1, y1 = (int(v) for v in label.box)
@@ -414,11 +425,10 @@ def test_an_empty_line_of_lettering_changes_nothing():
     size = (60, 40)
     ids = _split_page(size)
     plain = render_page(size, [], ids)
-    empty = render_page(
-        size, [], ids, lettering=np.zeros((40, 60), dtype=np.uint8), lettering_area=np.zeros((40, 60), dtype=bool)
-    )
+    empty = render_page(size, [], ids, lettering=_letters(np.zeros((40, 60), dtype=bool), np.zeros((40, 60), np.uint8)))
     assert np.array_equal(np.asarray(plain.image), np.asarray(empty.image))
     assert np.array_equal(np.asarray(plain.outlines), np.asarray(empty.outlines))
+    assert empty.drawing.lettering is None
 
 
 @pytest.mark.parametrize("size", [(1100, 825), (2048, 1367)])
@@ -441,7 +451,7 @@ def test_numbers_keep_half_a_millimeter_from_the_lines_of_text(size, monkeypatch
 
     monkeypatch.setattr(render_module, "place_labels", spy)
 
-    rendered = render_page(size, regions, ids, lettering=np.zeros(ids.shape, dtype=np.uint8), lettering_area=area)
+    rendered = render_page(size, regions, ids, lettering=_letters(area, np.zeros(ids.shape, dtype=np.uint8)))
     render_page(size, regions, ids)
 
     (spacing, text), (_, no_text) = seen

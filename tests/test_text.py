@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
 import bench_case  # noqa: E402
 import bench_manifest  # noqa: E402
 import bench_metrics as bm  # noqa: E402
+import pdf_reading  # noqa: E402
 
 SAMPLES = Path(__file__).resolve().parent / "sample_images"
 WORDS = ("PAINT BY NUMBERS", "Hello world 2026", "quiet river")
@@ -353,63 +354,126 @@ def _lightness(gray: int) -> float:
     return float(cv2.cvtColor(np.full((1, 1, 3), gray / 255, dtype=np.float32), cv2.COLOR_BGR2Lab)[0, 0, 0])
 
 
-def test_dark_lettering_prints_as_ink_on_paper():
+def _outlined(printed: text.Lettering) -> np.ndarray:
+    """The pixels whose middle the letters' outline holds, filled by the even-odd rule."""
+    return pdf_reading.inside_even_odd(printed.outline, printed.area.shape)
+
+
+@pytest.mark.parametrize("ground, letters", [(220, 30), (30, 220)])
+def test_the_letters_print_solid_on_bare_paper_dark_or_light(ground, letters):
+    # T7.5: no box prints its ground. Light letters on a dark ground print as ink, as dark ones on a light ground do.
+    picture, strokes = _strokes(ground, letters)
+    printed = text.lettering(picture, [_LINE])
+    np.testing.assert_array_equal(printed.area, text.mask([_LINE], (80, 30)))
+    assert printed.ink.dtype == np.uint8
+    assert (printed.ink[strokes] == 255).all()  # the letters, solid
+    assert (printed.ink[~strokes] == 0).all()  # their ground bare paper, and nothing outside the line
+    np.testing.assert_array_equal(_outlined(printed), strokes)  # the outline holds the letters' pixels and no other
+    assert len(printed.outline) == len(range(10, 70, 6))  # a ring round each stroke
+    # The darker side is the letters, or their ground where they are light: the ink's tone is taken from it.
+    np.testing.assert_array_equal(printed.dark, printed.area & (strokes if letters < ground else ~strokes))
+
+
+def test_the_outline_runs_between_the_page_s_pixels_not_round_them():
+    # Dots 6 px in radius, anti-aliased: traced through the lightness between the pixels, a dot's outline is a circle,
+    # not the staircase of its pixels.
+    rows, columns = np.mgrid[0:60, 0:120].astype(np.float64)
+    covered = np.zeros((60, 120))
+    centers = [(20.3, 30.0), (40.0, 29.6), (60.5, 30.5), (80.0, 30.0), (99.8, 30.2)]
+    for x, y in centers:
+        covered = np.maximum(covered, np.clip(6.5 - np.hypot(columns - x, rows - y), 0, 1))  # the share of each pixel
+    lightness = 90 - 80 * covered  # L*, linear in the share, as a scan of ink reads
+    lab = np.dstack([lightness, np.zeros_like(lightness), np.zeros_like(lightness)]).astype(np.float32)
+    gray = cv2.cvtColor(lab, cv2.COLOR_Lab2BGR)  # float Lab: L* 0-100
+    picture = np.rint(np.clip(gray, 0, 1) * 255).astype(np.uint8)
+    printed = text.lettering(picture, [_rect_line((60, 30), (110, 30))])
+    assert len(printed.outline) == len(centers)
+    for ring, center in zip(sorted(printed.outline, key=lambda r: r[:, 0].mean()), centers):
+        radius = np.hypot(*(ring[:-1] - center).T)
+        # The cut is LETTER_CUT of the way from the dot's tone to the ground's: where a pixel is 40% covered. Its
+        # pixels' staircase would stray half a pixel and more.
+        assert np.abs(radius - 6.1).max() < 0.25
+        assert len(ring) > 20
+        assert len(np.unique(np.round(ring[:, 0] % 0.5, 6))) > 10  # not on the pixels' grid, nor the finer one's
+
+
+def test_a_letter_s_ink_runs_from_bare_paper_at_its_ground_to_solid_at_its_tone():
+    # Half inked where the outline runs, LETTER_CUT of the way from the letters' tone to their ground's, and in
+    # proportion either side of it. A mark too faint to reach the cut prints nothing, not even a gray.
+    assert text.LETTER_CUT == 0.6
+    picture, strokes = _strokes(ground=200, letters=40)
+    paler = min(range(40, 200), key=lambda g: abs((_lightness(200) - _lightness(g)) / (_lightness(200) - _lightness(40)) - 0.7))
+    faint = min(range(40, 200), key=lambda g: abs((_lightness(200) - _lightness(g)) / (_lightness(200) - _lightness(40)) - 0.25))
+    picture[10:20, 34:36] = paler
+    picture[10:20, 46:48] = faint
+    printed = text.lettering(picture, [_LINE])
+    towards = (_lightness(200) - _lightness(paler)) / (_lightness(200) - _lightness(40))
+    expected = 255 * (0.5 + 0.5 * (towards - 0.4) / 0.6)
+    assert np.abs(printed.ink[10:20, 34:36].astype(np.float64) - expected).max() <= 1
+    assert (printed.ink[10:20, 46:48] == 0).all()
+    assert (printed.ink[strokes & (picture[:, :, 0] == 40)] == 255).all()
+
+
+def test_a_ground_shading_from_light_to_dark_prints_nothing_of_itself():
+    # The ground is found round every pixel, not once for the box: a sign lit at one end and dark at the other. As one
+    # tone for the box (D-050), its dark end printed as gray as the letters' edges.
+    picture, strokes = _strokes(ground=0, letters=0)
+    picture[:] = np.linspace(235, 110, 80).round().astype(np.uint8)[None, :, None]
+    picture[strokes] = 20
+    printed = text.lettering(picture, [_LINE])
+    assert (printed.ink[strokes] == 255).all()
+    assert (printed.ink[~strokes] == 0).all()
+    np.testing.assert_array_equal(_outlined(printed), strokes)
+
+
+def test_a_patch_of_the_letters_tone_wider_than_their_strokes_is_ground():
+    # A band, a panel or a glow caught in a line's box is not lettering, however dark (or light) it is: it is wider
+    # than any stroke of the letters.
     picture, strokes = _strokes(ground=220, letters=30)
-    ink, area = text.lettering(picture, [_LINE])
-    np.testing.assert_array_equal(area, text.mask([_LINE], (80, 30)))
-    assert ink.dtype == np.uint8
-    assert (ink[strokes] == 255).all()  # the letters, solid
-    assert (ink[area & ~strokes] == 0).all()  # their ground, bare paper
-    assert (ink[~area] == 0).all()  # and nothing outside the line
+    strokes[:, 50:72] = False
+    picture[:, 50:72] = 220
+    picture[7:23, 52:70] = 30  # 16 px tall: wider than the disk the ground is found with
+    assert 2 * text._Box(np.asarray(_LINE.quad), (0, 0, 0, 0), np.ones((1, 1), bool), (0.0, 1.0), False).ground_reach + 1 < 16
+    printed = text.lettering(picture, [_LINE])
+    assert (printed.ink[7:23, 52:70] == 0).all()
+    assert (printed.ink[strokes] == 255).all()
+    np.testing.assert_array_equal(_outlined(printed), strokes)
 
 
-def test_light_lettering_prints_as_paper_letters_in_its_dark_ground():
-    # As it looks: no guess at which side is the lettering.
+def test_a_frame_along_the_box_s_edge_is_not_lettering():
+    # A lit edge of the sign the box caught: thin enough for a stroke, but it runs along the box's edge.
     picture, strokes = _strokes(ground=30, letters=220)
-    ink, area = text.lettering(picture, [_LINE])
-    assert (ink[strokes] == 0).all()
-    assert (ink[area & ~strokes] == 255).all()
-    assert (ink[~area] == 0).all()
+    picture[5:7, 5:75] = 220
+    printed = text.lettering(picture, [_LINE])
+    assert (printed.ink[5:7] == 0).all()
+    assert (printed.ink[strokes] == 255).all()
+    np.testing.assert_array_equal(_outlined(printed), strokes)
 
 
-def test_the_lightness_is_stretched_from_the_box_s_98th_percentile_to_its_2nd():
-    # Specks darker or lighter than the lettering and its ground, 1% of the box each, don't stretch the scale: the
-    # letters are still solid, the ground still paper, and a tone halfway between prints halfway.
-    picture, strokes = _strokes(ground=200, letters=60)
-    box = text.mask([_LINE], (80, 30))
-    ground = np.argwhere(box & ~strokes)
-    specks = len(np.argwhere(box)) // 100
-    for (y, x) in ground[:specks]:
-        picture[y, x] = 0
-    for (y, x) in ground[-specks:]:
-        picture[y, x] = 255
-    half = ground[len(ground) // 2]
-    lightness = (_lightness(200) + _lightness(60)) / 2
-    gray = min(range(256), key=lambda g: abs(_lightness(g) - lightness))
-    picture[half[0], half[1]] = gray
-    ink, _ = text.lettering(picture, [_LINE])
-    assert (ink[strokes] == 255).all()
-    rest = box & ~strokes
-    rest[half[0], half[1]] = False
-    for (y, x) in ground[:specks]:
-        rest[y, x] = False
-    assert (ink[rest] == 0).all()
-    assert all(ink[y, x] == 255 for y, x in ground[:specks])  # darker than the letters: solid all the same
-    expected = 255 * (_lightness(200) - _lightness(gray)) / (_lightness(200) - _lightness(60))
-    assert abs(int(ink[half[0], half[1]]) - expected) <= 1
+def test_boxes_that_overlap_take_the_side_most_of_their_pixels_say(monkeypatch):
+    # One sign read twice: a box fooled on its own goes with the larger one over it. Fooled, it would print the gaps
+    # between the letters, which are as thin as strokes, and not the letters.
+    picture, strokes = _strokes(ground=220, letters=30)
+    big, small = _rect_line((40, 15), (70, 20)), _rect_line((55, 15), (30, 20))
+    monkeypatch.setattr(text, "_light_letters", lambda lightness, inside, middle: bool(inside.sum() < 1000))
+    alone = text.lettering(picture, [small])
+    assert not alone.ink[strokes].any() and alone.ink[~strokes].any()
+    both = text.lettering(picture, [big, small])
+    assert (both.ink[strokes] == 255).all() and (both.ink[~strokes] == 0).all()
+    np.testing.assert_array_equal(_outlined(both), strokes)
 
 
-def test_between_its_two_percentiles_the_ink_follows_the_box_s_lightness():
-    # A box of every gray from black to white: its 2nd percentile of L* and darker print solid, its 98th and lighter bare
-    # paper, and in between in proportion.
-    picture = np.tile(np.linspace(0, 255, 80).round().astype(np.uint8)[None, :, None], (30, 1, 3))
-    ink, area = text.lettering(picture, [_LINE])
-    lightness = cv2.cvtColor(picture.astype(np.float32) / 255, cv2.COLOR_BGR2Lab)[:, :, 0].astype(np.float64)
-    low, high = np.percentile(lightness[area], [2, 98])
-    expected = np.clip((high - lightness) / (high - low), 0, 1) * 255
-    assert np.abs(ink[area] - expected[area]).max() <= 0.5 + 1e-3
-    assert (ink[area & (lightness <= low)] == 255).all() and (ink[area & (lightness >= high)] == 0).all()
-    assert ((ink[area] > 0) & (ink[area] < 255)).mean() > 0.8
+def test_the_letters_side_is_what_two_of_three_things_say():
+    # Fewer pixels than the ground; the ground along the box's edge; the ground one piece and the letters many.
+    inside = np.ones((20, 60), dtype=bool)
+    lightness = np.full((20, 60), 20.0, dtype=np.float32)
+    lightness[5:15, 5:55:6] = 90.0  # light strokes on a dark ground: all three say light
+    assert text._light_letters(lightness, inside, 55.0)
+    assert not text._light_letters(100 - lightness, inside, 55.0)
+    bold = np.full((20, 60), 20.0, dtype=np.float32)
+    bold[2:18, 2:58] = 90.0
+    bold[2:18, 10:58:8] = 20.0  # bold light letters filling most of the box: more pixels than their ground
+    assert text._light_letters(bold, inside, 55.0)
 
 
 def test_lettering_fainter_than_the_contrast_floor_prints_nothing():
@@ -420,43 +484,55 @@ def test_lettering_fainter_than_the_contrast_floor_prints_nothing():
     assert 19.0 < _lightness(ground) - _lightness(faint) < 20.0
     assert 20.0 <= _lightness(ground) - _lightness(strong) < 21.0
     picture, strokes = _strokes(ground=ground, letters=faint)
-    ink, area = text.lettering(picture, [_LINE])
-    assert area.any() and not ink.any()  # the line is still there; it prints nothing
+    printed = text.lettering(picture, [_LINE])
+    assert printed.area.any() and not printed.ink.any() and printed.outline == [] and not printed.dark.any()
     picture, strokes = _strokes(ground=ground, letters=strong)
-    ink, _ = text.lettering(picture, [_LINE])
-    assert (ink[strokes] == 255).all()
+    printed = text.lettering(picture, [_LINE])
+    assert (printed.ink[strokes] == 255).all()
 
 
 def test_a_box_all_one_tone_but_a_few_specks_prints_nothing():
-    # The specks stand far apart from the rest, but there is no lettering to stretch: its two percentiles are one tone.
+    # The specks stand far apart from the rest, but there is no lettering: the box's two percentiles are one tone.
     picture = np.full((30, 80, 3), 200, dtype=np.uint8)
     box = np.argwhere(text.mask([_LINE], (80, 30)))
     for y, x in box[:: len(box) // 10][:10]:
         picture[y, x] = 0
-    ink, area = text.lettering(picture, [_LINE])
-    assert area.any() and not ink.any()
+    printed = text.lettering(picture, [_LINE])
+    assert printed.area.any() and not printed.ink.any() and printed.outline == []
 
 
-def test_where_two_lines_overlap_the_one_inking_a_pixel_more_does():
-    rng = np.random.default_rng(3)
-    picture = rng.integers(0, 256, (40, 90, 3), dtype=np.uint8)
-    picture[:, 45:] //= 3  # a darker right half, so the two boxes stretch differently
-    first, second = _rect_line((35, 20), (60, 18)), _rect_line((55, 22), (60, 14), angle=10)
-    ink_first, area_first = text.lettering(picture, [first])
-    ink_second, area_second = text.lettering(picture, [second])
-    ink, area = text.lettering(picture, [first, second])
-    np.testing.assert_array_equal(area, area_first | area_second)
-    np.testing.assert_array_equal(ink, np.maximum(ink_first, ink_second))
-    assert ((ink_first != ink_second) & area_first & area_second).any()  # the overlap does tell them apart
+def test_specks_beyond_the_letters_tone_don_t_move_it():
+    # The letters' tone is the box's 2nd percentile: specks darker than the letters, 1% of the box, print as solid as
+    # they do, and leave the letters solid.
+    picture, strokes = _strokes(ground=200, letters=60)
+    box = text.mask([_LINE], (80, 30))
+    ground = np.argwhere(box & ~strokes)
+    specks = ground[:: len(ground) // (box.sum() // 100)][: box.sum() // 100]
+    picture[specks[:, 0], specks[:, 1]] = 0
+    printed = text.lettering(picture, [_LINE])
+    assert (printed.ink[strokes] == 255).all()
+
+
+def test_where_two_lines_overlap_a_point_is_a_letter_if_either_box_says_so():
+    picture, strokes = _strokes(ground=220, letters=30)
+    first, second = _rect_line((30, 15), (50, 20)), _rect_line((50, 15), (50, 20))
+    a, b, both = (text.lettering(picture, lines) for lines in ([first], [second], [first, second]))
+    np.testing.assert_array_equal(both.area, a.area | b.area)
+    np.testing.assert_array_equal(both.ink, np.maximum(a.ink, b.ink))
+    np.testing.assert_array_equal(_outlined(both), _outlined(a) | _outlined(b))
+    # The letters two boxes share are traced once: a ring apiece, none lying over another, which the even-odd rule
+    # would leave paper.
+    assert len(both.outline) == len(range(10, 70, 6)) < len(a.outline) + len(b.outline)
 
 
 def test_no_lines_print_nothing():
     picture, _ = _strokes(ground=220, letters=30)
-    ink, area = text.lettering(picture, [])
-    assert ink.shape == area.shape == (30, 80) and not ink.any() and not area.any()
+    printed = text.lettering(picture, [])
+    assert printed.ink.shape == printed.area.shape == printed.dark.shape == (30, 80)
+    assert not printed.ink.any() and not printed.area.any() and printed.outline == []
     point = text.TextLine(quad=((40.0, 15.0),) * 4, score=1.0)
-    ink, area = text.lettering(picture, [point])
-    assert not ink.any() and not area.any()
+    printed = text.lettering(picture, [point])
+    assert not printed.ink.any() and not printed.area.any()
     with pytest.raises(ValueError):
         text.lettering(picture.astype(np.float32), [_LINE])
 
@@ -540,7 +616,7 @@ def _without_text(monkeypatch, picture: np.ndarray, params, long_edge: int):
     return page
 
 
-def test_the_page_prints_the_lettering_found_and_leaves_the_regions_as_they_are(monkeypatch):
+def test_the_page_prints_the_letters_found_and_leaves_the_regions_as_they_are(monkeypatch):
     picture, _ = _lettering(size=(1400, 933))
     params = params_for_preset("Medium")
     pipeline.clear_cache()
@@ -550,32 +626,40 @@ def test_the_page_prints_the_lettering_found_and_leaves_the_regions_as_they_are(
     resized = pipeline.resize_to_long_edge(picture, pipeline.PREVIEW_LONG_EDGE)
     assert len(analysis.text) == len(WORDS)
 
-    ink, area = text.lettering(resized, analysis.text)
-    assert ink.any()
-    np.testing.assert_array_equal(analysis.lettering_area, area)
+    printed = text.lettering(resized, analysis.text)
+    assert printed.ink.any()
+    np.testing.assert_array_equal(analysis.lettering_area, printed.area)
     np.testing.assert_array_equal(analysis.lettering_area, text.mask(analysis.text, size))
-    np.testing.assert_array_equal(analysis.lettering, 255 - ink)
-    # The lettering darker than halfway is printed ink -- here all of it, with no face on the page -- in the gray of
-    # the picture under it.
-    printed = ink >= 128
-    np.testing.assert_array_equal(analysis.printed_ink, printed)
-    assert analysis.ink_gray == ink_module.ink_gray(resized, printed)
-    # The page shows it in that gray, as it looks, darkened only where a line runs through.
+    np.testing.assert_array_equal(analysis.lettering, 255 - printed.ink)
+    # The PDF draws the letters' outline (T7.5).
+    assert len(page.drawing.lettering) == len(printed.outline) > len("".join(WORDS).replace(" ", ""))
+    for got, want in zip(page.drawing.lettering, printed.outline):
+        np.testing.assert_array_equal(got, want)
+    # The pixels the letters cover at least half of are printed ink -- here all of it, with no face on the page -- in
+    # the gray of the picture under the lines' darker side: the letters.
+    inked = printed.ink >= 128
+    np.testing.assert_array_equal(analysis.printed_ink, inked)
+    assert analysis.ink_gray == ink_module.ink_gray(resized, printed.dark)
+    assert (printed.dark & inked).sum() > 0.9 * inked.sum()
+    # The page shows them in that gray, their ground bare paper, darkened only where a line runs through.
     gray = np.asarray(page.page.convert("L")).astype(np.float64)
-    tone = np.rint(255 - ink * ((255 - analysis.ink_gray) / 255))
-    assert (gray[area] <= tone[area]).all()
-    assert (gray[area] == tone[area]).mean() > 0.9
-    assert (gray[ink == 255] <= analysis.ink_gray).all()
+    tone = np.rint(255 - printed.ink * ((255 - analysis.ink_gray) / 255))
+    assert (gray[printed.area] <= tone[printed.area]).all()
+    assert (gray[printed.area] == tone[printed.area]).mean() > 0.9
+    assert (gray[printed.ink == 255] <= analysis.ink_gray).all()
+    assert (printed.ink[printed.area] == 0).mean() > 0.5  # most of a line is ground
 
     plain = _without_text(monkeypatch, picture, params, pipeline.PREVIEW_LONG_EDGE)
     assert not plain.analysis.lettering_area.any() and (plain.analysis.lettering == 255).all()
-    assert not plain.analysis.printed_ink.any()
+    assert not plain.analysis.printed_ink.any() and plain.drawing.lettering is None
     np.testing.assert_array_equal(analysis.region_id_map, plain.analysis.region_id_map)
     np.testing.assert_array_equal(analysis.region_color, plain.analysis.region_color)
     assert analysis.legend_size == plain.analysis.legend_size
 
 
-def test_light_lettering_prints_its_ground_and_leaves_its_letters_paper():
+def test_light_letters_print_as_ink_and_their_dark_ground_as_bare_paper():
+    # T7.5: "Text boxes should not have a background." D-050 printed them as they look: the ground solid, the letters
+    # paper.
     picture, _ = _lettering(size=(1400, 933))
     picture = 255 - picture  # pale words on a dark page
     pipeline.clear_cache()
@@ -587,9 +671,11 @@ def test_light_lettering_prints_its_ground_and_leaves_its_letters_paper():
     letters = analysis.lettering_area & (resized[:, :, 0] > 200)
     ground = analysis.lettering_area & (resized[:, :, 0] < 25)
     assert letters.sum() > 500 and ground.sum() > letters.sum()
-    assert (analysis.lettering[letters] > 220).mean() > 0.9  # the letters bare paper, or nearly
-    assert (analysis.lettering[ground] < 10).mean() > 0.95  # their ground solid, or nearly
-    assert analysis.printed_ink[ground].all() and not analysis.printed_ink[letters].any()
+    assert (analysis.lettering[letters] < 35).mean() > 0.9  # the letters solid, or nearly
+    assert (analysis.lettering[ground] == 255).mean() > 0.95  # their ground bare paper
+    assert analysis.printed_ink[letters].mean() > 0.9 and not analysis.printed_ink[ground].any()
+    # In the tone of the dark ground, the picture's darker side there, as the page's ink is.
+    assert analysis.ink_gray < 40
 
 
 def test_on_line_art_no_number_clears_lettering_and_the_ink_keeps_the_artwork_s_gray(monkeypatch):
@@ -608,9 +694,10 @@ def test_on_line_art_no_number_clears_lettering_and_the_ink_keeps_the_artwork_s_
     assert calls and page.analysis.lettering_area.any()
     for kwargs in calls:
         assert kwargs["clearable"].any()  # the comic's hatching, which a number may clear
-        assert not (kwargs["clearable"] & kwargs["lettering_area"]).any()  # but never inside a line of text
-    # Inside the lines, the ink lying in a region is the lettering darker than halfway and no other, as the page prints
-    # it: the comic's own ink there, pale where the lettering is, is not printed ink any more. Its ink in no region is.
+        assert not (kwargs["clearable"] & kwargs["lettering"].area).any()  # but never inside a line of text
+    # Inside the lines, the ink lying in a region is the letters, the pixels they cover at least half of, and no other,
+    # as the page prints them: the comic's own ink there, but the letters, is not printed ink any more. Its ink in no
+    # region is.
     analysis = page.analysis
     lettering_ink = 255 - analysis.lettering.astype(np.int64)
     in_region = analysis.lettering_area & (analysis.region_id_map >= 0)
@@ -643,8 +730,8 @@ def test_after_a_merge_no_number_clears_lettering_either(monkeypatch):
     pipeline.clear_cache()
     pipeline.generate(comic, params_for_preset("Hard"), pipeline.PREVIEW_LONG_EDGE)
     assert len(calls) == 2  # drawn again after the merge
-    assert calls[1]["clearable"].any() and calls[1]["lettering_area"].any()
-    assert not (calls[1]["clearable"] & calls[1]["lettering_area"]).any()
+    assert calls[1]["clearable"].any() and calls[1]["lettering"].area.any()
+    assert not (calls[1]["clearable"] & calls[1]["lettering"].area).any()
     pipeline.clear_cache()
 
 
