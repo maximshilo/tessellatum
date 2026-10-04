@@ -103,3 +103,20 @@ def render(path, index: int, px_per_mm: float, clip_mm: tuple[float, float, floa
     rgba = rgba.reshape(height, width, 4).astype(np.float64)
     alpha = rgba[..., 3:] / 255  # QtPdf renders onto a transparent background
     return rgba[..., :3] * alpha + 255 * (1 - alpha)
+
+
+def inside_even_odd(rings: list[np.ndarray], shape: tuple[int, int]) -> np.ndarray:
+    """``rings`` (closed Nx2 (x, y) arrays, pixel centers at whole numbers) filled by the even-odd rule, at the pixels'
+    middles: a pixel is inside when an odd number of the rings' edges cross its row to its left (an edge holds its
+    upper end, not its lower)."""
+    height, width = shape
+    crossings = np.zeros((height, width + 1), dtype=np.int64)
+    for ring in rings:
+        assert np.array_equal(ring[0], ring[-1])  # closed
+        for (xa, ya), (xb, yb) in zip(ring[:-1], ring[1:]):
+            rows = np.arange(max(0, int(np.ceil(min(ya, yb)))), min(height, int(np.ceil(max(ya, yb)))))
+            if rows.size == 0 or ya == yb:
+                continue
+            x = xa + (rows - ya) * (xb - xa) / (yb - ya)
+            np.add.at(crossings, (rows, np.clip(np.floor(x).astype(int) + 1, 0, width)), 1)
+    return np.cumsum(crossings, axis=1)[:, :width] % 2 == 1

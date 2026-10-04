@@ -255,8 +255,13 @@ From 0.1.44 the PDF draws that page again as vector art, from what it was drawn
 from (`GeneratedPage.drawing`): its lines as paths at the width asked for, never
 widened to a pixel, its numbers as text in the page's own font, the ink it prints
 as the outline of its pixels, and its lettering as an image at its resolution.
+From 0.1.45 the ink's outline is smoothed off its pixels' staircase
+(`core/ink_outline.py`), each point held within half a pixel of where it was
+traced, so that every pixel's middle stays on its own side of it and nothing the
+page joins or keeps apart is broken or run together.
 The harness measures the raster page, which is unchanged; `tests/test_export.py`
-reads the PDF back and checks it against the raster page and the asked-for width.
+reads the PDF back and checks it against the raster page and the asked-for width,
+and that at 300 dpi its ink and paper are in the pieces the page's are.
 
 ## Quality metrics
 

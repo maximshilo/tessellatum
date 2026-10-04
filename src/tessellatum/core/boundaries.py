@@ -157,61 +157,6 @@ def trace_boundaries(
     return smooth_boundaries(paths, smoothing_px, max_shift_px, size=(width, height))
 
 
-def outline_rings(mask: np.ndarray) -> list[np.ndarray]:
-    """Closed rings along the cracks round the pixels of ``mask``, which an even-odd fill fills exactly.
-
-    Every crack between a pixel of ``mask`` and one that isn't -- or the page
-    edge -- is on exactly one ring, so filling the rings by the even-odd rule
-    covers exactly the pixels of ``mask``: a hole is a ring inside a ring.
-    Two pixels touching only at a corner make four cracks meet there; the
-    rings may pass through that corner in either pairing, which the even-odd
-    rule fills the same.
-
-    Returns Nx2 float64 ``(x, y)`` arrays in page coordinates, each repeating
-    its first point at the end.
-    """
-    inside = np.asarray(mask, dtype=bool)
-    height, width = inside.shape
-    # A margin of pixels not in the mask, so that the mask's cracks never meet the page edge: off the page counts as a
-    # region of its own while tracing, and the margin's own crack with it is one closed path, left out.
-    ids = np.zeros((height + 2, width + 2), dtype=np.int32)
-    ids[1:-1, 1:-1] = inside
-    paths = [
-        path - 1.0
-        for path in trace_boundaries(ids, smoothing_px=0)
-        if path[:, 0].min() > -0.5 and path[:, 1].min() > -0.5  # the margin's crack with the page edge
-    ]
-    rings = [path for path in paths if _is_closed(path)]
-    # The rest run between corners where the mask's pixels touch diagonally; joined end to end they close up.
-    open_paths = [path for path in paths if not _is_closed(path)]
-    ends: dict[tuple[int, int], list[int]] = {}
-    for index, path in enumerate(open_paths):
-        for end in (path[0], path[-1]):
-            ends.setdefault(_corner(end), []).append(index)
-    used = [False] * len(open_paths)
-    for index, path in enumerate(open_paths):
-        if used[index]:
-            continue
-        used[index] = True
-        pieces = [path]
-        start, at = _corner(path[0]), _corner(path[-1])
-        while at != start:
-            following = next(other for other in ends[at] if not used[other])
-            used[following] = True
-            piece = open_paths[following]
-            if _corner(piece[0]) != at:
-                piece = piece[::-1]
-            pieces.append(piece[1:])
-            at = _corner(piece[-1])
-        rings.append(np.vstack(pieces))
-    return rings
-
-
-def _corner(point: np.ndarray) -> tuple[int, int]:
-    """A pixel corner's point, which lies on half-integers, as a key."""
-    return int(round(2 * point[0])), int(round(2 * point[1]))
-
-
 def _along_ink(first: np.ndarray, second: np.ndarray, stride: int, ink: np.ndarray) -> np.ndarray:
     """For each path, given its first two corners, whether it runs along the ink.
 
