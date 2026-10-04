@@ -4,8 +4,10 @@ Speed **and** quality benchmarks for the page-generation pipeline, so a change
 can be judged on numbers: is it faster, and did the output get any worse?
 
 What counts as a good page for each kind of image (photos, bold-line
-cartoons, faces, text), and the metrics still needed to measure it, is
-described in [`QUALITY_BENCHMARKS.md`](QUALITY_BENCHMARKS.md).
+cartoons, faces, text), and which metric checks each property against which
+target, is specified in [`QUALITY_BENCHMARKS.md`](QUALITY_BENCHMARKS.md).
+Where the pages stand against the baseline recorded before the quality work
+began is in [`REPORT.md`](REPORT.md).
 
 ## Quick start
 
@@ -654,9 +656,10 @@ How the face metrics are defined:
     quarter of it. Edges in a textured box include the texture's: an eye outlined
     as a region of its own can still leave most of the fur's edges around it
     undrawn.
-  - On today's pages of the face images, the features that are gone score an edge
-    recall of at most 0.182, with no region of their own; those still there score
-    at least 0.411, or have a region covering at least 27.7% of their box.
+  - On the pages of the face images at 0.1.15, where the thresholds were set, the
+    features that are gone score an edge recall of at most 0.182, with no region of
+    their own; those still there score at least 0.411, or have a region covering at
+    least 27.7% of their box.
 - **Face regions** counts the regions with more than half their pixels inside the
   image's annotated face boxes (a pixel is inside where its middle is): the face's own
   regions, without the large ones around it that only reach into its box. A face should
@@ -832,11 +835,11 @@ and 0.019, under the 0.021 and 0.023 it was given on stroke pages, which it keep
 Gradient slivers' tolerances come from 24 pairs at each size, the two images with gradient
 areas at every preset, measured on 0.1.38. They are far tighter than the page's slivers',
 which were measured on T1.8's pages, 12.9% slivers on average and up to 53% (0.27% and
-0.8% at 0.1.37): on the same pairs today the page's slivers move by 0.053 and 0.048 points.
+0.8% at 0.1.37): on the same pairs at 0.1.38 the page's slivers move by 0.053 and 0.048 points.
 
 The subject's tolerances come from 60 pairs at each size, the five images with outlined
 subjects at every preset, measured on 0.1.39 (`T5.3-sizes`, `T5.3-export-sizes`). They are
-tighter than the face's because today's pages move less between two sizes than T1.8's, on
+tighter than the face's because 0.1.39's pages move less between two sizes than T1.8's, on
 which the face's were measured: on the same pairs the face's ΔE00 moves by 4.6% and 4.8%
 (tolerance 7.8% and 8.2%), and the page's by 4.6% and 3.2% (6.9% and 7.3%).
 
@@ -913,18 +916,20 @@ Four of the targets need explaining:
   every region, so the doubling it is there to catch is still caught. The plain
   count stays in the report, and both are judged for regressions. Too few lines
   miss the target as much as too many.
-- **Jaggedness ≤ 1.02** is met today by the bold-line cartoons (1.007–1.016) and
-  `scene.png` (1.002–1.008), whose lines follow smooth shapes. Photos score
-  1.05–1.25.
+- **Jaggedness ≤ 1.02** was met, when it was set, only by the bold-line cartoons
+  (1.007–1.016) and `scene.png` (1.002–1.008), whose lines follow smooth shapes;
+  photos scored 1.05–1.25. Since lines are smoothed along their length (0.1.22)
+  every page meets it: 1.001–1.012 at 0.1.45.
 - **Text CER page** counts from the source's, because OCR doesn't read all of the
   source either (0.04–0.26 at preview size, see the text metrics).
 - **Flat colors ΔE00** counts from the floor its own difficulty and artwork set,
   because that floor alone runs from 0 to 7.64 over the benchmark set before a
   page is drawn at all, and holds only where the manifest's colors are exact,
   as the ink precision targets do. The 2.5 is the margin every page whose
-  palette can be the artwork's colors keeps today: the two digital drawings and
-  `scene.png` sit 0.34–2.42 above their floor at v0.1.29. The two scans sit
-  3.13–10.12 above theirs, and are reported rather than targeted: they miss on
+  palette can be the artwork's colors kept when it was set: the two digital
+  drawings and `scene.png` sit 0.34–2.42 above their floor at v0.1.29 (at most
+  2.42 at 0.1.45 too). The two scans sit 3.13–10.12 above theirs, and are
+  reported rather than targeted: they miss on
   their whole palette too (2.73–6.62 above), not only on their legend, because
   some colors their manifest lists are hardly in the fills at all -- at Hard, no
   pixel of the comics' fills is within 5 ΔE00 of its two blues or its red, and
