@@ -3,7 +3,8 @@
 Pixel-level work NumPy can't vectorize -- union-find labeling, the sequential
 small-region merge, the same-color union that follows it, the greedy coloring
 that groups regions for the width measurement, the walk that turns the
-boundaries between regions into one path each, the search for the nearest
+boundaries between regions into one path each (and the printed ink's outline
+into rings, see ``ink_outline``), the search for the nearest
 core a thin part can reach without crossing line art's ink, and the bilateral
 filter's per-pixel weighting -- runs here as compiled code. So do line art's
 region steps (see ``regions.look_through_hatching`` to ``regions.split_areas``):
@@ -559,6 +560,99 @@ def trace_boundary_paths(right, down, degree, stride, num_edges):
 
     starts[paths] = n
     return corners[:n], starts[: paths + 1]
+
+
+@njit(cache=True, nogil=True)
+def _ink_edge(pad, stride, i, j, d):
+    """Is there a crack edge leaving corner ``(i, j)`` in direction ``d`` (0 right, 1 down, 2 left, 3 up), ink on its right?
+
+    ``pad`` is the ink with a margin of one pixel of paper round it, flattened:
+    pixel ``(r, c)`` is ``pad[(r + 1) * stride + c + 1]``. Corner ``(i, j)``
+    touches pixels ``(i - 1, j - 1)``, ``(i - 1, j)``, ``(i, j - 1)`` and
+    ``(i, j)``. Right is as seen on the page, whose rows run downwards.
+    """
+    if d == 0:  # the pixel below the edge is ink, the one above paper
+        return pad[(i + 1) * stride + j + 1] and not pad[i * stride + j + 1]
+    if d == 1:  # the pixel left of it is ink, the one right of it paper
+        return pad[(i + 1) * stride + j] and not pad[(i + 1) * stride + j + 1]
+    if d == 2:  # the pixel above it is ink, the one below paper
+        return pad[i * stride + j] and not pad[(i + 1) * stride + j]
+    return pad[i * stride + j + 1] and not pad[i * stride + j]  # the pixel right of it is ink, the one left of it paper
+
+
+@njit(cache=True, nogil=True)
+def trace_ink_rings(pad, height, width):
+    """Walk the cracks round the ink into closed rings, the ink on each ring's right.
+
+    ``pad`` is as for ``_ink_edge``, for ink ``height`` x ``width`` pixels.
+    Every crack between an ink pixel and a paper one -- or the page edge -- is
+    on exactly one ring, walked once. At a corner where two ink pixels meet
+    only diagonally, two rings (or one ring twice) pass, and the walk turns
+    towards the paper: so the two pixels stay one piece of ink, as the page
+    shows them, and each visit to the corner turns round its own paper pixel.
+
+    Returns ``(corners, joints, starts)``: every ring's corners in order, as
+    ``i * (width + 1) + j``; for each, at a diagonal joint, the direction
+    ``(dx, dy)`` from the corner to the paper pixel the ring turns round there
+    (both 1 or -1), else ``(0, 0)``; and where each ring begins in those
+    arrays, with their length last. A ring does not repeat its first corner.
+    """
+    stride = width + 2
+    corners_across = width + 1
+    di = (0, 1, 0, -1)
+    dj = (1, 0, -1, 0)
+    # Each direction's left, as seen on the page: towards the paper.
+    lx = (0, 1, 0, -1)
+    ly = (-1, 0, 1, 0)
+    num_edges = 0
+    for i in range(height + 1):
+        for j in range(width + 1):
+            for d in range(4):
+                if _ink_edge(pad, stride, i, j, d):
+                    num_edges += 1
+    used = np.zeros((height + 1) * corners_across * 4, np.bool_)
+    corners = np.empty(num_edges, np.int64)
+    joints = np.zeros((num_edges, 2), np.int8)
+    starts = np.empty(num_edges + 1, np.int64)
+    n = 0
+    rings = 0
+    for i0 in range(height + 1):
+        for j0 in range(width + 1):
+            for d0 in range(4):
+                if used[(i0 * corners_across + j0) * 4 + d0] or not _ink_edge(pad, stride, i0, j0, d0):
+                    continue
+                first = n
+                starts[rings] = n
+                rings += 1
+                i, j, d = i0, j0, d0
+                while True:
+                    used[(i * corners_across + j) * 4 + d] = True
+                    corners[n] = i * corners_across + j
+                    n += 1
+                    i += di[d]
+                    j += dj[d]
+                    left = (d + 3) & 3
+                    right = (d + 1) & 3
+                    joint = _ink_edge(pad, stride, i, j, left) and _ink_edge(pad, stride, i, j, right)
+                    if joint:
+                        following = left  # towards the paper, round it
+                    elif _ink_edge(pad, stride, i, j, d):
+                        following = d
+                    elif _ink_edge(pad, stride, i, j, left):
+                        following = left
+                    else:
+                        following = right
+                    closed = i == i0 and j == j0 and following == d0
+                    if joint:
+                        # The paper pixel this visit turns round lies to the left of both edges.
+                        at = first if closed else n
+                        joints[at, 0] = lx[d] + lx[following]
+                        joints[at, 1] = ly[d] + ly[following]
+                    if closed:
+                        break
+                    d = following
+    starts[rings] = n
+    return corners[:n], joints[:n], starts[: rings + 1]
 
 
 @njit(cache=True, nogil=True)
@@ -1743,6 +1837,7 @@ def warm_up() -> None:
 
     right, down, degree, num_edges = crack_edges(ids.reshape(3, 3))
     trace_boundary_paths(right, down, degree, 4, num_edges)
+    trace_ink_rings(np.pad(np.eye(3, dtype=np.bool_), 1).reshape(-1), 3, 3)
 
     padded = np.zeros(5 * 5 * 3, dtype=np.uint8)
     out = np.empty(3 * 3 * 3, dtype=np.uint8)

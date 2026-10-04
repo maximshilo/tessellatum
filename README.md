@@ -62,12 +62,13 @@ with them, and "Export…" draws it again at print resolution.
     inside 10 mm margins, centered, on a landscape sheet when the picture is
     wider than tall. Its lines are paths of the width asked for and its numbers
     text, so a printer draws them at its own resolution rather than at the
-    page's pixels, however small the picture. What the page prints from the
-    picture has no other shape than its pixels: line art's ink and the marks in
-    a face are the outline of those pixels, filled, and the lettering of signs
-    and captions an image at the page's resolution, stored losslessly. The
-    legend gets a portrait sheet of its own, its swatches 12 mm squares in
-    their exact colors.
+    page's pixels, however small the picture. Line art's ink and the marks in
+    a face are the outline of the page's pixels, filled, smoothed off their
+    staircase without joining or breaking anything: every pixel's middle stays
+    on its own side of the outline, and strokes and gaps a pixel wide stay at
+    least 0.08 mm wide. The lettering of signs and captions is an image at the
+    page's resolution, stored losslessly. The legend gets a portrait sheet of
+    its own, its swatches 12 mm squares in their exact colors.
   - **PNG**: the page above its legend in one image, which records its
     resolution, so it prints as large as the PDF's page.
 

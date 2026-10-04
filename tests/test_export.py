@@ -9,6 +9,7 @@ from PIL import Image, ImageFont
 
 from tessellatum.core import export
 from tessellatum.core.boundaries import trace_boundaries
+from tessellatum.core.ink_outline import ink_outline
 from tessellatum.core.legend import LABEL_FONT_RATIO, SWATCH_BORDER_MM, SWATCH_GAP_MM, SWATCH_MM, render_legend
 from tessellatum.core.print_size import A4, print_scale
 from tessellatum.core.regions import extract_regions
@@ -146,8 +147,16 @@ def test_read_back_the_vector_page_is_the_raster_page(tmp_path):
     lettered = cv2.dilate(drawing.lettering_area.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
 
     assert np.abs(back - page).mean() < 1.0
-    np.testing.assert_array_equal(back[drawing.ink & ~near].round(), 30)  # the printed ink, solid, to the pixel
-    np.testing.assert_array_equal(back[~near & ~drawing.ink & ~lettered], 255)  # bare paper everywhere else
+    # The printed ink is solid over its pixels, and bare paper is white, but where the ink's outline runs: there it is
+    # smoothed off the pixels' staircase (see ``ink_outline``), and its pixels are as dark as it covers them, the ink
+    # taking from one what it gives another.
+    cross = np.ones((3, 3), np.uint8)
+    solid = cv2.erode(drawing.ink.astype(np.uint8), cross).astype(bool)
+    edge = cv2.dilate(drawing.ink.astype(np.uint8), cross).astype(bool) & ~solid & ~near & ~lettered
+    np.testing.assert_array_equal(back[solid & ~near].round(), 30)
+    np.testing.assert_array_equal(back[~near & ~drawing.ink & ~edge & ~lettered], 255)
+    covered = (255 - back[edge]) / (255 - 30)
+    assert covered.sum() == pytest.approx(drawing.ink[edge].sum(), rel=0.02)
     assert np.abs(back - page)[lines].mean() < 6  # the lines, anti-aliased each its own way
     others = cv2.dilate((lines | leaders).astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool) & ~numbers
     for label in rendered.labels:
@@ -160,24 +169,59 @@ def test_read_back_the_vector_page_is_the_raster_page(tmp_path):
         assert (top, bottom) == pytest.approx((y0, y1), abs=1)
 
 
-def test_the_printed_ink_is_the_outline_of_its_pixels_filled(tmp_path):
+def test_the_printed_ink_is_its_outline_smoothed_filled(tmp_path):
     drawing = _full_page().drawing
     _, (first, _) = _save(tmp_path, drawing)
     content = first["content"]
-    rings = re.search(r"(?s)0\.1176 g\n(.*?)\nf\*\n", content).group(1)  # the ink's gray, 30, then the filled outlines
+    path = re.search(r"(?s)0\.1176 g\n(.*?)\nf\*\n", content).group(1)  # the ink's gray, 30, then the filled outlines
+    rings = [
+        np.array([[float(v) for v in word.split()[:2]] for word in ring.split("\n")]) - 0.5  # back to the page's pixels
+        for ring in re.split(r"\n(?=\S+ \S+ m$)", path, flags=re.M)
+    ]
+    expected = ink_outline(drawing.ink)
+    assert len(rings) == len(expected)
+    for ring, want in zip(rings, expected):
+        np.testing.assert_allclose(ring, want, atol=0.005 + 1e-9)  # to a hundredth of a pixel
+    # Filled by the even-odd rule, every pixel's middle is ink where the page prints ink, and paper where it doesn't.
     width, height = ALIGNED
-    # Filled by the even-odd rule, at the pixels' middles: a pixel is inside when an odd number of the outlines'
-    # upright edges lie to its left in its row.
-    parity = np.zeros((height, width + 1), dtype=np.int64)
-    for ring in re.split(r"\n(?=\S+ \S+ m$)", rings, flags=re.M):
-        points = np.array([[int(v) for v in word.split()[:2]] for word in ring.split("\n")])
-        assert points.dtype.kind == "i" and np.array_equal(points[0], points[-1])  # pixel corners, and closed
-        for (xa, ya), (xb, yb) in zip(points[:-1], points[1:]):
-            assert xa == xb or ya == yb  # along the cracks between pixels
-            if xa == xb:
-                parity[min(ya, yb) : max(ya, yb), xa] += 1
-    inside = np.cumsum(parity, axis=1)[:, :width] % 2 == 1
-    np.testing.assert_array_equal(inside, drawing.ink)
+    np.testing.assert_array_equal(pdf_reading.inside_even_odd(rings, (height, width)), drawing.ink)
+
+
+def test_read_back_at_300_dpi_the_ink_joins_and_parts_what_the_page_does(tmp_path):
+    # T7.4's acceptance, on a page of everything that breaks or merges when an outline is smoothed carelessly: hatching
+    # a pixel apart across and along the diagonal, strokes a pixel wide whose pixels meet only at their corners,
+    # specks and pinholes. Read back by QtPdf at 300 dpi, each piece of ink and each piece of paper the page has is
+    # one piece on paper, no two run together, and none is lost.
+    size = (1300, 900)  # 4.7 px a millimeter, as the benchmark's comics page at its own size
+    width, height = size
+    ink = np.zeros((height, width), dtype=bool)
+    ink[100:300:2, 100:400] = True
+    for k in range(0, 300, 3):
+        ink[np.arange(100, 300), np.arange(100, 300) + 400 + k] = True
+    rng = np.random.default_rng(0)
+    ink[400:800, 100:600] = rng.random((400, 500)) < 0.08  # specks
+    ink[400:800, 700:1200] = rng.random((400, 500)) > 0.08  # pinholes
+    drawing = PageDrawing(size, PageStyle(), [], [], ink, 30, None, None)
+    path = tmp_path / "ink.pdf"
+    export.save_pdf(drawing, PALETTE, path)
+    px_per_mm = 300 / 25.4
+    back = pdf_reading.render(path, 0, px_per_mm).mean(axis=2) < (255 + 30) / 2
+    scale = print_scale(size)
+    left, top = (A4.height_mm - scale.printed_size_mm[0]) / 2, (A4.width_mm - scale.printed_size_mm[1]) / 2
+    columns = np.floor((left + (np.arange(width) + 0.5) / scale.px_per_mm) * px_per_mm).astype(int)
+    rows = np.floor((top + (np.arange(height) + 0.5) / scale.px_per_mm) * px_per_mm).astype(int)
+    at_centers = back[np.ix_(rows, columns)]
+    # A 300 dpi dot is wider than the margins, so a stroke's rounded tip can print lighter than halfway at its last
+    # pixel's middle; the pieces are compared where the printed page agrees with the page.
+    assert (at_centers == ink).mean() > 0.999
+    for printed, page, connectivity in ((back, ink, 8), (~back, ~ink, 4)):
+        _, on_paper = cv2.connectedComponents(printed.astype(np.uint8), connectivity=connectivity)
+        padded = np.pad(page, 1, constant_values=connectivity == 4)  # the paper round the page is one piece
+        count, on_page = cv2.connectedComponents(padded.astype(np.uint8), connectivity=connectivity)
+        agree = page & (at_centers == ink)
+        pairs = np.unique(np.column_stack([on_page[1:-1, 1:-1][agree], on_paper[np.ix_(rows, columns)][agree]]), axis=0)
+        assert len(np.unique(pairs[:, 0])) == count - 1  # none lost
+        assert len(pairs) == len(np.unique(pairs[:, 0])) == len(np.unique(pairs[:, 1]))  # none broken, none merged
 
 
 def test_the_lettering_is_its_tones_at_the_page_s_pixels_darkening_what_is_under_it(tmp_path):

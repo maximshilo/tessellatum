@@ -12,7 +12,7 @@ from typing import Sequence
 import numpy as np
 from PIL import Image
 
-from tessellatum.core.boundaries import outline_rings
+from tessellatum.core.ink_outline import ink_outline
 from tessellatum.core.labels import baseline_bbox, font
 from tessellatum.core.legend import LABEL_FONT_RATIO, SWATCH_BORDER_MM, SWATCH_GAP_MM, SWATCH_MM, number_fill
 from tessellatum.core.print_size import A4, MM_PER_INCH, PT_PER_INCH, print_scale
@@ -58,8 +58,9 @@ def save_pdf(drawing: PageDrawing, palette_rgb: Sequence[tuple[int, int, int]], 
     - the numbers and their leaders the same way, the numbers as text in the
       font the page writes them in, embedded;
     - the printed ink -- line art's own, the marks in a face, the lettering
-      inked solid -- as the outline of its pixels, filled: it has no other
-      shape than the page's pixels give it;
+      inked solid -- as the outline of its pixels, filled, smoothed off their
+      staircase without joining or breaking anything the page keeps apart or
+      together (see ``ink_outline``);
     - the lettering of signs and captions, which prints in its own tones, as a
       gray image at the page's resolution, stored losslessly.
 
@@ -110,7 +111,7 @@ def _page_sheet(document: _Document, drawing: PageDrawing, numbers: int) -> None
         resources["XObject"] = {"Lt": document.gray_image(tone)}
         ops.append(f"q /Dk gs {x1 - x0} 0 0 {y0 - y1} {x0} {y1} cm /Lt Do Q")
     if drawing.ink is not None and drawing.ink.any():
-        ops += [f"{_gray(drawing.ink_gray)} g", _path(outline_rings(drawing.ink), offset=0.5, places=0), "f*"]
+        ops += [f"{_gray(drawing.ink_gray)} g", _path(ink_outline(drawing.ink), offset=0.5), "f*"]
     leaders = [label.leader for label in drawing.labels if label.leader is not None]
     if leaders:
         dot = line_width * style.leader_dot_ratio / 2
@@ -161,16 +162,16 @@ def _legend_sheet(document: _Document, palette_rgb: Sequence[tuple[int, int, int
     document.page(_sheet_size_mm(False), "\n".join(ops), {"Font": {"F1": numbers}})
 
 
-def _path(paths: list[np.ndarray], offset: float, places: int = 2) -> str:
+def _path(paths: list[np.ndarray], offset: float) -> str:
     """Path construction for ``paths``, Nx2 (x, y) points each, one subpath apiece, moved by ``offset`` in x and y.
 
-    The page's lines and leaders put pixel centers at integer coordinates; the
-    sheet's image of the page puts them half a pixel in, so their ``offset`` is
-    0.5. ``places`` decimals: a hundredth of a pixel is a hundredth of 0.1-0.4
-    mm, far finer than a printer's dot, and a pixel's corner needs none.
+    The page's lines, leaders and ink outline put pixel centers at integer
+    coordinates; the sheet's image of the page puts them half a pixel in, so
+    their ``offset`` is 0.5. Two decimals: a hundredth of a pixel is a
+    hundredth of 0.1-0.4 mm, far finer than a printer's dot.
     """
     points = np.concatenate(paths) + offset
-    words = [f"{x:.{places}f} {y:.{places}f} l" for x, y in points.tolist()]
+    words = [f"{x:.2f} {y:.2f} l" for x, y in points.tolist()]
     at = 0
     for path in paths:
         words[at] = words[at][:-1] + "m"
