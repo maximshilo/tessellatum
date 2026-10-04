@@ -223,15 +223,15 @@ Where the time goes, summed over the 96 cases:
 | finding faces / the subject / text | – | 1.7 s / 7.3 s / 29.0 s |
 | quantizing | 49.9 s | 46.2 s |
 | building regions | 7.7 s | 10.3 s |
-| settling textured edges | – | 8.8 s |
+| settling textured edges (the regions rebuilt included) | – | 8.8 s |
 | outlining the regions | 3.4 s | 1.7 s |
 | drawing and numbering the page | 2.7 s | 12.2 s |
 | the rest: line art's and faces' own steps, finding the lettering, resizing, the legend | 0.2 s | 12.7 s |
 | **total** | **63.9 s** | **134.0 s** |
 
 The six L-size previews over 1 s are Times Square at every preset (1.5-2.2 s: it has text, so it is looked at twice
-for it), the Vermeer at Max (1.17 s) and the Swiss castle at Max (1.09 s). The last two sit at the line: on the same
-pages they read 1.01-1.04 s and 0.96-0.98 s in earlier sessions. Peak memory is highest on images with text (862 MB
+for it), the Vermeer at Max (1.17 s) and the Swiss castle at Max (1.09 s). The last two sit at the line: the same
+pages read 0.98-1.04 s and 0.93-0.98 s when 0.1.40 to 0.1.44 were benchmarked, in other sessions. Peak memory is highest on images with text (862 MB
 median), where the text detector's second, larger look holds most of it while it runs.
 
 ## Against the definition of done
