@@ -38,6 +38,7 @@ def build_regions(
     min_area_px: int,
     min_width_px: float = 0.0,
     detail: np.ndarray | None = None,
+    detail_weight: int = 2,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Split ``labels`` into connected regions and merge away what can't be painted.
 
@@ -50,10 +51,11 @@ def build_regions(
     page separates two areas the painter fills with the same color.
 
     ``detail`` (HxW bool) marks where the page spends more detail -- the
-    faces in the picture. A region lying there may be half as large: each of
-    its pixels in ``detail`` counts twice towards ``min_area_px``, so a region
-    partly in it needs somewhere between half and all of it. Sizes are
-    counted so for which region is smallest, too.
+    faces in the picture. A region lying there may be ``detail_weight`` times
+    smaller (half, by default): each of its pixels in ``detail`` counts that
+    many times towards ``min_area_px``, so a region partly in it needs
+    somewhere between that share and all of it. Sizes are counted so for which
+    region is smallest, too.
 
     With ``min_width_px`` set, every part of a region narrower than that --
     which a brush that wide cannot paint without crossing a line -- is then
@@ -70,16 +72,20 @@ def build_regions(
     labels = np.ascontiguousarray(labels, dtype=np.int32)
     if detail is not None and not detail.any():
         detail = None
-    region_id_map, region_color = _regions_from_labels(labels, num_colors, min_area_px, detail)
+    if detail_weight < 1:
+        raise ValueError(f"a pixel in the detail counts at least once, not {detail_weight} times")
+    if detail is not None and detail_weight == 1:
+        detail = None
+    region_id_map, region_color = _regions_from_labels(labels, num_colors, min_area_px, detail, detail_weight)
     if min_width_px > 0 and region_color.size:
         widened = absorb_thin_parts(region_id_map, region_color, labels, min_width_px)
         if widened is not None:
-            region_id_map, region_color = _regions_from_labels(widened, num_colors, min_area_px, detail)
+            region_id_map, region_color = _regions_from_labels(widened, num_colors, min_area_px, detail, detail_weight)
     return region_id_map, region_color
 
 
 def _regions_from_labels(
-    labels: np.ndarray, num_colors: int, min_area_px: int, detail: np.ndarray | None = None
+    labels: np.ndarray, num_colors: int, min_area_px: int, detail: np.ndarray | None = None, detail_weight: int = 2
 ) -> tuple[np.ndarray, np.ndarray]:
     """Connected components of ``labels``, with the two merges that always apply."""
     h, w = labels.shape
@@ -89,9 +95,9 @@ def _regions_from_labels(
     region_color, areas = kernels.label_components(labels.reshape(-1), h, w, int(num_colors), flat_ids)
     if region_color.size:
         if detail is not None:
-            # A pixel in the detail counts twice: once in its region's pixel count, once more here.
+            # A pixel in the detail counts detail_weight times: once in its region's pixel count, the rest here.
             ids_in_detail = flat_ids[np.asarray(detail, dtype=bool).reshape(-1) & (flat_ids >= 0)]
-            areas += np.bincount(ids_in_detail, minlength=areas.size)
+            areas += (detail_weight - 1) * np.bincount(ids_in_detail, minlength=areas.size)
         kernels.merge_small_regions(flat_ids, h, w, areas, int(min_area_px), True)
         kernels.merge_same_color_neighbors(flat_ids, h, w, region_color, areas, True)
     return region_id_map, region_color

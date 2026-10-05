@@ -314,16 +314,16 @@ def test_the_regions_are_rebuilt_from_the_vote(monkeypatch):
     calls = []
     real = texture.settle_edges
 
-    def spy(picture, voted_labels, palette, sigma):
-        calls.append((voted_labels.copy(), sigma))
-        return real(picture, voted_labels, palette, sigma)
+    def spy(picture, voted_labels, palette, sigma, color_step):
+        calls.append((voted_labels.copy(), sigma, color_step))
+        return real(picture, voted_labels, palette, sigma, color_step)
 
     monkeypatch.setattr(texture, "settle_edges", spy)
     picture = flat(EVEN)
     paints = gray_bgr(100, 139, 100)
     new_ids, new_colors = texture.smooth_regions(picture, ids, colors, paints, 60, 12.0)
-    # The vote is of the regions' colors, a third of the brush to a sigma.
-    assert len(calls) == 1 and calls[0][1] == pytest.approx(4.0)
+    # The vote is of the regions' colors, a third of the brush to a sigma, with the color step the palette keeps.
+    assert len(calls) == 1 and calls[0][1] == pytest.approx(4.0) and calls[0][2] == texture.COLOR_STEP == 10.0
     np.testing.assert_array_equal(calls[0][0], labels)
     # The patch is left 21 of its 81 pixels, under the 60 a region needs, and the region stage merges it into the
     # region around it.
@@ -350,9 +350,9 @@ def test_the_rebuild_is_the_region_stage_with_the_limits_the_regions_were_built_
     paints = gray_bgr(*EVEN_PAINTS)
     new_ids, new_colors = texture.smooth_regions(flat(EVEN), ids, colors, paints, 50, 12.0, detail)
     assert len(calls) == 1
-    voted, num_colors, min_area_px, min_width_px, where = calls[0]
+    voted, num_colors, min_area_px, min_width_px, where, weight = calls[0]
     np.testing.assert_array_equal(voted, texture.settle_edges(flat(EVEN), colors[ids], paints, 4.0))
-    assert (num_colors, min_area_px, min_width_px) == (2, 50, 12.0) and where is detail
+    assert (num_colors, min_area_px, min_width_px, weight) == (2, 50, 12.0, 2) and where is detail
     expected_ids, expected_colors = build_regions(voted, 2, 50, 12.0, detail)
     np.testing.assert_array_equal(new_ids, expected_ids)
     np.testing.assert_array_equal(new_colors, expected_colors)
@@ -465,7 +465,9 @@ def test_a_photograph_s_edges_are_settled_and_its_page_is_easier_to_paint_and_no
     monkeypatch.setattr(pipeline, "smooth_regions", spy)
     analysis = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True).analysis
     assert len(calls) == 1
-    picture, ids, colors, palette, min_area_px, min_width_px, detail = calls[0]
+    picture, ids, colors, palette, min_area_px, min_width_px, detail, settling, color_step, weight = calls[0]
+    # The difficulty's settings for the vote, and the weight the regions were built with.
+    assert (settling, color_step, weight) == (params.edge_settling, params.edge_color_step_de00, params.detail_weight)
     resized = pipeline.resize_to_long_edge(image, pipeline.PREVIEW_LONG_EDGE)
     np.testing.assert_array_equal(picture, resized)  # the picture itself, not the smoothed one the colors came from
     assert min_area_px == analysis.min_region_area_px and min_width_px == analysis.min_paintable_width_px
@@ -508,9 +510,9 @@ def test_the_tones_and_the_marks_of_a_face_are_settled_on_the_smoothed_regions(m
         smoothed.append(real(*args))
         return smoothed[-1]
 
-    def tones_spy(picture, where, ids, colors, palette):
+    def tones_spy(picture, where, ids, colors, palette, min_step):
         toned.append((ids, colors))
-        return real_tones(picture, where, ids, colors, palette)
+        return real_tones(picture, where, ids, colors, palette, min_step)
 
     monkeypatch.setattr(pipeline, "smooth_regions", spy)
     monkeypatch.setattr(tones, "settle_tones", tones_spy)
@@ -529,3 +531,30 @@ def test_line_art_s_edges_are_its_ink_and_are_not_voted_on(monkeypatch):
     image = pipeline.load_image_bgr(SAMPLES / "m-cartoon-bold-lines-girl.png")
     pipeline.generate(image, params_for_preset("Medium"), pipeline.PREVIEW_LONG_EDGE)
     pipeline.clear_cache()
+
+
+def test_how_far_the_vote_reaches_and_how_firmly_it_holds_are_settings(monkeypatch):
+    labels = halves()
+    rows, columns = np.mgrid[:HEIGHT, :WIDTH]
+    labels[(rows - 45) ** 2 + (columns - 12) ** 2 <= 5**2] = 2
+    ids, colors = build_regions(labels, 3, 60, 0.0)
+    paints = gray_bgr(100, 139, 100)
+    calls = []
+    real = texture.settle_edges
+
+    def spy(picture, voted_labels, palette, sigma, color_step):
+        calls.append((sigma, color_step))
+        return real(picture, voted_labels, palette, sigma, color_step)
+
+    monkeypatch.setattr(texture, "settle_edges", spy)
+    texture.smooth_regions(flat(EVEN), ids, colors, paints, 60, 12.0, None, 2.0, 4.0)
+    assert calls == [(pytest.approx(8.0), 4.0)]  # twice the reach: two thirds of the brush to a sigma
+    # No reach settles nothing, and gives back what it was given.
+    new_ids, new_colors = texture.smooth_regions(flat(EVEN), ids, colors, paints, 60, 12.0, None, 0.0)
+    assert new_ids is ids and new_colors is colors and len(calls) == 1
+    with pytest.raises(ValueError):
+        texture.smooth_regions(flat(EVEN), ids, colors, paints, 60, 12.0, None, -1.0)
+    with pytest.raises(ValueError):
+        texture.smooth_regions(flat(EVEN), ids, colors, paints, 60, 12.0, None, 1.0, 0.0)
+    with pytest.raises(ValueError):
+        texture.settle_edges(flat(EVEN), colors[ids], paints, 4.0, 0.0)

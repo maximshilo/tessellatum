@@ -1,3 +1,5 @@
+import math
+import dataclasses
 from pathlib import Path
 
 import cv2
@@ -263,12 +265,22 @@ def test_the_region_limits_come_from_the_printed_page():
     assert min_area_px == round(scale.mm2_to_px(40.0))
     assert min_width_px == scale.mm_to_px(4.0)
 
-    # Below the brush and its footprint, the printed page's own limits hold.
-    finer = difficulty.DifficultyParams(num_colors=4, min_region_area_mm2=1.0, blur_sigma=0.0, min_width_mm=1.0)
-    min_area_px, min_width_px = pipeline._paintable_limits(finer, (200, 200))
-
+    # The brush is the one asked for, and no region is smaller than its footprint: at the default brush, the printed
+    # page's own limit.
+    default_brush = difficulty.DifficultyParams(num_colors=4, min_region_area_mm2=1.0, blur_sigma=0.0)
+    min_area_px, min_width_px = pipeline._paintable_limits(default_brush, (1100, 778))
+    scale = print_size.print_scale((1100, 778))
     assert min_width_px == scale.mm_to_px(print_size.MIN_PAINTABLE_WIDTH_MM)
     assert min_area_px == round(scale.mm2_to_px(print_size.MIN_REGION_AREA_MM2)) > 4
+
+    fine = difficulty.DifficultyParams(num_colors=4, min_region_area_mm2=1.0, blur_sigma=0.0, min_width_mm=2.0)
+    min_area_px, min_width_px = pipeline._paintable_limits(fine, (1100, 778))
+    assert min_width_px == scale.mm_to_px(2.0)
+    assert min_area_px == round(scale.mm2_to_px(math.pi)) > 4  # a 2 mm disk
+
+    # No brush at all, and no region under 4 pixels.
+    none = difficulty.DifficultyParams(num_colors=4, min_region_area_mm2=0.01, blur_sigma=0.0, min_width_mm=0.0)
+    assert pipeline._paintable_limits(none, (1100, 778)) == (4, 0.0)
 
 
 def test_a_preview_and_an_export_are_held_to_the_same_sizes_on_paper():
@@ -399,7 +411,7 @@ def test_the_ink_is_found_once_per_picture_and_size(monkeypatch):
     drawing, _shapes = _outlined_shapes()
     calls = []
     find = ink.find_ink
-    monkeypatch.setattr(ink, "find_ink", lambda *args: calls.append(1) or find(*args))
+    monkeypatch.setattr(ink, "find_ink", lambda *args, **kwargs: calls.append(1) or find(*args, **kwargs))
 
     for preset in ("Easy", "Medium", "Hard"):
         generate(drawing, difficulty.params_for_preset(preset), long_edge=800)
@@ -709,7 +721,7 @@ def test_with_text_off_no_text_is_looked_for_and_no_lettering_is_printed(monkeyp
     picture[140:150, 60:340:6] = 30
     line = text.TextLine(quad=((50.0, 130.0), (350.0, 130.0), (350.0, 160.0), (50.0, 160.0)), score=0.9)
     calls = []
-    monkeypatch.setattr(text, "find_text", lambda picture, source=None: calls.append(1) or [line])
+    monkeypatch.setattr(text, "find_text", lambda picture, source=None, max_height_mm=None: calls.append(1) or [line])
     params = difficulty.params_for_preset("Easy")
     pipeline.clear_cache()
     off = generate(picture, params, long_edge=400, collect_analysis=True, handling=Handling(text=False))
@@ -718,7 +730,7 @@ def test_with_text_off_no_text_is_looked_for_and_no_lettering_is_printed(monkeyp
     on = generate(picture, params, long_edge=400, collect_analysis=True)
     assert calls == [1] and on.analysis.lettering_area.any()
 
-    monkeypatch.setattr(text, "find_text", lambda picture, source=None: [])
+    monkeypatch.setattr(text, "find_text", lambda picture, source=None, max_height_mm=None: [])
     pipeline.clear_cache()
     nothing = generate(picture, params, long_edge=400)
     pipeline.clear_cache()
@@ -741,7 +753,7 @@ def test_the_page_comes_with_what_it_was_drawn_from_to_draw_it_again_off_the_pix
     picture = np.full((300, 400, 3), 235, dtype=np.uint8)
     picture[140:150, 60:340:6] = 30
     line = text.TextLine(quad=((50.0, 130.0), (350.0, 130.0), (350.0, 160.0), (50.0, 160.0)), score=0.9)
-    monkeypatch.setattr(text, "find_text", lambda picture, source=None: [line])
+    monkeypatch.setattr(text, "find_text", lambda picture, source=None, max_height_mm=None: [line])
     pipeline.clear_cache()
     result = generate(picture, difficulty.params_for_preset("Easy"), long_edge=400, collect_analysis=True)
     drawn, analysis = result.drawing, result.analysis
@@ -793,3 +805,91 @@ def test_the_tinted_version_is_the_page_under_a_wash_of_its_paint(sample_image_b
     np.testing.assert_array_equal(tinted, np.rint(page * wash / 255))
     paper = (page == 255).all(axis=2)
     assert paper.any() and (tinted[paper] == wash[paper]).all()  # where the page is bare, the wash alone
+
+
+def _two_close_grays_and_red() -> np.ndarray:
+    picture = np.zeros((300, 400, 3), dtype=np.uint8)
+    picture[:, :150] = 100
+    picture[:, 150:300] = 115
+    picture[:, 300:] = (40, 40, 200)
+    return picture
+
+
+def test_the_palette_margin_is_a_setting_and_the_colors_found_are_cached_by_it():
+    picture = _two_close_grays_and_red()
+    gap = float(pairwise_de00(np.array([(100,) * 3, (115,) * 3], dtype=np.uint8))[0, 1])
+    assert 4.0 < gap < MIN_PALETTE_DE00  # the two grays are closer than the palette's margin
+    easy = difficulty.custom_params(4, 30.0, 0.0)
+    pipeline.clear_cache()
+    merged = generate(picture, easy, long_edge=400)
+    kept = generate(picture, dataclasses.replace(easy, palette_margin_de00=4.0), long_edge=400)
+    again = generate(picture, easy, long_edge=400)  # the same picture: the margin is in the cache's key
+    pipeline.clear_cache()
+    assert (merged.num_colors_used, kept.num_colors_used, again.num_colors_used) == (2, 3, 2)
+    assert merged.page.tobytes() == again.page.tobytes()
+
+
+def test_the_brush_is_a_setting():
+    # The line 2 px wide of test_a_line_too_thin_to_paint_is_not_a_region_on_the_page, 1.9 mm on paper: too thin for the
+    # 3 mm brush, a region of its own for a 1 mm one.
+    image = np.zeros((200, 200, 3), dtype=np.uint8)
+    image[:, :100] = (200, 60, 60)
+    image[:, 100:] = (60, 180, 60)
+    image[:, 99:101] = (20, 20, 20)
+    params = difficulty.custom_params(3, 2.0, 0.0)
+    pipeline.clear_cache()
+    thick = generate(image, params, long_edge=200, collect_analysis=True)
+    fine = generate(image, dataclasses.replace(params, min_width_mm=1.0), long_edge=200, collect_analysis=True)
+    pipeline.clear_cache()
+    assert thick.num_regions == 2 and fine.num_regions == 3
+    assert (20, 20, 20) in fine.palette_rgb
+    assert fine.analysis.min_paintable_width_px == print_size.print_scale((200, 200)).mm_to_px(1.0)
+
+
+def test_the_ink_and_the_text_found_are_cached_by_their_settings(monkeypatch):
+    picture = np.full((300, 400, 3), 235, dtype=np.uint8)
+    picture[140:150, 60:340:6] = 30
+    line = text.TextLine(quad=((50.0, 130.0), (350.0, 130.0), (350.0, 160.0), (50.0, 160.0)), score=0.9)
+    asked = []
+    monkeypatch.setattr(
+        text, "find_text", lambda picture, source=None, max_height_mm=None: asked.append(max_height_mm) or [line]
+    )
+    gaps = []
+    real = ink.find_ink
+    monkeypatch.setattr(
+        ink, "find_ink", lambda *args, **kwargs: gaps.append(kwargs.get("gap_mm")) or real(*args, **kwargs)
+    )
+    params = difficulty.params_for_preset("Easy")
+    pipeline.clear_cache()
+    # Each found once for a setting, again for another.
+    for handling in (Handling(), Handling(), Handling(text_max_height_mm=30.0), Handling(ink_gap_mm=1.0)):
+        generate(picture, params, long_edge=400, handling=handling)
+    pipeline.clear_cache()
+    assert asked == [15.0, 30.0]
+    assert gaps == [0.5, 1.0]
+
+
+def test_a_face_s_tones_and_marks_and_the_vote_follow_their_settings(monkeypatch):
+    from tessellatum.core import marks, texture, tones
+
+    seen = {}
+    real_tones, real_marks, real_smooth = tones.settle_tones, marks.detail_marks, pipeline.smooth_regions
+    def spy(name, real, first):
+        def call(*args):
+            seen[name] = args[first:]  # the settings, after the arguments every call has
+            return real(*args)
+
+        return call
+
+    monkeypatch.setattr(tones, "settle_tones", spy("tones", real_tones, 5))
+    monkeypatch.setattr(marks, "detail_marks", spy("marks", real_marks, 6))
+    monkeypatch.setattr(pipeline, "smooth_regions", spy("vote", real_smooth, 7))
+    image = pipeline.load_image_bgr(Path(__file__).resolve().parent / "sample_images" / "l-photo-cats-face.jpg")
+    params = difficulty.custom_params(
+        12, 125.0, 5.0, min_width_mm=2.0, edge_settling=0.5, edge_color_step_de00=6.0, detail_weight=3
+    )
+    handling = Handling(mark_contrast=20.0, mark_length_mm=3.0, face_tone_step_de00=0.5)
+    pipeline.clear_cache()
+    generate(image, params, pipeline.PREVIEW_LONG_EDGE, handling=handling)
+    pipeline.clear_cache()
+    assert seen == {"vote": (0.5, 6.0, 3), "tones": (0.5,), "marks": (2.0, 20.0, 3.0)}

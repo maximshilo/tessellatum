@@ -28,7 +28,9 @@ first measured baseline is in [`REPORT.md`](REPORT.md).
 - **The painting** is the page with every region filled in its legend color. What the page prints (ink, detail
   marks, lettering) is kept as printed. Fidelity compares it with the image at the page's size.
 - **Targets** are what every page must reach, at every difficulty and at both sizes. A metric without a target is
-  still judged against a reference result set. A category's mean (or the mean over all cases) that gets worse by
+  still judged against a reference result set. They hold at the app's presets and default settings; the app lets the
+  user move its settings past them -- a finer brush, closer colors, smaller numbers -- for a page with more detail
+  than they allow, and such a page may miss them by design. A category's mean (or the mean over all cases) that gets worse by
   more than 3 standard errors of the case-to-case noise is a **regression**. A few metrics only inform.
 - **The benchmark set** is 12 images: six photographs, a painting, two digital bold-line cartoons, two scanned
   drawings and a flat drawing. Each is scored at Easy, Medium, Hard and Max, at preview size (1100 px) and at export

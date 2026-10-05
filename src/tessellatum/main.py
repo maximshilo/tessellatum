@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import QSettings
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
@@ -19,7 +20,8 @@ def main() -> None:
     app.setOrganizationName("Tessellatum")
     app.setWindowIcon(QIcon(str(RESOURCES_DIR / "icon.png")))
 
-    window = MainWindow()
+    # The panel's settings are kept between runs, under the organization and application names above.
+    window = MainWindow(store=QSettings())
     window.show()
 
     sys.exit(app.exec())

@@ -52,15 +52,31 @@ between them, keeping the zoom and the scroll:
   from white, with the lines, numbers and ink showing through as through a
   translucent paint (the page multiplied by the wash): a guide to paint from.
 
-The settings:
+The settings (every one has a tooltip saying what it does; sizes are on the
+printed A4 page; the panel keeps them between runs, and **Reset** puts them
+all back):
 
-- **Difficulty**: Easy, Medium or Hard, or Custom to set the colors, the
-  smallest region and the smoothing yourself (see "How it works").
-- **Lines and numbers**: how wide the lines print on the A4 page, 0.2 to
-  0.5 mm (0.3 mm by default), and their tone, Light, Medium or Dark. The
-  numbers are always a step lighter than the lines, so they read as the
-  page's own apparatus rather than as writing in the picture. Light is for
-  pale paints, under which darker lines would show.
+- **Difficulty**: Easy, Medium or Hard fill in the settings below it;
+  moving any of them picks Custom (see "How it works").
+- **Regions and colors**: how many colors to look for and how different
+  every two must be (the *color margin*, 10 ΔE00 by default; lower keeps
+  more, subtler colors), the smallest region (5 to 500 mm²), the *brush
+  width* -- the narrowest any part of a region may be, 3 mm by default, 1
+  to 6 mm -- the smoothing before the colors are found, and how far and how
+  firmly the vote that settles ragged edges reaches (*edge settling*, *edge
+  hold*).
+- **Lines and numbers**: how wide the lines print, 0.1 to 1 mm (0.3 mm by
+  default), and their tone, Light, Medium or Dark; how far along a line its
+  pixel staircase is smoothed; the smallest number (6 pt by default); how
+  far outside a small region its number may go, on a leader; and how far
+  numbers keep from text. The numbers are always a step lighter than the
+  lines, so they read as the page's own apparatus rather than as writing in
+  the picture. Light is for pale paints, under which darker lines would show.
+- **Faces and subject**, **Line art**, **Text**: how much smaller regions may
+  be in the faces and the subject, how dark and how long a mark in a face
+  must be to be printed, how faint a step in a face's tones is joined away;
+  how thin a cartoon's ink the paint goes over, and how wide a gap in its
+  lines is closed; how tall a line of text is printed.
 - **Picture handling**: three things the pipeline does on its own, each on by
   default, to turn off when one of them gets a picture wrong:
   - *Print line art's own ink*: a cartoon or a comic is drawn from its ink
@@ -164,22 +180,22 @@ step 5: their letters are printed, and step 7 keeps the numbers off them
 
 ### Difficulty
 
-Difficulty controls three things: how many colors k-means looks for, how
-small a region may be on the printed page before it is merged away, and how
-much smoothing is applied before quantizing — see
-`src/tessellatum/core/difficulty.py`. Region sizes are areas on paper:
-300 mm² at Easy, 125 mm² at Medium, 40 mm² at Hard, and 30–500 mm² in
-Custom. So a preview and an export of one image get regions of the same
-size, and a long, narrow picture, which prints smaller, gets fewer regions
-rather than smaller ones. Custom stops at 30 mm²: with smaller regions, a
-detailed page at the finest setting gets so many that a 3 mm brush can't reach
-into their corners over more than 1% of an A4 page, or, on a scanned drawing,
-that the numbers of its hatched areas find no room off its lines. (Settling a
-photograph's edges, step 4, would keep it under 1% down to 15 mm²; the scanned
-drawing is what holds the floor.)
-The brush width comes from the printed page instead, along with the smallest
-region any setting can keep and how wide a line prints — see
-`src/tessellatum/core/print_size.py`.
+Difficulty controls how many colors k-means looks for and how far apart
+they must be, how small a region may be on the printed page before it is
+merged away, how narrow any part of one may be (the brush), how much
+smoothing is applied before quantizing, and how the ragged edges are settled
+— see `src/tessellatum/core/difficulty.py`. Region sizes are areas on paper:
+300 mm² at Easy, 125 mm² at Medium, 40 mm² at Hard, and 5–500 mm² in
+Custom, never below the brush's own footprint. So a preview and an export of
+one image get regions of the same size, and a long, narrow picture, which
+prints smaller, gets fewer regions rather than smaller ones. Every preset
+paints with a 3 mm brush and keeps colors 10 ΔE00 apart, which the quality
+benchmarks hold every page to; Custom reaches past both, for pages with more
+detail than that: below 30 mm² regions at the 3 mm brush, more than 1% of a
+detailed page is out of the brush's reach, and a scanned drawing's hatched
+areas get numbers with no room off its lines. Every setting the app offers,
+with its range and unit, is listed in `src/tessellatum/core/settings.py`;
+the print model's own thresholds are in `src/tessellatum/core/print_size.py`.
 
 ### Line art
 

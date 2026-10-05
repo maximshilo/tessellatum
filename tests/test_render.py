@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from tessellatum.core import labels as labels_module
+from tessellatum.core import boundaries
 from tessellatum.core import render as render_module
 from tessellatum.core.print_size import OUTLINE_WIDTH_MM, print_scale
 from tessellatum.core.regions import extract_regions
@@ -264,7 +265,7 @@ def test_the_app_s_settings_give_the_default_style_at_their_defaults():
     assert low < OUTLINE_WIDTH_MM < high
     steps = (high - low) / render_module.LINE_WIDTH_MM_STEP
     assert steps == pytest.approx(round(steps))  # the range is a whole number of steps
-    assert ((OUTLINE_WIDTH_MM - low) / render_module.LINE_WIDTH_MM_STEP) == pytest.approx(2)  # the default is one
+    assert ((OUTLINE_WIDTH_MM - low) / render_module.LINE_WIDTH_MM_STEP) == pytest.approx(4)  # the default is one
 
 
 def test_line_art_s_ink_prints_solid_in_its_own_tone_and_carries_no_line_and_no_number():
@@ -461,3 +462,34 @@ def test_numbers_keep_half_a_millimeter_from_the_lines_of_text(size, monkeypatch
     away = cv2.distanceTransform((~area).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
     x0, y0, x1, y1 = (int(v) for v in label.box)
     assert away[y0:y1, x0:x1].min() > gap
+
+
+def test_the_line_smoothing_and_the_numbers_follow_the_style(monkeypatch):
+    size = (200, 150)
+    ids = _split_page(size)
+    regions = extract_regions(ids, np.array([0, 1], dtype=np.int32))
+    spacings = []
+    real = render_module.place_labels
+
+    def spy(regions, region_id_map, free, spacing, clearable=None, text=None):
+        spacings.append(spacing)
+        return real(regions, region_id_map, free, spacing, clearable, text)
+
+    monkeypatch.setattr(render_module, "place_labels", spy)
+    smoothing = []
+    real_trace = render_module.trace_boundaries
+    def trace_spy(ids, smoothing_px=None, **kwargs):
+        smoothing.append(smoothing_px)
+        return real_trace(ids, smoothing_px, **kwargs)
+
+    monkeypatch.setattr(render_module, "trace_boundaries", trace_spy)
+    render_page(size, regions, ids)
+    style = PageStyle(line_smoothing_mm=1.5, min_label_pt=9.0, leader_reach_mm=3.0, text_gap_mm=1.0)
+    render_page(size, regions, ids, style)
+    scale = print_scale(size)
+    assert smoothing == [boundaries.smoothing_length_px(size), max(2.0, scale.mm_to_px(1.5))]
+    default, chosen = spacings
+    assert default.leader_reach_px == scale.mm_to_px(8.0) and default.text_gap_px == scale.mm_to_px(0.5)
+    assert chosen.leader_reach_px == scale.mm_to_px(3.0) and chosen.text_gap_px == scale.mm_to_px(1.0)
+    assert chosen.min_font_size == labels_module.min_font_size(size, 9.0) >= default.min_font_size
+    assert scale.px_to_pt(labels_module.min_font_size((2000, 1500), 9.0)) >= 9.0

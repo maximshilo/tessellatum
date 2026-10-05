@@ -381,3 +381,16 @@ def test_near_grows_a_mask_by_the_disk_of_pixels_within_its_radius():
     assert ink.near(mask, 1.0).sum() == 5  # the pixel and its four neighbors
     assert ink.near(mask, 1.5).sum() == 9  # and the diagonals, sqrt(2) away
     assert ink.near(mask, 2.0).sum() == 13
+
+
+def test_how_long_a_break_closes_is_a_setting():
+    faint = (_gray_with_lightness(80),) * 3
+    image = _page()
+    image[300, 200:400] = BLACK
+    image[300, 300:303] = faint  # 3 px, 0.75 mm: open at 0.5 mm
+    assert not ink.ink_lines(image)[300, 300:303].all()
+    assert ink.ink_lines(image, gap_mm=1.0)[300, 300:303].all()
+    image[300, 302] = BLACK  # 2 px: closed at 0.5 mm, and at 0 no break closes
+    assert ink.ink_lines(image)[300, 300:302].all()
+    assert not ink.ink_lines(image, gap_mm=0.0)[300, 300:302].any()
+    assert ink.find_ink(_drawing(), gap_mm=0.0)[1].sum() <= ink.find_ink(_drawing())[1].sum()

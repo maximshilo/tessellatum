@@ -1,5 +1,6 @@
 """Export: a PNG that prints at the page's size, and a vector PDF of two A4 sheets, the page placed by the print model."""
 
+import dataclasses
 import re
 from collections import Counter
 
@@ -9,7 +10,7 @@ import pytest
 from PIL import Image, ImageFont
 
 from tessellatum.core import export, text
-from tessellatum.core.boundaries import trace_boundaries
+from tessellatum.core.boundaries import smoothing_length_px, trace_boundaries
 from tessellatum.core.ink_outline import ink_outline
 from tessellatum.core.legend import LABEL_FONT_RATIO, SWATCH_BORDER_MM, SWATCH_GAP_MM, SWATCH_MM, render_legend
 from tessellatum.core.painting import Painting, Version, completed, tint_rgb, tinted
@@ -514,3 +515,21 @@ def test_a_paint_s_path_runs_along_no_boundary_twice_where_two_regions_of_it_tou
                 steps[tuple(sorted((previous, point)))] += 1
             previous = point
         assert steps and max(steps.values()) == 1
+
+
+@pytest.mark.parametrize("version", [Version.COMPLETED, Version.TINTED])
+def test_a_paint_s_path_is_smoothed_as_the_page_s_lines_are(tmp_path, monkeypatch, version):
+    rendered, painting = _painted_full_page()
+    smoothing = []
+    real = export.region_outlines
+    def spy(paints, smoothing_px):
+        smoothing.append(smoothing_px)
+        return real(paints, smoothing_px)
+
+    monkeypatch.setattr(export, "region_outlines", spy)
+    size = rendered.drawing.size
+    for smoothing_mm in (PageStyle().line_smoothing_mm, 1.5):
+        drawing = dataclasses.replace(rendered.drawing, style=PageStyle(line_smoothing_mm=smoothing_mm))
+        export.save_pdf(drawing, PALETTE, tmp_path / "painted.pdf", version=version, painting=painting)
+    assert smoothing == [smoothing_length_px(size), smoothing_length_px(size, 1.5)]
+    assert smoothing[1] > smoothing[0]

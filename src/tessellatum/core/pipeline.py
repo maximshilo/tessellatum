@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import threading
 import weakref
 from collections import OrderedDict
@@ -17,7 +18,7 @@ from tessellatum.core import faces, ink, kernels, marks, subject, text, tones
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import render_legend
 from tessellatum.core.painting import Painting, Version, render_version
-from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, MIN_REGION_AREA_MM2, long_edge_at_dpi, print_scale
+from tessellatum.core.print_size import long_edge_at_dpi, print_scale
 from tessellatum.core.quantize import quantize
 from tessellatum.core.regions import (
     Region,
@@ -33,6 +34,7 @@ from tessellatum.core.regions import (
     split_areas,
 )
 from tessellatum.core.render import PAPER, Label, PageDrawing, PageStyle, render_page
+from tessellatum.core.text import MAX_BOX_HEIGHT_MM as MAX_TEXT_HEIGHT_MM
 from tessellatum.core.texture import smooth_regions
 
 PREVIEW_LONG_EDGE = 1100
@@ -145,7 +147,7 @@ class PageAnalysis:
 
 @dataclass(frozen=True)
 class Handling:
-    """What the pipeline does with what it finds in a picture. Each is on by default.
+    """What the pipeline does with what it finds in a picture, and how. Each switch is on by default.
 
     Turned off, the page is drawn as if nothing of the kind had been found.
     The subject and text are then not looked for, nor faces but by the
@@ -157,11 +159,24 @@ class Handling:
     from its colors, the subject and the faces found get more detail, a face's tones are settled and its thin dark marks
     printed (see ``subject``, ``faces``, ``tones`` and ``marks``). ``text``: the letters in the lines of text found are
     printed, and no number goes on them (see ``text``).
+
+    The rest say how, on paper: on line art, paint goes over ink thinner than ``thin_ink_mm`` (see
+    ``regions.look_through_hatching``), and gaps in its lines up to ``ink_gap_mm`` are closed (see ``ink.ink_lines``).
+    In a face, a dark mark is printed if it is at least ``mark_contrast`` L* darker than around it and
+    ``mark_length_mm`` long (see ``marks``), and a region joins a neighbor while that leaves its pixels less than
+    ``face_tone_step_de00`` further from the picture (see ``tones``). A line of text taller than
+    ``text_max_height_mm`` is lettering big enough to paint, and is not printed (see ``text.find_text``).
     """
 
     line_art: bool = True
     detail: bool = True
     text: bool = True
+    thin_ink_mm: float = ink.THIN_INK_MM
+    ink_gap_mm: float = ink.GAP_MM
+    mark_contrast: float = marks.MIN_CONTRAST
+    mark_length_mm: float = marks.MIN_LENGTH_MM
+    face_tone_step_de00: float = tones.MIN_STEP_DE00
+    text_max_height_mm: float = MAX_TEXT_HEIGHT_MM
 
 
 @dataclass
@@ -226,7 +241,9 @@ class _StageCache:
             self._entries.clear()
 
 
-_cache = _StageCache(max_entries=8)
+# One page touches 8 entries (two sizes of the picture, the line-art decision, its ink, its colors, its faces, subject
+# and text), so twice that keeps a page's stages while one setting at a time is tried, at a few tens of MB a preview.
+_cache = _StageCache(max_entries=16)
 
 
 def clear_cache() -> None:
@@ -238,15 +255,16 @@ def _paintable_limits(params: DifficultyParams, size: tuple[int, int]) -> tuple[
     """The region stage's limits for a page of ``size`` (width, height) in pixels.
 
     The difficulty sets the smallest region and the narrowest part of one on
-    the printed page, and the printed page sets how small either may get at
-    any difficulty: the brush, and its footprint (see ``print_size``). The
+    the printed page -- the brush -- and no region is smaller than the brush's
+    footprint, a disk as wide (see ``print_size``), nor than 4 pixels. The
     printed page's size follows the image's shape rather than its pixel
     count, so a preview and an export of one image are held to the same
     physical sizes.
     """
     scale = print_scale(size)
-    min_area_px = max(4, int(round(scale.mm2_to_px(max(params.min_region_area_mm2, MIN_REGION_AREA_MM2)))))
-    return min_area_px, scale.mm_to_px(max(params.min_width_mm, MIN_PAINTABLE_WIDTH_MM))
+    footprint_mm2 = math.pi * (max(params.min_width_mm, 0.0) / 2) ** 2
+    min_area_px = max(4, int(round(scale.mm2_to_px(max(params.min_region_area_mm2, footprint_mm2)))))
+    return min_area_px, scale.mm_to_px(max(params.min_width_mm, 0.0))
 
 
 def export_long_edge(image_bgr: np.ndarray) -> int:
@@ -273,8 +291,11 @@ def resize_to_long_edge(image_bgr: np.ndarray, long_edge: int) -> np.ndarray:
     return cv2.resize(image_bgr, new_size, interpolation=cv2.INTER_AREA)
 
 
-def detect_ink(image_bgr: np.ndarray, resized: np.ndarray, long_edge: int) -> tuple[ink.LineArt, np.ndarray]:
-    """Whether the picture is line art, and the ink lines of ``resized``, its page at ``long_edge``.
+def detect_ink(
+    image_bgr: np.ndarray, resized: np.ndarray, long_edge: int, gap_mm: float = ink.GAP_MM
+) -> tuple[ink.LineArt, np.ndarray]:
+    """Whether the picture is line art, and the ink lines of ``resized``, its page at ``long_edge``, gaps up to
+    ``gap_mm`` closed.
 
     The decision is made once per picture, on it at preview size, so a
     preview and an export always agree; at preview size the picture is
@@ -287,12 +308,14 @@ def detect_ink(image_bgr: np.ndarray, resized: np.ndarray, long_edge: int) -> tu
             image_bgr, ("resize", PREVIEW_LONG_EDGE), lambda: resize_to_long_edge(image_bgr, PREVIEW_LONG_EDGE)
         )
         if picture is resized:
-            decision, lines = ink.find_ink(resized)
+            decision, lines = ink.find_ink(resized, gap_mm=gap_mm)
             return _cache.get_or_compute(image_bgr, ("line art",), lambda: decision), lines
         decision = _cache.get_or_compute(image_bgr, ("line art",), lambda: ink.line_art(picture))
-        return decision, ink.ink_lines(resized) if decision.is_line_art else np.zeros(resized.shape[:2], dtype=bool)
+        if not decision.is_line_art:
+            return decision, np.zeros(resized.shape[:2], dtype=bool)
+        return decision, ink.ink_lines(resized, gap_mm)
 
-    return _cache.get_or_compute(image_bgr, ("ink", long_edge), find)
+    return _cache.get_or_compute(image_bgr, ("ink", long_edge, gap_mm), find)
 
 
 def detect_faces(image_bgr: np.ndarray, resized: np.ndarray) -> list[faces.Face]:
@@ -323,8 +346,11 @@ def detect_subject(image_bgr: np.ndarray, resized: np.ndarray) -> np.ndarray:
     return subject.mask(probability, resized.shape[1::-1])
 
 
-def detect_text(image_bgr: np.ndarray, resized: np.ndarray) -> list[text.TextLine]:
-    """The lines of text in the picture, in the pixels of ``resized``, its page (see ``text``).
+def detect_text(
+    image_bgr: np.ndarray, resized: np.ndarray, max_height_mm: float = text.MAX_BOX_HEIGHT_MM
+) -> list[text.TextLine]:
+    """The lines of text in the picture, at most ``max_height_mm`` tall, in the pixels of ``resized``, its page (see
+    ``text``).
 
     They are found once per picture -- on it at half its preview size, and
     where that finds text, again at twice its preview size from the source's
@@ -334,7 +360,9 @@ def detect_text(image_bgr: np.ndarray, resized: np.ndarray) -> list[text.TextLin
     picture = _cache.get_or_compute(
         image_bgr, ("resize", PREVIEW_LONG_EDGE), lambda: resize_to_long_edge(image_bgr, PREVIEW_LONG_EDGE)
     )
-    found = _cache.get_or_compute(image_bgr, ("text",), lambda: text.find_text(picture, image_bgr))
+    found = _cache.get_or_compute(
+        image_bgr, ("text", max_height_mm), lambda: text.find_text(picture, image_bgr, max_height_mm)
+    )
     return text.scaled(found, picture.shape[1::-1], resized.shape[1::-1])
 
 
@@ -422,7 +450,7 @@ def generate(
     report("resize")
 
     check_cancelled()
-    line_art, ink_lines = detect_ink(image_bgr, resized, long_edge)
+    line_art, ink_lines = detect_ink(image_bgr, resized, long_edge, handling.ink_gap_mm)
     ink_mask = ink_lines if handling.line_art and line_art.is_line_art and ink_lines.any() else None
     # An anti-aliased edge is at least the pixels right beside the ink, however fine the page.
     halo_px = max(1.0, print_scale((w, h)).mm_to_px(ink.HALO_MM))
@@ -432,8 +460,12 @@ def generate(
     labels, palette_bgr = _cache.get_or_compute(
         image_bgr,
         # Line art's colors are taken around its ink, unless line art is turned off (see ``Handling``).
-        ("quantize", long_edge, params.num_colors, params.blur_sigma, ink_mask is not None),
-        lambda: quantize(resized, params.num_colors, params.blur_sigma, ink=ink_mask, halo_px=halo_px),
+        ("quantize", long_edge, params.num_colors, params.blur_sigma, params.palette_margin_de00,
+         handling.ink_gap_mm if ink_mask is not None else None),
+        lambda: quantize(
+            resized, params.num_colors, params.blur_sigma, min_de00=params.palette_margin_de00, ink=ink_mask,
+            halo_px=halo_px,
+        ),
     )
     report("quantize")
 
@@ -448,7 +480,7 @@ def generate(
         labels = join_ink(labels, len(palette_bgr), resized, (ink_gray,) * 3, min_area_px, off_edge)  # a new map
         # The regions are built through hatching, a hatched patch one run of its gaps' colors, but never through a
         # line between two areas a painter sees as two.
-        thin_px = print_scale((w, h)).mm_to_px(ink.THIN_INK_MM)
+        thin_px = print_scale((w, h)).mm_to_px(handling.thin_ink_mm)
         region_labels, corners = look_through_hatching(labels, len(palette_bgr), thin_px, min_width_px)
         printed_ink = (labels >= len(palette_bgr)) | corners
     # The palette can be shorter than the difficulty asked for: colors too
@@ -468,21 +500,27 @@ def generate(
         detail = in_subject | in_faces if in_faces is not None else in_subject
         if not detail.any():
             detail = None
-    region_id_map, region_color = build_regions(region_labels, len(palette_bgr), min_area_px, min_width_px, detail)
+    region_id_map, region_color = build_regions(
+        region_labels, len(palette_bgr), min_area_px, min_width_px, detail, params.detail_weight
+    )
     if ink_mask is None:
         # Fur, foliage and stone leave the regions ragged edges no brush can follow: they are settled by a vote of
         # the page around each pixel, held to the picture's own edges. Line art's edges are its ink.
         region_id_map, region_color = smooth_regions(
-            resized, region_id_map, region_color, palette_bgr, min_area_px, min_width_px, detail
+            resized, region_id_map, region_color, palette_bgr, min_area_px, min_width_px, detail,
+            params.edge_settling, params.edge_color_step_de00, params.detail_weight,
         )
     if in_faces is not None:
         # A face's skin or fur is painted in a few large tones: each region there in the color nearest it, and the ones
         # a faint step from a neighbor joined to it.
-        region_id_map, region_color = tones.settle_tones(resized, in_faces, region_id_map, region_color, palette_bgr)
+        region_id_map, region_color = tones.settle_tones(
+            resized, in_faces, region_id_map, region_color, palette_bgr, handling.face_tone_step_de00
+        )
         # The thin dark marks in a face that no brush can paint -- pupils, eyelid and lip lines, whisker dots -- merge into
         # the regions around them. They are printed instead, in their own tone, and the regions' paint goes round them.
         printed_ink = marks.detail_marks(
-            resized, in_faces, region_id_map, region_color, palette_bgr, print_scale((w, h))
+            resized, in_faces, region_id_map, region_color, palette_bgr, print_scale((w, h)),
+            params.min_width_mm, handling.mark_contrast, handling.mark_length_mm,
         )
         ink_gray = ink.ink_gray(resized, printed_ink)
     clearable = None
@@ -508,7 +546,7 @@ def generate(
     # The letters of signs, titles and captions are printed, and nothing else in their lines; the regions are painted
     # round them, and no number may clear them.
     check_cancelled()
-    found_text = detect_text(image_bgr, resized) if handling.text else []
+    found_text = detect_text(image_bgr, resized, handling.text_max_height_mm) if handling.text else []
     letters = text.lettering(resized, found_text) if found_text else None
     if letters is not None:
         # Inside a line of text the letters take the place of the ink lying in a region, as the page prints them: what

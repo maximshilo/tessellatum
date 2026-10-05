@@ -125,20 +125,24 @@ class TextLine:
         return min(a, b), max(a, b)
 
 
-def find_text(picture_bgr: np.ndarray, source_bgr: np.ndarray | None = None) -> list[TextLine]:
+def find_text(
+    picture_bgr: np.ndarray, source_bgr: np.ndarray | None = None, max_height_mm: float = MAX_BOX_HEIGHT_MM
+) -> list[TextLine]:
     """The lines of text in ``picture_bgr``, in its pixels, top to bottom.
 
     ``picture_bgr`` is an HxWx3 uint8 picture at preview size, and
     ``source_bgr`` the same picture at its own size, from which the second,
-    finer look takes its pixels (``picture_bgr`` itself if None).
+    finer look takes its pixels (``picture_bgr`` itself if None). A line
+    taller than ``max_height_mm`` on paper is lettering big enough to paint,
+    and is left out.
     """
     picture = _checked(picture_bgr)
     source = picture if source_bgr is None else _checked(source_bgr)
     height, width = picture.shape[:2]
     size = (width, height)
-    if not _lines(_view(picture, picture, GATE_SCALE), size):
+    if not _lines(_view(picture, picture, GATE_SCALE), size, max_height_mm):
         return []
-    return sorted(_lines(_view(picture, source, FINE_SCALE), size), key=_reading_order)
+    return sorted(_lines(_view(picture, source, FINE_SCALE), size, max_height_mm), key=_reading_order)
 
 
 def scaled(lines: list[TextLine], from_size: tuple[int, int], to_size: tuple[int, int]) -> list[TextLine]:
@@ -650,15 +654,15 @@ def _probability(view: np.ndarray) -> np.ndarray:
     return probability.reshape(probability.shape[-2:])
 
 
-def _lines(view: np.ndarray, size: tuple[int, int]) -> list[TextLine]:
+def _lines(view: np.ndarray, size: tuple[int, int], max_height_mm: float = MAX_BOX_HEIGHT_MM) -> list[TextLine]:
     """The lines the network finds in ``view``, given in the pixels of the picture of ``size`` (width, height) it shows.
 
-    Only lines that look like one are kept (see ``MAX_BOX_HEIGHT_MM``).
+    Only lines that look like one are kept: at most ``max_height_mm`` tall on paper (see ``MAX_BOX_HEIGHT_MM``).
     """
     probability = _probability(view)
     map_height, map_width = probability.shape
     sx, sy = size[0] / map_width, size[1] / map_height
-    max_height_px = print_scale(size).mm_to_px(MAX_BOX_HEIGHT_MM)
+    max_height_px = print_scale(size).mm_to_px(max_height_mm)
     # Grown by a pixel right and down, so that a core's outline, through its pixels' middles, spans its pixels' corners.
     cores = cv2.dilate((probability > THRESHOLD).astype(np.uint8), np.ones((2, 2), np.uint8))
     contours, _ = cv2.findContours(cores, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)

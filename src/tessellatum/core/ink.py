@@ -97,32 +97,38 @@ class LineArt:
     deep_line_share: float  # share of the picture in deep lines
 
 
-def find_ink(image_bgr: np.ndarray, picture_bgr: np.ndarray | None = None) -> tuple[LineArt, np.ndarray]:
+def find_ink(
+    image_bgr: np.ndarray, picture_bgr: np.ndarray | None = None, gap_mm: float = GAP_MM
+) -> tuple[LineArt, np.ndarray]:
     """The ink lines of ``image_bgr``, if the picture is line art.
 
     ``picture_bgr`` is the picture the decision is made on, at preview size,
     so that every size of one picture gets the same answer; without it, the
     decision is made on ``image_bgr`` itself, which is then measured once for
     both. Returns the decision and an HxW bool mask of ``image_bgr``'s ink
-    lines, all False unless the picture is line art.
+    lines, gaps up to ``gap_mm`` closed (see ``ink_lines``), all False unless
+    the picture is line art.
     """
     if picture_bgr is None or picture_bgr is image_bgr:
         measured = _Measured(image_bgr)
         decision = measured.line_art()
-        return decision, measured.ink_lines() if decision.is_line_art else np.zeros(image_bgr.shape[:2], dtype=bool)
+        if not decision.is_line_art:
+            return decision, np.zeros(image_bgr.shape[:2], dtype=bool)
+        return decision, measured.ink_lines(gap_mm)
     decision = line_art(picture_bgr)
     if not decision.is_line_art:
         return decision, np.zeros(image_bgr.shape[:2], dtype=bool)
-    return decision, ink_lines(image_bgr)
+    return decision, ink_lines(image_bgr, gap_mm)
 
 
-def ink_lines(image_bgr: np.ndarray) -> np.ndarray:
+def ink_lines(image_bgr: np.ndarray, gap_mm: float = GAP_MM) -> np.ndarray:
     """HxW bool: the pixels of ``image_bgr`` on dark lines at most ``MAX_LINE_WIDTH_MM`` wide on paper, gaps closed.
 
-    Finds lines whether or not the picture is line art; ``find_ink`` decides
-    whether to use them.
+    A gap in a line up to ``gap_mm`` on paper is closed (see the module's
+    docstring); 0 closes none. Finds lines whether or not the picture is line
+    art; ``find_ink`` decides whether to use them.
     """
-    return _Measured(image_bgr).ink_lines()
+    return _Measured(image_bgr).ink_lines(gap_mm)
 
 
 def line_art(image_bgr: np.ndarray) -> LineArt:
@@ -159,8 +165,10 @@ class _Measured:
         self.lightness, self.depth = _lightness_and_depth(image_bgr, self.scale.mm_to_px(MAX_LINE_WIDTH_MM))
         self.ink = _ink(self.lightness, self.depth)
 
-    def ink_lines(self) -> np.ndarray:
-        return self.ink | (_close_breaks(self.ink, self.scale.mm_to_px(GAP_MM)) & (self.depth > GAP_MIN_DEPTH))
+    def ink_lines(self, gap_mm: float = GAP_MM) -> np.ndarray:
+        if gap_mm <= 0:
+            return self.ink.copy()
+        return self.ink | (_close_breaks(self.ink, self.scale.mm_to_px(gap_mm)) & (self.depth > GAP_MIN_DEPTH))
 
     def line_art(self) -> LineArt:
         ink, scale = self.ink, self.scale
