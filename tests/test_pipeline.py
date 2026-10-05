@@ -6,6 +6,7 @@ import pytest
 
 from tessellatum.core import boundaries, difficulty, faces, ink, labels, pipeline, print_size, render, subject, text
 from tessellatum.core.legend import render_legend
+from tessellatum.core.painting import Version, tint_rgb
 from tessellatum.core.color import MIN_PALETTE_DE00, pairwise_de00
 from tessellatum.core.pipeline import Handling, PipelineCancelled, generate
 
@@ -752,3 +753,43 @@ def test_the_page_comes_with_what_it_was_drawn_from_to_draw_it_again_off_the_pix
     assert analysis.printed_ink.any() and analysis.lettering_area.any()
     in_region = (analysis.region_id_map >= 0) & analysis.lettering_area
     np.testing.assert_array_equal(drawn.ink, analysis.printed_ink & ~in_region)
+
+
+def test_the_page_comes_with_what_it_is_painted_with_legend_colors_first(speckled_image_bgr):
+    result = generate(speckled_image_bgr, difficulty.params_for_preset("Easy"), long_edge=80, collect_analysis=True)
+
+    painting, analysis = result.painting, result.analysis
+    assert painting.region_id_map is analysis.region_id_map
+    np.testing.assert_array_equal(painting.region_color, analysis.region_color)
+    assert painting.palette_rgb == [tuple(int(v) for v in bgr[::-1]) for bgr in analysis.palette_bgr]
+    assert painting.palette_rgb[: len(result.palette_rgb)] == result.palette_rgb  # paint i is numbered i + 1
+    for region in analysis.regions:
+        assert painting.region_color[region.region_id] == region.color_index
+
+
+def test_the_completed_version_is_the_painting_the_benchmarks_score():
+    # Line art: its ink printed solid over the paint, the speck left as bare paper (see the line art test above).
+    drawing, shapes = _outlined_shapes()
+    result = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True)
+
+    analysis = result.analysis
+    expected = np.array(analysis.palette_bgr[:, ::-1])[analysis.region_color][np.clip(analysis.region_id_map, 0, None)]
+    expected[analysis.region_id_map < 0] = 255
+    expected[analysis.printed_ink] = analysis.ink_gray
+    completed = result.image(Version.COMPLETED)
+    np.testing.assert_array_equal(np.asarray(completed), expected)
+    assert (np.asarray(completed)[shapes["speck"]][~analysis.printed_ink[shapes["speck"]]] == 255).all()
+    assert result.image(Version.COMPLETED) is completed  # drawn once, and kept
+    assert result.image(Version.PAGE) is result.image() is result.page
+
+
+def test_the_tinted_version_is_the_page_under_a_wash_of_its_paint(sample_image_bgr):
+    result = generate(sample_image_bgr, difficulty.params_for_preset("Medium"), long_edge=200, collect_analysis=True)
+
+    analysis, page = result.analysis, np.asarray(result.page).astype(int)
+    tinted = np.asarray(result.image(Version.TINTED)).astype(int)
+    wash = np.array([tint_rgb(tuple(bgr[::-1])) for bgr in analysis.palette_bgr])[analysis.region_color]
+    wash = np.vstack([wash, [255, 255, 255]])[analysis.region_id_map]  # -1, in no region, takes the last: paper
+    np.testing.assert_array_equal(tinted, np.rint(page * wash / 255))
+    paper = (page == 255).all(axis=2)
+    assert paper.any() and (tinted[paper] == wash[paper]).all()  # where the page is bare, the wash alone

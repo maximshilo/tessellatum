@@ -12,14 +12,20 @@ from typing import Sequence
 import numpy as np
 from PIL import Image
 
+from tessellatum.core.boundaries import region_outlines
 from tessellatum.core.ink_outline import ink_outline
 from tessellatum.core.labels import baseline_bbox, font
 from tessellatum.core.legend import LABEL_FONT_RATIO, SWATCH_BORDER_MM, SWATCH_GAP_MM, SWATCH_MM, number_fill
+from tessellatum.core.painting import Painting, Version, tint_rgb
 from tessellatum.core.print_size import A4, MM_PER_INCH, PT_PER_INCH, print_scale
 from tessellatum.core.render import PageDrawing, number_origin
 
 # The space between the page and the legend in a PNG, on paper.
 LEGEND_GAP_MM = 6.0
+# How wide a painted version's fills are stroked round their edge, in their own color, on paper. Two fills meet along
+# the same line, but a viewer that smooths each one's edge on its own leaves a hairline of paper between them, which
+# this covers. It moves an edge by half that, 0.05 mm, less than a pixel of a page at 300 dpi.
+FILL_EDGE_MM = 0.1
 
 _PT_PER_MM = PT_PER_INCH / MM_PER_INCH
 # The size Pillow's measurements of a number's text box are taken at, in pixels an em: large enough that rounding them
@@ -43,7 +49,13 @@ def save_png(page: Image.Image, legend: Image.Image, path: Path) -> None:
     combined.save(path, "PNG", dpi=(scale.dpi, scale.dpi))
 
 
-def save_pdf(drawing: PageDrawing, palette_rgb: Sequence[tuple[int, int, int]], path: Path) -> None:
+def save_pdf(
+    drawing: PageDrawing,
+    palette_rgb: Sequence[tuple[int, int, int]],
+    path: Path,
+    version: Version = Version.PAGE,
+    painting: Painting | None = None,
+) -> None:
     """Save as two A4 sheets of vector art: the coloring page, then its legend.
 
     The page prints as the print model places it: scaled to fill the printable
@@ -67,6 +79,18 @@ def save_pdf(drawing: PageDrawing, palette_rgb: Sequence[tuple[int, int, int]], 
 
     Nothing on the sheet is an image.
 
+    ``version`` is the version of the page the first sheet prints (see
+    ``painting``), painted with ``painting`` unless it is the page itself. The
+    area each paint covers is filled along a path round it made of the page's
+    lines (see ``boundaries.region_outlines``), so that two neighbors meet on
+    the same line:
+
+    - the completed version fills every region with its paint and prints the
+      letters and the ink over it, solid, as above; no line and no number;
+    - the tinted version fills them with their wash (``painting.tint_rgb``) and
+      prints the page over it, drawn as above, in the Multiply blend mode: the
+      page's grays multiplied by the wash, as on the tinted image.
+
     The legend gets a portrait sheet of its own, across the printable width
     from the top margin: its swatches, ``legend.SWATCH_MM`` squares in their
     exact colors, numbered as the page is. The file carries no date, so the
@@ -74,7 +98,7 @@ def save_pdf(drawing: PageDrawing, palette_rgb: Sequence[tuple[int, int, int]], 
     """
     document = _Document()
     numbers = document.font(_number_font())
-    _page_sheet(document, drawing, numbers)
+    _page_sheet(document, drawing, numbers, version, painting)
     _legend_sheet(document, palette_rgb, numbers)
     Path(path).write_bytes(document.to_bytes())
 
@@ -83,32 +107,62 @@ def _sheet_size_mm(landscape: bool) -> tuple[float, float]:
     return (A4.height_mm, A4.width_mm) if landscape else (A4.width_mm, A4.height_mm)
 
 
-def _page_sheet(document: _Document, drawing: PageDrawing, numbers: int) -> None:
-    """The coloring page's sheet, drawn in the page's pixels, y down, mapped onto where the print model puts the page."""
+def _page_sheet(
+    document: _Document, drawing: PageDrawing, numbers: int, version: Version, painting: Painting | None
+) -> None:
+    """The page's sheet, drawn in the page's pixels, y down, mapped onto where the print model puts the page."""
     width, height = drawing.size
     scale = print_scale(drawing.size)
     sheet = _sheet_size_mm(scale.landscape)
     printed_w, printed_h = scale.printed_size_mm
     left, top = (sheet[0] - printed_w) / 2, (sheet[1] - printed_h) / 2
     pt_per_px = _PT_PER_MM / scale.px_per_mm
-    style = drawing.style
-    line_width = style.line_width_mm * scale.px_per_mm
-    darken = document.add(b"<< /Type /ExtGState /BM /Darken >>")
-    resources = {"Font": {"F1": numbers}, "ExtGState": {"Dk": darken}}
+    if not isinstance(version, Version):
+        raise ValueError(f"no such version of the page: {version!r}")
+    if version is not Version.PAGE and painting is None:
+        raise ValueError(f"the {version.value.lower()} version needs what the page is painted with")
 
     ops = [
         f"q {_num(pt_per_px, 8)} 0 0 {_num(-pt_per_px, 8)} {_num(left * _PT_PER_MM)} {_num((sheet[1] - top) * _PT_PER_MM)} cm",
         # Half of a line on the page's edge falls off the paper, as on the page.
         f"0 0 {width} {height} re W n",
-        f"1 J 1 j {_num(line_width)} w",
     ]
+    if version is Version.PAGE:
+        darken = document.add(b"<< /Type /ExtGState /BM /Darken >>")
+        resources = {"Font": {"F1": numbers}, "ExtGState": {"Dk": darken}}
+        ops += _page_ops(drawing, scale.px_per_mm)
+    elif version is Version.COMPLETED:
+        resources = {}
+        ops += _fill_ops(painting, painting.palette_rgb, scale.px_per_mm)
+        ops += _picture_ink_ops(drawing, darken=False)
+    elif version is Version.TINTED:
+        darken = document.add(b"<< /Type /ExtGState /BM /Darken >>")
+        multiply = document.add(b"<< /Type /ExtGState /BM /Multiply >>")
+        # The page, drawn on its own as on its sheet -- an isolated group -- then multiplied into the wash.
+        page = document.stream(
+            f"/Type /XObject /Subtype /Form /BBox [0 0 {width} {height}] "
+            "/Group << /S /Transparency /I true /CS /DeviceRGB >> "
+            f"/Resources << /Font << /F1 {numbers} 0 R >> /ExtGState << /Dk {darken} 0 R >> >> ",
+            "\n".join(_page_ops(drawing, scale.px_per_mm)).encode("latin-1"),
+        )
+        resources = {"ExtGState": {"Mu": multiply}, "XObject": {"Pg": page}}
+        ops += _fill_ops(painting, [tint_rgb(rgb) for rgb in painting.palette_rgb], scale.px_per_mm)
+        ops.append("q /Mu gs /Pg Do Q")
+    else:
+        raise ValueError(f"no such version of the page: {version!r}")
+    ops.append("Q")
+    document.page(sheet, "\n".join(ops), resources)
+
+
+def _page_ops(drawing: PageDrawing, px_per_mm: float) -> list[str]:
+    """The page as it prints, in its pixels: its lines, letters, ink, leaders and numbers, with the resources /F1 (the
+    numbers' font) and /Dk (the Darken blend mode)."""
+    style = drawing.style
+    line_width = style.line_width_mm * px_per_mm
+    ops = [f"1 J 1 j {_num(line_width)} w"]
     if drawing.strokes:
         ops += [f"{_gray(style.line_gray)} G", _path(drawing.strokes, offset=0.5), "S"]
-    if drawing.lettering:
-        # The letters, the darker of them and the lines, as the page prints them.
-        ops += [f"q /Dk gs {_gray(drawing.ink_gray)} g", _path(drawing.lettering, offset=0.5), "f* Q"]
-    if drawing.ink is not None and drawing.ink.any():
-        ops += [f"{_gray(drawing.ink_gray)} g", _path(ink_outline(drawing.ink), offset=0.5), "f*"]
+    ops += _picture_ink_ops(drawing, darken=True)
     leaders = [label.leader for label in drawing.labels if label.leader is not None]
     if leaders:
         dot = line_width * style.leader_dot_ratio / 2
@@ -122,8 +176,40 @@ def _page_sheet(document: _Document, drawing: PageDrawing, numbers: int) -> None
             x, y = number_origin(label)
             ops.append(f"/F1 {label.font_size} Tf 1 0 0 -1 {_num(x)} {_num(y)} Tm {_text(label.text)} Tj")
         ops.append("ET")
-    ops.append("Q")
-    document.page(sheet, "\n".join(ops), resources)
+    return ops
+
+
+def _fill_ops(painting: Painting, colors: Sequence[tuple[int, int, int]], px_per_mm: float) -> list[str]:
+    """Every paint's area filled in its entry of ``colors``, its edge stroked ``FILL_EDGE_MM`` wide.
+
+    The areas are outlined from the map of the paints rather than of the
+    regions: where two regions of one paint touch, no line divides their paint,
+    and a path round each would run along their boundary twice, which a viewer
+    smoothing the edges draws as a seam. Elsewhere the two maps have the same
+    boundaries and junctions, so the paths are the page's lines.
+    """
+    region_color = np.asarray(painting.region_color)
+    paints = np.where(painting.region_id_map >= 0, region_color[np.clip(painting.region_id_map, 0, None)], -1)
+    ops = [f"1 J 1 j {_num(FILL_EDGE_MM * px_per_mm)} w"]
+    for paint, rings in sorted(region_outlines(paints).items()):
+        rgb = " ".join(_gray(v) for v in colors[paint])
+        ops += [f"{rgb} rg {rgb} RG", _path(rings, offset=0.5), "B*"]
+    return ops
+
+
+def _picture_ink_ops(drawing: PageDrawing, darken: bool) -> list[str]:
+    """What the page prints of the picture itself, in its ink's gray: the letters, then the ink, solid.
+
+    ``darken`` draws the letters in the Darken blend mode (/Dk), the darker of them and what is under them, as the page
+    prints them over its lines.
+    """
+    ops = []
+    if drawing.lettering:
+        fill = f"q /Dk gs {_gray(drawing.ink_gray)} g" if darken else f"{_gray(drawing.ink_gray)} g"
+        ops += [fill, _path(drawing.lettering, offset=0.5), "f* Q" if darken else "f*"]
+    if drawing.ink is not None and drawing.ink.any():
+        ops += [f"{_gray(drawing.ink_gray)} g", _path(ink_outline(drawing.ink), offset=0.5), "f*"]
+    return ops
 
 
 def _legend_sheet(document: _Document, palette_rgb: Sequence[tuple[int, int, int]], numbers: int) -> None:

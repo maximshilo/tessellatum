@@ -1,5 +1,7 @@
 """One line per boundary: what the crack graph is traced into, how it is smoothed, and what gets drawn."""
 
+from collections import Counter
+
 import cv2
 import numpy as np
 import pytest
@@ -9,6 +11,7 @@ from tessellatum.core.boundaries import (
     SMOOTHING_MIN_PX,
     SMOOTHING_MM,
     crack_edges,
+    region_outlines,
     smooth_boundaries,
     smoothing_length_px,
     trace_boundaries,
@@ -16,6 +19,8 @@ from tessellatum.core.boundaries import (
 from tessellatum.core.print_size import print_scale
 from tessellatum.core.regions import build_regions, extract_regions
 from tessellatum.core.render import PAPER, PageStyle, render_page
+
+import pdf_reading
 
 
 def _line_layer(region_id_map: np.ndarray) -> np.ndarray:
@@ -401,3 +406,86 @@ def test_no_line_is_drawn_along_the_ink_and_a_boundary_ends_where_it_meets_it():
     assert any(np.array_equal(line, [[14.5, y - 0.5] for y in range(11, 21)]) for line in lines)
     # Without the ink given, the band is a region like any other, outlined along both edges.
     assert any(((line[:-1, 1] == line[1:, 1]) & (line[:-1, 1] == 8.5)).any() for line in trace_boundaries(ids, smoothing_px=0))
+
+
+def _region_pages() -> list[np.ndarray]:
+    """Region maps with holes, islands, regions touching corner to corner and pixels in no region."""
+    pages = []
+    for seed, shape, num_colors, blur_sigma in [(0, (30, 40), 5, 2.0), (1, (25, 25), 3, 0.0), (2, (40, 31), 8, 1.0)]:
+        ids, _colors = build_regions(_blobby_labels(seed, shape, num_colors, blur_sigma), num_colors, 0)
+        ids[2:5, 3:9] = -1
+        pages.append(ids)
+    lobes = np.zeros((6, 6), dtype=np.int32)  # region 1 in two lobes that meet at a corner, round region 2
+    lobes[:3, 3:] = 1
+    lobes[3:, :3] = 1
+    lobes[1, 4] = 2
+    pages.append(lobes)
+    return pages
+
+
+@pytest.mark.parametrize("page", range(4))
+def test_a_region_s_outline_filled_by_the_even_odd_rule_is_the_region(page):
+    ids = _region_pages()[page]
+
+    outlines = region_outlines(ids, smoothing_px=0)
+
+    assert sorted(outlines) == np.unique(ids[ids >= 0]).tolist()  # every region, and nothing for the pixels in none
+    for region, rings in outlines.items():
+        for ring in rings:
+            np.testing.assert_array_equal(ring[0], ring[-1])
+        np.testing.assert_array_equal(pdf_reading.inside_even_odd(rings, ids.shape), ids == region)
+
+
+
+@pytest.mark.parametrize("page", range(4))
+def test_two_neighbors_outlines_run_along_the_line_the_page_draws_between_them(page):
+    # The rings are made of the page's lines, smoothed as the page smooths them: every step of a line is in the outline
+    # of each region it runs between, once -- never of the pixels in no region, nor of the page's surround -- and the
+    # outlines have no other steps. So two neighbors filled side by side meet on the line, without a gap.
+    ids = _region_pages()[page]
+    height, width = ids.shape
+
+    outlines = region_outlines(ids)
+
+    def steps(path: np.ndarray) -> list[tuple]:
+        return [tuple(sorted((tuple(a), tuple(b)))) for a, b in zip(path[:-1].tolist(), path[1:].tolist())]
+
+    def region_sides(crack: np.ndarray) -> int:
+        """How many of the two pixels beside a line's first crack edge are in a region."""
+        (xa, ya), (xb, yb) = crack[0], crack[1]
+        if ya == yb:
+            beside = [(ya - 0.5, min(xa, xb) + 0.5), (ya + 0.5, min(xa, xb) + 0.5)]
+        else:
+            beside = [(min(ya, yb) + 0.5, xa - 0.5), (min(ya, yb) + 0.5, xa + 0.5)]
+        rows_columns = [(int(row), int(column)) for row, column in beside]
+        return sum(0 <= row < height and 0 <= column < width and ids[row, column] >= 0 for row, column in rows_columns)
+
+    expected = Counter()
+    for line, crack in zip(trace_boundaries(ids), trace_boundaries(ids, smoothing_px=0)):
+        for step in steps(line):
+            expected[step] += region_sides(crack)
+    drawn = Counter(step for rings in outlines.values() for ring in rings for step in steps(ring))
+    assert drawn == +expected
+
+
+def test_a_boundary_that_leaves_a_junction_and_comes_back_keeps_it_in_every_ring_that_meets_there():
+    # Region 1 touches region 2 at one corner only, so the outline it shares with region 0 runs from that junction round
+    # to it again. Smoothing takes it for a closed line and moves the junction off it, as the page's own line shows; the
+    # rings put it back, so that the three regions still meet there and two neighbors' rings still share every step.
+    ids = np.zeros((12, 12), dtype=np.int32)
+    ids[0:5, 0:5] = 2
+    ids[5:10, 5:10] = 1
+    junction = (4.5, 4.5)
+    (loop,) = [line for line in trace_boundaries(ids) if np.array_equal(line[0], line[-1])]
+    assert tuple(loop[0]) != junction
+
+    outlines = region_outlines(ids)
+
+    for region in (0, 1, 2):
+        assert any((ring == junction).all(axis=1).any() for ring in outlines[region]), region
+    steps = Counter()
+    for rings in outlines.values():
+        for ring in rings:
+            steps.update(tuple(sorted((tuple(a), tuple(b)))) for a, b in zip(ring[:-1].tolist(), ring[1:].tolist()))
+    inner = [count for step, count in steps.items() if not any(v in (-0.5, 11.5) for point in step for v in point)]
+    assert inner and all(count == 2 for count in inner)

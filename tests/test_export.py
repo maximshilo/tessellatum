@@ -1,6 +1,7 @@
 """Export: a PNG that prints at the page's size, and a vector PDF of two A4 sheets, the page placed by the print model."""
 
 import re
+from collections import Counter
 
 import cv2
 import numpy as np
@@ -11,6 +12,7 @@ from tessellatum.core import export, text
 from tessellatum.core.boundaries import trace_boundaries
 from tessellatum.core.ink_outline import ink_outline
 from tessellatum.core.legend import LABEL_FONT_RATIO, SWATCH_BORDER_MM, SWATCH_GAP_MM, SWATCH_MM, render_legend
+from tessellatum.core.painting import Painting, Version, completed, tint_rgb, tinted
 from tessellatum.core.print_size import A4, print_scale
 from tessellatum.core.regions import extract_regions
 from tessellatum.core.render import (
@@ -47,19 +49,39 @@ def _drawn(size, ids, color, style=PageStyle(), **printing):
     return render_page(size, regions, ids, style, **printing)
 
 
-def _full_page():
-    """The aligned page with everything a page can print: lines, numbers, a leader, printed ink and lettering."""
+def _full_page(bare: bool = False):
+    """The aligned page with everything a page can print: lines, numbers, a leader, printed ink and lettering.
+
+    ``bare`` leaves a patch of it in no region, as line art leaves a pocket no brush reaches.
+    """
+    ids, colors, printing = _full_page_parts(bare)
+    return _drawn(ALIGNED, ids, colors, **printing)
+
+
+def _full_page_parts(bare: bool = False):
+    """The full page's region map, its regions' colors and what it prints (see ``_full_page``)."""
     width, height = ALIGNED
     ids = _split(ALIGNED)
     cv2.circle(ids, (200, 300), 120, 2, -1)
     cv2.rectangle(ids, (450, 600), (700, 900), 3, -1)
     ids[700:708, 100:108] = 4  # 2 mm across: too small for its number, which goes outside with a leader
+    if bare:
+        ids[100:160, 450:530] = -1
     ink = np.zeros((height, width), dtype=np.uint8)
     cv2.line(ink, (60, 900), (300, 1050), 1, 3)
     cv2.circle(ink, (580, 200), 40, 1, 2)
     ink[500:540, 600:610] = 1  # a hole in it
     ink[515:525, 603:607] = 0
-    return _drawn(ALIGNED, ids, [0, 1, 2, 3, 0], ink=ink.astype(bool), ink_gray=30, lettering=_letters_on_full_page())
+    printing = dict(ink=ink.astype(bool), ink_gray=30, lettering=_letters_on_full_page())
+    return ids, [0, 1, 2, 3, 0], printing
+
+
+def _painted_full_page():
+    """The full page with a bare patch, and what it is painted with: each region in its color of ``PALETTE``."""
+    ids, colors, printing = _full_page_parts(bare=True)
+    rendered = _drawn(ALIGNED, ids, colors, **printing)
+    painting = Painting(ids, np.array(colors), PALETTE, rendered.picture_ink, rendered.drawing.ink_gray)
+    return rendered, painting
 
 
 def _letters_on_full_page():
@@ -375,3 +397,120 @@ def test_a_png_stacks_the_page_over_its_legend_and_prints_at_the_page_s_size(tmp
         stacked = np.asarray(saved.convert("RGB"))
     np.testing.assert_array_equal(stacked[:825], np.asarray(page))
     np.testing.assert_array_equal(stacked[825 + gap :], np.asarray(legend))
+
+
+def _read_back_page(path) -> np.ndarray:
+    """The aligned page's sheet read back at 4 px a millimeter, where its pixels lie on the page's: HxWx3 float."""
+    width, height = ALIGNED
+    return pdf_reading.render(path, 0, 4.0)[40 : 40 + height, 40 : 40 + width]
+
+
+def _away_from_edges(ids: np.ndarray, *masks: np.ndarray, reach: int = 2) -> np.ndarray:
+    """The pixels further than ``reach`` from any boundary of ``ids`` and from ``masks``."""
+    edges = np.zeros(ids.shape, dtype=bool)
+    edges[:, :-1] |= ids[:, :-1] != ids[:, 1:]
+    edges[:, 1:] |= ids[:, :-1] != ids[:, 1:]
+    edges[:-1, :] |= ids[:-1, :] != ids[1:, :]
+    edges[1:, :] |= ids[:-1, :] != ids[1:, :]
+    for mask in masks:
+        edges |= mask
+    kernel = np.ones((2 * reach + 1, 2 * reach + 1), np.uint8)
+    return ~cv2.dilate(edges.astype(np.uint8), kernel).astype(bool)
+
+
+def test_a_completed_pdf_fills_every_region_with_its_paint_and_prints_the_picture_s_ink_over_it(tmp_path):
+    rendered, painting = _painted_full_page()
+    drawing = rendered.drawing
+    path = tmp_path / "completed.pdf"
+    export.save_pdf(drawing, PALETTE, path, version=Version.COMPLETED, painting=painting)
+    first, second = pdf_reading.sheets(path.read_bytes())
+
+    content = first["content"]
+    # One path a paint, filled by the even-odd rule and its edge stroked in its own color; then the letters and the ink,
+    # solid in the ink's gray. No line, leader or number: the paint covers them.
+    fills = re.findall(r"(\S+ \S+ \S+) rg \1 RG\n[^a-zA-Z]*?[\d.]+ [\d.]+ m", content)
+    assert fills == [" ".join(export._gray(v) for v in rgb) for rgb in PALETTE]
+    assert content.count("B*") == len(PALETTE) and content.count("\nf*\n") == 2 and "BT" not in content
+    assert f"{export._num(export.FILL_EDGE_MM * 4.0)} w" in content  # 4 px a millimeter
+    assert first["resources"] == {} and second["size_mm"] == pytest.approx((210.0, 297.0), abs=1e-3)
+
+    back = _read_back_page(path)
+    image = np.asarray(completed(painting)).astype(np.float64)
+    letters = pdf_reading.inside_even_odd(drawing.lettering, painting.region_id_map.shape)
+    inside = _away_from_edges(painting.region_id_map, drawing.ink, letters)
+    np.testing.assert_allclose(back[inside], image[inside], atol=1)  # each region its paint
+    bare = inside & (painting.region_id_map < 0)
+    assert bare.sum() > 50 * 70 and (back[bare] == 255).all()  # the patch in no region, white
+    solid = cv2.erode(drawing.ink.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
+    np.testing.assert_allclose(back[solid], 30, atol=1)
+    assert np.abs(back - image).mean() < 1.0
+
+
+def test_a_tinted_pdf_is_the_page_multiplied_into_a_wash_of_its_paint(tmp_path):
+    rendered, painting = _painted_full_page()
+    drawing = rendered.drawing
+    path = tmp_path / "tinted.pdf"
+    export.save_pdf(drawing, PALETTE, path, version=Version.TINTED, painting=painting)
+    first, _ = pdf_reading.sheets(path.read_bytes())
+
+    content = first["content"]
+    fills = re.findall(r"(\S+ \S+ \S+) rg \1 RG\n", content)
+    assert fills == [" ".join(export._gray(v) for v in tint_rgb(rgb)) for rgb in PALETTE]
+    assert content.endswith("B*\nq /Mu gs /Pg Do Q\nQ")
+    objects = first["objects"]
+    assert objects[first["resources"]["ExtGState"]["Mu"]][0] == "<< /Type /ExtGState /BM /Multiply >>"
+    # The page is drawn on its own, as the page's sheet draws it, an isolated group laid over the wash.
+    form, page_content = objects[first["resources"]["XObject"]["Pg"]]
+    assert "/Subtype /Form" in form and "/Group << /S /Transparency /I true /CS /DeviceRGB >>" in form
+    page_path = tmp_path / "page.pdf"
+    export.save_pdf(drawing, PALETTE, page_path)
+    page_sheet = pdf_reading.sheets(page_path.read_bytes())[0]["content"]
+    assert page_content.decode("latin-1") in page_sheet
+
+    back = _read_back_page(path)
+    image = np.asarray(tinted(rendered.image, painting)).astype(np.float64)
+    page = _read_back_page(page_path)
+    # Away from the regions' edges, the read-back page multiplied by its wash, where the page is bare the wash alone.
+    inside = _away_from_edges(painting.region_id_map)
+    wash = painting.fill([tint_rgb(rgb) for rgb in PALETTE]).astype(np.float64)
+    np.testing.assert_allclose(back[inside], (page * wash / 255)[inside], atol=2)  # the renderer truncates
+    # Where both pages are bare -- the raster page's numbers and letters are anti-aliased its own way -- the tinted image.
+    paper = inside & (page == 255).all(axis=2) & (np.asarray(rendered.image) == 255).all(axis=2)
+    assert paper.mean() > 0.5
+    np.testing.assert_allclose(back[paper], image[paper], atol=1)
+    assert np.abs(back - image).mean() < 1.0
+
+
+@pytest.mark.parametrize("version", [Version.COMPLETED, Version.TINTED])
+def test_a_painted_pdf_needs_what_the_page_is_painted_with(tmp_path, version):
+    with pytest.raises(ValueError, match=f"{version.value.lower()} version"):
+        export.save_pdf(_full_page().drawing, PALETTE, tmp_path / "page.pdf", version=version)
+
+
+def test_a_version_there_is_not_is_refused(tmp_path):
+    _, painting = _painted_full_page()
+    with pytest.raises(ValueError, match="no such version"):
+        export.save_pdf(_full_page().drawing, PALETTE, tmp_path / "page.pdf", version="Completed", painting=painting)
+
+
+@pytest.mark.parametrize("version", [Version.COMPLETED, Version.TINTED])
+def test_a_paint_s_path_runs_along_no_boundary_twice_where_two_regions_of_it_touch(tmp_path, version):
+    # On the full page the 2 mm square, region 4, lies in region 0, and both take paint 0: their boundary divides no
+    # paint, so the path round paint 0 doesn't run along it, once for each, which a viewer would draw as a seam.
+    rendered, painting = _painted_full_page()
+    path = tmp_path / "painted.pdf"
+    export.save_pdf(rendered.drawing, PALETTE, path, version=version, painting=painting)
+    content = pdf_reading.sheets(path.read_bytes())[0]["content"]
+
+    paths = re.findall(r"(?s) RG\n(.*?)\nB\*", content)
+    assert len(paths) == len(PALETTE)
+    for fill in paths:
+        steps = Counter()
+        previous = None
+        for word in fill.split("\n"):
+            x, y, op = word.split()
+            point = (x, y)
+            if op == "l":
+                steps[tuple(sorted((previous, point)))] += 1
+            previous = point
+        assert steps and max(steps.values()) == 1

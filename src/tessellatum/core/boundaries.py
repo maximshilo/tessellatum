@@ -41,6 +41,8 @@ SMOOTHING_MM = 0.5
 # What the printed ink counts as while boundaries are traced: a region apart from every real one (ids >= 0) and from
 # the pixels in no region (-1), such as bare paper the ink encloses.
 _INK_ID = -2
+# What lies off the page, when the regions a boundary runs between are told apart.
+_OFF_PAGE = -3
 
 # The smallest area a closed line may be left enclosing. A region a pixel or two
 # across is smaller than the corridor, so smoothing its outline would pull it shut
@@ -134,12 +136,30 @@ def trace_boundaries(
     if ids.size == 0:
         return []
     height, width = ids.shape
-    stride = width + 1
     if ink is not None:
         ids = np.where(ink, _INK_ID, ids)  # a region of its own, so that the boundaries along it are paths of their own
+    paths, corners, starts, _degree = _crack_paths(ids)
+    if ink is not None:
+        # A path runs along the ink when the ink is on either side of it; off the page is not ink.
+        one, other = _beside(corners[starts[:-1]], corners[starts[:-1] + 1], width + 1, np.asarray(ink, bool), False)
+        paths = [path for path, along_ink in zip(paths, one | other) if not along_ink]
+    if smoothing_px is None:
+        smoothing_px = smoothing_length_px((width, height))
+    return smooth_boundaries(paths, smoothing_px, max_shift_px, size=(width, height))
+
+
+def _crack_paths(ids: np.ndarray) -> tuple[list[np.ndarray], np.ndarray, np.ndarray, np.ndarray]:
+    """The crack graph of ``ids`` walked into one path per boundary (see ``kernels.trace_boundary_paths``).
+
+    Returns each path's points, Nx2 float64 ``(x, y)`` in page coordinates, as
+    traced; the corners they are, with where each path starts among them and
+    their count last; and how many crack edges meet at each corner (see
+    ``crack_edges``).
+    """
+    stride = ids.shape[1] + 1
     right, down, degree, num_edges = crack_edges(ids)
     if num_edges == 0:
-        return []
+        return [], np.empty(0, dtype=np.int32), np.zeros(1, dtype=np.int32), degree
     corners, starts = kernels.trace_boundary_paths(right, down, degree, stride, num_edges)
 
     # Every corner of every path at once: the per-path work is then a slice.
@@ -147,26 +167,107 @@ def trace_boundaries(
     rows, columns = np.divmod(corners, stride)
     points[:, 0] = columns - 0.5
     points[:, 1] = rows - 0.5
+    return [points[begin:end] for begin, end in zip(starts[:-1], starts[1:])], corners, starts, degree
 
-    paths = [points[begin:end] for begin, end in zip(starts[:-1], starts[1:])]
-    if ink is not None:
-        along_ink = _along_ink(corners[starts[:-1]], corners[starts[:-1] + 1], stride, ink)
-        paths = [path for path, skip in zip(paths, along_ink) if not skip]
+
+def region_outlines(
+    region_id_map: np.ndarray,
+    smoothing_px: float | None = None,
+    max_shift_px: float = MAX_SHIFT_PX,
+) -> dict[int, list[np.ndarray]]:
+    """Every region's outline, made of the page's lines: closed rings, by region id.
+
+    The boundaries are traced and smoothed as ``trace_boundaries`` draws them
+    (without ink), and each region's are joined end to end at the junctions
+    into rings, each repeating its first point at the end. Filled by the
+    even-odd rule, a region's rings are the region: a hole in it is a ring of
+    its own. Two neighbors' rings run along the same line, point for point, so
+    filled side by side they leave no gap and overlap nowhere. The pixels in no
+    region (id -1) get no outline.
+
+    The one place a ring leaves the page's line is a boundary that leaves a
+    junction and comes back to it, round a region touching the rest of its
+    neighbors at a single corner: ``smooth_boundaries`` takes it for a closed
+    line, with no junction on it, and moves the junction too, up to
+    ``max_shift_px``. Here its two ends go back on the junction, where the
+    other boundaries meeting there end, so that the rings it joins meet them.
+
+    Returns Nx2 float64 ``(x, y)`` arrays in page coordinates, for every region
+    id on the map.
+    """
+    ids = np.asarray(region_id_map)
+    if ids.size == 0:
+        return {}
+    height, width = ids.shape
+    paths, corners, starts, degree = _crack_paths(ids)
     if smoothing_px is None:
         smoothing_px = smoothing_length_px((width, height))
-    return smooth_boundaries(paths, smoothing_px, max_shift_px, size=(width, height))
+    traced = paths
+    paths = smooth_boundaries(paths, smoothing_px, max_shift_px, size=(width, height))
+
+    first, last = corners[starts[:-1]], corners[starts[1:] - 1]
+    for index in np.flatnonzero((first == last) & (degree[first] >= 3)):
+        paths[index] = paths[index].copy()
+        paths[index][[0, -1]] = traced[index][0]
+    one, other = _beside(first, corners[starts[:-1] + 1], width + 1, ids, _OFF_PAGE)
+    bordering: dict[int, list[int]] = {}
+    for index, (a, b) in enumerate(zip(one.tolist(), other.tolist())):
+        for side in (a, b):
+            if side >= 0:
+                bordering.setdefault(side, []).append(index)
+    return {
+        region: _rings([paths[i] for i in indices], first[indices].tolist(), last[indices].tolist())
+        for region, indices in bordering.items()
+    }
 
 
-def _along_ink(first: np.ndarray, second: np.ndarray, stride: int, ink: np.ndarray) -> np.ndarray:
-    """For each path, given its first two corners, whether it runs along the ink.
+def _rings(paths: list[np.ndarray], first: list[int], last: list[int]) -> list[np.ndarray]:
+    """The boundary paths of one region, ``first`` and ``last`` the corners each starts and ends at, joined into rings.
+
+    At every corner an even number of them end: going round it, the four
+    pixels pass in and out of the region an even number of times. So a walk
+    that leaves each corner by a path not yet taken can only come to a stop
+    where it started, and walking until every path is taken splits them into
+    rings. How the walk pairs them up at a corner where four meet makes no
+    difference to what the rings enclose by the even-odd rule.
+    """
+    ending: dict[int, list[int]] = {}
+    for index, (begin, end) in enumerate(zip(first, last)):
+        ending.setdefault(begin, []).append(index)
+        ending.setdefault(end, []).append(index)
+    taken = [False] * len(paths)
+    rings = []
+    for start in range(len(paths)):
+        if taken[start]:
+            continue
+        taken[start] = True
+        pieces = [paths[start]]
+        origin, at = first[start], last[start]
+        while at != origin:
+            index = next(i for i in ending[at] if not taken[i])
+            taken[index] = True
+            if first[index] == at:
+                pieces.append(paths[index][1:])
+                at = last[index]
+            else:
+                pieces.append(paths[index][-2::-1])
+                at = first[index]
+        rings.append(np.concatenate(pieces))
+    return rings
+
+
+def _beside(
+    first: np.ndarray, second: np.ndarray, stride: int, values: np.ndarray, off_page
+) -> tuple[np.ndarray, np.ndarray]:
+    """For each path, given its first two corners, ``values`` at the two pixels it runs between; ``off_page`` off it.
 
     A path separates the same two regions all the way from one junction to
     the next, so its first crack edge says which two they are. The edge
     between corners ``(i, j)`` and ``(i, j + 1)`` separates the pixels
     ``(i - 1, j)`` and ``(i, j)``; the one between ``(i, j)`` and ``(i + 1, j)``
-    the pixels ``(i, j - 1)`` and ``(i, j)``. Off the page is not ink.
+    the pixels ``(i, j - 1)`` and ``(i, j)``.
     """
-    padded = np.pad(np.asarray(ink, dtype=bool), 1)  # padded[i + 1, j + 1] is pixel (i, j)
+    padded = np.pad(values, 1, constant_values=off_page)  # padded[i + 1, j + 1] is pixel (i, j)
     row0, column0 = np.divmod(first, stride)
     row1, column1 = np.divmod(second, stride)
     across_rows = row0 == row1  # the edge runs along a row of corners, between two rows of pixels
@@ -174,7 +275,7 @@ def _along_ink(first: np.ndarray, second: np.ndarray, stride: int, ink: np.ndarr
     column = np.minimum(column0, column1)
     one = np.where(across_rows, padded[row, column + 1], padded[row + 1, column])  # above, or left of, the edge
     other = padded[row + 1, column + 1]
-    return one | other
+    return one, other
 
 
 def smooth_boundaries(

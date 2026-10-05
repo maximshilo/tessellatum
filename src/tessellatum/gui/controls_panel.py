@@ -1,4 +1,4 @@
-"""Left-hand controls: open image, difficulty, page style, picture handling, output format, generate/export."""
+"""Left-hand controls: open image, difficulty, page style, picture handling, what to export, generate/export."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from tessellatum.core import difficulty
+from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import Handling
 from tessellatum.core.print_size import OUTLINE_WIDTH_MM
 from tessellatum.core.render import DEFAULT_TONE, LINE_WIDTH_MM_RANGE, LINE_WIDTH_MM_STEP, TONES, PageStyle
@@ -137,14 +138,24 @@ class ControlsPanel(QWidget):
             handling_layout.addWidget(check)
         handling_group.setLayout(handling_layout)
 
-        format_group = QGroupBox("Output format")
+        export_group = QGroupBox("Export")
+        self.version_combo = QComboBox()
+        for index, version in enumerate(Version):
+            self.version_combo.addItem(version.value, version)
+            self.version_combo.setItemData(index, version.description, Qt.ToolTipRole)
+        self.version_combo.setToolTip("Which version of the page to export: the preview can show each of them.")
         self.png_radio = QRadioButton("PNG (image)")
         self.pdf_radio = QRadioButton("PDF (A4)")
         self.png_radio.setChecked(True)
-        format_layout = QHBoxLayout()
+        format_row = QWidget()
+        format_layout = QHBoxLayout(format_row)
+        format_layout.setContentsMargins(0, 0, 0, 0)
         format_layout.addWidget(self.png_radio)
         format_layout.addWidget(self.pdf_radio)
-        format_group.setLayout(format_layout)
+        export_form = QFormLayout()
+        export_form.addRow("Version", self.version_combo)
+        export_form.addRow("Format", format_row)
+        export_group.setLayout(export_form)
 
         self.generate_button = QPushButton("Generate Preview")
         self.export_button = QPushButton("Export…")
@@ -175,7 +186,7 @@ class ControlsPanel(QWidget):
         layout.addWidget(self.custom_group)
         layout.addWidget(style_group)
         layout.addWidget(handling_group)
-        layout.addWidget(format_group)
+        layout.addWidget(export_group)
         layout.addWidget(self.generate_button)
         layout.addWidget(self.progress_row)
         layout.addWidget(self.export_button)
@@ -225,6 +236,9 @@ class ControlsPanel(QWidget):
 
     def get_output_format(self) -> str:
         return "PDF" if self.pdf_radio.isChecked() else "PNG"
+
+    def get_export_version(self) -> Version:
+        return self.version_combo.currentData()
 
     def set_busy(self, busy: bool) -> None:
         self.progress_row.setVisible(busy)

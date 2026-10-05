@@ -8,13 +8,23 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtWidgets import QFileDialog, QFrame, QMainWindow, QMessageBox, QScrollArea, QSplitter, QWidget
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QFrame,
+    QMainWindow,
+    QMessageBox,
+    QScrollArea,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
 
 from tessellatum.core import export, pipeline
+from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import GeneratedPage, PREVIEW_LONG_EDGE
 from tessellatum.core.print_size import print_scale
 from tessellatum.gui.controls_panel import ControlsPanel
-from tessellatum.gui.preview_widget import PreviewWidget
+from tessellatum.gui.preview_widget import PreviewWidget, VersionBar
 from tessellatum.gui.worker import PipelineWorker
 
 OPEN_IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.gif)"
@@ -27,6 +37,14 @@ class MainWindow(QMainWindow):
 
         self.controls = ControlsPanel()
         self.preview = PreviewWidget()
+        # Every version of a page is drawn with it, so the bar switches between them at once.
+        self.version_bar = VersionBar()
+        self.version_bar.setEnabled(False)
+        preview_pane = QWidget()
+        preview_layout = QVBoxLayout(preview_pane)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.addWidget(self.version_bar)
+        preview_layout.addWidget(self.preview)
 
         # The panel scrolls rather than holding the window taller than a small screen.
         controls_scroll = QScrollArea()
@@ -41,7 +59,7 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter()
         splitter.addWidget(controls_scroll)
-        splitter.addWidget(self.preview)
+        splitter.addWidget(preview_pane)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([320, 880])
@@ -54,11 +72,13 @@ class MainWindow(QMainWindow):
         self._worker: PipelineWorker | None = None
         self._pending_export_path: Path | None = None
         self._pending_export_format: str | None = None
+        self._pending_export_version: Version | None = None
 
         self.controls.open_image_requested.connect(self.open_image)
         self.controls.generate_requested.connect(self.generate_preview)
         self.controls.export_requested.connect(self.export_page)
         self.controls.abort_requested.connect(self.abort_generation)
+        self.version_bar.version_changed.connect(self.preview.show_version)
 
         self.resize(1280, 840)
 
@@ -82,6 +102,7 @@ class MainWindow(QMainWindow):
         self.controls.set_thumbnail(_bgr_to_pixmap(self.current_image_bgr))
         self.current_page = None
         self.controls.set_export_enabled(False)
+        self.version_bar.setEnabled(False)  # the preview left showing is the last picture's, until the next one
         self.statusBar().showMessage(f"Loaded {path.name}. Click \"Generate Preview\".")
 
     # -- Preview ----------------------------------------------------------
@@ -95,7 +116,7 @@ class MainWindow(QMainWindow):
         self.controls.set_busy(True)
         self.statusBar().showMessage("Generating preview…")
 
-        self._worker = self._make_worker(PREVIEW_LONG_EDGE)
+        self._worker = self._make_worker(PREVIEW_LONG_EDGE, versions=tuple(Version))
         self._worker.succeeded.connect(self._on_preview_ready)
         self._worker.start()
 
@@ -106,23 +127,23 @@ class MainWindow(QMainWindow):
 
     def _on_worker_cancelled(self) -> None:
         self.controls.set_busy(False)
-        self._pending_export_path = None
-        self._pending_export_format = None
+        self._clear_pending_export()
         self.statusBar().showMessage("Cancelled.")
 
     def _on_preview_ready(self, page: GeneratedPage) -> None:
         self.current_page = page
         self.controls.set_busy(False)
         self.controls.set_export_enabled(True)
-        self.preview.show_page(page.page, page.legend)
+        versions = {version: page.image(version) for version in Version}
+        self.preview.show_page(versions, page.legend, self.version_bar.version())
+        self.version_bar.setEnabled(True)
         self.statusBar().showMessage(
             f"Preview ready: {page.num_colors_used} colors, {page.num_regions} regions."
         )
 
     def _on_worker_failed(self, message: str) -> None:
         self.controls.set_busy(False)
-        self._pending_export_path = None
-        self._pending_export_format = None
+        self._clear_pending_export()
         QMessageBox.critical(self, "Generation failed", message)
         self.statusBar().showMessage("Generation failed.")
 
@@ -135,9 +156,11 @@ class MainWindow(QMainWindow):
             return
 
         fmt = self.controls.get_output_format()
+        version = self.controls.get_export_version()
         suffix = ".png" if fmt == "PNG" else ".pdf"
         file_filter = "PNG image (*.png)" if fmt == "PNG" else "PDF document (*.pdf)"
-        path_str, _ = QFileDialog.getSaveFileName(self, "Export Coloring Page", f"coloring_page{suffix}", file_filter)
+        name = "coloring_page" if version is Version.PAGE else f"coloring_page_{version.value.lower()}"
+        path_str, _ = QFileDialog.getSaveFileName(self, "Export Coloring Page", f"{name}{suffix}", file_filter)
         if not path_str:
             return
         path = Path(path_str)
@@ -146,11 +169,15 @@ class MainWindow(QMainWindow):
 
         self._pending_export_path = path
         self._pending_export_format = fmt
+        self._pending_export_version = version
         self.controls.set_busy(True)
         self.statusBar().showMessage(f"Rendering the {fmt} at print resolution…")
 
-        # 300 dpi on A4, or the picture's own size where that is less: the pipeline never upscales.
-        self._worker = self._make_worker(pipeline.export_long_edge(self.current_image_bgr))
+        # 300 dpi on A4, or the picture's own size where that is less: the pipeline never upscales. A PNG's image is
+        # drawn with the page; a PDF draws the version again from what the page is made of.
+        self._worker = self._make_worker(
+            pipeline.export_long_edge(self.current_image_bgr), versions=(version,) if fmt == "PNG" else ()
+        )
         self._worker.succeeded.connect(self._on_export_ready)
         self._worker.start()
 
@@ -158,16 +185,16 @@ class MainWindow(QMainWindow):
         self.controls.set_busy(False)
         path = self._pending_export_path
         fmt = self._pending_export_format
-        self._pending_export_path = None
-        self._pending_export_format = None
-        if path is None or fmt is None:
+        version = self._pending_export_version
+        self._clear_pending_export()
+        if path is None or fmt is None or version is None:
             return
 
         try:
             if fmt == "PNG":
-                export.save_png(page.page, page.legend, path)
+                export.save_png(page.image(version), page.legend, path)
             else:
-                export.save_pdf(page.drawing, page.palette_rgb, path)
+                export.save_pdf(page.drawing, page.palette_rgb, path, version=version, painting=page.painting)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Export failed", str(exc))
             self.statusBar().showMessage("Export failed.")
@@ -178,14 +205,21 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Exported to {path} ({width} × {height} px, {dpi:.0f} dpi on A4)")
         QMessageBox.information(self, "Export complete", f"Saved to:\n{path}\n\n{width} × {height} px, {dpi:.0f} dpi on A4")
 
-    def _make_worker(self, long_edge: int) -> PipelineWorker:
-        """A worker generating the current image at ``long_edge`` with the panel's settings, wired to its progress."""
+    def _clear_pending_export(self) -> None:
+        self._pending_export_path = None
+        self._pending_export_format = None
+        self._pending_export_version = None
+
+    def _make_worker(self, long_edge: int, versions: tuple[Version, ...] = ()) -> PipelineWorker:
+        """A worker generating the current image at ``long_edge`` with the panel's settings, wired to its progress, and
+        drawing ``versions`` of the page too."""
         worker = PipelineWorker(
             self.current_image_bgr,
             self.controls.get_difficulty_params(),
             long_edge,
             style=self.controls.get_page_style(),
             handling=self.controls.get_handling(),
+            versions=versions,
         )
         worker.failed.connect(self._on_worker_failed)
         worker.cancelled.connect(self._on_worker_cancelled)
