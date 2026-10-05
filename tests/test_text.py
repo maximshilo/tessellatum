@@ -399,16 +399,21 @@ def test_the_outline_runs_between_the_page_s_pixels_not_round_them():
 
 def test_a_letter_s_ink_runs_from_bare_paper_at_its_ground_to_solid_at_its_tone():
     # Half inked where the outline runs, LETTER_CUT of the way from the letters' tone to their ground's, and in
-    # proportion either side of it. A mark too faint to reach the cut prints nothing, not even a gray.
+    # proportion either side of it. A mark too faint to reach the cut, away from the letters, prints nothing, not even a
+    # gray: the page prints tones only at and beside the letters traced.
     assert text.LETTER_CUT == 0.6
     picture, strokes = _strokes(ground=200, letters=40)
-    paler = min(range(40, 200), key=lambda g: abs((_lightness(200) - _lightness(g)) / (_lightness(200) - _lightness(40)) - 0.7))
-    faint = min(range(40, 200), key=lambda g: abs((_lightness(200) - _lightness(g)) / (_lightness(200) - _lightness(40)) - 0.25))
-    picture[10:20, 34:36] = paler
+
+    def towards(gray: int) -> float:
+        """How far a gray lies from the ground's tone to the letters'."""
+        return (_lightness(200) - _lightness(gray)) / (_lightness(200) - _lightness(40))
+
+    paler = min(range(40, 200), key=lambda g: abs(towards(g) - 0.7))
+    faint = min(range(40, 200), key=lambda g: abs(towards(g) - 0.25))
+    picture[10:20, 34:36] = paler  # two of the strokes, 4 px from the next
     picture[10:20, 46:48] = faint
     printed = text.lettering(picture, [_LINE])
-    towards = (_lightness(200) - _lightness(paler)) / (_lightness(200) - _lightness(40))
-    expected = 255 * (0.5 + 0.5 * (towards - 0.4) / 0.6)
+    expected = 255 * (0.5 + 0.5 * (towards(paler) - 0.4) / 0.6)
     assert np.abs(printed.ink[10:20, 34:36].astype(np.float64) - expected).max() <= 1
     assert (printed.ink[10:20, 46:48] == 0).all()
     assert (printed.ink[strokes & (picture[:, :, 0] == 40)] == 255).all()
@@ -433,7 +438,8 @@ def test_a_patch_of_the_letters_tone_wider_than_their_strokes_is_ground():
     strokes[:, 50:72] = False
     picture[:, 50:72] = 220
     picture[7:23, 52:70] = 30  # 16 px tall: wider than the disk the ground is found with
-    assert 2 * text._Box(np.asarray(_LINE.quad), (0, 0, 0, 0), np.ones((1, 1), bool), (0.0, 1.0), False).ground_reach + 1 < 16
+    box = text._Box(np.asarray(_LINE.quad), (0, 0, 0, 0), np.ones((1, 1), bool), (0.0, 1.0), False)
+    assert 2 * box.ground_reach + 1 < 16
     printed = text.lettering(picture, [_LINE])
     assert (printed.ink[7:23, 52:70] == 0).all()
     assert (printed.ink[strokes] == 255).all()

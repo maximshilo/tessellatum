@@ -36,8 +36,8 @@ from tessellatum.core.texture import smooth_regions
 
 PREVIEW_LONG_EDGE = 1100
 
-# A pixel the letters cover at least this much (of 255: half of it) is printed ink: it ends the lines crossing it, and no
-# label point falls on it.
+# A pixel the letters ink at least this much (of 255: halfway, where their outline runs) is printed ink: it ends the
+# lines crossing it, and no label point falls on it.
 _LETTERING_PRINTED = 128
 
 # On line art, how many times at most the regions whose numbers found no room are merged and the page drawn again. Once
@@ -120,11 +120,11 @@ class PageAnalysis:
     # ``regions.settle_enclosed``), less the hatching cleared behind numbers written on it. Bold printed ink is in no
     # region, nor is bare paper the ink encloses too small to paint; thin printed ink is in the regions whose paint goes
     # over it. On a picture drawn from its colors, the detail marks printed in its faces, in their own gray (see
-    # ``marks``), which lie in the regions around them; all False without faces. On every picture, inside the lines of text
-    # found, the printed ink lying in a region is the pixels the letters cover at least half of (see ``lettering``) and no
-    # other; the printed ink in no region there is kept. On a picture drawn from its colors, ``ink_gray`` is the gray of the
-    # picture under all of it, the faces' marks and the lines of text alike -- under a line's darker side, which is its
-    # ground where its letters are light.
+    # ``marks``), which lie in the regions around them; all False without faces. On every picture, inside the lines of
+    # text found, the printed ink lying in a region is the letters, the pixels they ink at least halfway (see
+    # ``lettering``), and no other; the printed ink in no region there is kept. On a picture drawn from its colors,
+    # ``ink_gray`` is the gray of the picture under all of it, the faces' marks and the lines of text alike -- under a
+    # line's darker side, which is its ground where its letters are light.
     printed_ink: np.ndarray
     ink_gray: int
     # The faces in the picture (see ``faces``), found on it at preview size and given in the page's pixels. On a picture
@@ -132,12 +132,12 @@ class PageAnalysis:
     faces: list[faces.Face]
     # The lines of text in the picture (see ``text``), found on it once and given in the page's pixels, on every picture.
     text: list[text.TextLine]
-    # HxW bool: the pixels inside the lines of text found, where the page prints their letters, solid in ``ink_gray``,
-    # their ground bare paper, the lines running through, in place of the printed ink lying in a region (see
-    # ``text.lettering`` and ``render.render_page``; printed ink in no region prints solid there too); and HxW uint8, the
-    # ink the letters put on the page as ``outlines`` gives it, 0 = solid, 255 = bare paper (255 outside the letters).
-    # The pixels the letters cover at least half of are printed ink too: in ``printed_ink``, lying in the regions around
-    # them, which are painted round them.
+    # HxW bool: the pixels inside the lines of text found, where the page prints their letters in ``ink_gray``, their
+    # ground bare paper, the lines running through, in place of the printed ink lying in a region (see
+    # ``text.lettering`` and ``render.render_page``; printed ink in no region prints solid there too); and HxW uint8,
+    # the ink the letters put on the page as ``outlines`` gives it, 0 = solid, 255 = bare paper (255 away from the
+    # letters). The pixels they ink at least halfway are printed ink too: in ``printed_ink``, lying in the regions
+    # around them, which are painted round them.
     lettering_area: np.ndarray
     lettering: np.ndarray
 
@@ -501,15 +501,15 @@ def generate(
     found_text = detect_text(image_bgr, resized) if handling.text else []
     letters = text.lettering(resized, found_text) if found_text else None
     if letters is not None:
-        # Inside a line of text the letters take the place of the ink lying in a region, as the page prints them: what is
-        # printed there is the letters, and the ink in no region, which keeps two regions apart.
+        # Inside a line of text the letters take the place of the ink lying in a region, as the page prints them: what
+        # is printed there is the letters, and the ink in no region, which keeps two regions apart.
         in_no_region = printed_ink & (region_id_map < 0)
         printed_ink = np.where(letters.area, in_no_region | (letters.ink >= _LETTERING_PRINTED), printed_ink)
         if clearable is not None:
             clearable = clearable & ~letters.area
         if ink_mask is None:
-            # Line art prints in the artwork's own ink. Elsewhere the ink's gray is the picture's under the printed ink, and
-            # in the lines of text under their darker side: light letters print in the tone of their dark ground.
+            # Line art prints in the artwork's own ink. Elsewhere the ink's gray is the picture's under the printed ink,
+            # and in the lines of text under their darker side: light letters print in the tone of their dark ground.
             ink_gray = ink.ink_gray(resized, np.where(letters.area, in_no_region | letters.dark, printed_ink))
     report("regions")
 
@@ -536,8 +536,11 @@ def generate(
     rendered = render_page((w, h), regions, region_id_map, style, clearable=clearable, **printing)
     for _ in range(_MERGE_ROUNDS):
         # On line art, a region whose number found no room anywhere joins the area beside it, and the page is drawn
-        # again -- until every number has room, or no region moves. Every other picture is drawn once.
-        cramped = sorted({label.region_id for label in rendered.labels if label.cramped}) if ink_mask is not None else []
+        # again -- until every number has room, no region moves, or _MERGE_ROUNDS are done. Every other picture is
+        # drawn once.
+        cramped = sorted({label.region_id for label in rendered.labels if label.cramped})
+        if ink_mask is None:
+            cramped = []
         merged = merge_cramped(region_id_map, region_color, printed_ink, cramped, min_width_px) if cramped else None
         if merged is None:
             break

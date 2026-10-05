@@ -336,7 +336,7 @@ def _letters(area: np.ndarray, ink: np.ndarray, outline=()) -> Lettering:
 
 
 def _lettered_page(size: tuple[int, int] = (120, 80)):
-    """A page split down the middle, a band of solid ink across it, and a line of letters over the crack and the band."""
+    """A page split down the middle, a band of solid ink across it, and a line of letters over the crack and band."""
     width, height = size
     ids = _split_page(size)
     ids[:30, : width // 2] = 2  # a third region, whose boundary crosses the lettering where it is too faint to print

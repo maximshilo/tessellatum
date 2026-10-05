@@ -81,8 +81,8 @@ PAPER_PERCENTILE = 98.0
 INK_PERCENTILE = 2.0
 LETTER_CUT = 0.6
 MIN_CONTRAST = 20.0
-# A line's ground is its lightness with the letters taken out by a disk GROUND_DISK of its box's height across: wider
-# than a stroke of the boldest letters the box holds, narrower than the line.
+# A line's ground is its lightness with the letters taken out by a disk GROUND_DISK of its box's height across, and by
+# a square as wide turned to the line: wider than a stroke of the boldest letters the box holds, narrower than the line.
 GROUND_DISK = 0.6
 # A piece of a box's letters that runs along more than this share of the box's edge is no letter: it is ground caught
 # by the box -- a sign's edge, a frame -- and is not printed.
@@ -201,12 +201,14 @@ class Lettering:
 
     # HxW bool: the pixels whose middle lies in a line's box (see ``mask``).
     area: np.ndarray
-    # HxW uint8: how much of each pixel the letters cover, 0 bare paper to 255 solid: ``outline`` filled, anti-aliased.
+    # HxW uint8: the ink the page prints, 0 bare paper to 255 solid: the letters' own tones, 0 at their ground's, 128
+    # where their outline runs and 255 at the letters' tone, on the pixels the outline reaches and those beside them; 0
+    # elsewhere. 128 and up is where a pixel's middle lies inside the outline, or all but.
     ink: np.ndarray
-    # The letters' outline: closed rings of (x, y) points, pixel centers at whole numbers, each repeating its first point
-    # at the end. Filled by the even-odd rule, they are the letters.
+    # The letters' outline: closed rings of (x, y) points, pixel centers at whole numbers, each repeating its first
+    # point at the end. Filled by the even-odd rule, they are the letters, solid.
     outline: list[np.ndarray]
-    # HxW bool: in the boxes that print, their side darker than the cut between letters and ground -- the letters, or
+    # HxW bool: in the boxes that print, their side darker than halfway between their two tones -- the letters, or
     # their ground where the letters are the lighter side. The tone the lettering prints in is taken from it.
     dark: np.ndarray
 
@@ -326,12 +328,13 @@ def _group_letters(
 
 
 def _line_box(picture: np.ndarray, line: TextLine):
-    """A line's box as ``lettering`` reads it: (window, inside, box, darker side), or None if no pixel's middle lies in it.
+    """A line's box as ``lettering`` reads it: (window, inside, box, darker side).
 
-    ``window`` is the rows and columns its pixels lie in, (y0, y1, x0, x1), and
-    ``inside`` which of the window's pixels they are. ``box`` is the line as it
-    prints, and ``darker side`` its pixels darker than halfway between its two
-    tones; both None if it prints nothing.
+    None if no pixel's middle lies in the box. ``window`` is the rows and
+    columns its pixels lie in, (y0, y1, x0, x1), and ``inside`` which of the
+    window's pixels they are. ``box`` is the line as it prints, and ``darker
+    side`` its pixels darker than halfway between its two tones; both None if
+    it prints nothing.
     """
     quad = np.asarray(line.quad, dtype=np.float64)
     found = _box_pixels(quad, picture.shape[1::-1])
@@ -357,7 +360,7 @@ def _area(quad) -> float:
 
 @dataclass(frozen=True)
 class _Box:
-    """A line that prints, as ``lettering`` reads it: its box, where its pixels lie, its two tones and its letters' side."""
+    """A line that prints, as ``lettering`` reads it: its box, its pixels, its two tones and its letters' side."""
 
     quad: np.ndarray
     window: tuple[int, int, int, int]  # (y0, y1, x0, x1): the rows and columns of the page its pixels lie in
@@ -401,14 +404,15 @@ def _read(picture: np.ndarray, box: _Box) -> tuple[np.ndarray, tuple[int, int], 
     their strokes, which fills each stroke in with the ground either side of
     it and leaves anything wider as it is -- and by a square as wide, turned
     to the line, which keeps the corners of a band or a panel that the disk
-    would round off; whichever keeps more of the picture as it is. A pixel's ink is how far it lies
-    from its ground towards the letters' tone, in the contrast between the two
-    -- never taken as less than ``MIN_CONTRAST``, so a ground as dark as the
-    letters, or as light, prints nothing of its grain.
+    would round off; whichever keeps more of the picture as it is. A pixel's
+    ink is how far it lies from its ground towards the letters' tone, in the
+    contrast between the two -- never taken as less than ``MIN_CONTRAST``, so
+    a ground as dark as the letters, or as light, prints nothing of its grain.
 
-    ``letters`` is on the grid ``LETTERING_GRID`` times finer than the page:
-    its grid pixels within half a page pixel of the box's pixels' middles, the
-    top-left one at ``(row, column)`` of the page's grid. It holds those whose
+    ``letters`` is on the grid ``LETTERING_GRID`` times finer than the page,
+    over the box's window and a page pixel round it (as far as the page goes),
+    its top-left grid pixel at ``(row, column)`` of the page's grid: every
+    grid pixel the box can hold lies in it. It holds the grid pixels whose
     middle lies in the box and whose ink, from the lightness and its ground
     interpolated bicubically there, is more than ``1 - LETTER_CUT``, less the
     pieces running along the box's edge. ``ramp`` is the ink of the box's
@@ -578,7 +582,7 @@ def _finer(values: np.ndarray, r0: int, r1: int, c0: int, c1: int) -> np.ndarray
 
 
 def _filled(rings: list[np.ndarray], size: tuple[int, int]) -> np.ndarray:
-    """``rings``, in the grid's pixels, filled by the even-odd rule on the grid and averaged down to a ``size`` window."""
+    """``rings``, in the grid's pixels, filled by the even-odd rule on the grid, averaged down to a ``size`` window."""
     width, height = size
     grid = LETTERING_GRID
     canvas = np.zeros((height * grid, width * grid), dtype=np.uint8)

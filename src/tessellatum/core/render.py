@@ -165,10 +165,10 @@ def render_page(
 
     ``lettering`` is the letters in the lines of text found (see
     ``text.lettering``): inside the lines' boxes, ``lettering.area``, the page
-    prints them, solid in ``ink_gray`` as ``lettering.ink`` covers each pixel,
-    and the lines running through, in place of the printed ink lying in a
-    region -- a scan's own ink would print its letters twice. The letters'
-    ground is bare paper. Printed ink in no region, line art's bold ink and the
+    prints them in ``ink_gray``, as much as ``lettering.ink`` says -- the
+    letters' own tones round their outline -- and the lines running through,
+    in place of the printed ink lying in a region -- a scan's own ink would
+    print its letters twice. The letters' ground is bare paper. Printed ink in no region, line art's bold ink and the
     seam down a line two regions share, keeps them apart, and still prints
     solid. No number goes in the lines' boxes, nor within
     ``labels.TEXT_GAP_MM`` of them (see ``labels.place_labels``). The pixels
