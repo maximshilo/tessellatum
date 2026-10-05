@@ -1,6 +1,7 @@
 """Export: a PNG that prints at the page's size, and a vector PDF of two A4 sheets, the page placed by the print model."""
 
 import re
+from collections import Counter
 
 import cv2
 import numpy as np
@@ -485,3 +486,31 @@ def test_a_painted_pdf_needs_what_the_page_is_painted_with(tmp_path, version):
     with pytest.raises(ValueError, match=f"{version.value.lower()} version"):
         export.save_pdf(_full_page().drawing, PALETTE, tmp_path / "page.pdf", version=version)
 
+
+def test_a_version_there_is_not_is_refused(tmp_path):
+    _, painting = _painted_full_page()
+    with pytest.raises(ValueError, match="no such version"):
+        export.save_pdf(_full_page().drawing, PALETTE, tmp_path / "page.pdf", version="Completed", painting=painting)
+
+
+@pytest.mark.parametrize("version", [Version.COMPLETED, Version.TINTED])
+def test_a_paint_s_path_runs_along_no_boundary_twice_where_two_regions_of_it_touch(tmp_path, version):
+    # On the full page the 2 mm square, region 4, lies in region 0, and both take paint 0: their boundary divides no
+    # paint, so the path round paint 0 doesn't run along it, once for each, which a viewer would draw as a seam.
+    rendered, painting = _painted_full_page()
+    path = tmp_path / "painted.pdf"
+    export.save_pdf(rendered.drawing, PALETTE, path, version=version, painting=painting)
+    content = pdf_reading.sheets(path.read_bytes())[0]["content"]
+
+    paths = re.findall(r"(?s) RG\n(.*?)\nB\*", content)
+    assert len(paths) == len(PALETTE)
+    for fill in paths:
+        steps = Counter()
+        previous = None
+        for word in fill.split("\n"):
+            x, y, op = word.split()
+            point = (x, y)
+            if op == "l":
+                steps[tuple(sorted((previous, point)))] += 1
+            previous = point
+        assert steps and max(steps.values()) == 1

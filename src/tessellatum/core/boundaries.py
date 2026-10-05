@@ -138,7 +138,7 @@ def trace_boundaries(
     height, width = ids.shape
     if ink is not None:
         ids = np.where(ink, _INK_ID, ids)  # a region of its own, so that the boundaries along it are paths of their own
-    paths, corners, starts = _crack_paths(ids)
+    paths, corners, starts, _degree = _crack_paths(ids)
     if ink is not None:
         # A path runs along the ink when the ink is on either side of it; off the page is not ink.
         one, other = _beside(corners[starts[:-1]], corners[starts[:-1] + 1], width + 1, np.asarray(ink, bool), False)
@@ -148,17 +148,18 @@ def trace_boundaries(
     return smooth_boundaries(paths, smoothing_px, max_shift_px, size=(width, height))
 
 
-def _crack_paths(ids: np.ndarray) -> tuple[list[np.ndarray], np.ndarray, np.ndarray]:
+def _crack_paths(ids: np.ndarray) -> tuple[list[np.ndarray], np.ndarray, np.ndarray, np.ndarray]:
     """The crack graph of ``ids`` walked into one path per boundary (see ``kernels.trace_boundary_paths``).
 
     Returns each path's points, Nx2 float64 ``(x, y)`` in page coordinates, as
-    traced, and the corners they are, with where each path starts among them
-    and their count last.
+    traced; the corners they are, with where each path starts among them and
+    their count last; and how many crack edges meet at each corner (see
+    ``crack_edges``).
     """
     stride = ids.shape[1] + 1
     right, down, degree, num_edges = crack_edges(ids)
     if num_edges == 0:
-        return [], np.empty(0, dtype=np.int32), np.zeros(1, dtype=np.int32)
+        return [], np.empty(0, dtype=np.int32), np.zeros(1, dtype=np.int32), degree
     corners, starts = kernels.trace_boundary_paths(right, down, degree, stride, num_edges)
 
     # Every corner of every path at once: the per-path work is then a slice.
@@ -166,7 +167,7 @@ def _crack_paths(ids: np.ndarray) -> tuple[list[np.ndarray], np.ndarray, np.ndar
     rows, columns = np.divmod(corners, stride)
     points[:, 0] = columns - 0.5
     points[:, 1] = rows - 0.5
-    return [points[begin:end] for begin, end in zip(starts[:-1], starts[1:])], corners, starts
+    return [points[begin:end] for begin, end in zip(starts[:-1], starts[1:])], corners, starts, degree
 
 
 def region_outlines(
@@ -184,6 +185,13 @@ def region_outlines(
     filled side by side they leave no gap and overlap nowhere. The pixels in no
     region (id -1) get no outline.
 
+    The one place a ring leaves the page's line is a boundary that leaves a
+    junction and comes back to it, round a region touching the rest of its
+    neighbors at a single corner: ``smooth_boundaries`` takes it for a closed
+    line, with no junction on it, and moves the junction too, up to
+    ``max_shift_px``. Here its two ends go back on the junction, where the
+    other boundaries meeting there end, so that the rings it joins meet them.
+
     Returns Nx2 float64 ``(x, y)`` arrays in page coordinates, for every region
     id on the map.
     """
@@ -191,12 +199,16 @@ def region_outlines(
     if ids.size == 0:
         return {}
     height, width = ids.shape
-    paths, corners, starts = _crack_paths(ids)
+    paths, corners, starts, degree = _crack_paths(ids)
     if smoothing_px is None:
         smoothing_px = smoothing_length_px((width, height))
+    traced = paths
     paths = smooth_boundaries(paths, smoothing_px, max_shift_px, size=(width, height))
 
     first, last = corners[starts[:-1]], corners[starts[1:] - 1]
+    for index in np.flatnonzero((first == last) & (degree[first] >= 3)):
+        paths[index] = paths[index].copy()
+        paths[index][[0, -1]] = traced[index][0]
     one, other = _beside(first, corners[starts[:-1] + 1], width + 1, ids, _OFF_PAGE)
     bordering: dict[int, list[int]] = {}
     for index, (a, b) in enumerate(zip(one.tolist(), other.tolist())):

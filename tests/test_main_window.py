@@ -20,6 +20,7 @@ from tessellatum.core.print_size import print_scale  # noqa: E402
 from tessellatum.core.render import PageStyle  # noqa: E402
 from tessellatum.gui import main_window  # noqa: E402
 from tessellatum.gui.main_window import MainWindow  # noqa: E402
+from tessellatum.gui.worker import PipelineWorker  # noqa: E402
 
 import pdf_reading  # noqa: E402
 
@@ -247,7 +248,7 @@ def test_every_version_of_a_preview_is_drawn_with_it_and_the_bar_switches_betwee
         assert shown[version] == page.image(version).getpixel(middle)
     assert shown[Version.PAGE] == (255, 255, 255)  # bare paper, to paint
     assert shown[Version.COMPLETED] in page.palette_rgb  # painted
-    assert shown[Version.PAGE] != shown[Version.TINTED] != shown[Version.COMPLETED]
+    assert len(set(shown.values())) == len(Version)  # each version its own
 
     # Switching keeps the view where it is; a new preview keeps the version shown.
     window.preview.scale(2, 2)
@@ -258,6 +259,48 @@ def test_every_version_of_a_preview_is_drawn_with_it_and_the_bar_switches_betwee
     drive.wait()
     assert bar.version() is Version.TINTED
     assert _pixmap_pixel(drive, *middle) == window.current_page.image(Version.TINTED).getpixel(middle)
+
+
+def test_opening_another_picture_leaves_the_last_one_s_versions_out_of_reach(drive, tmp_path):
+    window = drive.window
+    window.current_image_bgr = _blocks((600, 400))
+    window.generate_preview()
+    drive.wait()
+    assert window.version_bar.isEnabled()
+
+    Image.fromarray(_blocks((300, 200))[:, :, ::-1]).save(tmp_path / "other.png")
+    drive.open_path = str(tmp_path / "other.png")
+    window.open_image()
+
+    assert not window.version_bar.isEnabled() and not window.controls.export_button.isEnabled()
+
+
+def test_cancelling_while_the_versions_are_drawn_cancels_the_preview(monkeypatch):
+    drawn = []
+
+    class Page:
+        def image(self, version):
+            drawn.append(version)
+
+    def finishing_as_cancelled(*args, should_cancel, **kwargs):
+        """A pipeline that finishes just as Abort is clicked: done, it no longer looks."""
+        deadline = time.monotonic() + TIMEOUT_S
+        while not should_cancel():
+            assert time.monotonic() < deadline
+            time.sleep(0.005)
+        return Page()
+
+    monkeypatch.setattr(pipeline, "generate", finishing_as_cancelled)
+    worker = PipelineWorker(_blocks((60, 40)), difficulty.params_for_preset("Easy"), 60, versions=tuple(Version))
+    outcomes = []
+    worker.succeeded.connect(lambda page: outcomes.append("succeeded"))
+    worker.cancelled.connect(lambda: outcomes.append("cancelled"))
+    worker.start()
+    worker.requestInterruption()
+    assert worker.wait(TIMEOUT_S * 1000)
+    _app.processEvents()
+
+    assert outcomes == ["cancelled"] and drawn == []
 
 
 def test_the_version_asked_for_is_exported(drive, tmp_path):
@@ -286,4 +329,3 @@ def test_the_version_asked_for_is_exported(drive, tmp_path):
     page_sheet = pdf_reading.sheets((tmp_path / "tinted.pdf").read_bytes())[0]
     assert page_sheet["content"].endswith("q /Mu gs /Pg Do Q\nQ")  # the page laid over its wash
     assert drive.dialogs[-1][1] == "Export complete" and len(drive.dialogs) == 2
-

@@ -178,7 +178,7 @@ class GeneratedPage:
 
     def image(self, version: Version = Version.PAGE) -> Image.Image:
         """``version`` of the page (see ``painting``): the page itself, or it painted in. Each is drawn once, when first
-        asked for, and kept."""
+        asked for, and kept, so ``page`` and ``painting`` are not to be changed after that."""
         if version not in self._images:
             self._images[version] = render_version(version, self.page, self.painting)
         return self._images[version]
@@ -566,7 +566,6 @@ def generate(
     legend = render_legend(used_palette_bgr, width=w, px_per_mm=print_scale((w, h)).px_per_mm)
     report("render")
 
-    palette_rgb = [(int(b[2]), int(b[1]), int(b[0])) for b in used_palette_bgr]
     # Legend colors first, so a color index means the same color in region_color as in the renumbered regions.
     order = used_color_indices + [i for i in range(len(palette_bgr)) if i not in remap]
     new_index = np.empty(len(order), dtype=np.int32)
@@ -578,6 +577,7 @@ def generate(
         ink=rendered.picture_ink,
         ink_gray=rendered.drawing.ink_gray,
     )
+    palette_rgb = painting.palette_rgb[: len(used_color_indices)]
 
     analysis = None
     if collect_analysis:

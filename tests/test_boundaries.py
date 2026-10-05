@@ -466,3 +466,26 @@ def test_two_neighbors_outlines_run_along_the_line_the_page_draws_between_them(p
             expected[step] += region_sides(crack)
     drawn = Counter(step for rings in outlines.values() for ring in rings for step in steps(ring))
     assert drawn == +expected
+
+
+def test_a_boundary_that_leaves_a_junction_and_comes_back_keeps_it_in_every_ring_that_meets_there():
+    # Region 1 touches region 2 at one corner only, so the outline it shares with region 0 runs from that junction round
+    # to it again. Smoothing takes it for a closed line and moves the junction off it, as the page's own line shows; the
+    # rings put it back, so that the three regions still meet there and two neighbors' rings still share every step.
+    ids = np.zeros((12, 12), dtype=np.int32)
+    ids[0:5, 0:5] = 2
+    ids[5:10, 5:10] = 1
+    junction = (4.5, 4.5)
+    (loop,) = [line for line in trace_boundaries(ids) if np.array_equal(line[0], line[-1])]
+    assert tuple(loop[0]) != junction
+
+    outlines = region_outlines(ids)
+
+    for region in (0, 1, 2):
+        assert any((ring == junction).all(axis=1).any() for ring in outlines[region]), region
+    steps = Counter()
+    for rings in outlines.values():
+        for ring in rings:
+            steps.update(tuple(sorted((tuple(a), tuple(b)))) for a, b in zip(ring[:-1].tolist(), ring[1:].tolist()))
+    inner = [count for step, count in steps.items() if not any(v in (-0.5, 11.5) for point in step for v in point)]
+    assert inner and all(count == 2 for count in inner)

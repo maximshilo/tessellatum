@@ -109,6 +109,8 @@ def render_version(version: Version, page: Image.Image, painting: Painting | Non
     """The image of ``version`` of a page: ``page`` itself, or it painted with ``painting``."""
     if version is Version.PAGE:
         return page
+    if version not in (Version.COMPLETED, Version.TINTED):
+        raise ValueError(f"no such version of the page: {version!r}")
     if painting is None:
         raise ValueError(f"the {version.value.lower()} version needs what the page is painted with")
     return completed(painting) if version is Version.COMPLETED else tinted(page, painting)

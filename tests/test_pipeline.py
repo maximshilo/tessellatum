@@ -789,8 +789,7 @@ def test_the_tinted_version_is_the_page_under_a_wash_of_its_paint(sample_image_b
     analysis, page = result.analysis, np.asarray(result.page).astype(int)
     tinted = np.asarray(result.image(Version.TINTED)).astype(int)
     wash = np.array([tint_rgb(tuple(bgr[::-1])) for bgr in analysis.palette_bgr])[analysis.region_color]
-    wash = wash[analysis.region_id_map]  # every pixel is in a region here
+    wash = np.vstack([wash, [255, 255, 255]])[analysis.region_id_map]  # -1, in no region, takes the last: paper
     np.testing.assert_array_equal(tinted, np.rint(page * wash / 255))
     paper = (page == 255).all(axis=2)
     assert paper.any() and (tinted[paper] == wash[paper]).all()  # where the page is bare, the wash alone
-

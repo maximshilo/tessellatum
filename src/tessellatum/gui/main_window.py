@@ -102,6 +102,7 @@ class MainWindow(QMainWindow):
         self.controls.set_thumbnail(_bgr_to_pixmap(self.current_image_bgr))
         self.current_page = None
         self.controls.set_export_enabled(False)
+        self.version_bar.setEnabled(False)  # the preview left showing is the last picture's, until the next one
         self.statusBar().showMessage(f"Loaded {path.name}. Click \"Generate Preview\".")
 
     # -- Preview ----------------------------------------------------------

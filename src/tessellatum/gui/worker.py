@@ -51,6 +51,8 @@ class PipelineWorker(QThread):
                 handling=self._handling,
             )
             for version in self._versions:
+                if self.isInterruptionRequested():
+                    raise PipelineCancelled()
                 result.image(version)
         except PipelineCancelled:
             self.cancelled.emit()

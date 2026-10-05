@@ -80,10 +80,10 @@ def save_pdf(
     Nothing on the sheet is an image.
 
     ``version`` is the version of the page the first sheet prints (see
-    ``painting``), painted with ``painting`` unless it is the page itself. Its
-    regions are filled along a path round each one made of the page's lines
-    (see ``boundaries.region_outlines``), so that two neighbors meet on the
-    same line:
+    ``painting``), painted with ``painting`` unless it is the page itself. The
+    area each paint covers is filled along a path round it made of the page's
+    lines (see ``boundaries.region_outlines``), so that two neighbors meet on
+    the same line:
 
     - the completed version fills every region with its paint and prints the
       letters and the ink over it, solid, as above; no line and no number;
@@ -117,6 +117,8 @@ def _page_sheet(
     printed_w, printed_h = scale.printed_size_mm
     left, top = (sheet[0] - printed_w) / 2, (sheet[1] - printed_h) / 2
     pt_per_px = _PT_PER_MM / scale.px_per_mm
+    if not isinstance(version, Version):
+        raise ValueError(f"no such version of the page: {version!r}")
     if version is not Version.PAGE and painting is None:
         raise ValueError(f"the {version.value.lower()} version needs what the page is painted with")
 
@@ -132,8 +134,8 @@ def _page_sheet(
     elif version is Version.COMPLETED:
         resources = {}
         ops += _fill_ops(painting, painting.palette_rgb, scale.px_per_mm)
-        ops += _picture_ink_ops(drawing)
-    else:
+        ops += _picture_ink_ops(drawing, darken=False)
+    elif version is Version.TINTED:
         darken = document.add(b"<< /Type /ExtGState /BM /Darken >>")
         multiply = document.add(b"<< /Type /ExtGState /BM /Multiply >>")
         # The page, drawn on its own as on its sheet -- an isolated group -- then multiplied into the wash.
@@ -146,6 +148,8 @@ def _page_sheet(
         resources = {"ExtGState": {"Mu": multiply}, "XObject": {"Pg": page}}
         ops += _fill_ops(painting, [tint_rgb(rgb) for rgb in painting.palette_rgb], scale.px_per_mm)
         ops.append("q /Mu gs /Pg Do Q")
+    else:
+        raise ValueError(f"no such version of the page: {version!r}")
     ops.append("Q")
     document.page(sheet, "\n".join(ops), resources)
 
@@ -158,11 +162,7 @@ def _page_ops(drawing: PageDrawing, px_per_mm: float) -> list[str]:
     ops = [f"1 J 1 j {_num(line_width)} w"]
     if drawing.strokes:
         ops += [f"{_gray(style.line_gray)} G", _path(drawing.strokes, offset=0.5), "S"]
-    if drawing.lettering:
-        # The letters, the darker of them and the lines, as the page prints them.
-        ops += [f"q /Dk gs {_gray(drawing.ink_gray)} g", _path(drawing.lettering, offset=0.5), "f* Q"]
-    if drawing.ink is not None and drawing.ink.any():
-        ops += [f"{_gray(drawing.ink_gray)} g", _path(ink_outline(drawing.ink), offset=0.5), "f*"]
+    ops += _picture_ink_ops(drawing, darken=True)
     leaders = [label.leader for label in drawing.labels if label.leader is not None]
     if leaders:
         dot = line_width * style.leader_dot_ratio / 2
@@ -180,27 +180,33 @@ def _page_ops(drawing: PageDrawing, px_per_mm: float) -> list[str]:
 
 
 def _fill_ops(painting: Painting, colors: Sequence[tuple[int, int, int]], px_per_mm: float) -> list[str]:
-    """Every region filled in its paint's entry of ``colors``, one path a paint, its edge stroked ``FILL_EDGE_MM`` wide.
+    """Every paint's area filled in its entry of ``colors``, its edge stroked ``FILL_EDGE_MM`` wide.
 
-    A paint's path is the rings of all its regions, filled by the even-odd rule: regions never overlap, so a point in
-    one is inside its rings alone, and two regions of one paint are both filled even where they touch.
+    The areas are outlined from the map of the paints rather than of the
+    regions: where two regions of one paint touch, no line divides their paint,
+    and a path round each would run along their boundary twice, which a viewer
+    smoothing the edges draws as a seam. Elsewhere the two maps have the same
+    boundaries and junctions, so the paths are the page's lines.
     """
-    rings: dict[int, list[np.ndarray]] = {}
     region_color = np.asarray(painting.region_color)
-    for region, outline in sorted(region_outlines(painting.region_id_map).items()):
-        rings.setdefault(int(region_color[region]), []).extend(outline)
+    paints = np.where(painting.region_id_map >= 0, region_color[np.clip(painting.region_id_map, 0, None)], -1)
     ops = [f"1 J 1 j {_num(FILL_EDGE_MM * px_per_mm)} w"]
-    for paint in sorted(rings):
+    for paint, rings in sorted(region_outlines(paints).items()):
         rgb = " ".join(_gray(v) for v in colors[paint])
-        ops += [f"{rgb} rg {rgb} RG", _path(rings[paint], offset=0.5), "B*"]
+        ops += [f"{rgb} rg {rgb} RG", _path(rings, offset=0.5), "B*"]
     return ops
 
 
-def _picture_ink_ops(drawing: PageDrawing) -> list[str]:
-    """What the page prints of the picture itself, solid in its ink's gray: the letters, then the ink."""
+def _picture_ink_ops(drawing: PageDrawing, darken: bool) -> list[str]:
+    """What the page prints of the picture itself, in its ink's gray: the letters, then the ink, solid.
+
+    ``darken`` draws the letters in the Darken blend mode (/Dk), the darker of them and what is under them, as the page
+    prints them over its lines.
+    """
     ops = []
     if drawing.lettering:
-        ops += [f"{_gray(drawing.ink_gray)} g", _path(drawing.lettering, offset=0.5), "f*"]
+        fill = f"q /Dk gs {_gray(drawing.ink_gray)} g" if darken else f"{_gray(drawing.ink_gray)} g"
+        ops += [fill, _path(drawing.lettering, offset=0.5), "f* Q" if darken else "f*"]
     if drawing.ink is not None and drawing.ink.any():
         ops += [f"{_gray(drawing.ink_gray)} g", _path(ink_outline(drawing.ink), offset=0.5), "f*"]
     return ops
