@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import weakref
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Hashable, TypeVar
 
@@ -16,6 +16,7 @@ from PIL import Image
 from tessellatum.core import faces, ink, kernels, marks, subject, text, tones
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import render_legend
+from tessellatum.core.painting import Painting, Version, render_version
 from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, MIN_REGION_AREA_MM2, long_edge_at_dpi, print_scale
 from tessellatum.core.quantize import quantize
 from tessellatum.core.regions import (
@@ -172,6 +173,15 @@ class GeneratedPage:
     num_regions: int
     analysis: PageAnalysis | None = None  # only with generate(..., collect_analysis=True)
     drawing: PageDrawing | None = None  # what ``page`` was drawn from, to draw it again off the pixel grid (see ``export``)
+    painting: Painting | None = None  # what ``page`` is painted with, for its painted versions (see ``painting``)
+    _images: dict[Version, Image.Image] = field(default_factory=dict, init=False, repr=False, compare=False)
+
+    def image(self, version: Version = Version.PAGE) -> Image.Image:
+        """``version`` of the page (see ``painting``): the page itself, or it painted in. Each is drawn once, when first
+        asked for, and kept."""
+        if version not in self._images:
+            self._images[version] = render_version(version, self.page, self.painting)
+        return self._images[version]
 
 
 class _StageCache:
@@ -557,17 +567,23 @@ def generate(
     report("render")
 
     palette_rgb = [(int(b[2]), int(b[1]), int(b[0])) for b in used_palette_bgr]
+    # Legend colors first, so a color index means the same color in region_color as in the renumbered regions.
+    order = used_color_indices + [i for i in range(len(palette_bgr)) if i not in remap]
+    new_index = np.empty(len(order), dtype=np.int32)
+    new_index[order] = np.arange(len(order), dtype=np.int32)
+    painting = Painting(
+        region_id_map=region_id_map,
+        region_color=new_index[region_color],
+        palette_rgb=[(int(b[2]), int(b[1]), int(b[0])) for b in palette_bgr[order]],
+        ink=rendered.picture_ink,
+        ink_gray=rendered.drawing.ink_gray,
+    )
 
     analysis = None
     if collect_analysis:
-        # Legend colors first, so a color index means the same color in
-        # region_color as in the renumbered regions.
-        order = used_color_indices + [i for i in range(len(palette_bgr)) if i not in remap]
-        new_index = np.empty(len(order), dtype=np.int32)
-        new_index[order] = np.arange(len(order), dtype=np.int32)
         analysis = PageAnalysis(
             region_id_map=region_id_map,
-            region_color=new_index[region_color],
+            region_color=painting.region_color,
             palette_bgr=palette_bgr[order],  # a copy: palette_bgr belongs to the stage cache
             legend_size=len(used_color_indices),
             min_region_area_px=min_area_px,
@@ -597,4 +613,5 @@ def generate(
         num_regions=len(regions),
         analysis=analysis,
         drawing=rendered.drawing,
+        painting=painting,
     )

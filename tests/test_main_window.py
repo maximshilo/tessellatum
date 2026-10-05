@@ -14,6 +14,7 @@ from PIL import Image  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tessellatum.core import difficulty, pipeline  # noqa: E402
+from tessellatum.core.painting import Version  # noqa: E402
 from tessellatum.core.pipeline import Handling, PipelineCancelled  # noqa: E402
 from tessellatum.core.print_size import print_scale  # noqa: E402
 from tessellatum.core.render import PageStyle  # noqa: E402
@@ -46,6 +47,7 @@ class _Drive:
         self.dialogs: list[tuple[str, str, str]] = []
         self.open_path = ""
         self.save_path = ""
+        self.save_names: list[str] = []  # the file names the save dialog was opened with
         self.calls: list[tuple[tuple, dict]] = []
         drive = self
 
@@ -68,7 +70,8 @@ class _Drive:
                 return drive.open_path, ""
 
             @staticmethod
-            def getSaveFileName(*args, **kwargs):
+            def getSaveFileName(parent, caption, name, file_filter):
+                drive.save_names.append(name)
                 return drive.save_path, ""
 
         monkeypatch.setattr(main_window, "QMessageBox", MessageBox)
@@ -217,3 +220,70 @@ def test_on_a_short_window_the_panel_scrolls_and_its_scroll_bar_covers_none_of_i
     assert scroll.verticalScrollBar().maximum() > 0  # it scrolls
     assert scroll.viewport().width() >= window.controls.minimumSizeHint().width()
     window.hide()
+
+
+def _pixmap_pixel(drive, x: int, y: int) -> tuple[int, int, int]:
+    color = drive.window.preview._pixmap_item.pixmap().toImage().pixelColor(x, y)
+    return color.red(), color.green(), color.blue()
+
+
+def test_every_version_of_a_preview_is_drawn_with_it_and_the_bar_switches_between_them(drive):
+    window = drive.window
+    window.current_image_bgr = _blocks((600, 400))
+    bar = window.version_bar
+    assert not bar.isEnabled() and bar.version() is Version.PAGE  # nothing to show yet
+    window.generate_preview()
+    drive.wait()
+
+    page = window.current_page
+    assert bar.isEnabled()
+    assert set(page._images) == set(Version)  # drawn by the worker, with the page
+    middle = (150, 100)  # the middle of the top left block, in the page's pixels
+    shown = {}
+    for version in Version:
+        bar.buttons[version].click()
+        assert bar.version() is version
+        shown[version] = _pixmap_pixel(drive, *middle)
+        assert shown[version] == page.image(version).getpixel(middle)
+    assert shown[Version.PAGE] == (255, 255, 255)  # bare paper, to paint
+    assert shown[Version.COMPLETED] in page.palette_rgb  # painted
+    assert shown[Version.PAGE] != shown[Version.TINTED] != shown[Version.COMPLETED]
+
+    # Switching keeps the view where it is; a new preview keeps the version shown.
+    window.preview.scale(2, 2)
+    transform = window.preview.transform()
+    bar.buttons[Version.TINTED].click()
+    assert window.preview.transform() == transform
+    window.generate_preview()
+    drive.wait()
+    assert bar.version() is Version.TINTED
+    assert _pixmap_pixel(drive, *middle) == window.current_page.image(Version.TINTED).getpixel(middle)
+
+
+def test_the_version_asked_for_is_exported(drive, tmp_path):
+    window = drive.window
+    window.current_image_bgr = _blocks((600, 400))
+    controls = window.controls
+    controls.version_combo.setCurrentIndex(controls.version_combo.findData(Version.COMPLETED))
+    drive.save_path = str(tmp_path / "completed")
+    window.export_page()
+    drive.wait()
+
+    assert drive.save_names == ["coloring_page_completed.png"]
+    (image, params, long_edge), kwargs = drive.calls[-1]
+    expected = pipeline.generate(image, params, long_edge, style=kwargs["style"], handling=kwargs["handling"])
+    with Image.open(tmp_path / "completed.png") as png:
+        top = png.convert("RGB").crop((0, 0, 600, 400))
+        assert top.tobytes() == expected.image(Version.COMPLETED).tobytes()
+    assert drive.dialogs[-1][1] == "Export complete"
+
+    controls.version_combo.setCurrentIndex(controls.version_combo.findData(Version.TINTED))
+    controls.pdf_radio.setChecked(True)
+    drive.save_path = str(tmp_path / "tinted.pdf")
+    window.export_page()
+    drive.wait()
+    assert drive.save_names[-1] == "coloring_page_tinted.pdf"
+    page_sheet = pdf_reading.sheets((tmp_path / "tinted.pdf").read_bytes())[0]
+    assert page_sheet["content"].endswith("q /Mu gs /Pg Do Q\nQ")  # the page laid over its wash
+    assert drive.dialogs[-1][1] == "Export complete" and len(drive.dialogs) == 2
+

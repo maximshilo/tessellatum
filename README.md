@@ -38,6 +38,22 @@ run the binary from a terminal to see the error.
 The panel on the left holds every setting; "Generate Preview" draws the page
 with them, and "Export…" draws it again at print resolution.
 
+Every preview is drawn in three versions, and the bar above it switches
+between them, keeping the zoom and the scroll:
+
+- **Page**: the coloring page as it prints.
+- **Completed**: the page painted in. Every region is filled in its legend
+  color, which covers the lines and numbers, as paint covers their grays;
+  what the page prints of the picture itself (line art's ink, the marks in a
+  face, the letters of a sign) shows on top, and paper the page leaves bare
+  stays white. It is the finished painting the benchmarks score, but for the
+  letters' soft edges, laid over the paint rather than over white.
+- **Tinted**: the page under a faint wash of its colors, each 40% of the way
+  from white, with the lines, numbers and ink showing through as through a
+  translucent paint (the page multiplied by the wash): a guide to paint from.
+
+The settings:
+
 - **Difficulty**: Easy, Medium or Hard, or Custom to set the colors, the
   smallest region and the smoothing yourself (see "How it works").
 - **Lines and numbers**: how wide the lines print on the A4 page, 0.2 to
@@ -57,7 +73,8 @@ with them, and "Export…" draws it again at print resolution.
     printed, their ground left bare, and no number goes on them.
 - **Export** renders the page at 300 dpi on A4: a long edge of 2244 to
   3272 px, depending on the picture's shape, or the picture's own size where
-  that is smaller, since nothing is upscaled.
+  that is smaller, since nothing is upscaled. *Version* picks which of the
+  three versions to export, in either format; the legend comes with each.
   - **PDF**: two A4 sheets of vector art. The page fills the printable area
     inside 10 mm margins, centered, on a landscape sheet when the picture is
     wider than tall. Its lines are paths of the width asked for and its numbers
@@ -69,9 +86,12 @@ with them, and "Export…" draws it again at print resolution.
     least 0.08 mm wide (most of a pixel on a page finer than about 225 dpi,
     where a pixel is narrower). The letters of signs and captions are their
     outline, traced between the page's pixels and filled, so they print as
-    smooth as the picture shows them. Nothing on the sheet is an image. The
-    legend gets a portrait sheet of its own, its swatches 12 mm squares in
-    their exact colors.
+    smooth as the picture shows them. The completed and tinted versions fill
+    each region with its paint or its wash along a path round it made of the
+    page's own lines, so two neighbors meet on the line between them; the
+    tinted one lays the page over the wash in the Multiply blend mode. Nothing
+    on the sheet is an image. The legend gets a portrait sheet of its own, its
+    swatches 12 mm squares in their exact colors.
   - **PNG**: the page above its legend in one image, which records its
     resolution, so it prints as large as the PDF's page.
 

@@ -132,6 +132,10 @@ class RenderedPage:
     # HxW bool: the ink as printed, less the detail ink cleared behind numbers written on hatching; None without.
     printed_ink: np.ndarray | None = None
     drawing: PageDrawing | None = None  # what the page was drawn from
+    # HxW uint8: the ink the page prints of the picture itself, 0 = bare paper, 255 = solid, in the drawing's
+    # ``ink_gray``: the printed ink solid, and the letters in the lines of text in their own tones; none of the lines,
+    # the numbers or their leaders: what still shows on the page painted in (see ``painting``).
+    picture_ink: np.ndarray | None = None
 
 
 def render_page(
@@ -179,7 +183,8 @@ def render_page(
     Returns the page, plus what it was built from: the ink the lines and the
     printed ink put on it, the geometry each line was drawn from, where each
     number went, the ink of the leader lines that point a number written
-    outside its region into it, and the ink printed.
+    outside its region into it, the ink printed, and the ink the page prints of
+    the picture itself, without the lines and numbers.
     """
     inked = ink is not None and bool(ink.any())
     strokes = trace_boundaries(region_id_map, ink=ink if inked else None)
@@ -239,6 +244,10 @@ def render_page(
         left, top = label.box[0], label.box[1]
         draw.text((left - bbox[0], top - bbox[1]), label.text, fill=label_fill, font=font(label.font_size))
 
+    picture_ink = np.where(lettering_area, lettering.ink, 0).astype(np.uint8) if lettered else np.zeros_like(lines_only)
+    if inked:
+        picture_ink[solid(ink)] = PAPER
+
     drawing = PageDrawing(
         size=size,
         style=style,
@@ -256,6 +265,7 @@ def render_page(
         leaders=Image.fromarray(PAPER - leader_coverage, "L"),
         printed_ink=ink if inked else None,
         drawing=drawing,
+        picture_ink=picture_ink,
     )
 
 

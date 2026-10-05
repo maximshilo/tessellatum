@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tessellatum.core import difficulty  # noqa: E402
+from tessellatum.core.painting import Version  # noqa: E402
 from tessellatum.core.pipeline import Handling  # noqa: E402
 from tessellatum.core.render import TONES, PageStyle  # noqa: E402
 from tessellatum.gui import controls_panel  # noqa: E402
@@ -106,3 +107,15 @@ def test_every_step_of_the_picture_handling_starts_on_and_each_box_turns_its_own
         box.setChecked(False)
         assert panel.get_handling() == Handling(**{name: False})
         box.setChecked(True)
+
+
+def test_any_version_of_the_page_can_be_exported_and_the_page_itself_is_the_default(panel):
+    combo = panel.version_combo
+    assert [combo.itemData(i) for i in range(combo.count())] == list(Version)
+    assert [combo.itemText(i) for i in range(combo.count())] == [version.value for version in Version]
+    assert panel.get_export_version() is Version.PAGE
+    for index, version in enumerate(Version):
+        assert combo.itemData(index, Qt.ToolTipRole) == version.description
+        combo.setCurrentIndex(index)
+        assert panel.get_export_version() is version
+
