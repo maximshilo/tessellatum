@@ -45,6 +45,7 @@ def settle_tones(
     region_id_map: np.ndarray,
     region_color: np.ndarray,
     palette_bgr: np.ndarray,
+    min_step: float = MIN_STEP_DE00,
 ) -> tuple[np.ndarray, np.ndarray]:
     """The page's regions and their colors with the tones inside ``where`` (HxW bool) settled.
 
@@ -56,7 +57,7 @@ def settle_tones(
 
     Each of those regions first takes the palette color its pixels are
     nearest, summed over them; on a tie it keeps the color it has. Then,
-    while some region would be less than ``MIN_STEP_DE00`` a pixel further
+    while some region would be less than ``min_step`` a pixel further
     from the picture in a neighbor's color, the one with the least to lose
     joins that neighbor and takes its color. Two that have joined count as
     one from then on, by all their pixels. A region that joins one lying
@@ -121,7 +122,7 @@ def settle_tones(
         len(palette_bgr),
     )
     error = held.astype(np.float64) @ _cell_distances(cells, palette_bgr)
-    settled_colors = _settle(error, pixels[settled].astype(np.float64), colors[settled], touching, beside)
+    settled_colors = _settle(error, pixels[settled].astype(np.float64), colors[settled], touching, beside, min_step)
 
     if np.array_equal(settled_colors, colors[settled]):
         return ids, colors
@@ -146,7 +147,12 @@ def _cell_distances(cells: np.ndarray, palette_bgr: np.ndarray) -> np.ndarray:
 
 
 def _settle(
-    error: np.ndarray, pixels: np.ndarray, colors: np.ndarray, touching: np.ndarray, beside: np.ndarray
+    error: np.ndarray,
+    pixels: np.ndarray,
+    colors: np.ndarray,
+    touching: np.ndarray,
+    beside: np.ndarray,
+    min_step: float = MIN_STEP_DE00,
 ) -> np.ndarray:
     """The color each region ends with (see ``settle_tones``); regions that join end with one color.
 
@@ -173,7 +179,7 @@ def _settle(
         step = np.concatenate([to_region, to_color], axis=1) / pixels[:, None]
         best = int(np.argmin(step))
         mover, target = divmod(best, step.shape[1])
-        if not step[mover, target] < MIN_STEP_DE00:
+        if not step[mover, target] < min_step:
             break
         open_[mover] = False
         others = touching[mover].copy()

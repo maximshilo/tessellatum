@@ -1,11 +1,16 @@
-"""Left-hand controls: open image, difficulty, page style, picture handling, what to export, generate/export."""
+"""Left-hand controls: open image, difficulty and every setting, page style, picture handling, export, generate.
+
+Each setting the app offers (see ``core.settings``) gets a slider, built from
+its entry there: its range, its step, its unit and its tooltip. The difficulty
+presets fill in the difficulty's settings, and moving any of those picks
+Custom. Reset puts every setting back to its default.
+"""
 
 from __future__ import annotations
 
 import math
-from typing import Callable
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -18,29 +23,135 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QSlider,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt
 
-from tessellatum.core import difficulty
+from tessellatum.core import difficulty, settings
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import Handling
-from tessellatum.core.print_size import OUTLINE_WIDTH_MM
-from tessellatum.core.render import DEFAULT_TONE, LINE_WIDTH_MM_RANGE, LINE_WIDTH_MM_STEP, TONES, PageStyle
+from tessellatum.core.render import DEFAULT_TONE, TONES, PageStyle
+from tessellatum.core.settings import Setting
 
 THUMBNAIL_SIZE = 220
 
-# The region-size slider moves in equal ratios rather than equal steps: its
-# largest region is about 17 times its smallest, and 30 -> 60 mm² is as big a change
-# on the page as 250 -> 500 mm².
-REGION_SLIDER_STEPS = 100
+# A slider over a setting that moves in equal ratios (``Setting.log``) has this many steps: the region size's, from 2
+# to 500 mm², about 5% apart, so that 2 -> 4 mm² is as big a move as 250 -> 500 mm².
+LOG_SLIDER_STEPS = 120
 
 TONE_TOOLTIPS = {
     "Light": "Fainter lines and numbers, which vanish under the palest paints.",
     "Medium": "Gray lines, and lighter gray numbers that don't read as writing in the picture.",
     "Dark": "Darker lines and numbers, easier to follow on paper.",
 }
+
+CUSTOM_TOOLTIP = "Set every difficulty setting yourself. Moving any of them picks Custom, starting from the preset."
+
+# Where the panel keeps its settings between runs (see ``ControlsPanel``): the preset, the tone, each setting by name,
+# and each switch.
+_PRESET_KEY = "difficulty/preset"
+_TONE_KEY = "style/tone"
+_SETTING_KEY = "settings/{}"
+_SWITCH_KEY = "handling/{}"
+
+
+def slider_steps(setting: Setting) -> int:
+    """How many steps a slider over ``setting`` has: its range in steps of its own, or ``LOG_SLIDER_STEPS``."""
+    if setting.log:
+        return LOG_SLIDER_STEPS
+    return round((setting.maximum - setting.minimum) / setting.step)
+
+
+def slider_value(setting: Setting, position: int) -> float:
+    """The value at a position of a slider over ``setting``."""
+    if setting.log:
+        value = setting.minimum * (setting.maximum / setting.minimum) ** (position / LOG_SLIDER_STEPS)
+    else:
+        value = round(setting.minimum + position * setting.step, 6)
+    return setting.clamp(value)
+
+
+def slider_position(setting: Setting, value: float) -> int:
+    """The position of a slider over ``setting`` nearest to ``value``."""
+    value = setting.clamp(value)
+    if setting.log:
+        ratio = math.log(value / setting.minimum) / math.log(setting.maximum / setting.minimum)
+        return round(LOG_SLIDER_STEPS * ratio)
+    return round((value - setting.minimum) / setting.step)
+
+
+class SettingSlider(QWidget):
+    """A slider over one setting, its value and unit beside it.
+
+    It holds the value it was set to exactly, though that may fall between two
+    of its steps (a preset's 125 mm², say), until the slider is moved.
+    ``edited`` is emitted only when the user moves it.
+    """
+
+    edited = Signal()
+
+    def __init__(self, setting: Setting, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setting = setting
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(0, slider_steps(setting))
+        self.value_label = QLabel()
+        self.value_label.setFixedWidth(72)
+        self.setToolTip(setting.tooltip)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.slider)
+        layout.addWidget(self.value_label)
+        self._value = setting.default
+        self.set_value(setting.default)
+        self.slider.valueChanged.connect(self._on_moved)
+
+    def value(self) -> float:
+        return self._value
+
+    def set_value(self, value: float) -> None:
+        """Show ``value``, held within the setting's range, without counting it as the user's edit."""
+        self._value = self.setting.clamp(value)
+        self.slider.blockSignals(True)
+        self.slider.setValue(slider_position(self.setting, self._value))
+        self.slider.blockSignals(False)
+        self.value_label.setText(self.setting.text(self._value))
+
+    def _on_moved(self, position: int) -> None:
+        self._value = slider_value(self.setting, position)
+        self.value_label.setText(self.setting.text(self._value))
+        self.edited.emit()
+
+
+class Section(QWidget):
+    """A titled part of the panel that folds away: a button with its title, and the controls under it."""
+
+    def __init__(self, title: str, expanded: bool = True, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.toggle = QToolButton()
+        self.toggle.setText(title)
+        self.toggle.setCheckable(True)
+        self.toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.toggle.setStyleSheet("QToolButton { border: none; font-weight: bold; }")
+        self.body = QWidget()
+        self.form = QFormLayout(self.body)
+        self.form.setContentsMargins(12, 0, 0, 4)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addWidget(self.toggle)
+        layout.addWidget(self.body)
+        self.toggle.toggled.connect(self.set_expanded)
+        self.toggle.setChecked(expanded)
+        self.set_expanded(expanded)
+
+    def set_expanded(self, expanded: bool) -> None:
+        self.toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+        self.body.setVisible(expanded)
+
+    def is_expanded(self) -> bool:
+        return self.toggle.isChecked()
 
 
 class ControlsPanel(QWidget):
@@ -49,8 +160,11 @@ class ControlsPanel(QWidget):
     export_requested = Signal()
     abort_requested = Signal()
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None, store: QSettings | None = None):
+        """``store``, if given, is where the panel keeps its settings between runs: read now, written on every change."""
         super().__init__(parent)
+        self._store = store
+        self._loading = False
 
         self.open_button = QPushButton("Open Image…")
         self.thumbnail_label = QLabel("No image loaded")
@@ -62,61 +176,31 @@ class ControlsPanel(QWidget):
         self.preset_combo.addItems(difficulty.preset_names())
         for index, name in enumerate(difficulty.PRESETS):
             self.preset_combo.setItemData(index, difficulty.describe(difficulty.params_for_preset(name)), Qt.ToolTipRole)
-        self.preset_combo.setItemData(
-            self.preset_combo.findText("Custom"), "Set the colors, the smallest region and the smoothing yourself.", Qt.ToolTipRole
-        )
+        self.preset_combo.setItemData(self.preset_combo.findText("Custom"), CUSTOM_TOOLTIP, Qt.ToolTipRole)
         self.preset_combo.setCurrentText(difficulty.DEFAULT_PRESET)
+        self.reset_button = QPushButton("Reset")
+        self.reset_button.setToolTip("Put every setting back to its default, and the difficulty to Medium.")
+        preset_row = QWidget()
+        preset_layout = QHBoxLayout(preset_row)
+        preset_layout.setContentsMargins(0, 0, 0, 0)
+        preset_layout.addWidget(self.preset_combo, 1)
+        preset_layout.addWidget(self.reset_button)
 
-        self.custom_group = QGroupBox("Custom settings")
-        medium = difficulty.params_for_preset("Medium")
-        self.colors_slider, colors_row = _slider_row(
-            *difficulty.CUSTOM_COLORS_RANGE, default=medium.num_colors, text=lambda v: f"up to {v}"
-        )
-        self.min_region_slider, min_region_row = _slider_row(
-            0,
-            REGION_SLIDER_STEPS,
-            default=region_slider_position(medium.min_region_area_mm2),
-            text=lambda v: f"{region_slider_area_mm2(v):.0f} mm²",
-        )
-        self.blur_slider, blur_row = _slider_row(
-            int(difficulty.CUSTOM_BLUR_RANGE[0] * 10),
-            int(difficulty.CUSTOM_BLUR_RANGE[1] * 10),
-            default=int(medium.blur_sigma * 10),
-            text=lambda v: f"{v / 10:.1f}",
-        )
-        self.colors_slider.setToolTip(
-            "How many colors to look for. Colors too alike to tell apart are merged, so a page can keep fewer."
-        )
-        self.min_region_slider.setToolTip(
-            "The smallest area a region may have on the printed A4 page, half that on a photograph's or painting's "
-            "subject and faces. Smaller ones merge into a neighbor."
-        )
-        custom_form = QFormLayout()
-        custom_form.addRow("Colors", colors_row)
-        custom_form.addRow("Smallest region", min_region_row)
-        custom_form.addRow("Smoothing", blur_row)
-        self.custom_group.setLayout(custom_form)
-        self.custom_group.setVisible(False)
+        # One slider per setting, by the field's name, in the section its group names.
+        self.controls: dict[str, SettingSlider] = {s.name: SettingSlider(s) for s in settings.SETTINGS}
+        self.sections: dict[str, Section] = {
+            group: Section(group, expanded=group in (settings.REGIONS, settings.LINES)) for group in settings.GROUPS
+        }
+        for s in settings.SETTINGS:
+            self.sections[s.group].form.addRow(s.label, self.controls[s.name])
 
-        style_group = QGroupBox("Lines and numbers")
-        self.line_width_slider, line_width_row = _slider_row(
-            0,
-            line_width_position(LINE_WIDTH_MM_RANGE[1]),
-            default=line_width_position(OUTLINE_WIDTH_MM),
-            text=lambda v: f"{line_width_mm(v):.2f} mm",
-        )
-        self.line_width_slider.setToolTip("How wide the lines print on the A4 page.")
         self.tone_combo = QComboBox()
         self.tone_combo.addItems(list(TONES))
         for index, name in enumerate(TONES):
             self.tone_combo.setItemData(index, TONE_TOOLTIPS[name], Qt.ToolTipRole)
         self.tone_combo.setCurrentText(DEFAULT_TONE)
-        style_form = QFormLayout()
-        style_form.addRow("Line width", line_width_row)
-        style_form.addRow("Tone", self.tone_combo)
-        style_group.setLayout(style_form)
+        self.sections[settings.LINES].form.insertRow(1, "Tone", self.tone_combo)
 
-        handling_group = QGroupBox("Picture handling")
         self.line_art_check = QCheckBox("Print line art's own ink")
         self.line_art_check.setToolTip(
             "On a cartoon or a comic, print its ink lines and paint the areas they enclose. "
@@ -124,16 +208,18 @@ class ControlsPanel(QWidget):
         )
         self.detail_check = QCheckBox("More detail on faces and subject")
         self.detail_check.setToolTip(
-            "On a photograph or a painting, regions in the faces and the subject found may be half the smallest size, "
-            "a face is painted in a few tones, and its thin dark marks (pupils, lip lines) are printed."
+            "On a photograph or a painting, regions in the faces and the subject found may be smaller (see Face and "
+            "subject detail), a face is painted in a few tones, and its thin dark marks (pupils, lip lines) are printed."
         )
         self.text_check = QCheckBox("Print text")
         self.text_check.setToolTip(
             "Print the letters of the signs, titles and captions found in the picture, their ground left bare, "
             "and keep the numbers off them."
         )
+        self._switches = {"line_art": self.line_art_check, "detail": self.detail_check, "text": self.text_check}
+        handling_group = QGroupBox("Picture handling")
         handling_layout = QVBoxLayout()
-        for check in (self.line_art_check, self.detail_check, self.text_check):
+        for check in self._switches.values():
             check.setChecked(True)
             handling_layout.addWidget(check)
         handling_group.setLayout(handling_layout)
@@ -182,10 +268,12 @@ class ControlsPanel(QWidget):
         layout.addWidget(self.open_button)
         layout.addWidget(self.thumbnail_label, alignment=Qt.AlignCenter)
         layout.addWidget(QLabel("Difficulty"))
-        layout.addWidget(self.preset_combo)
-        layout.addWidget(self.custom_group)
-        layout.addWidget(style_group)
+        layout.addWidget(preset_row)
+        layout.addWidget(self.sections[settings.REGIONS])
+        layout.addWidget(self.sections[settings.LINES])
         layout.addWidget(handling_group)
+        for group in (settings.FACES, settings.LINE_ART, settings.TEXT):
+            layout.addWidget(self.sections[group])
         layout.addWidget(export_group)
         layout.addWidget(self.generate_button)
         layout.addWidget(self.progress_row)
@@ -196,16 +284,100 @@ class ControlsPanel(QWidget):
         self.generate_button.clicked.connect(self.generate_requested)
         self.export_button.clicked.connect(self.export_requested)
         self.abort_button.clicked.connect(self._on_abort_clicked)
+        self.reset_button.clicked.connect(self.reset)
         self.preset_combo.currentTextChanged.connect(self._on_preset_changed)
+        for name, control in self.controls.items():
+            control.edited.connect(lambda name=name: self._on_setting_edited(name))
+        self.tone_combo.currentTextChanged.connect(lambda _text: self._save())
+        for check in self._switches.values():
+            check.toggled.connect(lambda _checked: self._save())
 
+        self._show_preset(difficulty.DEFAULT_PRESET)
+        self._load()
+
+    # -- Settings --------------------------------------------------------
+    def _difficulty_controls(self) -> dict[str, SettingSlider]:
+        return {name: c for name, c in self.controls.items() if c.setting.owner == settings.DIFFICULTY}
+
+    def _show_preset(self, name: str) -> None:
+        """Set the difficulty's sliders to the preset ``name``'s values."""
+        params = difficulty.params_for_preset(name)
+        for field, control in self._difficulty_controls().items():
+            control.set_value(getattr(params, field))
+
+    def _on_preset_changed(self, name: str) -> None:
+        if name != "Custom":
+            self._show_preset(name)
+        self._save()
+
+    def _on_setting_edited(self, name: str) -> None:
+        # A difficulty setting moved off its preset is a Custom difficulty, starting from the preset's other values.
+        if self.controls[name].setting.owner == settings.DIFFICULTY and self.preset_combo.currentText() != "Custom":
+            self.preset_combo.blockSignals(True)
+            self.preset_combo.setCurrentText("Custom")
+            self.preset_combo.blockSignals(False)
+        self._save()
+
+    def reset(self) -> None:
+        """Every setting back to its default: the default preset, the default style, every switch on."""
+        self._loading = True
+        try:
+            self.preset_combo.setCurrentText(difficulty.DEFAULT_PRESET)
+            self._show_preset(difficulty.DEFAULT_PRESET)
+            for control in self.controls.values():
+                if control.setting.owner != settings.DIFFICULTY:
+                    control.set_value(control.setting.default)
+            self.tone_combo.setCurrentText(DEFAULT_TONE)
+            for check in self._switches.values():
+                check.setChecked(True)
+        finally:
+            self._loading = False
+        self._save()
+
+    def _save(self) -> None:
+        if self._store is None or self._loading:
+            return
+        self._store.setValue(_PRESET_KEY, self.preset_combo.currentText())
+        self._store.setValue(_TONE_KEY, self.tone_combo.currentText())
+        for name, control in self.controls.items():
+            self._store.setValue(_SETTING_KEY.format(name), control.value())
+        for name, check in self._switches.items():
+            self._store.setValue(_SWITCH_KEY.format(name), check.isChecked())
+
+    def _load(self) -> None:
+        """The settings kept in the store, where it has them; anything it lacks or can't read keeps its default."""
+        if self._store is None:
+            return
+        self._loading = True
+        try:
+            preset = self._store.value(_PRESET_KEY)
+            if preset in difficulty.preset_names():
+                self.preset_combo.setCurrentText(preset)
+            tone = self._store.value(_TONE_KEY)
+            if tone in TONES:
+                self.tone_combo.setCurrentText(tone)
+            for name, control in self.controls.items():
+                kept = self._store.value(_SETTING_KEY.format(name))
+                try:
+                    value = float(kept)
+                except (TypeError, ValueError):
+                    continue
+                # A preset's difficulty is the preset's, whatever was kept beside it.
+                if control.setting.owner != settings.DIFFICULTY or preset == "Custom":
+                    control.set_value(value)
+            for name, check in self._switches.items():
+                kept = self._store.value(_SWITCH_KEY.format(name))
+                if kept is not None:
+                    check.setChecked(kept in (True, "true", "True", 1, "1"))
+        finally:
+            self._loading = False
+
+    # -- Buttons -----------------------------------------------------------
     def _on_abort_clicked(self) -> None:
         # Cancellation takes effect at the pipeline's next stage boundary, so
         # disable the button immediately to avoid double-clicks while we wait.
         self.abort_button.setEnabled(False)
         self.abort_requested.emit()
-
-    def _on_preset_changed(self, name: str) -> None:
-        self.custom_group.setVisible(name == "Custom")
 
     def set_thumbnail(self, pixmap: QPixmap) -> None:
         scaled = pixmap.scaled(
@@ -213,26 +385,22 @@ class ControlsPanel(QWidget):
         )
         self.thumbnail_label.setPixmap(scaled)
 
+    # -- What the pipeline is asked for -------------------------------------
+    def _chosen(self, owner: str) -> dict[str, float]:
+        return {name: c.value() for name, c in self.controls.items() if c.setting.owner == owner}
+
     def get_difficulty_params(self) -> difficulty.DifficultyParams:
         preset = self.preset_combo.currentText()
         if preset != "Custom":
             return difficulty.params_for_preset(preset)
-
-        return difficulty.custom_params(
-            num_colors=self.colors_slider.value(),
-            min_region_area_mm2=region_slider_area_mm2(self.min_region_slider.value()),
-            blur_sigma=self.blur_slider.value() / 10.0,
-        )
+        return difficulty.custom_params(**self._chosen(settings.DIFFICULTY))
 
     def get_page_style(self) -> PageStyle:
-        return PageStyle.from_settings(line_width_mm(self.line_width_slider.value()), self.tone_combo.currentText())
+        return PageStyle.from_settings(tone=self.tone_combo.currentText(), **self._chosen(settings.STYLE))
 
     def get_handling(self) -> Handling:
-        return Handling(
-            line_art=self.line_art_check.isChecked(),
-            detail=self.detail_check.isChecked(),
-            text=self.text_check.isChecked(),
-        )
+        switches = {name: check.isChecked() for name, check in self._switches.items()}
+        return Handling(**switches, **self._chosen(settings.HANDLING))
 
     def get_output_format(self) -> str:
         return "PDF" if self.pdf_radio.isChecked() else "PNG"
@@ -255,44 +423,3 @@ class ControlsPanel(QWidget):
     def set_export_enabled(self, enabled: bool) -> None:
         self.export_button.setProperty("hasResult", enabled)
         self.export_button.setEnabled(enabled)
-
-
-def region_slider_area_mm2(position: int) -> float:
-    """The smallest region's area, in mm², at a position of the region-size slider."""
-    lo, hi = difficulty.CUSTOM_MIN_REGION_AREA_MM2_RANGE
-    return lo * (hi / lo) ** (position / REGION_SLIDER_STEPS)
-
-
-def region_slider_position(area_mm2: float) -> int:
-    """The region-size slider's position nearest to ``area_mm2``."""
-    lo, hi = difficulty.CUSTOM_MIN_REGION_AREA_MM2_RANGE
-    area_mm2 = min(max(area_mm2, lo), hi)
-    return round(REGION_SLIDER_STEPS * math.log(area_mm2 / lo) / math.log(hi / lo))
-
-
-def line_width_mm(position: int) -> float:
-    """The line width, in mm, at a position of the line-width slider."""
-    return round(LINE_WIDTH_MM_RANGE[0] + position * LINE_WIDTH_MM_STEP, 2)
-
-
-def line_width_position(width_mm: float) -> int:
-    """The line-width slider's position nearest to ``width_mm``."""
-    return round((width_mm - LINE_WIDTH_MM_RANGE[0]) / LINE_WIDTH_MM_STEP)
-
-
-def _slider_row(
-    minimum: int, maximum: int, default: int, text: Callable[[int], str] = str
-) -> tuple[QSlider, QWidget]:
-    slider = QSlider(Qt.Horizontal)
-    slider.setRange(minimum, maximum)
-    slider.setValue(default)
-    value_label = QLabel(text(default))
-    value_label.setFixedWidth(64)
-    slider.valueChanged.connect(lambda v: value_label.setText(text(v)))
-
-    row = QWidget()
-    row_layout = QHBoxLayout(row)
-    row_layout.setContentsMargins(0, 0, 0, 0)
-    row_layout.addWidget(slider)
-    row_layout.addWidget(value_label)
-    return slider, row

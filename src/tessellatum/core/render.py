@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 
-from tessellatum.core.boundaries import trace_boundaries
+from tessellatum.core.boundaries import SMOOTHING_MM, smoothing_length_px, trace_boundaries
 from tessellatum.core.labels import (
     LEADER_REACH_MM,
     TEXT_GAP_MM,
@@ -23,7 +23,7 @@ from tessellatum.core.labels import (
     place_labels,
     text_bbox,
 )
-from tessellatum.core.print_size import OUTLINE_WIDTH_MM, print_scale
+from tessellatum.core.print_size import MIN_LABEL_SIZE_PT, OUTLINE_WIDTH_MM, print_scale
 from tessellatum.core.regions import Region
 from tessellatum.core.text import Lettering
 
@@ -43,8 +43,9 @@ TONES = {
     "Dark": (0x36, 0x66),
 }
 DEFAULT_TONE = "Medium"
-# The line widths the app offers, in mm on paper, and its step.
-LINE_WIDTH_MM_RANGE = (0.2, 0.5)
+# The line widths the app offers, in mm on paper, and its step. 0.2 to 0.5 mm read well on the benchmark's pages; the
+# app reaches past both, for a hairline or a bold page.
+LINE_WIDTH_MM_RANGE = (0.1, 1.0)
 LINE_WIDTH_MM_STEP = 0.05
 
 # A line is never drawn thinner than this, whatever the paper asks for. The
@@ -74,11 +75,21 @@ LEADER_DOT_RATIO = 3.0
 
 @dataclass(frozen=True)
 class PageStyle:
-    """The page's ink: how wide its lines print, and how dark they and the numbers are.
+    """The page's ink: how its lines and numbers print.
 
     ``line_width_mm`` is a physical width, converted for each page by the
     print model, so a preview and an export of one image print the same line.
     The grays are tones on white paper, 0 black and 255 invisible.
+    ``line_smoothing_mm`` is how far along a line its pixel staircase is
+    smoothed (see ``boundaries.smoothing_length_px``). ``min_label_pt`` is
+    the smallest a number prints, ``leader_reach_mm`` how far from its region
+    a number with a leader may go, and ``text_gap_mm`` how far a number keeps
+    from a line of text found (see ``labels``). All are on paper.
+
+    The numbers' placement decides which of line art's regions have room for
+    one, and a region with none joins the area beside it (see
+    ``pipeline.generate``), so on line art the number settings can change the
+    regions too.
     """
 
     line_width_mm: float = OUTLINE_WIDTH_MM
@@ -86,16 +97,26 @@ class PageStyle:
     line_gray: int = LINE_GRAY
     label_gray: int = LABEL_GRAY
     leader_dot_ratio: float = LEADER_DOT_RATIO
+    line_smoothing_mm: float = SMOOTHING_MM
+    min_label_pt: float = MIN_LABEL_SIZE_PT
+    leader_reach_mm: float = LEADER_REACH_MM
+    text_gap_mm: float = TEXT_GAP_MM
 
     def line_width_px(self, size: tuple[int, int]) -> float:
         """How wide a line is on a page of ``size`` (width, height) pixels."""
         return max(self.min_line_width_px, print_scale(size).mm_to_px(self.line_width_mm))
 
+    def smoothing_px(self, size: tuple[int, int]) -> float:
+        """How far a line is smoothed along its length on a page of ``size`` (see ``boundaries.smoothing_length_px``)."""
+        return smoothing_length_px(size, self.line_smoothing_mm)
+
     @classmethod
-    def from_settings(cls, line_width_mm: float = OUTLINE_WIDTH_MM, tone: str = DEFAULT_TONE) -> PageStyle:
-        """The style for a line width in mm and one of ``TONES``, as the app offers them."""
+    def from_settings(
+        cls, line_width_mm: float = OUTLINE_WIDTH_MM, tone: str = DEFAULT_TONE, **more: float
+    ) -> PageStyle:
+        """The style for a line width in mm and one of ``TONES``, as the app offers them, and any other fields by name."""
         line_gray, label_gray = TONES[tone]
-        return cls(line_width_mm=line_width_mm, line_gray=line_gray, label_gray=label_gray)
+        return cls(line_width_mm=line_width_mm, line_gray=line_gray, label_gray=label_gray, **more)
 
 
 @dataclass
@@ -175,7 +196,7 @@ def render_page(
     print its letters twice. The letters' ground is bare paper. Printed ink in no region, line art's bold ink and the
     seam down a line two regions share, keeps them apart, and still prints
     solid. No number goes in the lines' boxes, nor within
-    ``labels.TEXT_GAP_MM`` of them (see ``labels.place_labels``). The pixels
+    ``style.text_gap_mm`` of them (see ``labels.place_labels``). The pixels
     the letters cover at least half of are in ``ink`` as well, which ends the
     lines crossing them and keeps label points off them. The page's drawing
     has the letters' outline, ``lettering.outline``.
@@ -187,7 +208,7 @@ def render_page(
     the picture itself, without the lines and numbers.
     """
     inked = ink is not None and bool(ink.any())
-    strokes = trace_boundaries(region_id_map, ink=ink if inked else None)
+    strokes = trace_boundaries(region_id_map, smoothing_px=style.smoothing_px(size), ink=ink if inked else None)
     line_width = style.line_width_px(size)
     lines_only = ink_coverage(size, strokes, line_width)
     lettered = lettering is not None and bool(lettering.area.any())
@@ -211,12 +232,12 @@ def render_page(
     coverage = all_ink(ink)
 
     spacing = LabelSpacing(
-        min_font_size=min_font_size(size),
+        min_font_size=min_font_size(size, style.min_label_pt),
         label_gap_px=line_width,
         leader_width_px=line_width,
         leader_dot_px=line_width * style.leader_dot_ratio,
-        leader_reach_px=print_scale(size).mm_to_px(LEADER_REACH_MM),
-        text_gap_px=print_scale(size).mm_to_px(TEXT_GAP_MM),
+        leader_reach_px=print_scale(size).mm_to_px(style.leader_reach_mm),
+        text_gap_px=print_scale(size).mm_to_px(style.text_gap_mm),
     )
     # A number goes on no printed ink, and a leader runs through none, whichever region's paint goes over it.
     seen = np.where(ink, -1, region_id_map) if inked else region_id_map

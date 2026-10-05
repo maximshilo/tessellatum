@@ -12,7 +12,7 @@ from typing import Sequence
 import numpy as np
 from PIL import Image
 
-from tessellatum.core.boundaries import region_outlines
+from tessellatum.core.boundaries import region_outlines, smoothing_length_px
 from tessellatum.core.ink_outline import ink_outline
 from tessellatum.core.labels import baseline_bbox, font
 from tessellatum.core.legend import LABEL_FONT_RATIO, SWATCH_BORDER_MM, SWATCH_GAP_MM, SWATCH_MM, number_fill
@@ -133,7 +133,7 @@ def _page_sheet(
         ops += _page_ops(drawing, scale.px_per_mm)
     elif version is Version.COMPLETED:
         resources = {}
-        ops += _fill_ops(painting, painting.palette_rgb, scale.px_per_mm)
+        ops += _fill_ops(painting, painting.palette_rgb, scale.px_per_mm, drawing.style.line_smoothing_mm)
         ops += _picture_ink_ops(drawing, darken=False)
     elif version is Version.TINTED:
         darken = document.add(b"<< /Type /ExtGState /BM /Darken >>")
@@ -146,7 +146,9 @@ def _page_sheet(
             "\n".join(_page_ops(drawing, scale.px_per_mm)).encode("latin-1"),
         )
         resources = {"ExtGState": {"Mu": multiply}, "XObject": {"Pg": page}}
-        ops += _fill_ops(painting, [tint_rgb(rgb) for rgb in painting.palette_rgb], scale.px_per_mm)
+        ops += _fill_ops(
+            painting, [tint_rgb(rgb) for rgb in painting.palette_rgb], scale.px_per_mm, drawing.style.line_smoothing_mm
+        )
         ops.append("q /Mu gs /Pg Do Q")
     else:
         raise ValueError(f"no such version of the page: {version!r}")
@@ -179,19 +181,23 @@ def _page_ops(drawing: PageDrawing, px_per_mm: float) -> list[str]:
     return ops
 
 
-def _fill_ops(painting: Painting, colors: Sequence[tuple[int, int, int]], px_per_mm: float) -> list[str]:
+def _fill_ops(
+    painting: Painting, colors: Sequence[tuple[int, int, int]], px_per_mm: float, smoothing_mm: float
+) -> list[str]:
     """Every paint's area filled in its entry of ``colors``, its edge stroked ``FILL_EDGE_MM`` wide.
 
     The areas are outlined from the map of the paints rather than of the
     regions: where two regions of one paint touch, no line divides their paint,
     and a path round each would run along their boundary twice, which a viewer
     smoothing the edges draws as a seam. Elsewhere the two maps have the same
-    boundaries and junctions, so the paths are the page's lines.
+    boundaries and junctions, so the paths are the page's lines, smoothed
+    ``smoothing_mm`` along them as the page's are (see ``render.PageStyle``).
     """
     region_color = np.asarray(painting.region_color)
     paints = np.where(painting.region_id_map >= 0, region_color[np.clip(painting.region_id_map, 0, None)], -1)
     ops = [f"1 J 1 j {_num(FILL_EDGE_MM * px_per_mm)} w"]
-    for paint, rings in sorted(region_outlines(paints).items()):
+    smoothing_px = smoothing_length_px(painting.region_id_map.shape[1::-1], smoothing_mm)
+    for paint, rings in sorted(region_outlines(paints, smoothing_px).items()):
         rgb = " ".join(_gray(v) for v in colors[paint])
         ops += [f"{rgb} rg {rgb} RG", _path(rings, offset=0.5), "B*"]
     return ops

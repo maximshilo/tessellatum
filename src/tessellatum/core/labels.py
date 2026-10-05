@@ -84,17 +84,18 @@ class LabelSpacing:
     text_gap_px: float = 0.0  # how far a number keeps from a line of text
 
 
-def min_font_size(size: tuple[int, int]) -> int:
+def min_font_size(size: tuple[int, int], min_pt: float = MIN_LABEL_SIZE_PT) -> int:
     """The smallest em size, in whole pixels, a number on a page of ``size`` is drawn at.
 
-    That is the smallest that prints legibly (``MIN_LABEL_SIZE_PT``), and
-    never less than ``MIN_FONT_SIZE``. The size in points is checked with the
-    same arithmetic the benchmark measures it with, so a number of this size is
-    never scored a hair under it.
+    That is the smallest that prints at ``min_pt`` -- by default the smallest
+    that prints legibly (``MIN_LABEL_SIZE_PT``) -- and never less than
+    ``MIN_FONT_SIZE``. The size in points is checked with the same arithmetic
+    the benchmark measures it with, so a number of this size is never scored a
+    hair under it.
     """
     scale = print_scale(size)
-    font_size = max(MIN_FONT_SIZE, math.floor(scale.pt_to_px(MIN_LABEL_SIZE_PT)))
-    while scale.px_to_pt(font_size) < MIN_LABEL_SIZE_PT:
+    font_size = max(MIN_FONT_SIZE, math.floor(scale.pt_to_px(min_pt)))
+    while scale.px_to_pt(font_size) < min_pt:
         font_size += 1
     return font_size
 

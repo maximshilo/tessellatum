@@ -1,5 +1,6 @@
 """The headless GUI drive: open, preview, cancel and export through the window, its dialogs answered by stubs."""
 
+import dataclasses
 import os
 import re
 import time
@@ -18,7 +19,7 @@ from tessellatum.core.painting import Version  # noqa: E402
 from tessellatum.core.pipeline import Handling, PipelineCancelled  # noqa: E402
 from tessellatum.core.print_size import print_scale  # noqa: E402
 from tessellatum.core.render import PageStyle  # noqa: E402
-from tessellatum.gui import main_window  # noqa: E402
+from tessellatum.gui import controls_panel, main_window  # noqa: E402
 from tessellatum.gui.main_window import MainWindow  # noqa: E402
 from tessellatum.gui.worker import PipelineWorker  # noqa: E402
 
@@ -114,7 +115,9 @@ def test_an_opened_picture_is_previewed_with_the_panel_s_settings(drive, tmp_pat
 
     controls = drive.window.controls
     controls.preset_combo.setCurrentText("Hard")
-    controls.line_width_slider.setValue(controls.line_width_slider.maximum())
+    for name, value in (("min_width_mm", 2.0), ("line_width_mm", 0.5), ("ink_gap_mm", 1.0)):
+        control = controls.controls[name]
+        control.slider.setValue(controls_panel.slider_position(control.setting, value))
     controls.tone_combo.setCurrentText("Dark")
     controls.text_check.setChecked(False)
     drive.window.generate_preview()
@@ -123,9 +126,12 @@ def test_an_opened_picture_is_previewed_with_the_panel_s_settings(drive, tmp_pat
 
     (image, params, long_edge), kwargs = drive.calls[-1]
     assert image is drive.window.current_image_bgr
-    assert params == difficulty.params_for_preset("Hard") and long_edge == pipeline.PREVIEW_LONG_EDGE
+    # Hard with a 2 mm brush: a Custom difficulty.
+    assert controls.preset_combo.currentText() == "Custom"
+    assert params == dataclasses.replace(difficulty.params_for_preset("Hard"), min_width_mm=2.0)
+    assert long_edge == pipeline.PREVIEW_LONG_EDGE
     assert kwargs["style"] == PageStyle.from_settings(0.5, "Dark")
-    assert kwargs["handling"] == Handling(text=False)
+    assert kwargs["handling"] == Handling(text=False, ink_gap_mm=1.0)
     page = drive.window.current_page
     assert page is not None and page.page.size == (600, 400)  # never upscaled
     assert controls.generate_button.isEnabled() and controls.export_button.isEnabled()

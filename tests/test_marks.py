@@ -241,3 +241,23 @@ def test_marks_are_looked_for_only_in_the_faces_of_a_picture_drawn_from_its_colo
         image = pipeline.load_image_bgr(SAMPLES / name)
         pipeline.generate(image, params_for_preset("Medium"), pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     pipeline.clear_cache()
+
+
+def test_the_brush_the_contrast_and_the_length_are_settings():
+    def found(image, **settings):
+        height, width = image.shape[:2]
+        ids = np.zeros((height, width), dtype=np.int32)
+        palette = np.array([(PAPER,) * 3], dtype=np.uint8)
+        where = np.ones((height, width), dtype=bool)
+        return marks.detail_marks(image, where, ids, np.zeros(1, dtype=np.int32), palette, SCALE, **settings)
+
+    # A band 15 px wide (3.45 mm) is too wide for the 3 mm brush, and a mark for a 4 mm one.
+    band = page((DARKER, 300, 300, 315, 400))
+    assert not found(band).any() and found(band, brush_mm=4.0)[330:370, 305:310].all()
+    # 12.57 L* darker: a mark at the default 12, not at 13; 11.44 L*: a mark at 11.
+    assert found(page((OVER_THRESHOLD, 300, 300, 308, 380))).any()
+    assert not found(page((OVER_THRESHOLD, 300, 300, 308, 380)), min_contrast=13.0).any()
+    assert found(page((UNDER_THRESHOLD, 300, 300, 308, 380)), min_contrast=11.0)[320:360, 303:305].all()
+    # A 5 px dot (1.2 mm) is a speck at 2 mm, and a mark at 1 mm.
+    dot = page((DARKER, 300, 300, 305, 305))
+    assert not found(dot).any() and found(dot, min_length_mm=1.0)[301:304, 301:304].all()

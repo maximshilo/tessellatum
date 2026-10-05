@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -31,11 +31,12 @@ OPEN_IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.gif)"
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, store: QSettings | None = None):
+        """``store``, if given, is where the panel keeps its settings between runs (see ``ControlsPanel``)."""
         super().__init__()
         self.setWindowTitle("Tessellatum")
 
-        self.controls = ControlsPanel()
+        self.controls = ControlsPanel(store=store)
         self.preview = PreviewWidget()
         # Every version of a page is drawn with it, so the bar switches between them at once.
         self.version_bar = VersionBar()

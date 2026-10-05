@@ -64,22 +64,29 @@ def smooth_regions(
     min_area_px: int,
     min_width_px: float,
     detail: np.ndarray | None = None,
+    settling: float = 1.0,
+    color_step: float = COLOR_STEP,
+    detail_weight: int = 2,
 ) -> tuple[np.ndarray, np.ndarray]:
     """The page's regions with their edges settled by the vote, rebuilt (see the module's docstring).
 
     ``image_bgr`` is the page's picture, ``region_id_map`` and
     ``region_color`` its regions as ``regions.build_regions`` returns them,
     and ``palette_bgr`` their colors. ``min_width_px`` is the brush, which
-    sets how far the vote reaches; it, ``min_area_px`` and ``detail`` are
-    what the regions were built with, and are rebuilt with.
+    sets how far the vote reaches -- ``REACH`` of it to one sigma, times
+    ``settling``; 0 settles nothing. ``color_step`` is the vote's
+    ``COLOR_STEP``. ``min_width_px``, ``min_area_px``, ``detail`` and
+    ``detail_weight`` are what the regions were built with, and are rebuilt
+    with.
 
     Returns (region_id_map, region_color) as ``build_regions`` does: the
     arrays passed in if the vote changes nothing, else new ones. Pixels in no
     region (-1) take no part and stay in none.
 
     Raises ValueError if the picture is not the region map's size, if a
-    region on the map has no entry in ``region_color``, or if a region's
-    color is not one of ``palette_bgr``.
+    region on the map has no entry in ``region_color``, if a region's color is
+    not one of ``palette_bgr``, or if ``settling`` is negative or
+    ``color_step`` not positive.
     """
     ids = np.ascontiguousarray(region_id_map, dtype=np.int32)
     colors = np.asarray(region_color, dtype=np.int32)
@@ -92,24 +99,30 @@ def smooth_regions(
     if colors.size and not 0 <= int(colors.min()) <= int(colors.max()) < len(palette_bgr):
         low, high = int(colors.min()), int(colors.max())
         raise ValueError(f"region colors run from {low} to {high}, the palette has {len(palette_bgr)}")
-    if colors.size == 0 or min_width_px <= 0:
+    if settling < 0 or not color_step > 0:
+        raise ValueError(f"the vote needs a reach of at least 0 and a color step above 0, not {settling}, {color_step}")
+    if colors.size == 0 or min_width_px <= 0 or settling == 0:
         return region_id_map, region_color
 
     inside = ids >= 0
     labels = np.where(inside, colors[np.where(inside, ids, 0)], -1).astype(np.int32)
-    voted = settle_edges(image, labels, palette_bgr, REACH * min_width_px)
+    voted = settle_edges(image, labels, palette_bgr, REACH * min_width_px * settling, color_step)
     if np.array_equal(voted, labels):
         return region_id_map, region_color
     # Off the palette is how the region stage is told a pixel is in no region.
-    return build_regions(np.where(inside, voted, len(palette_bgr)), len(palette_bgr), min_area_px, min_width_px, detail)
+    return build_regions(
+        np.where(inside, voted, len(palette_bgr)), len(palette_bgr), min_area_px, min_width_px, detail, detail_weight
+    )
 
 
-def settle_edges(image_bgr: np.ndarray, labels: np.ndarray, palette_bgr: np.ndarray, sigma_px: float) -> np.ndarray:
+def settle_edges(
+    image_bgr: np.ndarray, labels: np.ndarray, palette_bgr: np.ndarray, sigma_px: float, color_step: float = COLOR_STEP
+) -> np.ndarray:
     """``labels`` (HxW int32: each pixel's palette color, -1 for none) after one vote with weights ``sigma_px`` wide.
 
     Every pixel takes the color with the largest Gaussian-weighted share of
     the pixels within three sigmas of it, rows and columns, times
-    ``exp(-d / COLOR_STEP)``, where ``d`` is the L*a*b* distance from the
+    ``exp(-d / color_step)``, where ``d`` is the L*a*b* distance from the
     pixel's color in ``image_bgr`` to that color of ``palette_bgr``. Pixels
     off the page and pixels without a color count for nobody. On a tie a
     pixel keeps its color if it is among the best, else takes the lowest.
@@ -117,7 +130,7 @@ def settle_edges(image_bgr: np.ndarray, labels: np.ndarray, palette_bgr: np.ndar
     the order they are taken in. Returns a new array.
 
     Raises ValueError if the picture is not the map's size, if a label is
-    past the palette, or if ``sigma_px`` is not positive.
+    past the palette, or if ``sigma_px`` or ``color_step`` is not positive.
     """
     labels = np.asarray(labels)
     image_bgr = np.ascontiguousarray(image_bgr, dtype=np.uint8)
@@ -129,6 +142,8 @@ def settle_edges(image_bgr: np.ndarray, labels: np.ndarray, palette_bgr: np.ndar
         raise ValueError(f"label {int(labels.max())} is on the map, the palette has {len(palette)}")
     if not sigma_px > 0:
         raise ValueError(f"sigma must be positive, not {sigma_px}")
+    if not color_step > 0:
+        raise ValueError(f"the color step must be positive, not {color_step}")
     height, width = labels.shape
     flat = np.ascontiguousarray(labels, dtype=np.int32).reshape(-1)
     radius = max(1, int(np.ceil(_CUTOFF_SIGMAS * sigma_px)))
@@ -157,7 +172,7 @@ def settle_edges(image_bgr: np.ndarray, labels: np.ndarray, palette_bgr: np.ndar
 
     def vote(y_start: int, y_stop: int) -> None:
         kernels.vote_rows(
-            flat, ends, near, pixels_lab, colors_lab, cumulative, weights, radius, float(COLOR_STEP), y_start, y_stop,
+            flat, ends, near, pixels_lab, colors_lab, cumulative, weights, radius, float(color_step), y_start, y_stop,
             height, width, out,
         )
 

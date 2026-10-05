@@ -401,14 +401,14 @@ def test_a_photographed_face_is_painted_in_fewer_tones_no_further_from_it(monkey
     seen, settled, marked = [], [], []
     real, real_marks = tones.settle_tones, marks.detail_marks
 
-    def spy(picture, where, ids, colors, palette):
+    def spy(picture, where, ids, colors, palette, min_step):
         seen.append(where)
-        settled.append(real(picture, where, ids, colors, palette))
+        settled.append(real(picture, where, ids, colors, palette, min_step))
         return settled[-1]
 
-    def marks_spy(picture, where, ids, colors, palette, scale):
+    def marks_spy(picture, where, ids, colors, palette, scale, *settings):
         marked.append((ids, colors))
-        return real_marks(picture, where, ids, colors, palette, scale)
+        return real_marks(picture, where, ids, colors, palette, scale, *settings)
 
     monkeypatch.setattr(tones, "settle_tones", spy)
     monkeypatch.setattr(marks, "detail_marks", marks_spy)
@@ -424,7 +424,7 @@ def test_a_photographed_face_is_painted_in_fewer_tones_no_further_from_it(monkey
     monkeypatch.setattr(marks, "detail_marks", real_marks)
 
     pipeline.clear_cache()
-    monkeypatch.setattr(tones, "settle_tones", lambda picture, where, ids, colors, palette: (ids, colors))
+    monkeypatch.setattr(tones, "settle_tones", lambda picture, where, ids, colors, palette, *settings: (ids, colors))
     plain = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True).analysis
     pipeline.clear_cache()
 
@@ -463,3 +463,12 @@ def test_tones_are_settled_only_in_the_faces_of_a_picture_drawn_from_its_colors(
         image = pipeline.load_image_bgr(SAMPLES / name)
         pipeline.generate(image, params_for_preset("Medium"), pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     pipeline.clear_cache()
+
+
+@pytest.mark.parametrize("min_step, joins", [(1.2, True), (0.5, False), (0.0, False)])
+def test_the_faintest_step_kept_is_a_setting(min_step, joins):
+    # Region 0, painted 132, beside paint at 135, 1.09 away: it joins under a step of 1.2, and under 0.5 or 0 it stays.
+    ids, image = strips((0, 30, 132), (1, 30, 228))
+    colors = np.array([0, 1], dtype=np.int32)
+    _ids, new_colors = tones.settle_tones(image, over(ids, 0), ids, colors, gray_bgr(132, 135), min_step)
+    assert new_colors.tolist() == ([1, 1] if joins else [0, 1])

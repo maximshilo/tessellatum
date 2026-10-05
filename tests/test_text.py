@@ -586,9 +586,9 @@ def test_text_is_found_once_per_picture_and_the_analysis_changes_nothing(monkeyp
     calls = []
     real = text.find_text
 
-    def counting(picture, source=None):
+    def counting(picture, source=None, max_height_mm=text.MAX_BOX_HEIGHT_MM):
         calls.append((picture.shape, None if source is None else source.shape))
-        return real(picture, source)
+        return real(picture, source, max_height_mm)
 
     monkeypatch.setattr(text, "find_text", counting)
     picture, _ = _lettering(size=(1400, 933))
@@ -615,7 +615,7 @@ def test_line_art_has_its_text_found_too():
 def _without_text(monkeypatch, picture: np.ndarray, params, long_edge: int):
     """The page of ``picture`` with no text found, and the text found put back after."""
     with monkeypatch.context() as patched:
-        patched.setattr(text, "find_text", lambda picture, source=None: [])
+        patched.setattr(text, "find_text", lambda picture, source=None, max_height_mm=None: [])
         pipeline.clear_cache()
         page = pipeline.generate(picture, params, long_edge, collect_analysis=True)
     pipeline.clear_cache()
@@ -835,3 +835,22 @@ def test_every_number_keeps_half_a_millimeter_from_the_lines_of_text_found(name,
     for label in analysis.labels:
         x0, y0, x1, y1 = (int(v) for v in label.box)
         assert away[max(0, y0) : y1, max(0, x0) : x1].min() > gap, label
+
+
+def test_how_tall_a_line_of_text_may_be_is_a_setting(monkeypatch):
+    def answer(core):
+        def network(view):
+            probability = np.zeros((640, 960), dtype=np.float32)
+            probability[core] = 0.9
+            return probability
+
+        return network
+
+    blank = np.zeros((640, 960, 3), dtype=np.uint8)
+    # Grown to 58 px, 16.8 mm: over the 15 mm a line may be, under 20 mm.
+    monkeypatch.setattr(text, "_probability", answer((slice(300, 320), slice(100, 500))))
+    assert not text._lines(blank, (960, 640)) and text._lines(blank, (960, 640), 20.0)
+    # Grown to 41 px, 11.8 mm: a line, unless lines may be only 10 mm tall.
+    monkeypatch.setattr(text, "_probability", answer((slice(300, 314), slice(100, 500))))
+    assert text._lines(blank, (960, 640)) and not text._lines(blank, (960, 640), 10.0)
+    assert text.find_text(blank, max_height_mm=10.0) == []

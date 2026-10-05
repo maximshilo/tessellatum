@@ -46,13 +46,18 @@ def detail_marks(
     region_color: np.ndarray,
     palette_bgr: np.ndarray,
     scale: PrintScale,
+    brush_mm: float = MIN_PAINTABLE_WIDTH_MM,
+    min_contrast: float = MIN_CONTRAST,
+    min_length_mm: float = MIN_LENGTH_MM,
 ) -> np.ndarray:
     """HxW bool: the thin dark marks of ``image_bgr``, a page's picture, inside ``where`` (HxW bool), to print.
 
     ``region_id_map``, ``region_color`` and ``palette_bgr`` are the page's
     regions and their colors: a mark is only where a region's paint is no
     darker than it. Pixels in no region (-1) are never part of one. ``scale``
-    is the page's print scale (see ``print_size.print_scale``).
+    is the page's print scale (see ``print_size.print_scale``). A mark is no
+    wider than ``brush_mm``, at least ``min_contrast`` L* darker than around
+    it and at least ``min_length_mm`` long (see the module's docstring).
 
     Only the box around ``where`` is looked at, with a margin wide enough that
     every pixel in it is judged exactly as it would be over the whole picture.
@@ -65,7 +70,7 @@ def detail_marks(
     blur_reach = math.ceil(4 * sigma)
     # A round element the smallest odd number of pixels across wider than the brush: it fits in no mark as wide as the
     # brush or narrower.
-    reach = math.floor((scale.mm_to_px(MIN_PAINTABLE_WIDTH_MM) - 1) / 2) + 1
+    reach = math.floor((scale.mm_to_px(brush_mm) - 1) / 2) + 1
     disk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * reach + 1, 2 * reach + 1))
     # A pixel's closing reads the smoothed lightness twice the element's reach away, and that the picture a blur's reach
     # further.
@@ -85,11 +90,11 @@ def detail_marks(
         np.asarray(palette_bgr, dtype=np.float32).reshape(1, -1, 3) / np.float32(255), cv2.COLOR_BGR2Lab
     )[0, :, 0]
     paint = palette_lightness[np.asarray(region_color)[np.clip(ids, 0, None)]]
-    found = where[y0:y1, x0:x1] & (ids >= 0) & (contrast >= MIN_CONTRAST) & (lightness <= paint)
+    found = where[y0:y1, x0:x1] & (ids >= 0) & (contrast >= min_contrast) & (lightness <= paint)
 
     _count, components, stats, _centroids = cv2.connectedComponentsWithStats(found.view(np.uint8), connectivity=8)
     extent = np.maximum(stats[:, cv2.CC_STAT_WIDTH], stats[:, cv2.CC_STAT_HEIGHT])
-    long_enough = extent >= scale.mm_to_px(MIN_LENGTH_MM)
+    long_enough = extent >= scale.mm_to_px(min_length_mm)
     long_enough[0] = False  # the background
     marks[y0:y1, x0:x1] = long_enough[components]
     return marks

@@ -1099,3 +1099,22 @@ def test_merges_without_diagonals_do_not_count_a_corner_as_a_neighbor():
         flat = same.reshape(-1).copy()
         kernels.merge_same_color_neighbors(flat, 4, 4, np.array([5, 5], dtype=np.int32), np.array([1, 1], dtype=np.int64), diagonals)
         assert flat.reshape(4, 4)[1, 1] == expected
+
+
+def test_how_much_smaller_a_region_may_be_in_the_detail_is_a_setting():
+    # A 6 x 6 patch, 36 pixels, wholly in the detail, with 100 pixels the smallest region: it counts 72 at the default
+    # weight of 2 and merges, 108 at 3 and stays; at 1 the detail counts for nothing.
+    labels = np.zeros((40, 40), dtype=np.int32)
+    labels[10:16, 10:16] = 1
+    detail = np.zeros(labels.shape, dtype=bool)
+    detail[5:25, 5:25] = True
+    kept = {}
+    for weight in (1, 2, 3):
+        ids, color = build_regions(labels, 2, min_area_px=100, detail=detail, detail_weight=weight)
+        kept[weight] = len(color) == 2 and (ids[10:16, 10:16] != ids[0, 0]).all()
+    assert kept == {1: False, 2: False, 3: True}
+    np.testing.assert_array_equal(
+        build_regions(labels, 2, 100, detail=detail, detail_weight=1)[0], build_regions(labels, 2, 100)[0]
+    )
+    with pytest.raises(ValueError):
+        build_regions(labels, 2, 100, detail=detail, detail_weight=0)

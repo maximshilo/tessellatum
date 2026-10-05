@@ -95,15 +95,15 @@ def crack_edges(region_id_map: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.n
     return right.reshape(-1), down.reshape(-1), degree.reshape(-1), int(right.sum() + down.sum())
 
 
-def smoothing_length_px(size: tuple[int, int]) -> float:
+def smoothing_length_px(size: tuple[int, int], smoothing_mm: float = SMOOTHING_MM) -> float:
     """How far to blur a line along its length, on a page of ``size`` (width, height) pixels.
 
-    The longer of a pixel step and what the printed page can show (see
+    The longer of a pixel step and ``smoothing_mm`` on the printed page (see
     ``SMOOTHING_MIN_PX`` and ``SMOOTHING_MM``); the printed size of a page
     depends only on its shape, so both previews and exports of one image are
     smoothed to the same thing on paper.
     """
-    return max(SMOOTHING_MIN_PX, print_scale(size).mm_to_px(SMOOTHING_MM))
+    return max(SMOOTHING_MIN_PX, print_scale(size).mm_to_px(smoothing_mm))
 
 
 def trace_boundaries(
