@@ -56,10 +56,10 @@ def test_custom_params_are_clamped_to_the_sliders():
         difficulty.CUSTOM_BLUR_RANGE[1],
     )
     finer = difficulty.custom_params(
-        64, 2.0, 0.0, min_width_mm=0.1, palette_margin_de00=-3.0, edge_settling=9.0, edge_color_step_de00=0.0,
+        64, 2.0, 0.0, min_width_mm=0.5, palette_margin_de00=-3.0, edge_settling=9.0, edge_color_step_de00=0.0,
         detail_weight=3.6,
     )
-    assert finer == difficulty.DifficultyParams(64, 2.0, 0.0, 0.5, 0.0, 3.0, 1.0, 4)
+    assert finer == difficulty.DifficultyParams(64, 5.0, 0.0, 1.0, 0.0, 3.0, 1.0, 4)
     assert isinstance(finer.detail_weight, int) and isinstance(finer.num_colors, int)
     with pytest.raises(TypeError):
         difficulty.custom_params(12, 125.0, 5.0, brush=2.0)

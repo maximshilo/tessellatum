@@ -107,14 +107,14 @@ class PageStyle:
         return max(self.min_line_width_px, print_scale(size).mm_to_px(self.line_width_mm))
 
     def smoothing_px(self, size: tuple[int, int]) -> float:
-        """How far a line is smoothed along its length on a page of ``size`` (see ``boundaries.smoothing_length_px``)."""
+        """How far a line is smoothed along its length on a page of ``size`` (``boundaries.smoothing_length_px``)."""
         return smoothing_length_px(size, self.line_smoothing_mm)
 
     @classmethod
     def from_settings(
         cls, line_width_mm: float = OUTLINE_WIDTH_MM, tone: str = DEFAULT_TONE, **more: float
     ) -> PageStyle:
-        """The style for a line width in mm and one of ``TONES``, as the app offers them, and any other fields by name."""
+        """The style for a line width in mm and one of ``TONES``, as the app offers them, and other fields by name."""
         line_gray, label_gray = TONES[tone]
         return cls(line_width_mm=line_width_mm, line_gray=line_gray, label_gray=label_gray, **more)
 

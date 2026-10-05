@@ -1,5 +1,6 @@
 """Tones: a face's regions in the palette colors nearest them, the faintest steps between them joined (T4.4, D-045)."""
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -472,3 +473,94 @@ def test_the_faintest_step_kept_is_a_setting(min_step, joins):
     colors = np.array([0, 1], dtype=np.int32)
     _ids, new_colors = tones.settle_tones(image, over(ids, 0), ids, colors, gray_bgr(132, 135), min_step)
     assert new_colors.tolist() == ([1, 1] if joins else [0, 1])
+
+
+
+def _settle_every_row(error, pixels, colors, touching, beside, min_step=tones.MIN_STEP_DE00):
+    """``tones._settle`` as it was before it kept each region's least step: every row of steps worked out at every
+    join. The reference the kept steps must agree with."""
+    count = len(colors)
+    error, pixels, touching, beside = error.copy(), pixels.copy(), touching.copy(), beside.copy()
+    rows = np.arange(count)
+    nearest = error.argmin(axis=1)
+    closer = error[rows, nearest] < error[rows, colors]
+    colors = np.where(closer, nearest, colors)
+    leader = rows.copy()
+    open_ = np.ones(count, dtype=bool)
+    for _ in rows:
+        own = error[rows, colors]
+        to_region = np.where(touching & open_[:, None] & open_[None, :], error[:, colors] - own[:, None], np.inf)
+        to_color = np.where(beside & open_[:, None], error - own[:, None], np.inf)
+        step = np.concatenate([to_region, to_color], axis=1) / pixels[:, None]
+        best = int(np.argmin(step))
+        mover, target = divmod(best, step.shape[1])
+        if not step[mover, target] < min_step:
+            break
+        open_[mover] = False
+        others = touching[mover].copy()
+        touching[mover, :] = touching[:, mover] = False
+        if target < count:
+            leader[mover] = target
+            error[target] += error[mover]
+            pixels[target] += pixels[mover]
+            touching[target] |= others
+            touching[:, target] |= others
+            touching[target, target] = False
+            beside[target] |= beside[mover]
+        else:
+            colors[mover] = target - count
+            beside[others, colors[mover]] = True
+    for region in rows:
+        end = region
+        while leader[end] != end:
+            end = leader[end]
+        colors[region] = colors[end]
+    return colors.astype(np.int32)
+
+
+def test_keeping_each_region_s_least_step_settles_as_working_out_every_row_does():
+    rng = np.random.default_rng(49)
+    for case in range(3000):
+        count, palette = int(rng.integers(1, 70)), int(rng.integers(1, 12))
+        if case % 2:  # whole numbers and equal sizes: ties everywhere
+            error = rng.integers(0, 6, (count, palette)).astype(np.float64)
+            pixels = np.full(count, float(rng.integers(1, 4)))
+        else:
+            error = rng.random((count, palette)) * rng.integers(1, 50, (count, 1))
+            pixels = rng.integers(1, 40, count).astype(np.float64)
+        colors = rng.integers(0, palette, count).astype(np.int32)
+        touching = rng.random((count, count)) < rng.choice([0.05, 0.2, 0.6])
+        touching = touching | touching.T
+        np.fill_diagonal(touching, False)
+        beside = rng.random((count, palette)) < rng.choice([0.0, 0.1, 0.4])
+        min_step = float(rng.choice([0.0, 0.3, 1.0, 2.5, 1e9]))
+        before = (error.copy(), pixels.copy(), colors.copy(), touching.copy(), beside.copy())
+        got = tones._settle(error, pixels, colors, touching, beside, min_step)
+        want = _settle_every_row(*before, min_step)
+        np.testing.assert_array_equal(got, want, err_msg=f"case {case}")
+        for passed, kept in zip((error, pixels, colors, touching, beside), before):
+            np.testing.assert_array_equal(passed, kept)  # nothing passed in is changed
+
+
+def test_a_face_of_thousands_of_regions_settles_in_a_moment():
+    # Every join used to work out every region's steps again: a face cut into ~3,000 regions by a fine brush and a
+    # palette of 64 close colors took minutes. Now only the rows a join changes are.
+    rng = np.random.default_rng(7)
+    count, palette = 3000, 64
+    error = rng.random((count, palette)) * 50
+    pixels = rng.integers(5, 60, count).astype(np.float64)
+    colors = rng.integers(0, palette, count).astype(np.int32)
+    side = 55  # a grid of regions, each touching the eight around it
+    touching = np.zeros((count, count), dtype=bool)
+    for region in range(count):
+        row, column = divmod(region, side)
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
+                r, c = row + dr, column + dc
+                other = r * side + c
+                if (dr or dc) and 0 <= c < side and 0 <= other < count:
+                    touching[region, other] = True
+    beside = rng.random((count, palette)) < 0.01
+    start = time.perf_counter()
+    tones._settle(error, pixels, colors, touching, beside, 3.0)
+    assert time.perf_counter() - start < 20.0

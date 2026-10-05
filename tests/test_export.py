@@ -522,9 +522,11 @@ def test_a_paint_s_path_is_smoothed_as_the_page_s_lines_are(tmp_path, monkeypatc
     rendered, painting = _painted_full_page()
     smoothing = []
     real = export.region_outlines
-    monkeypatch.setattr(
-        export, "region_outlines", lambda paints, smoothing_px: smoothing.append(smoothing_px) or real(paints, smoothing_px)
-    )
+    def spy(paints, smoothing_px):
+        smoothing.append(smoothing_px)
+        return real(paints, smoothing_px)
+
+    monkeypatch.setattr(export, "region_outlines", spy)
     size = rendered.drawing.size
     for smoothing_mm in (PageStyle().line_smoothing_mm, 1.5):
         drawing = dataclasses.replace(rendered.drawing, style=PageStyle(line_smoothing_mm=smoothing_mm))

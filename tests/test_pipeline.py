@@ -851,10 +851,14 @@ def test_the_ink_and_the_text_found_are_cached_by_their_settings(monkeypatch):
     picture[140:150, 60:340:6] = 30
     line = text.TextLine(quad=((50.0, 130.0), (350.0, 130.0), (350.0, 160.0), (50.0, 160.0)), score=0.9)
     asked = []
-    monkeypatch.setattr(text, "find_text", lambda picture, source=None, max_height_mm=None: asked.append(max_height_mm) or [line])
+    monkeypatch.setattr(
+        text, "find_text", lambda picture, source=None, max_height_mm=None: asked.append(max_height_mm) or [line]
+    )
     gaps = []
     real = ink.find_ink
-    monkeypatch.setattr(ink, "find_ink", lambda *args, **kwargs: gaps.append(kwargs.get("gap_mm")) or real(*args, **kwargs))
+    monkeypatch.setattr(
+        ink, "find_ink", lambda *args, **kwargs: gaps.append(kwargs.get("gap_mm")) or real(*args, **kwargs)
+    )
     params = difficulty.params_for_preset("Easy")
     pipeline.clear_cache()
     # Each found once for a setting, again for another.
@@ -870,9 +874,16 @@ def test_a_face_s_tones_and_marks_and_the_vote_follow_their_settings(monkeypatch
 
     seen = {}
     real_tones, real_marks, real_smooth = tones.settle_tones, marks.detail_marks, pipeline.smooth_regions
-    monkeypatch.setattr(tones, "settle_tones", lambda *args: seen.setdefault("tones", args[5:]) and real_tones(*args))
-    monkeypatch.setattr(marks, "detail_marks", lambda *args: seen.setdefault("marks", args[6:]) and real_marks(*args))
-    monkeypatch.setattr(pipeline, "smooth_regions", lambda *args: seen.setdefault("vote", args[7:]) and real_smooth(*args))
+    def spy(name, real, first):
+        def call(*args):
+            seen[name] = args[first:]  # the settings, after the arguments every call has
+            return real(*args)
+
+        return call
+
+    monkeypatch.setattr(tones, "settle_tones", spy("tones", real_tones, 5))
+    monkeypatch.setattr(marks, "detail_marks", spy("marks", real_marks, 6))
+    monkeypatch.setattr(pipeline, "smooth_regions", spy("vote", real_smooth, 7))
     image = pipeline.load_image_bgr(Path(__file__).resolve().parent / "sample_images" / "l-photo-cats-face.jpg")
     params = difficulty.custom_params(
         12, 125.0, 5.0, min_width_mm=2.0, edge_settling=0.5, edge_color_step_de00=6.0, detail_weight=3

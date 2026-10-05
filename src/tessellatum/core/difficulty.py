@@ -43,7 +43,8 @@ class DifficultyParams:
             regions.
         min_width_mm: the narrowest any part of a region may be on the printed
             page, in millimeters -- the brush the page is painted with; 0 sets
-            no width at all.
+            no width at all, and then settles no edges either, since the vote
+            reaches as far as the brush says (see ``edge_settling``).
         palette_margin_de00: the least CIEDE2000 difference between two of the
             palette's colors: closer ones are merged into one (see
             ``quantize``). 0 keeps every color found.
@@ -86,11 +87,15 @@ PRESETS: dict[str, DifficultyParams] = {
 # numbers with no room off its lines (20 mm²). That is still the benchmark's finest page (``finest_params``). The
 # sliders now reach well past it -- smaller regions, a finer brush, closer colors -- for pages with more detail than
 # those limits allow; how paintable such a page is, is the user's choice.
+#
+# They stop where a page still comes out in seconds: with every one at its finest, a detailed photograph's preview
+# has 1,000-2,700 regions and takes 4-12 s, most of it placing their numbers. A 0.5 mm brush and 2 mm² regions gave
+# the lion and the Palermo castle over 7,000 regions and 100 s.
 CUSTOM_RANGES: dict[str, tuple[float, float]] = {
     "num_colors": (2, 64),
-    "min_region_area_mm2": (2.0, 500.0),
+    "min_region_area_mm2": (5.0, 500.0),
     "blur_sigma": (0.0, 12.0),
-    "min_width_mm": (0.5, 6.0),
+    "min_width_mm": (1.0, 6.0),
     "palette_margin_de00": (0.0, 20.0),
     "edge_settling": (0.0, 3.0),
     "edge_color_step_de00": (1.0, 40.0),

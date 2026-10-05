@@ -36,9 +36,12 @@ from tessellatum.core.settings import Setting
 
 THUMBNAIL_SIZE = 220
 
-# A slider over a setting that moves in equal ratios (``Setting.log``) has this many steps: the region size's, from 2
-# to 500 mm², about 5% apart, so that 2 -> 4 mm² is as big a move as 250 -> 500 mm².
+# A slider over a setting that moves in equal ratios (``Setting.log``) has this many steps: the region size's, from 5
+# to 500 mm², about 4% apart, so that 5 -> 10 mm² is as big a move as 250 -> 500 mm².
 LOG_SLIDER_STEPS = 120
+
+# A slider is never narrower than this, however narrow the panel is dragged: below it a handle has no room to move.
+MIN_SLIDER_WIDTH = 80
 
 TONE_TOOLTIPS = {
     "Light": "Fainter lines and numbers, which vanish under the palest paints.",
@@ -96,6 +99,7 @@ class SettingSlider(QWidget):
         self.setting = setting
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(0, slider_steps(setting))
+        self.slider.setMinimumWidth(MIN_SLIDER_WIDTH)
         self.value_label = QLabel()
         self.value_label.setFixedWidth(72)
         self.setToolTip(setting.tooltip)
@@ -161,7 +165,7 @@ class ControlsPanel(QWidget):
     abort_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None, store: QSettings | None = None):
-        """``store``, if given, is where the panel keeps its settings between runs: read now, written on every change."""
+        """``store``, if given, is where the panel keeps its settings between runs: read now, written on each change."""
         super().__init__(parent)
         self._store = store
         self._loading = False
@@ -192,7 +196,9 @@ class ControlsPanel(QWidget):
             group: Section(group, expanded=group in (settings.REGIONS, settings.LINES)) for group in settings.GROUPS
         }
         for s in settings.SETTINGS:
-            self.sections[s.group].form.addRow(s.label, self.controls[s.name])
+            label = QLabel(s.label)
+            label.setToolTip(s.tooltip)
+            self.sections[s.group].form.addRow(label, self.controls[s.name])
 
         self.tone_combo = QComboBox()
         self.tone_combo.addItems(list(TONES))
@@ -200,6 +206,15 @@ class ControlsPanel(QWidget):
             self.tone_combo.setItemData(index, TONE_TOOLTIPS[name], Qt.ToolTipRole)
         self.tone_combo.setCurrentText(DEFAULT_TONE)
         self.sections[settings.LINES].form.insertRow(1, "Tone", self.tone_combo)
+        # Every section's labels as wide as the widest, so that the sliders line up from one section to the next.
+        labels = [
+            section.form.labelForField(section.form.itemAt(row, QFormLayout.FieldRole).widget())
+            for section in self.sections.values()
+            for row in range(section.form.rowCount())
+        ]
+        label_width = max(label.sizeHint().width() for label in labels)
+        for label in labels:
+            label.setMinimumWidth(label_width)
 
         self.line_art_check = QCheckBox("Print line art's own ink")
         self.line_art_check.setToolTip(
@@ -209,7 +224,8 @@ class ControlsPanel(QWidget):
         self.detail_check = QCheckBox("More detail on faces and subject")
         self.detail_check.setToolTip(
             "On a photograph or a painting, regions in the faces and the subject found may be smaller (see Face and "
-            "subject detail), a face is painted in a few tones, and its thin dark marks (pupils, lip lines) are printed."
+            "subject detail), a face is painted in a few tones, and its thin dark marks (pupils, lip lines) are "
+            "printed."
         )
         self.text_check = QCheckBox("Print text")
         self.text_check.setToolTip(

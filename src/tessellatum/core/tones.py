@@ -33,6 +33,9 @@ from tessellatum.core.color import bgr_to_lab, ciede2000
 # neighbor's color than in its own, in CIEDE2000, averaged over them.
 MIN_STEP_DE00 = 1.0
 
+# How many regions' steps are worked out at a time: a block's steps to every region and color stay a few MB.
+_STEP_BLOCK = 256
+
 # A region's pixels are counted by color in cells of the sRGB cube this many bits a channel across -- 32 steps of 8 --
 # and each cell's pixels stand at its middle: at most 4 of 255 a channel from where they are, which evens out over a
 # region.
@@ -171,15 +174,37 @@ def _settle(
 
     leader = rows.copy()  # the region each has joined, itself until it does
     open_ = np.ones(count, dtype=bool)  # still looked at: not joined to another, nor to a region outside
+
+    def steps(which: np.ndarray) -> np.ndarray:
+        """What a pixel of each region in ``which`` would lose in each neighbor's color: the other settled regions',
+        then the rest's -- a row of the whole page's steps each, computed as it would be with all of them."""
+        own = error[which, colors[which]]
+        to_region = np.where(
+            touching[which] & open_[which, None] & open_[None, :], error[which][:, colors] - own[:, None], np.inf
+        )
+        to_color = np.where(beside[which] & open_[which, None], error[which] - own[:, None], np.inf)
+        return np.concatenate([to_region, to_color], axis=1) / pixels[which, None]
+
+    # Each region's least step and where to, the first of its least: the step the whole page's least would be, in
+    # its row. A join changes only the rows of the two regions and of the mover's neighbors -- every other region's
+    # steps stay as they were, the mover's column aside, which only its neighbors had open -- so only those rows are
+    # worked out again, rather than the page's every row at every join.
+    least = np.full(count, np.inf)
+    where_to = np.zeros(count, dtype=np.int64)
+
+    def update(which: np.ndarray) -> None:
+        for start in range(0, len(which), _STEP_BLOCK):
+            block = which[start : start + _STEP_BLOCK]
+            step = steps(block)
+            where_to[block] = step.argmin(axis=1)
+            least[block] = step[np.arange(len(block)), where_to[block]]
+
+    update(rows)
     for _ in rows:  # every join closes a region, so there are at most as many as regions
-        own = error[rows, colors]
-        # What a pixel of each region would lose in each neighbor's color: the other settled regions', then the rest's.
-        to_region = np.where(touching & open_[:, None] & open_[None, :], error[:, colors] - own[:, None], np.inf)
-        to_color = np.where(beside & open_[:, None], error - own[:, None], np.inf)
-        step = np.concatenate([to_region, to_color], axis=1) / pixels[:, None]
-        best = int(np.argmin(step))
-        mover, target = divmod(best, step.shape[1])
-        if not step[mover, target] < min_step:
+        # The whole page's least step, the first in reading order on a tie: the first region with it, at its first.
+        mover = int(np.argmin(least))
+        target = int(where_to[mover])
+        if not least[mover] < min_step:
             break
         open_[mover] = False
         others = touching[mover].copy()
@@ -192,9 +217,14 @@ def _settle(
             touching[:, target] |= others
             touching[target, target] = False
             beside[target] |= beside[mover]
+            changed = others.copy()
+            changed[target] = True
         else:  # into a region outside: it has that color now, and its neighbors a neighbor of it outside
             colors[mover] = target - count
             beside[others, colors[mover]] = True
+            changed = others
+        least[mover] = np.inf
+        update(np.flatnonzero(changed & open_))
 
     for region in rows:  # a chain of joins ends at the region that has the color
         end = region

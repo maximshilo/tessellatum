@@ -5,8 +5,10 @@ The pipeline takes its settings in three objects: how granular the page is
 and numbers print (``render.PageStyle``), and what it does with the line art,
 faces and text it finds (``pipeline.Handling``). Each setting here is one
 field of one of them, by name, with what the app needs to offer it: a label,
-a unit, a range, a step and a tooltip. Its default is the field's own, so a
-page drawn at the defaults is the page the pipeline draws when given nothing.
+a unit, a range, a step and a tooltip. Its default is the field's own, or for
+the colors, the smallest region and the smoothing, which have none, the
+default preset's: a page drawn at the defaults is the page the pipeline draws
+at that preset when given nothing else.
 
 Sizes are on the printed A4 page, as everywhere in the pipeline (see
 ``print_size``). The defaults are what the quality benchmarks are measured at
@@ -166,7 +168,7 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(
         "min_label_pt", STYLE, LINES, "Smallest number", "pt", 4.0, 12.0, 0.5,
         "The smallest a region's number prints. Smaller fits more numbers inside small regions; below 6 pt they "
-        "get hard to read.",
+        "get hard to read. A preview draws no number under 10 pixels, 6.5-7 pt, so smaller sizes show on an export.",
     ),
     Setting(
         "leader_reach_mm", STYLE, LINES, "Leader reach", "mm", 1.0, 20.0, 0.5,
@@ -178,12 +180,12 @@ SETTINGS: tuple[Setting, ...] = (
     ),
     # -- Line art --
     Setting(
-        "thin_ink_mm", HANDLING, LINE_ART, "Paint over ink thinner than", "mm", 0.0, 5.0, 0.1,
-        "On a cartoon or comic, the paint goes over its ink lines thinner than this (hatching, fine strokes), and "
+        "thin_ink_mm", HANDLING, LINE_ART, "Paint over ink up to", "mm", 0.0, 5.0, 0.1,
+        "On a cartoon or comic, the paint goes over its ink lines up to this wide (hatching, fine strokes), and "
         "never over bolder ones.",
     ),
     Setting(
-        "ink_gap_mm", HANDLING, LINE_ART, "Close gaps in lines up to", "mm", 0.0, 3.0, 0.1,
+        "ink_gap_mm", HANDLING, LINE_ART, "Close line gaps up to", "mm", 0.0, 3.0, 0.1,
         "Gaps in a cartoon's ink lines up to this wide are closed, so the paint of two areas doesn't run together.",
     ),
     # -- Text --

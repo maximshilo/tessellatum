@@ -119,7 +119,7 @@ def test_the_sliders_reach_past_the_old_finest_page(panel):
         control.slider.setValue(end)
     params = panel.get_difficulty_params()
     assert (params.num_colors, params.palette_margin_de00, params.min_region_area_mm2, params.min_width_mm) == (
-        64, 0.0, 2.0, 0.5
+        64, 0.0, 5.0, 1.0
     )
     finest = difficulty.finest_params()
     assert params.num_colors > finest.num_colors and params.min_region_area_mm2 < finest.min_region_area_mm2
@@ -215,7 +215,27 @@ def test_a_kept_preset_is_the_preset_and_a_store_that_can_t_be_read_is_ignored(t
 
 def test_without_a_store_nothing_is_kept(panel, tmp_path):
     _move(panel, "min_width_mm", 1.0)
-    assert ControlsPanel().get_difficulty_params() == difficulty.params_for_preset(difficulty.DEFAULT_PRESET)
+    other = ControlsPanel()
+    assert other.get_difficulty_params() == difficulty.params_for_preset(difficulty.DEFAULT_PRESET)
+    other.deleteLater()
+    _app.processEvents()
+
+
+def test_at_its_narrowest_every_slider_has_room_and_the_sliders_line_up(panel):
+    for section in panel.sections.values():
+        section.toggle.setChecked(True)
+    panel.show()  # laid out only once shown
+    panel.resize(panel.minimumSizeHint().width(), panel.sizeHint().height())
+    _app.processEvents()
+    for s in settings.SETTINGS:
+        control = panel.controls[s.name]
+        assert control.slider.width() >= controls_panel.MIN_SLIDER_WIDTH, s.name
+        # A setting's label explains it too.
+        assert panel.sections[s.group].form.labelForField(control).toolTip() == s.tooltip
+    # Every section's labels are as wide as the widest, so the sliders start in one column.
+    lefts = {panel.controls[s.name].slider.mapTo(panel, panel.controls[s.name].slider.rect().topLeft()).x()
+             for s in settings.SETTINGS}
+    assert len(lefts) == 1
 
 
 def test_any_version_of_the_page_can_be_exported_and_the_page_itself_is_the_default(panel):

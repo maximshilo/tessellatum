@@ -478,10 +478,11 @@ def test_the_line_smoothing_and_the_numbers_follow_the_style(monkeypatch):
     monkeypatch.setattr(render_module, "place_labels", spy)
     smoothing = []
     real_trace = render_module.trace_boundaries
-    monkeypatch.setattr(
-        render_module, "trace_boundaries",
-        lambda ids, smoothing_px=None, **kwargs: smoothing.append(smoothing_px) or real_trace(ids, smoothing_px, **kwargs),
-    )
+    def trace_spy(ids, smoothing_px=None, **kwargs):
+        smoothing.append(smoothing_px)
+        return real_trace(ids, smoothing_px, **kwargs)
+
+    monkeypatch.setattr(render_module, "trace_boundaries", trace_spy)
     render_page(size, regions, ids)
     style = PageStyle(line_smoothing_mm=1.5, min_label_pt=9.0, leader_reach_mm=3.0, text_gap_mm=1.0)
     render_page(size, regions, ids, style)
