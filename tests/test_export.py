@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from PIL import Image, ImageFont
 
-from tessellatum.core import export
+from tessellatum.core import export, text
 from tessellatum.core.boundaries import trace_boundaries
 from tessellatum.core.ink_outline import ink_outline
 from tessellatum.core.legend import LABEL_FONT_RATIO, SWATCH_BORDER_MM, SWATCH_GAP_MM, SWATCH_MM, render_legend
@@ -59,12 +59,16 @@ def _full_page():
     cv2.circle(ink, (580, 200), 40, 1, 2)
     ink[500:540, 600:610] = 1  # a hole in it
     ink[515:525, 603:607] = 0
-    area = np.zeros((height, width), dtype=bool)
-    area[1000:1060, 420:740] = True
-    lettering = np.zeros((height, width), dtype=np.uint8)
-    columns = np.arange(width)
-    lettering[area] = np.broadcast_to(np.where(np.sin(columns / 3.0) > 0.3, 230, 40), (height, width))[area]
-    return _drawn(ALIGNED, ids, [0, 1, 2, 3, 0], ink=ink.astype(bool), ink_gray=30, lettering=lettering, lettering_area=area)
+    return _drawn(ALIGNED, ids, [0, 1, 2, 3, 0], ink=ink.astype(bool), ink_gray=30, lettering=_letters_on_full_page())
+
+
+def _letters_on_full_page():
+    """A line of dark letters on a pale ground, rows 1000-1059 and columns 420-739 of the aligned page."""
+    width, height = ALIGNED
+    picture = np.full((height, width, 3), 225, dtype=np.uint8)
+    cv2.putText(picture, "Paint 2026", (430, 1045), cv2.FONT_HERSHEY_DUPLEX, 1.6, (25, 25, 25), 3, cv2.LINE_AA)
+    line = text.TextLine(quad=((420.0, 1000.0), (740.0, 1000.0), (740.0, 1060.0), (420.0, 1060.0)), score=1.0)
+    return text.lettering(picture, [line])
 
 
 def _save(tmp_path, drawing: PageDrawing, palette=PALETTE, name="page.pdf"):
@@ -142,9 +146,10 @@ def test_read_back_the_vector_page_is_the_raster_page(tmp_path):
         numbers[y0 - 1 : y1 + 1, x0 - 1 : x1 + 1] = True
     leaders = np.asarray(rendered.leaders) < 255
     near = cv2.dilate((lines | numbers | leaders).astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
-    # The renderer grows an image a pixel at its far edges where it lies on the pixel grid; the lettering's own pixels
-    # are checked in the file below.
-    lettered = cv2.dilate(drawing.lettering_area.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
+    # The letters' edges are anti-aliased each its own way, the raster page's from the picture's pixels; they are
+    # checked in the file below.
+    letters = pdf_reading.inside_even_odd(drawing.lettering, (height, width)).astype(np.uint8)
+    lettered = cv2.dilate(letters, np.ones((5, 5), np.uint8)).astype(bool)
 
     assert np.abs(back - page).mean() < 1.0
     # The printed ink is solid over its pixels, and bare paper is white, but where the ink's outline runs: there it is
@@ -173,7 +178,7 @@ def test_the_printed_ink_is_its_outline_smoothed_filled(tmp_path):
     drawing = _full_page().drawing
     _, (first, _) = _save(tmp_path, drawing)
     content = first["content"]
-    path = re.search(r"(?s)0\.1176 g\n(.*?)\nf\*\n", content).group(1)  # the ink's gray, 30, then the filled outlines
+    path = re.search(r"(?s)\n0\.1176 g\n(.*?)\nf\*\n", content).group(1)  # the ink's gray, 30, then the filled outlines
     rings = [
         np.array([[float(v) for v in word.split()[:2]] for word in ring.split("\n")]) - 0.5  # back to the page's pixels
         for ring in re.split(r"\n(?=\S+ \S+ m$)", path, flags=re.M)
@@ -201,7 +206,7 @@ def test_read_back_at_300_dpi_the_ink_joins_and_parts_what_the_page_does(tmp_pat
     rng = np.random.default_rng(0)
     ink[400:800, 100:600] = rng.random((400, 500)) < 0.08  # specks
     ink[400:800, 700:1200] = rng.random((400, 500)) > 0.08  # pinholes
-    drawing = PageDrawing(size, PageStyle(), [], [], ink, 30, None, None)
+    drawing = PageDrawing(size, PageStyle(), [], [], ink, 30, None)
     path = tmp_path / "ink.pdf"
     export.save_pdf(drawing, PALETTE, path)
     px_per_mm = 300 / 25.4
@@ -224,20 +229,31 @@ def test_read_back_at_300_dpi_the_ink_joins_and_parts_what_the_page_does(tmp_pat
         assert len(pairs) == len(np.unique(pairs[:, 0])) == len(np.unique(pairs[:, 1]))  # none broken, none merged
 
 
-def test_the_lettering_is_its_tones_at_the_page_s_pixels_darkening_what_is_under_it(tmp_path):
-    drawing = _full_page().drawing
+def test_the_letters_are_their_outline_filled_darkening_what_is_under_them(tmp_path):
+    # T7.5: the lettering is vector art like the rest of the sheet, not an image at the page's pixels.
+    rendered = _full_page()
+    drawing = rendered.drawing
     path, (first, _) = _save(tmp_path, drawing)
     content = first["content"]
-    image = first["resources"]["XObject"]["Lt"]
-    info, pixels = first["objects"][image]
-    w, h = (int(v) for v in re.search(r"/Width (\d+) /Height (\d+)", info).groups())
-    assert "/ColorSpace /DeviceGray /BitsPerComponent 8" in info
-    assert re.search(rf"q /Dk gs {w} 0 0 -{h} 420 1060 cm /Lt Do Q", content)  # its box, rows 1000-1059, columns 420-739
+    assert "XObject" not in first["resources"] and b"/Subtype /Image" not in path.read_bytes()
     dk = first["resources"]["ExtGState"]["Dk"]
     assert first["objects"][dk][0] == "<< /Type /ExtGState /BM /Darken >>"
-    expected = paper_under(drawing.lettering[1000:1060, 420:740], drawing.ink_gray)
-    np.testing.assert_array_equal(np.frombuffer(pixels, dtype=np.uint8).reshape(h, w), expected)
-    assert content.index("/Lt Do") < content.index("f*")  # the printed ink goes over it, as on the page
+    letters = re.search(r"(?s)\nq /Dk gs 0\.1176 g\n(.*?)\nf\* Q\n", content)  # in the ink's gray, 30
+    rings = [
+        np.array([[float(v) for v in word.split()[:2]] for word in ring.split("\n")]) - 0.5  # back to the page's pixels
+        for ring in re.split(r"\n(?=\S+ \S+ m$)", letters.group(1), flags=re.M)
+    ]
+    assert len(rings) == len(drawing.lettering) > 6
+    for ring, want in zip(rings, drawing.lettering):
+        np.testing.assert_allclose(ring, want, atol=0.005 + 1e-9)
+    assert letters.start() < content.index("\n0.1176 g\n")  # the printed ink goes over them, as on the page
+    # Read back at four times the page's pixels, they cover what the raster page's letters do.
+    back = pdf_reading.render(path, 0, 16.0).mean(axis=2)[160 : 160 + 4 * ALIGNED[1], 160 : 160 + 4 * ALIGNED[0]]
+    window = (slice(4 * 990, 4 * 1070), slice(4 * 410, 4 * 750))
+    printed = (255 - back[window]) / (255 - 30)
+    letters_ink = _letters_on_full_page().ink.astype(np.float64) / 255
+    assert printed.sum() / 16 == pytest.approx(letters_ink[990:1070, 410:750].sum(), rel=0.03)
+    assert (back[window] == 255).mean() > 0.6  # their ground, bare paper
 
 
 def test_the_numbers_are_text_in_the_page_s_font_embedded_where_the_page_writes_them(tmp_path):

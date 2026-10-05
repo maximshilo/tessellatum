@@ -25,6 +25,7 @@ from tessellatum.core.labels import (
 )
 from tessellatum.core.print_size import OUTLINE_WIDTH_MM, print_scale
 from tessellatum.core.regions import Region
+from tessellatum.core.text import Lettering
 
 # The page's ink, as a tone on white paper: 0 is black, 255 is invisible.
 # Gray rather than black, so that a line disappears under the paint that is
@@ -103,12 +104,13 @@ class PageDrawing:
 
     In the page's pixels, ``size`` (width, height) of them, with pixel centers
     at integer coordinates, as ``render_page`` draws it, in this order: the
-    lines, in ``style.line_gray``; inside ``lettering_area``, the lettering
-    (0 bare paper to 255 solid, in ``ink_gray``), darkening what is under it;
-    the printed ink, solid in ``ink_gray`` over what is under it; the leaders,
-    in ``style.label_gray``, darkening what is under them; and the numbers, in
-    ``style.label_gray``, at the size and the place ``number_origin`` gives.
-    ``ink``, ``lettering`` and ``lettering_area`` are None where the page has none.
+    lines, in ``style.line_gray``; the letters of the lines of text, the rings
+    of ``lettering`` filled by the even-odd rule, solid in ``ink_gray``,
+    darkening what is under them; the printed ink, solid in ``ink_gray`` over
+    what is under it; the leaders, in ``style.label_gray``, darkening what is
+    under them; and the numbers, in ``style.label_gray``, at the size and the
+    place ``number_origin`` gives. ``ink`` and ``lettering`` are None where the
+    page has none.
     """
 
     size: tuple[int, int]
@@ -117,8 +119,7 @@ class PageDrawing:
     labels: list[Label]
     ink: np.ndarray | None
     ink_gray: int
-    lettering: np.ndarray | None
-    lettering_area: np.ndarray | None
+    lettering: list[np.ndarray] | None
 
 
 @dataclass
@@ -141,8 +142,7 @@ def render_page(
     ink: np.ndarray | None = None,
     ink_gray: int = 0,
     clearable: np.ndarray | None = None,
-    lettering: np.ndarray | None = None,
-    lettering_area: np.ndarray | None = None,
+    lettering: Lettering | None = None,
 ) -> RenderedPage:
     """Draw the boundaries of ``region_id_map`` + numbers for ``regions`` onto a white ``size`` canvas.
 
@@ -163,18 +163,18 @@ def render_page(
     region with the ink under it, and a line's width round it, left unprinted
     (see ``labels.place_labels``).
 
-    ``lettering`` (HxW uint8, 0 bare paper to 255 solid) is the lettering in
-    the lines of text found, printed in ``ink_gray`` as it looks (see
-    ``text.lettering``), and ``lettering_area`` (HxW bool) the lines' boxes:
-    there the page prints the lettering, and the lines running through, in
-    place of the printed ink lying in a region -- a scan's own ink would
-    print its letters twice, the second time binarized. Printed ink in no
-    region, line art's bold ink and the seam down a line two regions share,
-    keeps them apart, and still prints solid. No number goes in the lines'
-    boxes, nor within ``labels.TEXT_GAP_MM`` of them (see
-    ``labels.place_labels``). The part of the lettering inked enough to read as
-    ink is in ``ink`` as well, which ends the lines crossing it and keeps label
-    points off it.
+    ``lettering`` is the letters in the lines of text found (see
+    ``text.lettering``): inside the lines' boxes, ``lettering.area``, the page
+    prints them in ``ink_gray``, as much as ``lettering.ink`` says -- the
+    letters' own tones round their outline -- and the lines running through,
+    in place of the printed ink lying in a region -- a scan's own ink would
+    print its letters twice. The letters' ground is bare paper. Printed ink in no region, line art's bold ink and the
+    seam down a line two regions share, keeps them apart, and still prints
+    solid. No number goes in the lines' boxes, nor within
+    ``labels.TEXT_GAP_MM`` of them (see ``labels.place_labels``). The pixels
+    the letters cover at least half of are in ``ink`` as well, which ends the
+    lines crossing them and keeps label points off them. The page's drawing
+    has the letters' outline, ``lettering.outline``.
 
     Returns the page, plus what it was built from: the ink the lines and the
     printed ink put on it, the geometry each line was drawn from, where each
@@ -185,7 +185,8 @@ def render_page(
     strokes = trace_boundaries(region_id_map, ink=ink if inked else None)
     line_width = style.line_width_px(size)
     lines_only = ink_coverage(size, strokes, line_width)
-    lettered = lettering is not None and lettering_area is not None and bool(lettering_area.any())
+    lettered = lettering is not None and bool(lettering.area.any())
+    lettering_area = lettering.area if lettered else None
 
     def solid(printed: np.ndarray | None) -> np.ndarray | None:
         """The printed ink that prints solid: all of it but, inside the lines of text, what lies in a region."""
@@ -194,10 +195,10 @@ def render_page(
         return printed & ((region_id_map < 0) | ~lettering_area)
 
     def all_ink(printed: np.ndarray | None) -> np.ndarray:
-        """The ink the page puts down: the lines, the printed ink solid, and inside the lines of text their lettering."""
+        """The ink the page puts down: the lines, the printed ink solid, and inside the lines of text their letters."""
         coverage = lines_only
         if lettered:
-            coverage = np.where(lettering_area, np.maximum(lines_only, lettering), coverage)
+            coverage = np.where(lettering_area, np.maximum(lines_only, lettering.ink), coverage)
         if inked:
             coverage = np.where(solid(printed), np.uint8(PAPER), coverage)
         return coverage
@@ -224,7 +225,7 @@ def render_page(
 
     paper = paper_under(lines_only, style.line_gray)
     if lettered:
-        letters = np.minimum(paper, paper_under(lettering, ink_gray))
+        letters = np.minimum(paper, paper_under(lettering.ink, ink_gray))
         paper[lettering_area] = letters[lettering_area]
     if inked:
         paper[solid(ink)] = min(int(ink_gray), PAPER)
@@ -245,8 +246,7 @@ def render_page(
         labels=labels,
         ink=solid(ink) if inked else None,
         ink_gray=min(int(ink_gray), PAPER),
-        lettering=lettering if lettered else None,
-        lettering_area=lettering_area if lettered else None,
+        lettering=list(lettering.outline) if lettered else None,
     )
     return RenderedPage(
         image=page,

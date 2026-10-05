@@ -16,7 +16,7 @@ from tessellatum.core.ink_outline import ink_outline
 from tessellatum.core.labels import baseline_bbox, font
 from tessellatum.core.legend import LABEL_FONT_RATIO, SWATCH_BORDER_MM, SWATCH_GAP_MM, SWATCH_MM, number_fill
 from tessellatum.core.print_size import A4, MM_PER_INCH, PT_PER_INCH, print_scale
-from tessellatum.core.render import PAPER, PageDrawing, number_origin, paper_under
+from tessellatum.core.render import PageDrawing, number_origin
 
 # The space between the page and the legend in a PNG, on paper.
 LEGEND_GAP_MM = 6.0
@@ -57,12 +57,15 @@ def save_pdf(drawing: PageDrawing, palette_rgb: Sequence[tuple[int, int, int]], 
       coarser than the line;
     - the numbers and their leaders the same way, the numbers as text in the
       font the page writes them in, embedded;
-    - the printed ink -- line art's own, the marks in a face, the lettering
-      inked solid -- as the outline of its pixels, filled, smoothed off their
-      staircase without joining or breaking anything the page keeps apart or
-      together (see ``ink_outline``);
-    - the lettering of signs and captions, which prints in its own tones, as a
-      gray image at the page's resolution, stored losslessly.
+    - the printed ink -- line art's own, the marks in a face -- as the outline
+      of its pixels, filled, smoothed off their staircase without joining or
+      breaking anything the page keeps apart or together (see
+      ``ink_outline``);
+    - the letters of signs and captions as their outline, filled: traced
+      between the page's pixels, so they print as smooth as the source shows
+      them (see ``text.lettering``).
+
+    Nothing on the sheet is an image.
 
     The legend gets a portrait sheet of its own, across the printable width
     from the top margin: its swatches, ``legend.SWATCH_MM`` squares in their
@@ -101,15 +104,9 @@ def _page_sheet(document: _Document, drawing: PageDrawing, numbers: int) -> None
     ]
     if drawing.strokes:
         ops += [f"{_gray(style.line_gray)} G", _path(drawing.strokes, offset=0.5), "S"]
-    if drawing.lettering_area is not None and drawing.lettering is not None:
-        # Under the lettering's box, the darker of it and the lines, as the page prints it; paper elsewhere.
-        rows = np.flatnonzero(drawing.lettering_area.any(axis=1))
-        columns = np.flatnonzero(drawing.lettering_area.any(axis=0))
-        y0, y1, x0, x1 = int(rows[0]), int(rows[-1]) + 1, int(columns[0]), int(columns[-1]) + 1
-        area = drawing.lettering_area[y0:y1, x0:x1]
-        tone = np.where(area, paper_under(drawing.lettering[y0:y1, x0:x1], drawing.ink_gray), np.uint8(PAPER))
-        resources["XObject"] = {"Lt": document.gray_image(tone)}
-        ops.append(f"q /Dk gs {x1 - x0} 0 0 {y0 - y1} {x0} {y1} cm /Lt Do Q")
+    if drawing.lettering:
+        # The letters, the darker of them and the lines, as the page prints them.
+        ops += [f"q /Dk gs {_gray(drawing.ink_gray)} g", _path(drawing.lettering, offset=0.5), "f* Q"]
     if drawing.ink is not None and drawing.ink.any():
         ops += [f"{_gray(drawing.ink_gray)} g", _path(ink_outline(drawing.ink), offset=0.5), "f*"]
     leaders = [label.leader for label in drawing.labels if label.leader is not None]
@@ -317,13 +314,6 @@ class _Document:
         """A Flate-compressed stream; ``entries`` are its dictionary's own, each followed by a space."""
         packed = zlib.compress(data)
         return self.add(f"<< {entries}/Filter /FlateDecode /Length {len(packed)} >>\nstream\n".encode() + packed + b"\nendstream")
-
-    def gray_image(self, pixels: np.ndarray) -> int:
-        height, width = pixels.shape
-        return self.stream(
-            f"/Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceGray /BitsPerComponent 8 ",
-            np.ascontiguousarray(pixels, dtype=np.uint8).tobytes(),
-        )
 
     def font(self, face: _TrueType) -> int:
         """``face`` embedded whole, as a simple font of the digits."""

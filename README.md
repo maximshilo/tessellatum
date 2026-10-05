@@ -53,8 +53,8 @@ with them, and "Export…" draws it again at print resolution.
   - *More detail on faces and subject*: on a photograph or a painting, the
     faces and the subject found get smaller regions than the rest, a face is
     painted in a few tones, and its thin dark marks are printed;
-  - *Print text as it looks*: the lettering of signs, titles and captions
-    found is printed, and no number goes on it.
+  - *Print text*: the letters of signs, titles and captions found are
+    printed, their ground left bare, and no number goes on them.
 - **Export** renders the page at 300 dpi on A4: a long edge of 2244 to
   3272 px, depending on the picture's shape, or the picture's own size where
   that is smaller, since nothing is upscaled.
@@ -67,9 +67,11 @@ with them, and "Export…" draws it again at print resolution.
     staircase without joining or breaking anything: every pixel's middle stays
     on its own side of the outline, and strokes and gaps a pixel wide stay at
     least 0.08 mm wide (most of a pixel on a page finer than about 225 dpi,
-    where a pixel is narrower). The lettering of signs and captions is an image at the
-    page's resolution, stored losslessly. The legend gets a portrait sheet of
-    its own, its swatches 12 mm squares in their exact colors.
+    where a pixel is narrower). The letters of signs and captions are their
+    outline, traced between the page's pixels and filled, so they print as
+    smooth as the picture shows them. Nothing on the sheet is an image. The
+    legend gets a portrait sheet of its own, its swatches 12 mm squares in
+    their exact colors.
   - **PNG**: the page above its legend in one image, which records its
     resolution, so it prints as large as the PDF's page.
 
@@ -83,8 +85,8 @@ below). On a photograph or a painting, it looks for faces and for the
 picture's subject before step 2, which gives them smaller regions; after step
 4 it settles a face's tones and finds the thin dark marks to print in it (see
 "Faces and the subject"). On every picture it looks for lines of text before
-step 5: their lettering is printed as it looks, and step 7 keeps the numbers
-off it (see "Text").
+step 5: their letters are printed, and step 7 keeps the numbers off them
+(see "Text").
 
 1. **Quantize**: the image is smoothed and reduced to a small palette of
    flat colors via k-means clustering in Lab color space. Colors the painter
@@ -279,22 +281,33 @@ like one: at most 15 mm tall on paper (bigger lettering is shapes to paint) and
 at least half again as long as tall, which an eye, a window or a disc mostly
 isn't.
 
-The page prints the lettering in each line found as it looks: the line's own
-lightness, from bare paper to solid ink, stretched so that its lightest tones
-(the 98th percentile) are paper and its darkest (the 2nd) solid ink, in the
-ink's tone, anti-aliased. Dark lettering prints as ink on paper; light
-lettering — a lit sign, white type on a dark panel — as paper letters in its
-dark printed ground. Which of the two a line is can't be told reliably from its
-pixels (a sign's panel can shade from light to dark behind its letters), and
-printed as it looks it reads either way. Inside a line the lettering takes the
-place of a scan's own ink lying in its regions, so the scan doesn't print its
-letters a second time, binarized and twice as bold; the lines between regions
-still run through it, and ink that keeps two regions apart — bold ink, the
-seam down a line two regions share — still prints solid. The regions and
-the palette are left as they are: the lettering darker than halfway is printed
-ink, painted round, which ends the lines crossing it, and no number goes within
-about 0.5 mm of the line's box. A line whose lettering stands out from its
-ground by less than 20 L\* prints nothing. See `src/tessellatum/core/text.py`.
+The page prints the letters in each line found, and nothing else in its box:
+the letters solid in the ink's tone, their ground bare paper, whether they are
+darker than their ground or lighter — a lit sign's white type prints as ink
+just as a caption's black type does. Which side of a line is its letters is
+told by three things about its box, two of which must agree: letters cover less
+of the box than their ground, the ground runs along the box's edge, and the
+ground is one piece where the letters are many. Boxes that overlap, one sign
+read twice, go with the side most of their pixels say. The ground is found
+round every pixel rather than once for the box: it is the picture's lightness
+with anything as thin as a stroke taken out (a morphological closing, or
+opening for light letters, by a disk 0.6 of the line's height across and a
+square turned to the line), so a panel shading from light to dark behind its
+letters, a band, a glow or a sign's edge is ground and prints nothing. A
+pixel's ink is how far it lies from its ground towards the letters' tone (the
+box's 2nd percentile of lightness, or its 98th for light letters). The
+letters' outline runs where that is 40%, traced through the lightness
+interpolated between the page's pixels on a grid four times finer, and
+smoothed off that grid: the PDF fills it as vector art, and the page prints the
+letters' own tones round it, from bare paper at the ground to solid at the
+letters. Inside a line the letters take the place of a scan's own ink lying in
+its regions, so the scan doesn't print its letters a second time; the lines
+between regions still run through, and ink that keeps two regions apart —
+bold ink, the seam down a line two regions share — still prints solid. The
+regions and the palette are left as they are: the letters are printed ink,
+painted round, which ends the lines crossing them, and no number goes within
+about 0.5 mm of the line's box. A line whose two tones stand less than 20 L\*
+apart prints nothing. See `src/tessellatum/core/text.py`.
 
 ### Performance
 

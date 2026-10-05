@@ -192,8 +192,9 @@ vanished. More generally:
 - digits in the image get confused with region numbers.
 
 What good looks like:
-- Signs, titles and captions are found and printed as they look. Lettering taller than 15 mm on paper is big enough
-  to paint as shapes.
+- Signs, titles and captions are found and their letters printed, solid, without the box's ground: a light sign's
+  letters print as ink as a dark caption's do. Lettering taller than 15 mm on paper is big enough to paint as
+  shapes.
 - No region number goes on text or next to it.
 - Region numbers are styled so they can't be mistaken for the image's text: small and gray.
 

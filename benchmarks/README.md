@@ -64,7 +64,8 @@ images x presets x output sizes:
     goes over them; from 0.1.35 also the thin dark marks printed in the faces
     found on a picture that isn't line art, which lie in the regions around
     them; from 0.1.41 also the lettering in the lines of text found that is
-    darker than halfway, which lies in the regions around it) and the gray it
+    darker than halfway, which lies in the regions around it, and from 0.1.47
+    the pixels the letters there cover at least half of) and the gray it
     prints in;
   - the faces the pipeline finds in the picture (from 0.1.33), with each one's
     box on the page, score and detector;
@@ -72,8 +73,9 @@ images x presets x output sizes:
     that isn't line art);
   - the lines of text the pipeline finds in the picture (from 0.1.40), each a box
     turned to its line, on the page, with the network's score;
-  - where the page prints those lines' lettering as it looks, and the ink it
-    puts down there, 0 solid and 255 bare paper (from 0.1.41);
+  - where the page prints those lines' lettering, and the ink it puts down
+    there, 0 solid and 255 bare paper (from 0.1.41 as it looks, from 0.1.47
+    the letters alone);
   - where a region may be half the difficulty's smallest, each of its pixels
     there counting twice towards it (from 0.1.34: the faces found, on a picture
     that isn't line art; from 0.1.39 the subject too).
@@ -256,7 +258,9 @@ exported at 2400 px, which for these images was the same page.
 From 0.1.44 the PDF draws that page again as vector art, from what it was drawn
 from (`GeneratedPage.drawing`): its lines as paths at the width asked for, never
 widened to a pixel, its numbers as text in the page's own font, the ink it prints
-as the outline of its pixels, and its lettering as an image at its resolution.
+as the outline of its pixels, and its lettering as an image at its resolution
+(from 0.1.47 as the letters' outline, traced between the pixels: the PDF holds
+no image).
 From 0.1.45 the ink's outline is smoothed off its pixels' staircase
 (`core/ink_outline.py`), each point held within half a pixel of where it was
 traced, so that every pixel's middle stays on its own side of it and nothing the
@@ -727,6 +731,11 @@ How the found-text metrics are defined:
   ink in no region, which keeps two regions apart, still prints solid). Its part darker
   than halfway is printed ink, in the regions around it. The painting keeps the printed
   lettering in its own tone, as the page prints it; the text CER metrics read it.
+- From 0.1.47 the page prints the letters alone, their ground bare paper, light
+  letters as ink as dark ones are: each pixel's ink is how far it lies from its ground,
+  found round it with anything as thin as a stroke taken out, towards the letters'
+  tone (`text.lettering`). The fields and what the painting and the metrics read are
+  as before.
 - From 0.1.42 no number goes in the box of a line found, nor within 0.5 mm of it
   (`labels.TEXT_GAP_MM`), measured between the middles of the page's pixels, so the
   bare paper left between them can be up to about a pixel and a half less (0.14 mm
