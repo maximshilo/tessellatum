@@ -60,8 +60,8 @@ all back):
   moving any of them picks Custom (see "How it works").
 - **Regions and colors**: how many colors to look for and how different
   every two must be (the *color margin*, 10 ΔE00 by default; lower keeps
-  more, subtler colors), the smallest region (5 to 500 mm²), the *brush
-  width* -- the narrowest any part of a region may be, 3 mm by default, 1
+  more, subtler colors), the smallest region (2 to 500 mm²), the *brush
+  width* -- the narrowest any part of a region may be, 3 mm by default, 0.5
   to 6 mm -- which corners keep their points (the *sharpest corner*, 20° by
   default; 180° rounds every corner to the brush) and how plainly the picture
   must show one (the *corner contrast*, 20 ΔE00), the smoothing before the
@@ -194,7 +194,7 @@ they must be, how small a region may be on the printed page before it is
 merged away, how narrow any part of one may be (the brush), how much
 smoothing is applied before quantizing, and how the ragged edges are settled
 — see `src/tessellatum/core/difficulty.py`. Region sizes are areas on paper:
-300 mm² at Easy, 125 mm² at Medium, 40 mm² at Hard, and 5–500 mm² in
+300 mm² at Easy, 125 mm² at Medium, 40 mm² at Hard, and 2–500 mm² in
 Custom, never below the brush's own footprint. So a preview and an export of
 one image get regions of the same size, and a long, narrow picture, which
 prints smaller, gets fewer regions rather than smaller ones. Every preset

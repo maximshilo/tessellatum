@@ -119,7 +119,7 @@ def test_the_sliders_reach_past_the_old_finest_page(panel):
         control.slider.setValue(end)
     params = panel.get_difficulty_params()
     assert (params.num_colors, params.palette_margin_de00, params.min_region_area_mm2, params.min_width_mm) == (
-        64, 0.0, 5.0, 1.0
+        64, 0.0, 2.0, 0.5
     )
     finest = difficulty.finest_params()
     assert params.num_colors > finest.num_colors and params.min_region_area_mm2 < finest.min_region_area_mm2
