@@ -55,11 +55,9 @@ JUNCTION_CLEARANCE_PX = 2.5
 EDGE_SMOOTHING_MM = 0.5
 EDGE_TOLERANCE_MM = 0.5
 EDGE_THRESHOLDS = (5.0, 10.0)
-# Bands, as a gradient breaks into. A region is one where no brush BAND_MAX_WIDTH_MM wide, twice the paintable width,
-# fits anywhere in it, and it is at least BAND_MIN_ELONGATION times as long as it is wide.
 # The sharpest corner whose tip -- the point a round brush can't reach -- counts as paintable: a painter fills it with
-# the brush's point. The pipeline keeps the tips of corners this sharp at its defaults
-# (``regions.SHARPEST_CORNER_DEG``), and slivers leave them out (see ``corner_tips``).
+# the brush's point, so slivers leave such points out (see ``corner_tips``), wherever a page has them. The pipeline
+# keeps them when its sharpest corner setting asks it to (``regions.CornerRule``); by default it rounds every corner.
 CORNER_SHARPEST_DEG = 20.0
 # A tip meets its region's reach along a base at least this many brush radii long, may measure this much deeper or
 # longer than its corner's shape says on the pixel grid, and takes in the pixels within this many of it: as the
@@ -70,6 +68,8 @@ _TIP_RIM_PX = 2
 # A tip with another tip's middle within this many brush radii of its own is a ragged edge's, as the pipeline's
 # ``regions._TIP_APART_RADII``.
 _TIP_APART_RADII = 2.0
+# Bands, as a gradient breaks into. A region is one where no brush BAND_MAX_WIDTH_MM wide, twice the paintable width,
+# fits anywhere in it, and it is at least BAND_MIN_ELONGATION times as long as it is wide.
 BAND_MAX_WIDTH_MM = 6.0
 BAND_MIN_ELONGATION = 4.0
 # Palette. Colors should differ from each other by a clear margin: at least PALETTE_MIN_DE00 (CIEDE2000).
@@ -485,17 +485,18 @@ def corner_tips(
     pixels side by side, one in it and one of its region in no piece -- is at
     least ``_TIP_BASE_RADII`` radii long and meets what the brush reaches
     along one stretch (an 8-connected run), not none, nor two as a neck or a
-    channel does, and it is neither
-    deeper (area over base) nor longer (its farthest pixel's straight
-    distance from its region's reach) than the tip of a corner
-    ``sharpest_deg`` sharp, give or take ``_TIP_SLACK``; and no other tip's
-    middle lies within ``_TIP_APART_RADII`` radii of its own (tips crowded so
-    are the spikes of a ragged edge, not a shape's corners). A tip then takes in
-    what the brush can't reach of its region within ``_TIP_RIM_PX`` of it: the
-    pixels along its sides and its base the piece leaves out.
+    channel does; if it is neither deeper (area over base) nor longer (its
+    farthest pixel's straight distance from its region's reach) than the tip
+    of a corner ``sharpest_deg`` sharp, give or take ``_TIP_SLACK``; and if no
+    other tip's middle lies within ``_TIP_APART_RADII`` radii of its own (tips
+    crowded so are the spikes of a ragged edge, not a shape's corners). A tip
+    then takes in what the brush can't reach of its region within
+    ``_TIP_RIM_PX`` of it: the pixels along its sides and its base the piece
+    leaves out.
 
-    The pipeline keeps corners' tips by this rule (``regions.corner_tips``),
-    measuring a piece's length along a path through it rather than straight.
+    The pipeline, asked to, keeps corners' tips by this rule
+    (``regions.corner_tips``), measuring a piece's length along a path through
+    it rather than straight.
     """
     ids, areas = _renumbered_regions(region_id_map)
     none = np.zeros(ids.shape, dtype=bool)

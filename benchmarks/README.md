@@ -343,22 +343,24 @@ How the paintability metrics are defined:
   - Thin parts of regions are slivers. Until 0.1.50 so were the corners a
     round brush can't reach -- a square region lost a few pixels at each
     corner -- but a painter fills a corner's point with the brush's tip, and
-    from 0.1.50 the pipeline keeps the points of corners down to 20° (see
-    `regions.CornerRule`), so slivers leave out the points of corners that
-    sharp (`bench_metrics.corner_tips`), by the pipeline's rule for which
-    pieces of a region beyond its brush are corners. Such a piece meets
-    what its brush reaches along one stretch at least half the brush long
-    (not none, nor two as a neck or a channel does), and is no deeper -- its
-    area over that stretch -- and no longer -- its farthest pixel from it --
-    than the point of a 20° corner, give or take 20% for the pixel grid; and
-    no other such piece's middle lies within a brush's width of its own,
-    where a ragged edge's spikes crowd. A strip, a needle or a neck is no
-    corner. The points are measured on the page as drawn, whatever the
-    pipeline kept, so they count for a version before 0.1.50 too; a corner
-    such a version rounded has no point left to leave out. The harness
-    measures a piece's length in a straight line and in a box round it, the
-    pipeline along a path through it: on the photographs at Hard the two
-    leave out the same share of the page to within 0.01 points.
+    from 0.1.50 the pipeline can keep the points of corners (its sharpest
+    corner setting, off by default; see `regions.CornerRule`). So slivers
+    leave out the points of corners down to 20° wherever a page has them
+    (`bench_metrics.corner_tips`), by the pipeline's rule for which pieces of
+    a region beyond its brush are corners. Such a piece meets what its brush
+    reaches along one stretch at least half the brush long (not none, nor two
+    as a neck or a channel does), and is no deeper -- its area over that
+    stretch -- and no longer -- its farthest pixel from it -- than the point
+    of a 20° corner, give or take 20% for the pixel grid; and no other such
+    piece's middle lies within a brush's width of its own, where a ragged
+    edge's spikes crowd. A strip, a needle or a neck is no corner. The points
+    are measured on the page as drawn, whatever the pipeline kept, so they
+    count for a version before 0.1.50 too, and for a page drawn with its
+    corners rounded: a rounded corner has no point left to leave out. The
+    harness measures a piece's length in a straight line and in a box round
+    it, the pipeline along a path through it: on the lion, the Swiss castle
+    and the cartoon girl at Hard, preview and export, the two leave out the
+    same share of the page to within 0.01 points.
   - The brush is an odd number of pixels across (13 px for a 13.2 px width,
     15 px for 14 px), so a bar is judged to within a pixel of the width.
   - On line art the brush goes wherever the region map puts the region. Until

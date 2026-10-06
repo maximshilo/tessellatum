@@ -60,8 +60,8 @@ class DifficultyParams:
             times towards ``min_region_area_mm2``); 1 spends no more detail on
             them.
         sharpest_corner_deg: the sharpest corner, in degrees, whose point the
-            brush rule keeps rather than rounding it to the brush; 180 rounds
-            every corner (see ``regions.CornerRule``).
+            brush rule keeps rather than rounding it to the brush; 180, the
+            default, rounds every corner (see ``regions.CornerRule``).
         corner_contrast_de00: how much closer to its own color than to its
             neighbor's (CIEDE2000) a corner's point must be in the picture, on
             average, to be kept: the points of a picture's shapes stand apart,

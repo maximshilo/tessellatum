@@ -116,13 +116,15 @@ SETTINGS: tuple[Setting, ...] = (
     _difficulty(
         "min_width_mm", "Brush width", "mm", 0.1,
         "The narrowest any part of a region may be on the printed page: the brush it is painted with. Narrower "
-        "parts are given to the region beside them. A finer brush keeps thinner shapes.",
+        "parts are given to the region beside them, which also rounds sharp corners unless Sharpest corner keeps "
+        "them. A finer brush keeps thinner shapes.",
     ),
     _difficulty(
         "sharpest_corner_deg", "Sharpest corner", "°", 1,
         "The sharpest corner whose point is kept, rather than rounded off where the brush can't reach: a painter "
-        "fills it with the brush's tip. Points crowding within a brush's width of each other, the spikes of a ragged "
-        "edge, are rounded all the same. 180 rounds every corner to the brush.",
+        "fills it with the brush's tip. 180, the default, rounds every corner to the brush; 20 keeps a triangle's or "
+        "a spire's points. Points crowding within a brush's width of each other, the spikes of a ragged edge, are "
+        "rounded all the same.",
     ),
     _difficulty(
         "corner_contrast_de00", "Corner contrast", "ΔE00", 0.5,

@@ -21,16 +21,18 @@ _SETTLE_ROUNDS = 4
 _MIN_POOLED_BOX_PX = 32_000
 
 # A round brush can't reach into a corner: it stops at the circle touching both sides, and the brush rule
-# (``absorb_thin_parts``) would give the point beyond -- the corner's *tip* -- to the region beside it, rounding every
-# corner to the brush. A tip is kept instead when its corner is no sharper than this, by default (see ``corner_tips``):
-# a painter fills it with the brush's point. 20 degrees keeps a spire's point, and a star's; a drainpipe on a wall, a
-# few times longer than wide, is a needle and goes.
-SHARPEST_CORNER_DEG = 20.0
+# (``absorb_thin_parts``) gives the point beyond -- the corner's *tip* -- to the region beside it, rounding every
+# corner to the brush. Asked to, it keeps the tips of corners no sharper than a given angle instead (see
+# ``CornerRule``): a painter fills them with the brush's point. By default it doesn't: 180 degrees rounds every corner,
+# as pages always were. 20 degrees keeps a spire's point, and a star's, while a drainpipe on a wall, a few times longer
+# than wide, is a needle and still goes.
+SHARPEST_CORNER_DEG = 180.0
 
-# ... and when the picture shows it plainly: when its pixels lie, on average, this much closer by CIEDE2000 to their
-# region's color than to the color the brush rule would give them, by default (see ``CornerRule``). A roof against the
-# sky, or a flat fill's point, stands that far apart; the spikes of fur and foliage, whose pixels lie between two
-# neighboring colors of the palette, a step of it apart, do not, and are rounded off as before.
+# A tip is kept only where the picture shows it plainly: where its pixels lie, on average, this much closer by
+# CIEDE2000 to their region's color than to the color the brush rule would give them, by default (see
+# ``CornerRule``). A roof against the sky, or a flat fill's point, stands that far apart; the spikes of fur and
+# foliage, whose pixels lie between two neighboring colors of the palette, a step of it apart, do not, and are rounded
+# off as before.
 CORNER_CONTRAST_DE00 = 20.0
 
 # A tip meets the rest of its region along a base at least this many brush radii long -- half the brush. A part
@@ -65,7 +67,7 @@ class CornerRule:
     picture, or at 0, the corner's shape is enough.
     """
 
-    sharpest_deg: float = SHARPEST_CORNER_DEG
+    sharpest_deg: float
     contrast_de00: float = CORNER_CONTRAST_DE00
     image_bgr: np.ndarray | None = None
     palette_bgr: np.ndarray | None = None
@@ -104,24 +106,22 @@ def tip_depth(sharpest_deg: float) -> float:
     return (1 / math.tan(angle / 2) - (math.pi - angle) / 2) / (math.pi - angle)
 
 
-def corner_tips(
-    region_id_map: np.ndarray, num_regions: int, min_width_px: float, sharpest_deg: float = SHARPEST_CORNER_DEG
-) -> np.ndarray:
+def corner_tips(region_id_map: np.ndarray, num_regions: int, min_width_px: float, sharpest_deg: float) -> np.ndarray:
     """The pixels a brush ``min_width_px`` wide can't reach that are corners' tips all the same: HxW bool.
 
     What a region's brush can't reach falls into pieces (8-connected). A
     piece is a corner's tip if it meets the part of its region the brush
     reaches along one stretch, its base, at least half the brush long (pairs
     of pixels side by side, ``_TIP_BASE_RADII``), and is neither deeper nor
-    longer than the tip of a corner ``sharpest_deg`` sharp: its
-    area over its base no more than ``tip_depth``, its farthest pixel no
-    farther from the rest than ``tip_length``, both give or take the pixel
-    grid (``_TIP_SLACK``). A strip narrower than half the brush where it
-    leaves its region, longer than such a tip is deep, or a needle reaching
-    further than its point, is no tip; nor is a neck between two parts the
-    brush reaches, a channel meeting it in two places, or a region with none.
-    And a tip stands alone: with another's middle within a brush's width of
-    its own (``_TIP_APART_RADII``), it is a spike of a ragged edge.
+    longer than the tip of a corner ``sharpest_deg`` sharp: its area over its
+    base no more than ``tip_depth``, its farthest pixel no farther from the
+    rest than ``tip_length``, both give or take the pixel grid
+    (``_TIP_SLACK``). A strip narrower than half the brush where it leaves its
+    region, longer than such a tip is deep, or a needle reaching further than
+    its point, is no tip; nor is a neck between two parts the brush reaches, a
+    channel meeting it in two places, or a region with none. And a tip stands
+    alone: with another's middle within a brush's width of its own
+    (``_TIP_APART_RADII``), it is a spike of a ragged edge.
 
     A piece is made of the pixels more than a pixel beyond the brush and
     those beside them. The rest lie within a pixel of it: along a slanted
@@ -136,17 +136,11 @@ def corner_tips(
 
 
 def _tips(
-    ids: np.ndarray,
-    num_regions: int,
-    radius: float,
-    sharpest_deg: float,
-    fits: np.ndarray | None,
-    to_brush: np.ndarray | None = None,
+    ids: np.ndarray, num_regions: int, radius: float, sharpest_deg: float, fits: np.ndarray | None
 ) -> tuple[np.ndarray, int]:
     """(each pixel's corner tip, numbered from 0, -1 for none; how many numbers there are), see ``corner_tips``.
 
-    ``fits`` is where a brush of ``radius`` fits (``_brush_fits``), and
-    ``to_brush`` each pixel's distance to it, if known.
+    ``fits`` is where a brush of ``radius`` fits (``_brush_fits``), if known.
     """
     h, w = ids.shape
     pieces = np.full((h, w), -1, dtype=np.int32)
@@ -157,8 +151,7 @@ def _tips(
         fits = _brush_fits(ids, num_regions, radius)
     if not fits.any():
         return pieces, 0
-    if to_brush is None:
-        to_brush = cv2.distanceTransform((~fits).view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+    to_brush = cv2.distanceTransform((~fits).view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
     flat = ids.reshape(-1)
     unreached = np.empty((h, w), dtype=bool)
     area, box = kernels.brush_pieces(

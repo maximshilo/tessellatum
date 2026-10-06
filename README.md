@@ -62,11 +62,12 @@ all back):
   every two must be (the *color margin*, 10 ΔE00 by default; lower keeps
   more, subtler colors), the smallest region (2 to 500 mm²), the *brush
   width* -- the narrowest any part of a region may be, 3 mm by default, 0.5
-  to 6 mm -- which corners keep their points (the *sharpest corner*, 20° by
-  default; 180° rounds every corner to the brush) and how plainly the picture
-  must show one (the *corner contrast*, 20 ΔE00), the smoothing before the
-  colors are found, and how far and how firmly the vote that settles ragged
-  edges reaches (*edge settling*, *edge hold*).
+  to 6 mm -- which corners keep their points (the *sharpest corner*: 180°,
+  the default, rounds every corner to the brush; 20° keeps a triangle's
+  points) and how plainly the picture must show one (the *corner contrast*,
+  20 ΔE00), the smoothing before the colors are found, and how far and how
+  firmly the vote that settles ragged edges reaches (*edge settling*, *edge
+  hold*).
 - **Lines and numbers**: how wide the lines print, 0.1 to 1 mm (0.3 mm by
   default), and their tone, Light, Medium or Dark; how far along a line its
   pixel staircase is smoothed; the smallest number (6 pt by default); how
@@ -142,13 +143,14 @@ step 5: their letters are printed, and step 7 keeps the numbers off them
    region narrower than the brush — 3 mm on the printed page — goes to the
    region whose paint reaches it first, and a region thinner than that
    everywhere disappears into its neighbors, so the page asks for no stroke
-   too fine to make. A corner's point is the exception: a round brush stops
-   short of it, but a painter fills it with the brush's tip, so a corner down
-   to 20° keeps its point where the picture shows it plainly (its pixels on
-   average 20 ΔE00 closer to their own color than to their neighbor's), and
-   a triangle stays a triangle. A strip, a needle or a neck is no corner, and
-   nor are the spikes of fur, foliage or a ragged silhouette, which crowd
-   within a brush's width of each other: they are rounded off as before. See
+   too fine to make. A corner's point can be the exception: a round brush
+   stops short of it, but a painter fills it with the brush's tip. With the
+   *sharpest corner* setting below its default of 180°, a corner down to that
+   angle keeps its point where the picture shows it plainly (its pixels on
+   average 20 ΔE00 closer to their own color than to their neighbor's), and a
+   triangle stays a triangle. A strip, a needle or a neck is no corner, and nor
+   are the spikes of fur, foliage or a ragged silhouette, which crowd within a
+   brush's width of each other: they are rounded off all the same. See
    `regions.CornerRule`.
 4. **Settle**: where a photograph is textured — fur, foliage, stone — its
    colors alternate faster than a brush is wide, and the edges between its
@@ -255,7 +257,7 @@ ink:
 - what a brush still can't reach, in pockets walled mostly by ink it may not
   go over — the tips a fill makes against a bold outline, the channels
   between dark blobs of a scan — is left as bare paper, outlined like any
-  other area: too narrow to paint (the ink draws the corner);
+  other area: too narrow to paint;
 - a region whose number finds no room anywhere, not even on its own hatching
   cleared, joins the area its white shares an edge with, as a region below the
   difficulty's smallest area does — or, if it is hatching with no room for a

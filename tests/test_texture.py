@@ -1,6 +1,5 @@
 """Texture: the regions' edges settled by a vote of the page around each pixel, held to the picture's own (T5.1, D-046)."""
 
-import dataclasses
 import sys
 from pathlib import Path
 
@@ -454,10 +453,7 @@ def _mean_distance(picture: np.ndarray, painting: np.ndarray) -> float:
 def test_a_photograph_s_edges_are_settled_and_its_page_is_easier_to_paint_and_no_further_from_it(monkeypatch):
     pipeline.clear_cache()
     image = pipeline.load_image_bgr(SAMPLES / "l-photo-lion.jpg")
-    # The corners rounded to the brush, as the vote found them before v0.1.50: what the vote does on its own. With
-    # their points kept (see ``regions.CornerRule``), the fur's that the picture holds stay after it too, and slivers
-    # but for corners' tips come out much the same either way (0.62% and 0.59% of the page).
-    params = dataclasses.replace(params_for_preset("Hard"), sharpest_corner_deg=180.0)
+    params = params_for_preset("Hard")
     calls, results = [], []
     real = pipeline.smooth_regions
 
@@ -470,7 +466,8 @@ def test_a_photograph_s_edges_are_settled_and_its_page_is_easier_to_paint_and_no
     analysis = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True).analysis
     assert len(calls) == 1
     picture, ids, colors, palette, min_area_px, min_width_px, detail, settling, color_step, weight, corners = calls[0]
-    # The difficulty's settings for the vote, and the weight and the corners the regions were built with: none kept.
+    # The difficulty's settings for the vote, and the weight and the corners the regions were built with: none kept,
+    # by default.
     assert (settling, color_step, weight, corners) == (
         params.edge_settling, params.edge_color_step_de00, params.detail_weight, None
     )

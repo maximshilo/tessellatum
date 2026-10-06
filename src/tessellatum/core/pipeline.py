@@ -501,8 +501,8 @@ def generate(
         detail = in_subject | in_faces if in_faces is not None else in_subject
         if not detail.any():
             detail = None
-    # A region's corners keep their points, where the picture shows them plainly, rather than being rounded to the
-    # brush.
+    # Asked to, a region's corners keep their points where the picture shows them plainly, rather than being rounded
+    # to the brush; by default every corner is rounded.
     corner_rule = None
     if params.sharpest_corner_deg < 180:
         corner_rule = CornerRule(params.sharpest_corner_deg, params.corner_contrast_de00, resized, palette_bgr)

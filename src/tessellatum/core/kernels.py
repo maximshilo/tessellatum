@@ -6,10 +6,10 @@ that groups regions for the width measurement, the walk that turns the
 boundaries between regions into one path each (and the printed ink's outline
 into rings, see ``ink_outline``), the search for the nearest
 core a thin part can reach without crossing line art's ink, and the bilateral
-filter's per-pixel weighting -- runs here as compiled code, and so do the
-measures of the corners' tips the brush rule keeps (see
-``regions.corner_tips``). So do line art's
-region steps (see ``regions.look_through_hatching`` to ``regions.split_areas``):
+filter's per-pixel weighting -- runs here as compiled code, as do the
+measures of the corners' tips the brush rule can keep (see
+``regions.corner_tips``). So do line art's region steps (see
+``regions.look_through_hatching`` to ``regions.split_areas``):
 their searches along paths, and the passes over the page that compare each
 pixel with its neighbors, which NumPy would make one whole-page array per
 neighbor for. Those give exactly what the NumPy code they replace gave

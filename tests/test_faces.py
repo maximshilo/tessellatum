@@ -1,6 +1,5 @@
 """Faces: YuNet for photographed and painted faces, an LBP cascade for drawn ones, and what the pipeline reports."""
 
-import dataclasses
 import hashlib
 import sys
 from pathlib import Path
@@ -545,10 +544,9 @@ def test_a_picture_drawn_from_its_colors_looks_for_faces_on_the_page_s_path_and_
 def test_a_picture_without_faces_is_drawn_as_before(monkeypatch):
     pipeline.clear_cache()
     image = pipeline.load_image_bgr(SAMPLES / "scene.png")
-    # The regions' edges are settled since v0.1.37 (see ``texture``), its subject has more detail since v0.1.39 (see
-    # ``subject``), and its corners keep their points since v0.1.50 (see ``regions.CornerRule``), none of them about
-    # faces: they are left out here.
-    params = dataclasses.replace(params_for_preset("Medium"), sharpest_corner_deg=180.0)
+    params = params_for_preset("Medium")
+    # The regions' edges are settled since v0.1.37 (see ``texture``), and its subject has more detail since v0.1.39
+    # (see ``subject``), neither of them about faces: they are left out here.
     monkeypatch.setattr(pipeline, "smooth_regions", lambda picture, ids, colors, *rest: (ids, colors))
     monkeypatch.setattr(subject, "find_subject", _no_subject)
     page = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)

@@ -59,7 +59,8 @@ the page paintable is recorded as an intended trade-off.
 
 - Every region is wide enough for a brush at print size. Width matters, not just area: a 2-pixel sliver can still
   pass an area threshold. A corner's point is the exception: a round brush stops short of it, but a painter fills it
-  with the brush's tip, so a triangle keeps its corners rather than being rounded to the brush.
+  with the brush's tip, so a page may keep a triangle's corners (an opt-in setting) rather than round them to the
+  brush.
 - Every region carries a legible number, never on a line or on another number. A region too small to hold its number
   gets it just outside, with a leader line, rather than going without one.
 - There are few slivers anywhere, and none where a gradient would break into thin bands.
@@ -122,7 +123,7 @@ What went wrong before this work, on the photo of the lion at Hard:
 
 What good looks like:
 - Texture is simplified into a handful of patches that follow the form, with smooth boundaries.
-- Shapes keep their corners: a roof, a spire or a triangle keeps its point.
+- Shapes can keep their corners: with the sharpest corner setting on, a roof, a spire or a triangle keeps its point.
 - Gradients (sky, shading) become a few broad bands, not thin concentric slivers.
 - More detail goes to the subject, less to the background.
 - Palette colors are at least 10 ΔE00 apart.

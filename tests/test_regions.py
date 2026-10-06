@@ -1198,7 +1198,7 @@ def test_a_corner_the_picture_does_not_show_plainly_is_rounded_all_the_same():
 def test_corner_tips_are_what_a_brush_can_not_reach_of_a_corner_s_point():
     labels = _triangle(30)
 
-    tips = corner_tips(labels, 2, 10.0)
+    tips = corner_tips(labels, 2, 10.0, 20.0)
 
     assert tips[80, 124] and not tips[80, 60]  # at the point, not in the middle
     # In the triangle, near its corners (its point, and the two 75 degree ones); round it, only in the page's corners.
