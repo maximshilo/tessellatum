@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import cv2
@@ -18,6 +19,198 @@ _SETTLE_ROUNDS = 4
 # thread: for them, handing off to a worker (and contending for the GIL) costs
 # more than the OpenCV work itself.
 _MIN_POOLED_BOX_PX = 32_000
+
+# A round brush can't reach into a corner: it stops at the circle touching both sides, and the brush rule
+# (``absorb_thin_parts``) gives the point beyond -- the corner's *tip* -- to the region beside it, rounding every
+# corner to the brush. Asked to, it keeps the tips of corners no sharper than a given angle instead (see
+# ``CornerRule``): a painter fills them with the brush's point. By default it doesn't: 180 degrees rounds every corner,
+# as pages always were. 20 degrees keeps a spire's point, and a star's, while a drainpipe on a wall, a few times longer
+# than wide, is a needle and still goes.
+SHARPEST_CORNER_DEG = 180.0
+
+# A tip is kept only where the picture shows it plainly: where its pixels lie, on average, this much closer by
+# CIEDE2000 to their region's color than to the color the brush rule would give them, by default (see
+# ``CornerRule``). A roof against the sky, or a flat fill's point, stands that far apart; the spikes of fur and
+# foliage, whose pixels lie between two neighboring colors of the palette, a step of it apart, do not, and are rounded
+# off as before.
+CORNER_CONTRAST_DE00 = 20.0
+
+# A tip meets the rest of its region along a base at least this many brush radii long -- half the brush. A part
+# narrower where it leaves its region is a strip, however short, and goes as any thin part does.
+_TIP_BASE_RADII = 1.0
+
+# How far round a tip the pixels its brush can't reach are part of it (see ``corner_tips``): the band along its sides
+# and its base, a pixel or so wide, that lies within a pixel of a brush.
+_TIP_RIM_PX = 2
+
+# How much deeper or longer than its shape says a corner's tip may measure on the pixel grid: a corner as sharp as
+# the setting measured up to 17% deeper at a preview's 6 px brush radius (a wedge's tip is a few hundred pixels), 6%
+# at an export's.
+_TIP_SLACK = 1.2
+
+# A shape's corner stands alone: a tip with another corner's tip -- of any region -- within this many brush radii of it
+# (a brush's width, between their middles) is the edge of fur, foliage or a ragged silhouette, whose spikes and notches
+# alternate, and is rounded off as any thin part is. A triangle's corners lie further apart than that, but for a
+# triangle smaller than the brush is wide. Kept, a ragged edge's tips would make its lines zigzag (on the benchmark's
+# castle 4% longer than smoothed, against 1% with them rounded).
+_TIP_APART_RADII = 2.0
+
+
+@dataclass(frozen=True, eq=False)
+class CornerRule:
+    """Which corners' tips the brush rule keeps (see ``absorb_thin_parts`` and ``corner_tips``).
+
+    ``sharpest_deg`` is the sharpest corner whose tip is kept, in degrees; 180
+    keeps none. A tip is kept only if its pixels in ``image_bgr`` lie, on
+    average, at least ``contrast_de00`` closer (CIEDE2000) to their region's
+    color in ``palette_bgr`` than to the color that would take them; without a
+    picture, or at 0, the corner's shape is enough.
+    """
+
+    sharpest_deg: float
+    contrast_de00: float = CORNER_CONTRAST_DE00
+    image_bgr: np.ndarray | None = None
+    palette_bgr: np.ndarray | None = None
+
+
+def tip_length(sharpest_deg: float) -> float:
+    """How far beyond the brush the point of a corner ``sharpest_deg`` sharp lies, in brush radii.
+
+    The circle a brush of radius r stops at, in a corner of angle a, has its
+    middle r / sin(a/2) from the point, so the point lies r (1 / sin(a/2) - 1)
+    beyond it: 0.41 at 90 degrees, 2.9 at 30, 4.8 at 20. 0 at 180 degrees and
+    over.
+    """
+    if not sharpest_deg > 0:
+        raise ValueError(f"a corner is sharper than 0 degrees, not {sharpest_deg}")
+    if sharpest_deg >= 180:
+        return 0.0
+    return 1 / math.sin(math.radians(sharpest_deg) / 2) - 1
+
+
+def tip_depth(sharpest_deg: float) -> float:
+    """How deep a corner ``sharpest_deg`` sharp has its tip, in brush radii: the tip's area over the length of its base.
+
+    A round brush of radius r in a corner of angle a reaches no nearer the
+    point than the circle touching both sides. What lies beyond, the tip, has
+    the area r² (cot(a/2) - (π - a)/2) and meets the rest of the region along
+    an arc r (π - a) long, so the ratio of the two grows as the corner
+    sharpens: 0.14 at 90 degrees, 0.93 at 30, 2.1 at 15. A strip's is its
+    length. 0 at 180 degrees and over, where there is no corner.
+    """
+    if not sharpest_deg > 0:
+        raise ValueError(f"a corner is sharper than 0 degrees, not {sharpest_deg}")
+    if sharpest_deg >= 180:
+        return 0.0
+    angle = math.radians(sharpest_deg)
+    return (1 / math.tan(angle / 2) - (math.pi - angle) / 2) / (math.pi - angle)
+
+
+def corner_tips(region_id_map: np.ndarray, num_regions: int, min_width_px: float, sharpest_deg: float) -> np.ndarray:
+    """The pixels a brush ``min_width_px`` wide can't reach that are corners' tips all the same: HxW bool.
+
+    What a region's brush can't reach falls into pieces (8-connected). A
+    piece is a corner's tip if it meets the part of its region the brush
+    reaches along one stretch, its base, at least half the brush long (pairs
+    of pixels side by side, ``_TIP_BASE_RADII``), and is neither deeper nor
+    longer than the tip of a corner ``sharpest_deg`` sharp: its area over its
+    base no more than ``tip_depth``, its farthest pixel no farther from the
+    rest than ``tip_length``, both give or take the pixel grid
+    (``_TIP_SLACK``). A strip narrower than half the brush where it leaves its
+    region, longer than such a tip is deep, or a needle reaching further than
+    its point, is no tip; nor is a neck between two parts the brush reaches, a
+    channel meeting it in two places, or a region with none. And a tip stands
+    alone: with another's middle within a brush's width of its own
+    (``_TIP_APART_RADII``), it is a spike of a ragged edge.
+
+    A piece is made of the pixels more than a pixel beyond the brush and
+    those beside them. The rest lie within a pixel of it: along a slanted
+    edge, the grid's staircase leaves single pixels there, which are no
+    corner, and would join a tip to whatever lies along the edge. A tip then
+    takes in what the brush can't reach of its region within ``_TIP_RIM_PX``
+    of it: the pixels along its sides and its base the piece leaves out, but
+    not a thin part that runs on from it.
+    """
+    ids = np.ascontiguousarray(region_id_map, dtype=np.int32)
+    return _tips(ids, num_regions, min_width_px / 2, sharpest_deg, None)[0] >= 0
+
+
+def _tips(
+    ids: np.ndarray, num_regions: int, radius: float, sharpest_deg: float, fits: np.ndarray | None
+) -> tuple[np.ndarray, int]:
+    """(each pixel's corner tip, numbered from 0, -1 for none; how many numbers there are), see ``corner_tips``.
+
+    ``fits`` is where a brush of ``radius`` fits (``_brush_fits``), if known.
+    """
+    h, w = ids.shape
+    pieces = np.full((h, w), -1, dtype=np.int32)
+    depth, length = tip_depth(sharpest_deg), tip_length(sharpest_deg)
+    if depth <= 0 or num_regions == 0:
+        return pieces, 0
+    if fits is None:
+        fits = _brush_fits(ids, num_regions, radius)
+    if not fits.any():
+        return pieces, 0
+    to_brush = cv2.distanceTransform((~fits).view(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+    flat = ids.reshape(-1)
+    unreached = np.empty((h, w), dtype=bool)
+    area, box = kernels.brush_pieces(
+        flat, to_brush.reshape(-1), radius, h, w, unreached.reshape(-1), pieces.reshape(-1)
+    )
+    if area.size == 0:
+        return pieces, 0
+    base_of = np.empty((h, w), dtype=np.int32)
+    base = kernels.piece_bases(pieces.reshape(-1), flat, unreached.reshape(-1), area.size, h, w, base_of.reshape(-1))
+    # The stretches along which each piece meets what its brush reaches: 8-connected runs of the pixels it meets.
+    stretches = kernels.count_stretches(base_of.reshape(-1), area.size, h, w)
+    tip = (base >= _TIP_BASE_RADII * radius) & (stretches == 1) & (area <= (_TIP_SLACK * depth * radius + 0.5) * base)
+    if tip.any():
+        reach = kernels.piece_lengths(pieces.reshape(-1), flat, unreached.reshape(-1), box, tip, h, w)
+        tip &= reach <= _TIP_SLACK * length * radius + 1  # measured from the middle of the last pixel reached
+    if not tip.any():
+        return np.full((h, w), -1, dtype=np.int32), 0
+    on = pieces >= 0
+    ys, xs = np.nonzero(on)
+    which = np.flatnonzero(tip)
+    if which.size > 1:
+        middle_y = (np.bincount(pieces[ys, xs], ys, minlength=area.size) / area)[which]
+        middle_x = (np.bincount(pieces[ys, xs], xs, minlength=area.size) / area)[which]
+        order = np.argsort(middle_x, kind="stable")
+        crowded = np.empty(which.size, dtype=bool)
+        crowded[order] = kernels.near_another(middle_y[order], middle_x[order], _TIP_APART_RADII * radius)
+        tip[which[crowded]] = False
+    if not tip.any():
+        return np.full((h, w), -1, dtype=np.int32), 0
+    tips = np.full((h, w), -1, dtype=np.int32)
+    kept = tip[pieces[ys, xs]]
+    tips[ys[kept], xs[kept]] = pieces[ys[kept], xs[kept]]
+    # The rim: what the brush can't reach of a tip's region beside it, which takes the tip's number.
+    pixels = (ys[kept] * w + xs[kept]).astype(np.int64)
+    kernels.tip_rims(tips.reshape(-1), flat, unreached.reshape(-1), pixels, _TIP_RIM_PX, h, w)
+    return tips, int(area.size)
+
+
+def _keep_corners(widened, ids, region_color, radius, fits, corners: CornerRule) -> None:
+    """Give, in place, every corner's tip ``corners`` keeps its own region's color back in ``widened``."""
+    tips, count = _tips(ids, int(region_color.size), radius, corners.sharpest_deg, fits)
+    if count == 0:
+        return
+    ys, xs = np.nonzero(tips >= 0)
+    own = region_color[ids[ys, xs]]
+    taken = widened[ys, xs] != own
+    ys, xs, own = ys[taken], xs[taken], own[taken]
+    if not ys.size:
+        return
+    if corners.contrast_de00 > 0 and corners.image_bgr is not None:
+        # How much closer each pixel is to its own color than to the one it was given, averaged over its tip.
+        picture = bgr_to_lab(np.asarray(corners.image_bgr)[ys, xs])
+        palette = bgr_to_lab(np.asarray(corners.palette_bgr, dtype=np.uint8).reshape(-1, 3))
+        closer = ciede2000(picture, palette[widened[ys, xs]]) - ciede2000(picture, palette[own])
+        which = tips[ys, xs]
+        mean = np.bincount(which, closer, minlength=count) / np.maximum(np.bincount(which, minlength=count), 1)
+        plain = mean[which] >= corners.contrast_de00
+        ys, xs, own = ys[plain], xs[plain], own[plain]
+    widened[ys, xs] = own
 
 
 @dataclass
@@ -39,6 +232,7 @@ def build_regions(
     min_width_px: float = 0.0,
     detail: np.ndarray | None = None,
     detail_weight: int = 2,
+    corners: CornerRule | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Split ``labels`` into connected regions and merge away what can't be painted.
 
@@ -60,9 +254,9 @@ def build_regions(
     With ``min_width_px`` set, every part of a region narrower than that --
     which a brush that wide cannot paint without crossing a line -- is then
     given away to the region whose paint reaches it first, and the regions
-    are rebuilt from the result (see ``absorb_thin_parts``). A region thinner
-    than the brush everywhere disappears into its neighbors, in ``detail``
-    too.
+    are rebuilt from the result (see ``absorb_thin_parts``), but for the
+    corners' tips ``corners`` keeps. A region thinner than the brush
+    everywhere disappears into its neighbors, in ``detail`` too.
 
     Returns:
         (region_id_map, region_color): region_id_map is HxW int32 (each pixel's
@@ -78,7 +272,7 @@ def build_regions(
         detail = None
     region_id_map, region_color = _regions_from_labels(labels, num_colors, min_area_px, detail, detail_weight)
     if min_width_px > 0 and region_color.size:
-        widened = absorb_thin_parts(region_id_map, region_color, labels, min_width_px)
+        widened = absorb_thin_parts(region_id_map, region_color, labels, min_width_px, corners)
         if widened is not None:
             region_id_map, region_color = _regions_from_labels(widened, num_colors, min_area_px, detail, detail_weight)
     return region_id_map, region_color
@@ -104,7 +298,11 @@ def _regions_from_labels(
 
 
 def absorb_thin_parts(
-    region_id_map: np.ndarray, region_color: np.ndarray, labels: np.ndarray, min_width_px: float
+    region_id_map: np.ndarray,
+    region_color: np.ndarray,
+    labels: np.ndarray,
+    min_width_px: float,
+    corners: CornerRule | None = None,
 ) -> np.ndarray | None:
     """Give every pixel the color of the region whose core lies nearest, or None if there is no core.
 
@@ -126,6 +324,9 @@ def absorb_thin_parts(
     them: where the nearest core lies on the far side, the nearest one on its
     own side is found instead (``kernels.nearest_seed_within``), and a thin
     part with no core on its side at all keeps its color.
+
+    Given ``corners``, the tips of corners it keeps keep their color too,
+    rather than every corner being rounded to the brush (see ``CornerRule``).
 
     Returns the new HxW int32 label map, or None when the brush fits nowhere
     on the page, leaving nothing to grow from.
@@ -152,6 +353,9 @@ def absorb_thin_parts(
     if outside.any():
         _keep_to_own_side(widened, nearest, fits, outside, region_id_map, region_color, labels)
         widened[outside] = labels[outside]
+    if corners is not None:
+        ids = np.ascontiguousarray(region_id_map, dtype=np.int32)
+        _keep_corners(widened, ids, np.asarray(region_color, dtype=np.int32), min_width_px / 2, fits, corners)
     return widened
 
 

@@ -53,7 +53,7 @@ def test_apply_holds_each_setting_in_its_range():
         difficulty.params_for_preset("Hard"),
     )
     chosen = (params.num_colors, params.min_width_mm, params.palette_margin_de00, params.detail_weight)
-    assert chosen == (64, 1.0, 4.5, 3)
+    assert chosen == (64, 0.5, 4.5, 3)
     assert params.min_region_area_mm2 == difficulty.params_for_preset("Hard").min_region_area_mm2  # the rest as given
     assert style == PageStyle(line_width_mm=1.0)
     assert handling == Handling(ink_gap_mm=1.2)

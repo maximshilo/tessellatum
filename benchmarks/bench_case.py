@@ -384,8 +384,11 @@ def main() -> int:
         )
         quality.update(bm.unlabeled_regions(page_data.region_id_map, page_data.labeled_region_ids))
         brush_px = print_scale.mm_to_px(bm.print_size.MIN_PAINTABLE_WIDTH_MM)
-        slivers = bm.sliver_mask(page_data.region_id_map, brush_px)
-        quality["sliver_area_fraction"] = float(slivers.mean()) if slivers.size else 0.0  # bm.sliver_share
+        # What the brush can't reach, but for the corners' points it fills with its own (from 0.1.50).
+        corners = bm.corner_tips(page_data.region_id_map, brush_px)
+        slivers = bm.sliver_mask(page_data.region_id_map, brush_px) & ~corners
+        quality["sliver_area_fraction"] = float(slivers.mean()) if slivers.size else 0.0
+        quality["corner_tip_fraction"] = float(corners.mean()) if corners.size else 0.0
         quality.update(bm.band_regions(page_data.region_id_map, print_scale.mm_to_px(bm.BAND_MAX_WIDTH_MM)))
         quality.update(label_scores(page_data, print_scale))
         quality.update(bm.compactness_stats(page_data.region_id_map))

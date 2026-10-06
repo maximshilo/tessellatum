@@ -350,9 +350,9 @@ def test_the_rebuild_is_the_region_stage_with_the_limits_the_regions_were_built_
     paints = gray_bgr(*EVEN_PAINTS)
     new_ids, new_colors = texture.smooth_regions(flat(EVEN), ids, colors, paints, 50, 12.0, detail)
     assert len(calls) == 1
-    voted, num_colors, min_area_px, min_width_px, where, weight = calls[0]
+    voted, num_colors, min_area_px, min_width_px, where, weight, corners = calls[0]
     np.testing.assert_array_equal(voted, texture.settle_edges(flat(EVEN), colors[ids], paints, 4.0))
-    assert (num_colors, min_area_px, min_width_px, weight) == (2, 50, 12.0, 2) and where is detail
+    assert (num_colors, min_area_px, min_width_px, weight, corners) == (2, 50, 12.0, 2, None) and where is detail
     expected_ids, expected_colors = build_regions(voted, 2, 50, 12.0, detail)
     np.testing.assert_array_equal(new_ids, expected_ids)
     np.testing.assert_array_equal(new_colors, expected_colors)
@@ -465,9 +465,12 @@ def test_a_photograph_s_edges_are_settled_and_its_page_is_easier_to_paint_and_no
     monkeypatch.setattr(pipeline, "smooth_regions", spy)
     analysis = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True).analysis
     assert len(calls) == 1
-    picture, ids, colors, palette, min_area_px, min_width_px, detail, settling, color_step, weight = calls[0]
-    # The difficulty's settings for the vote, and the weight the regions were built with.
-    assert (settling, color_step, weight) == (params.edge_settling, params.edge_color_step_de00, params.detail_weight)
+    picture, ids, colors, palette, min_area_px, min_width_px, detail, settling, color_step, weight, corners = calls[0]
+    # The difficulty's settings for the vote, and the weight and the corners the regions were built with: none kept,
+    # by default.
+    assert (settling, color_step, weight, corners) == (
+        params.edge_settling, params.edge_color_step_de00, params.detail_weight, None
+    )
     resized = pipeline.resize_to_long_edge(image, pipeline.PREVIEW_LONG_EDGE)
     np.testing.assert_array_equal(picture, resized)  # the picture itself, not the smoothed one the colors came from
     assert min_area_px == analysis.min_region_area_px and min_width_px == analysis.min_paintable_width_px

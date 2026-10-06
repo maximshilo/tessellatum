@@ -292,7 +292,7 @@ whether a brush can paint the bands a gradient breaks into:
 | SSIM | structural similarity of luma between painting and source | higher |
 | labeled area | share of the area to paint (the regions: the page less what it prints, but for the thin ink paint goes over from 0.1.30) inside regions that carry a number | higher |
 | unlabeled | regions without a number | lower (0) |
-| slivers | share of the page a round brush 3 mm wide can't paint without crossing into another region | lower |
+| slivers | share of the page a round brush 3 mm wide can't paint without crossing into another region, but for the points of corners down to 20° (from 0.1.50); `case.json` also records the share of the page in those points, as `corner_tip_fraction` | lower |
 | gradient slivers | the same share of the image's gradient areas, where a gradient breaking into thin bands would show; `case.json` also records the largest share inside one area, as `gradient_sliver_fraction_max` | lower |
 | bands | regions no brush 6 mm wide fits in, and at least 4 times as long as they are wide: the shape of the bands a gradient breaks into; `case.json` also records their share of the page, as `band_area_fraction` | informational |
 | labels < 6 pt | share of numbers printing smaller than 6 pt; `case.json` also records the smallest, as `min_label_pt` | lower (0) |
@@ -340,8 +340,27 @@ How the paintability metrics are defined:
   of a pixel center. A pixel is paintable if the brush fits entirely inside the
   pixel's region somewhere that covers it: the region's morphological opening
   by that disk. The page edge counts as a boundary.
-  - Thin parts of regions are slivers, and so are the corners a round brush
-    can't reach: a square region loses a few pixels at each corner.
+  - Thin parts of regions are slivers. Until 0.1.50 so were the corners a
+    round brush can't reach -- a square region lost a few pixels at each
+    corner -- but a painter fills a corner's point with the brush's tip, and
+    from 0.1.50 the pipeline can keep the points of corners (its sharpest
+    corner setting, off by default; see `regions.CornerRule`). So slivers
+    leave out the points of corners down to 20° wherever a page has them
+    (`bench_metrics.corner_tips`), by the pipeline's rule for which pieces of
+    a region beyond its brush are corners. Such a piece meets what its brush
+    reaches along one stretch at least half the brush long (not none, nor two
+    as a neck or a channel does), and is no deeper -- its area over that
+    stretch -- and no longer -- its farthest pixel from it -- than the point
+    of a 20° corner, give or take 20% for the pixel grid; and no other such
+    piece's middle lies within a brush's width of its own, where a ragged
+    edge's spikes crowd. A strip, a needle or a neck is no corner. The points
+    are measured on the page as drawn, whatever the pipeline kept, so they
+    count for a version before 0.1.50 too, and for a page drawn with its
+    corners rounded: a rounded corner has no point left to leave out. The
+    harness measures a piece's length in a straight line and in a box round
+    it, the pipeline along a path through it: on the lion, the Swiss castle
+    and the cartoon girl at Hard, preview and export, the two leave out the
+    same share of the page to within 0.01 points.
   - The brush is an odd number of pixels across (13 px for a 13.2 px width,
     15 px for 14 px), so a bar is judged to within a pixel of the width.
   - On line art the brush goes wherever the region map puts the region. Until

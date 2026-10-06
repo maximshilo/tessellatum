@@ -60,9 +60,12 @@ all back):
   moving any of them picks Custom (see "How it works").
 - **Regions and colors**: how many colors to look for and how different
   every two must be (the *color margin*, 10 ΔE00 by default; lower keeps
-  more, subtler colors), the smallest region (5 to 500 mm²), the *brush
-  width* -- the narrowest any part of a region may be, 3 mm by default, 1
-  to 6 mm -- the smoothing before the colors are found, and how far and how
+  more, subtler colors), the smallest region (2 to 500 mm²), the *brush
+  width* -- the narrowest any part of a region may be, 3 mm by default, 0.5
+  to 6 mm -- which corners keep their points (the *sharpest corner*: 180°,
+  the default, rounds every corner to the brush; 20° keeps a triangle's
+  points) and how plainly the picture must show one (the *corner contrast*,
+  20 ΔE00), the smoothing before the colors are found, and how far and how
   firmly the vote that settles ragged edges reaches (*edge settling*, *edge
   hold*).
 - **Lines and numbers**: how wide the lines print, 0.1 to 1 mm (0.3 mm by
@@ -140,7 +143,15 @@ step 5: their letters are printed, and step 7 keeps the numbers off them
    region narrower than the brush — 3 mm on the printed page — goes to the
    region whose paint reaches it first, and a region thinner than that
    everywhere disappears into its neighbors, so the page asks for no stroke
-   too fine to make.
+   too fine to make. A corner's point can be the exception: a round brush
+   stops short of it, but a painter fills it with the brush's tip. With the
+   *sharpest corner* setting below its default of 180°, a corner down to that
+   angle keeps its point where the picture shows it plainly (its pixels on
+   average 20 ΔE00 closer to their own color than to their neighbor's), and a
+   triangle stays a triangle. A strip, a needle or a neck is no corner, and nor
+   are the spikes of fur, foliage or a ragged silhouette, which crowd within a
+   brush's width of each other: they are rounded off all the same. See
+   `regions.CornerRule`.
 4. **Settle**: where a photograph is textured — fur, foliage, stone — its
    colors alternate faster than a brush is wide, and the edges between its
    regions come out ragged, with bumps and notches the brush can't paint
@@ -185,7 +196,7 @@ they must be, how small a region may be on the printed page before it is
 merged away, how narrow any part of one may be (the brush), how much
 smoothing is applied before quantizing, and how the ragged edges are settled
 — see `src/tessellatum/core/difficulty.py`. Region sizes are areas on paper:
-300 mm² at Easy, 125 mm² at Medium, 40 mm² at Hard, and 5–500 mm² in
+300 mm² at Easy, 125 mm² at Medium, 40 mm² at Hard, and 2–500 mm² in
 Custom, never below the brush's own footprint. So a preview and an export of
 one image get regions of the same size, and a long, narrow picture, which
 prints smaller, gets fewer regions rather than smaller ones. Every preset

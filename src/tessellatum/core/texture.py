@@ -41,7 +41,7 @@ import numpy as np
 
 from tessellatum.core import kernels, parallel
 from tessellatum.core.color import MIN_PALETTE_DE00
-from tessellatum.core.regions import build_regions
+from tessellatum.core.regions import CornerRule, build_regions
 
 # One sigma of the vote's weights, as a share of the brush's width: 1 mm for the 3 mm brush. Within the brush's own
 # radius, a sigma and a half, lies 68% of the weight.
@@ -67,6 +67,7 @@ def smooth_regions(
     settling: float = 1.0,
     color_step: float = COLOR_STEP,
     detail_weight: int = 2,
+    corners: CornerRule | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """The page's regions with their edges settled by the vote, rebuilt (see the module's docstring).
 
@@ -75,9 +76,9 @@ def smooth_regions(
     and ``palette_bgr`` their colors. ``min_width_px`` is the brush, which
     sets how far the vote reaches -- ``REACH`` of it to one sigma, times
     ``settling``; 0 settles nothing. ``color_step`` is the vote's
-    ``COLOR_STEP``. ``min_width_px``, ``min_area_px``, ``detail`` and
-    ``detail_weight`` are what the regions were built with, and are rebuilt
-    with.
+    ``COLOR_STEP``. ``min_width_px``, ``min_area_px``, ``detail``,
+    ``detail_weight`` and ``corners`` are what the regions were built with,
+    and are rebuilt with.
 
     Returns (region_id_map, region_color) as ``build_regions`` does: the
     arrays passed in if the vote changes nothing, else new ones. Pixels in no
@@ -111,7 +112,8 @@ def smooth_regions(
         return region_id_map, region_color
     # Off the palette is how the region stage is told a pixel is in no region.
     return build_regions(
-        np.where(inside, voted, len(palette_bgr)), len(palette_bgr), min_area_px, min_width_px, detail, detail_weight
+        np.where(inside, voted, len(palette_bgr)), len(palette_bgr), min_area_px, min_width_px, detail, detail_weight,
+        corners,
     )
 
 

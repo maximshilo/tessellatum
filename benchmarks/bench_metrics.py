@@ -55,6 +55,19 @@ JUNCTION_CLEARANCE_PX = 2.5
 EDGE_SMOOTHING_MM = 0.5
 EDGE_TOLERANCE_MM = 0.5
 EDGE_THRESHOLDS = (5.0, 10.0)
+# The sharpest corner whose tip -- the point a round brush can't reach -- counts as paintable: a painter fills it with
+# the brush's point, so slivers leave such points out (see ``corner_tips``), wherever a page has them. The pipeline
+# keeps them when its sharpest corner setting asks it to (``regions.CornerRule``); by default it rounds every corner.
+CORNER_SHARPEST_DEG = 20.0
+# A tip meets its region's reach along a base at least this many brush radii long, may measure this much deeper or
+# longer than its corner's shape says on the pixel grid, and takes in the pixels within this many of it: as the
+# pipeline's ``regions._TIP_BASE_RADII``, ``regions._TIP_SLACK`` and ``regions._TIP_RIM_PX``.
+_TIP_BASE_RADII = 1.0
+_TIP_SLACK = 1.2
+_TIP_RIM_PX = 2
+# A tip with another tip's middle within this many brush radii of its own is a ragged edge's, as the pipeline's
+# ``regions._TIP_APART_RADII``.
+_TIP_APART_RADII = 2.0
 # Bands, as a gradient breaks into. A region is one where no brush BAND_MAX_WIDTH_MM wide, twice the paintable width,
 # fits anywhere in it, and it is at least BAND_MIN_ELONGATION times as long as it is wide.
 BAND_MAX_WIDTH_MM = 6.0
@@ -452,6 +465,157 @@ def sliver_mask(region_id_map: np.ndarray, min_width_px: float) -> np.ndarray:
 def sliver_share(region_id_map: np.ndarray, min_width_px: float) -> float:
     """Share of page area in slivers (see ``sliver_mask``)."""
     return float(sliver_mask(region_id_map, min_width_px).mean()) if region_id_map.size else 0.0
+
+
+def corner_tips(
+    region_id_map: np.ndarray, min_width_px: float, sharpest_deg: float = CORNER_SHARPEST_DEG
+) -> np.ndarray:
+    """The pixels a round brush ``min_width_px`` wide can't reach (``sliver_mask``) that are corners' tips: HxW bool.
+
+    In a corner of angle a, a brush of radius r stops at the circle touching
+    both sides; the point beyond, the corner's tip, a painter fills with the
+    brush's point. Its area over the length of its base, where it meets what
+    the brush reaches, is r (cot(a/2) - (π - a)/2) / (π - a), and its point
+    lies r (1 / sin(a/2) - 1) beyond the brush.
+
+    What a region's brush can't reach falls into pieces: the pixels more than
+    a pixel beyond the brush and those beside them, 8-connected within a
+    region. (Single pixels within a pixel of the brush are the grid's
+    staircase along a slanted edge.) A piece is a tip if its base -- pairs of
+    pixels side by side, one in it and one of its region in no piece -- is at
+    least ``_TIP_BASE_RADII`` radii long and meets what the brush reaches
+    along one stretch (an 8-connected run), not none, nor two as a neck or a
+    channel does; if it is neither deeper (area over base) nor longer (its
+    farthest pixel's straight distance from its region's reach) than the tip
+    of a corner ``sharpest_deg`` sharp, give or take ``_TIP_SLACK``; and if no
+    other tip's middle lies within ``_TIP_APART_RADII`` radii of its own (tips
+    crowded so are the spikes of a ragged edge, not a shape's corners). A tip
+    then takes in what the brush can't reach of its region within
+    ``_TIP_RIM_PX`` of it: the pixels along its sides and its base the piece
+    leaves out.
+
+    The pipeline, asked to, keeps corners' tips by this rule
+    (``regions.corner_tips``), measuring a piece's length along a path through
+    it rather than straight.
+    """
+    ids, areas = _renumbered_regions(region_id_map)
+    none = np.zeros(ids.shape, dtype=bool)
+    if areas.size == 0 or sharpest_deg >= 180:
+        return none
+    count = areas.size
+    radius = min_width_px / 2
+    fits = (ids >= 0) & (_out_of_region_distance_sq(ids, count) > radius**2)
+    if not fits.any():
+        return none
+    to_brush_sq = _squared_distance(cv2.distanceTransform((~fits).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE))
+    unreached = (ids >= 0) & (to_brush_sq > radius**2)
+    beyond = (ids >= 0) & (to_brush_sq > (radius + 1) ** 2)
+    if not beyond.any():
+        return none
+    near = beyond | _beside_own(beyond, ids, unreached, 1)
+    pieces, piece_count = _pieces_by_region(near, ids, count)
+    area = np.bincount(pieces[near], minlength=piece_count)
+    reached = (ids >= 0) & ~unreached
+    base = np.zeros(piece_count, dtype=np.int64)
+    base_of = np.full(ids.shape, -1, dtype=np.int64)  # each reached pixel a piece meets, by the piece
+    pairs = (
+        (slice(None), slice(None, -1), slice(None), slice(1, None)),
+        (slice(None, -1), slice(None), slice(1, None), slice(None)),
+    )
+    for rows_a, columns_a, rows_b, columns_b in pairs:
+        a, b = (rows_a, columns_a), (rows_b, columns_b)
+        same = ids[a] == ids[b]
+        for inside, outside in ((a, b), (b, a)):
+            meets = same & (pieces[inside] >= 0) & (pieces[outside] < 0)
+            base += np.bincount(pieces[inside][meets], minlength=piece_count)
+            view = base_of[outside]
+            reaching = meets & reached[outside]
+            view[reaching] = pieces[inside][reaching]
+    # The stretches along which each piece meets what its brush reaches: 8-connected runs of those pixels.
+    met = base_of >= 0
+    runs, run_count = _pieces_by_region(met, base_of, piece_count)
+    run_piece = np.zeros(run_count, dtype=np.int64)
+    run_piece[runs[met]] = base_of[met]
+    stretches = np.bincount(run_piece, minlength=piece_count)
+    angle = math.radians(sharpest_deg)
+    depth = (1 / math.tan(angle / 2) - (math.pi - angle) / 2) / (math.pi - angle)
+    length = 1 / math.sin(angle / 2) - 1
+    tip = (base >= _TIP_BASE_RADII * radius) & (stretches == 1) & (area <= (_TIP_SLACK * depth * radius + 0.5) * base)
+    reach = _TIP_SLACK * length * radius + 1  # measured from the middle of the last pixel reached
+    for k in np.flatnonzero(tip):
+        tip[k] = _farthest_from_reach(ids, pieces, unreached, k, reach) <= reach
+    which = np.flatnonzero(tip)
+    if which.size > 1:
+        ys, xs = np.nonzero(near)
+        middles = np.stack(
+            [np.bincount(pieces[near], weights, minlength=piece_count)[which] / area[which] for weights in (ys, xs)], 1
+        )
+        crowded = np.zeros(which.size, dtype=bool)
+        for start in range(0, which.size, 1024):  # a block of tips against all of them, to keep the arrays small
+            apart = np.hypot(*(middles[start : start + 1024, None, :] - middles[None, :, :]).transpose(2, 0, 1))
+            apart[np.arange(apart.shape[0]), np.arange(start, start + apart.shape[0])] = np.inf
+            crowded[start : start + 1024] = apart.min(axis=1) < _TIP_APART_RADII * radius
+        tip[which[crowded]] = False
+    if not tip.any():
+        return none
+    tips = near & tip[np.maximum(pieces, 0)]
+    return tips | _beside_own(tips, ids, unreached, _TIP_RIM_PX)
+
+
+def _beside_own(mask: np.ndarray, ids: np.ndarray, within: np.ndarray, reach_px: int) -> np.ndarray:
+    """The pixels of ``within`` with a pixel of ``mask`` of their own region within ``reach_px`` across or down.
+
+    Measured around each 8-connected run of ``mask``, in its box widened by ``reach_px``.
+    """
+    out = np.zeros(ids.shape, dtype=bool)
+    count, _labels, stats, _middles = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=8)
+    h, w = ids.shape
+    for left, top, width, height, _area in stats[1:count]:
+        y0, x0 = max(0, top - reach_px), max(0, left - reach_px)
+        y1, x1 = min(h, top + height + reach_px), min(w, left + width + reach_px)
+        part_mask = np.pad(mask[y0:y1, x0:x1], reach_px)
+        part_ids = np.pad(ids[y0:y1, x0:x1], reach_px, constant_values=-1)
+        here = ids[y0:y1, x0:x1]
+        found = np.zeros(here.shape, dtype=bool)
+        for dy in range(2 * reach_px + 1):
+            for dx in range(2 * reach_px + 1):
+                rows, columns = slice(dy, dy + here.shape[0]), slice(dx, dx + here.shape[1])
+                found |= part_mask[rows, columns] & (part_ids[rows, columns] == here)
+        out[y0:y1, x0:x1] |= found
+    return within & out
+
+
+def _pieces_by_region(mask: np.ndarray, ids: np.ndarray, count: int) -> tuple[np.ndarray, int]:
+    """The 8-connected pieces of ``mask`` within each region of ``ids``, numbered from 0 (-1 off the mask); how many.
+
+    Pieces of two regions that touch are told apart; a region's pieces joined
+    only through another region's would be counted as one, which a region's
+    pixels beyond its brush never are in practice.
+    """
+    _n, component = cv2.connectedComponents(mask.astype(np.uint8), connectivity=8)
+    key = component.astype(np.int64) * count + ids
+    pieces = np.full(ids.shape, -1, dtype=np.int64)
+    unique, inverse = np.unique(key[mask], return_inverse=True)
+    pieces[mask] = inverse
+    return pieces, int(unique.size)
+
+
+def _farthest_from_reach(ids: np.ndarray, pieces: np.ndarray, unreached: np.ndarray, piece: int, limit: float) -> float:
+    """The straight distance from piece ``piece``'s farthest pixel to its region's pixels a brush reaches.
+
+    Measured in the piece's box, widened by ``limit`` and a pixel: a piece
+    whose region's reach lies further than that is farther than ``limit``.
+    """
+    ys, xs = np.nonzero(pieces == piece)
+    pad = int(math.ceil(limit)) + 1
+    h, w = ids.shape
+    y0, y1 = max(0, ys.min() - pad), min(h, ys.max() + pad + 1)
+    x0, x1 = max(0, xs.min() - pad), min(w, xs.max() + pad + 1)
+    reached = (ids[y0:y1, x0:x1] == ids[ys[0], xs[0]]) & ~unreached[y0:y1, x0:x1]
+    if not reached.any():
+        return math.inf
+    distance = cv2.distanceTransform((~reached).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+    return float(distance[ys - y0, xs - x0].max())
 
 
 def gradient_slivers(slivers: np.ndarray, boxes) -> dict[str, float | None]:

@@ -1,3 +1,5 @@
+import math
+
 import cv2
 import numpy as np
 import pytest
@@ -5,7 +7,7 @@ import pytest
 from tessellatum.core import ink as ink_module
 from tessellatum.core import kernels
 from tessellatum.core import regions as regions_module
-from tessellatum.core.regions import absorb_thin_parts, build_regions, extract_regions
+from tessellatum.core.regions import CornerRule, absorb_thin_parts, build_regions, corner_tips, extract_regions
 
 
 def test_small_regions_get_merged_away():
@@ -1118,3 +1120,92 @@ def test_how_much_smaller_a_region_may_be_in_the_detail_is_a_setting():
     )
     with pytest.raises(ValueError):
         build_regions(labels, 2, 100, detail=detail, detail_weight=0)
+
+
+def _triangle(apex_deg: float) -> np.ndarray:
+    """A triangle of color 1 on 0, 160 x 140: its point ``apex_deg`` sharp at row 80, column 125, its sides 70 px."""
+    half = math.radians(apex_deg) / 2
+    point = np.array([125.0, 80.0])
+    corners = [point, point + (-70, -70 * math.tan(half)), point + (-70, 70 * math.tan(half))]
+    labels = np.zeros((160, 140), dtype=np.int32)
+    cv2.fillPoly(labels, [np.round(np.array(corners) * 16).astype(np.int32)], 1, cv2.LINE_8, shift=4)
+    return labels
+
+
+def test_a_corner_s_tip_is_as_deep_and_as_long_as_its_angle_says():
+    # In brush radii: area over base, and how far the point lies beyond the circle the brush stops at.
+    assert regions_module.tip_depth(90) == pytest.approx(0.137, abs=1e-3)
+    assert regions_module.tip_depth(30) == pytest.approx(0.926, abs=1e-3)
+    assert regions_module.tip_length(60) == pytest.approx(1.0)
+    assert regions_module.tip_length(20) == pytest.approx(4.759, abs=1e-3)
+    assert regions_module.tip_depth(180) == regions_module.tip_length(180) == 0
+    with pytest.raises(ValueError):
+        regions_module.tip_depth(0)
+
+
+@pytest.mark.parametrize("apex_deg", [20, 30, 45, 60])
+def test_a_corner_keeps_its_point_down_to_the_sharpest_corner_kept(apex_deg):
+    labels = _triangle(apex_deg)
+    triangle, point = labels == 1, (80, 125)
+
+    rounded = _painted(*build_regions(labels, 2, 20, 10.0))
+    kept = _painted(*build_regions(labels, 2, 20, 10.0, corners=CornerRule(apex_deg, 0.0)))
+    blunter = _painted(*build_regions(labels, 2, 20, 10.0, corners=CornerRule(apex_deg + 15, 0.0)))
+
+    assert rounded[point] == 0 and blunter[point] == 0  # a 10 px brush rounds the point off
+    assert kept[point] == 1 and (triangle & (kept != 1)).sum() <= 1  # unless a corner that sharp is kept
+    assert not (~triangle & (kept == 1)).any()  # which takes nothing from the region round it
+
+
+def test_a_strip_narrower_than_half_the_brush_is_no_corner_however_sharp_the_corners_kept():
+    # The thin tail of ``test_the_thin_tail_of_a_region_is_handed_over_where_its_own_brush_stops_reaching``: 3 px wide,
+    # under half the 7 px brush, where it leaves its block.
+    labels = np.zeros((40, 60), dtype=np.int32)
+    labels[10:30, 10:30] = 1
+    labels[19:22, 30:42] = 1
+
+    region_id_map, region_color = build_regions(labels, 2, 4, 7.0, corners=CornerRule(5.0, 0.0))
+
+    assert (_painted(region_id_map, region_color)[19:22, 38:42] == 0).all()
+
+
+def test_a_needle_is_no_corner_however_wide_it_is_where_it_leaves_its_region():
+    # A 2 px needle 40 px long, out of a block on a root that narrows from 14 px: a 20 degree corner's tip of the
+    # 10 px brush ends 24 px beyond it.
+    labels = np.zeros((80, 120), dtype=np.int32)
+    labels[20:60, 10:50] = 1
+    cv2.fillPoly(labels, [np.array([(50, 33), (50, 47), (58, 41), (58, 39)], dtype=np.int32)], 1)
+    labels[39:41, 50:90] = 1
+
+    painted = _painted(*build_regions(labels, 2, 20, 10.0, corners=CornerRule(20.0, 0.0)))
+
+    assert (painted[39:41, 66:90] == 0).all()  # all but its root
+
+
+def test_a_corner_the_picture_does_not_show_plainly_is_rounded_all_the_same():
+    labels = _triangle(30)
+    point = (80, 125)
+    for triangle_bgr, kept in (((40, 40, 160), True), ((150, 150, 150), False)):
+        palette = np.array([(160, 160, 160), triangle_bgr], dtype=np.uint8)  # 4 ΔE00 apart, or far
+        picture = palette[labels]
+        rule = CornerRule(20.0, regions_module.CORNER_CONTRAST_DE00, picture, palette)
+        assert (_painted(*build_regions(labels, 2, 20, 10.0, corners=rule))[point] == 1) == kept
+        # With no contrast asked for, the shape is enough.
+        shape_only = CornerRule(20.0, 0.0, picture, palette)
+        assert _painted(*build_regions(labels, 2, 20, 10.0, corners=shape_only))[point] == 1
+
+
+def test_corner_tips_are_what_a_brush_can_not_reach_of_a_corner_s_point():
+    labels = _triangle(30)
+
+    tips = corner_tips(labels, 2, 10.0, 20.0)
+
+    assert tips[80, 124] and not tips[80, 60]  # at the point, not in the middle
+    # In the triangle, near its corners (its point, and the two 75 degree ones); round it, only in the page's corners.
+    ys, xs = np.nonzero(tips & (labels == 1))
+    corners = np.array([(80, 125), (61, 55), (99, 55)])
+    assert (np.hypot(ys[:, None] - corners[:, 0], xs[:, None] - corners[:, 1]).min(axis=1) < 30).all()
+    ys, xs = np.nonzero(tips & (labels == 0))
+    assert (np.minimum(ys, 159 - ys) < 5).all() and (np.minimum(xs, 139 - xs) < 5).all()
+    assert not corner_tips(labels, 2, 10.0, 180.0).any()
+    assert corner_tips(labels, 2, 10.0, 45.0)[80, 124] == False  # noqa: E712 - a 30 degree point is too sharp for 45
