@@ -57,9 +57,12 @@ def test_custom_params_are_clamped_to_the_sliders():
     )
     finer = difficulty.custom_params(
         64, 2.0, 0.0, min_width_mm=0.5, palette_margin_de00=-3.0, edge_settling=9.0, edge_color_step_de00=0.0,
-        detail_weight=3.6,
+        detail_weight=3.6, sharpest_corner_deg=1.0, corner_contrast_de00=-5.0,
     )
-    assert finer == difficulty.DifficultyParams(64, 5.0, 0.0, 1.0, 0.0, 3.0, 1.0, 4)
+    assert finer == difficulty.DifficultyParams(64, 5.0, 0.0, 1.0, 0.0, 3.0, 1.0, 4, 5.0, 0.0)
+    assert difficulty.custom_params(12, 125.0, 5.0, sharpest_corner_deg=500.0, corner_contrast_de00=99.0) == (
+        difficulty.DifficultyParams(12, 125.0, 5.0, sharpest_corner_deg=180.0, corner_contrast_de00=60.0)
+    )
     assert isinstance(finer.detail_weight, int) and isinstance(finer.num_colors, int)
     with pytest.raises(TypeError):
         difficulty.custom_params(12, 125.0, 5.0, brush=2.0)
@@ -74,12 +77,15 @@ def test_describe_speaks_in_print_units():
     assert difficulty.describe(difficulty.params_for_preset("Easy")) == (
         "Up to 6 colors, at least 10 ΔE00 apart. Regions of at least 300 mm² (about 17 × 17 mm; half that on a "
         "photograph's or painting's subject and faces) "
-        "and 3 mm wide on the printed A4 page."
+        "and 3 mm wide on the printed A4 page, corners down to 20° kept sharp."
     )
-    fine = difficulty.custom_params(30, 16.0, 0.0, min_width_mm=1.5, palette_margin_de00=6.0, detail_weight=3)
+    fine = difficulty.custom_params(
+        30, 16.0, 0.0, min_width_mm=1.5, palette_margin_de00=6.0, detail_weight=3, sharpest_corner_deg=180.0
+    )
     assert difficulty.describe(fine) == (
         "Up to 30 colors, at least 6 ΔE00 apart. Regions of at least 16 mm² (about 4 × 4 mm; 1/3 of that on a "
-        "photograph's or painting's subject and faces) and 1.5 mm wide on the printed A4 page."
+        "photograph's or painting's subject and faces) and 1.5 mm wide on the printed A4 page, corners rounded to "
+        "the brush."
     )
 
 

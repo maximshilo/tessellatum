@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from tessellatum.core.color import MIN_PALETTE_DE00
 from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM
+from tessellatum.core.regions import CORNER_CONTRAST_DE00, SHARPEST_CORNER_DEG
 
 
 # How many times smaller a region may be in the faces and the subject found, by default (see ``DifficultyParams``).
@@ -58,6 +59,14 @@ class DifficultyParams:
             the subject found than elsewhere (each pixel there counts that many
             times towards ``min_region_area_mm2``); 1 spends no more detail on
             them.
+        sharpest_corner_deg: the sharpest corner, in degrees, whose point the
+            brush rule keeps rather than rounding it to the brush; 180 rounds
+            every corner (see ``regions.CornerRule``).
+        corner_contrast_de00: how much closer to its own color than to its
+            neighbor's (CIEDE2000) a corner's point must be in the picture, on
+            average, to be kept: the points of a picture's shapes stand apart,
+            the spikes of fur and foliage don't. 0 keeps every corner sharp
+            enough.
     """
 
     num_colors: int
@@ -68,6 +77,8 @@ class DifficultyParams:
     edge_settling: float = 1.0
     edge_color_step_de00: float = MIN_PALETTE_DE00
     detail_weight: int = DETAIL_WEIGHT
+    sharpest_corner_deg: float = SHARPEST_CORNER_DEG
+    corner_contrast_de00: float = CORNER_CONTRAST_DE00
 
 
 # Every preset paints with the same 3 mm brush; they differ in how many regions
@@ -100,6 +111,8 @@ CUSTOM_RANGES: dict[str, tuple[float, float]] = {
     "edge_settling": (0.0, 3.0),
     "edge_color_step_de00": (1.0, 40.0),
     "detail_weight": (1, 4),
+    "sharpest_corner_deg": (5.0, 180.0),
+    "corner_contrast_de00": (0.0, 60.0),
 }
 # The fields that take whole numbers.
 _INTEGER_FIELDS = frozenset({"num_colors", "detail_weight"})
@@ -156,9 +169,14 @@ def describe(params: DifficultyParams) -> str:
     """The settings in words, in the printed page's units, e.g. for a tooltip."""
     side_mm = math.sqrt(params.min_region_area_mm2)
     detail = {1: "as much", 2: "half that"}.get(params.detail_weight, f"1/{params.detail_weight} of that")
+    corners = (
+        f"corners down to {params.sharpest_corner_deg:g}° kept sharp"
+        if params.sharpest_corner_deg < 180
+        else "corners rounded to the brush"
+    )
     return (
         f"Up to {params.num_colors} colors, at least {params.palette_margin_de00:g} ΔE00 apart. "
         f"Regions of at least {params.min_region_area_mm2:.0f} mm² "
         f"(about {side_mm:.0f} × {side_mm:.0f} mm; {detail} on a photograph's or painting's subject and faces) "
-        f"and {params.min_width_mm:g} mm wide on the printed A4 page."
+        f"and {params.min_width_mm:g} mm wide on the printed A4 page, {corners}."
     )

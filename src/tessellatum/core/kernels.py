@@ -6,7 +6,9 @@ that groups regions for the width measurement, the walk that turns the
 boundaries between regions into one path each (and the printed ink's outline
 into rings, see ``ink_outline``), the search for the nearest
 core a thin part can reach without crossing line art's ink, and the bilateral
-filter's per-pixel weighting -- runs here as compiled code. So do line art's
+filter's per-pixel weighting -- runs here as compiled code, and so do the
+measures of the corners' tips the brush rule keeps (see
+``regions.corner_tips``). So do line art's
 region steps (see ``regions.look_through_hatching`` to ``regions.split_areas``):
 their searches along paths, and the passes over the page that compare each
 pixel with its neighbors, which NumPy would make one whole-page array per
@@ -1423,6 +1425,286 @@ def unreached_by_brush(ids, to_brush, radius, out_unreached):
 
 
 @njit(cache=True, nogil=True)
+def brush_pieces(ids, to_brush, radius, height, width, out_unreached, out_pieces):
+    """The pieces of each region its brush can't reach (see ``regions.corner_tips``), labeled in ``out_pieces``.
+
+    ``out_unreached`` gets the pixels farther than ``radius`` from where a brush
+    fits (``to_brush``), as ``unreached_by_brush`` finds them. A piece is an
+    8-connected run, within one region, of the pixels more than ``radius`` + 1
+    from it and the unreached pixels of their region beside them; each gets a
+    number from 0, in the order of its first pixel, in ``out_pieces`` (-1
+    elsewhere). Returns each piece's area and its box, as rows of
+    (top, left, bottom, right), inclusive.
+    """
+    total = height * width
+    limit = radius * radius
+    deep_limit = (radius + 1) * (radius + 1)
+    beyond = np.zeros(total, np.bool_)
+    for p in range(total):
+        d = np.float64(to_brush[p])
+        square = np.rint(d * d)
+        out_unreached[p] = ids[p] >= 0 and square > limit
+        beyond[p] = ids[p] >= 0 and square > deep_limit
+        out_pieces[p] = -1
+    # A piece's pixels: those beyond, and the unreached ones of their region beside them.
+    near = np.zeros(total, np.bool_)
+    count_near = 0
+    for p in range(total):
+        if not out_unreached[p]:
+            continue
+        y, x = p // width, p % width
+        here = beyond[p]
+        if not here:
+            r = ids[p]
+            for dy in range(-1, 2):
+                yy = y + dy
+                if yy < 0 or yy >= height:
+                    continue
+                for dx in range(-1, 2):
+                    xx = x + dx
+                    if xx < 0 or xx >= width:
+                        continue
+                    q = yy * width + xx
+                    if beyond[q] and ids[q] == r:
+                        here = True
+        if here:
+            near[p] = True
+            count_near += 1
+    area = np.zeros(count_near, np.int64)
+    box = np.zeros((count_near, 4), np.int32)
+    stack = np.empty(count_near, np.int64)
+    count = 0
+    for p in range(total):
+        if not near[p] or out_pieces[p] >= 0:
+            continue
+        r = ids[p]
+        out_pieces[p] = count
+        stack[0] = p
+        size = 1
+        box[count, 0] = p // width
+        box[count, 1] = p % width
+        box[count, 2] = p // width
+        box[count, 3] = p % width
+        while size > 0:
+            size -= 1
+            q = stack[size]
+            area[count] += 1
+            y, x = q // width, q % width
+            if y < box[count, 0]:
+                box[count, 0] = y
+            if x < box[count, 1]:
+                box[count, 1] = x
+            if y > box[count, 2]:
+                box[count, 2] = y
+            if x > box[count, 3]:
+                box[count, 3] = x
+            for dy in range(-1, 2):
+                yy = y + dy
+                if yy < 0 or yy >= height:
+                    continue
+                for dx in range(-1, 2):
+                    xx = x + dx
+                    if xx < 0 or xx >= width:
+                        continue
+                    s = yy * width + xx
+                    if near[s] and out_pieces[s] < 0 and ids[s] == r:
+                        out_pieces[s] = count
+                        stack[size] = s
+                        size += 1
+        count += 1
+    return area[:count], box[:count]
+
+
+@njit(cache=True, nogil=True)
+def count_stretches(base_of, count, height, width):
+    """For each piece numbered below ``count``, how many 8-connected runs of ``base_of`` (>= 0) carry its number."""
+    total = height * width
+    stretches = np.zeros(count, np.int64)
+    seen = np.zeros(total, np.bool_)
+    marked = 0
+    for p in range(total):
+        if base_of[p] >= 0:
+            marked += 1
+    stack = np.empty(marked, np.int64)
+    for p in range(total):
+        k = base_of[p]
+        if k < 0 or seen[p]:
+            continue
+        stretches[k] += 1
+        seen[p] = True
+        stack[0] = p
+        size = 1
+        while size > 0:
+            size -= 1
+            q = stack[size]
+            y, x = q // width, q % width
+            for dy in range(-1, 2):
+                yy = y + dy
+                if yy < 0 or yy >= height:
+                    continue
+                for dx in range(-1, 2):
+                    xx = x + dx
+                    if xx < 0 or xx >= width:
+                        continue
+                    s = yy * width + xx
+                    if base_of[s] == k and not seen[s]:
+                        seen[s] = True
+                        stack[size] = s
+                        size += 1
+    return stretches
+
+
+@njit(cache=True, nogil=True)
+def tip_rims(tips, ids, unreached, pixels, reach, height, width):
+    """Give, in place, each unreached pixel of their region within ``reach`` across or down of a tip's ``pixels``
+    (flat indices, in raster order) the tip's number in ``tips``, but for the tips' own pixels. Where tips of one region
+    are that near each other, the first numbers the pixels between.
+    """
+    for i in range(pixels.shape[0]):
+        p = pixels[i]
+        k = tips[p]
+        y, x = p // width, p % width
+        r = ids[p]
+        for yy in range(max(0, y - reach), min(height, y + reach + 1)):
+            for xx in range(max(0, x - reach), min(width, x + reach + 1)):
+                q = yy * width + xx
+                if tips[q] < 0 and unreached[q] and ids[q] == r:
+                    tips[q] = k
+
+
+@njit(cache=True, nogil=True)
+def piece_bases(pieces, ids, unreached, count, height, width, out_base_of):
+    """For each piece (``pieces`` >= 0, numbered below ``count``), how many of its region's pixels in no piece it meets.
+
+    Pixels side by side count, each pair once; diagonal ones and off the page
+    don't. A piece's pixels all lie in one region of ``ids``. Those of them
+    not ``unreached`` get the piece's number in ``out_base_of`` (the last
+    piece's, if two meet one), the rest -1.
+    """
+    base = np.zeros(count, np.int64)
+    for p in range(height * width):
+        out_base_of[p] = -1
+    for y in range(height):
+        row = y * width
+        for x in range(width):
+            p = row + x
+            k = pieces[p]
+            if k < 0:
+                continue
+            r = ids[p]
+            for q in (p - 1, p + 1, p - width, p + width):
+                if q == p - 1 and x == 0 or q == p + 1 and x + 1 == width or q < 0 or q >= height * width:
+                    continue
+                if pieces[q] >= 0 or ids[q] != r:
+                    continue
+                base[k] += 1
+                if not unreached[q]:
+                    out_base_of[q] = k
+    return base
+
+
+@njit(cache=True, nogil=True)
+def piece_lengths(pieces, ids, unreached, box, which, height, width):
+    """For each piece ``which`` marks (numbered as ``pieces``, with ``box`` as ``brush_pieces`` gives it), how far its
+    farthest pixel lies from its region's rest; 0 for the others.
+
+    The rest is the pixels of the region not ``unreached``; the distance runs
+    through the region's ``unreached`` pixels within the piece's box, widened
+    by 3 pixels, a pixel's side counting 1 and its diagonal sqrt(2) (two
+    passes each way, which follow a piece that bends back on itself only so
+    far, and so may measure it shorter).
+    """
+    diagonal = np.float32(np.sqrt(2.0))
+    far = np.float32(np.inf)
+    length = np.zeros(which.shape[0], np.float32)
+    for k in range(which.shape[0]):
+        if not which[k]:
+            continue
+        y0, x0 = max(0, box[k, 0] - 3), max(0, box[k, 1] - 3)
+        y1, x1 = min(height - 1, box[k, 2] + 3), min(width - 1, box[k, 3] + 3)
+        bh, bw = y1 - y0 + 1, x1 - x0 + 1
+        r = -2
+        for y in range(box[k, 0], box[k, 2] + 1):
+            for x in range(box[k, 1], box[k, 3] + 1):
+                if pieces[y * width + x] == k:
+                    r = ids[y * width + x]
+                    break
+            if r != -2:
+                break
+        # In the box: 0 on the region's reached pixels, far on its unreached ones, -1 everywhere else (no way through).
+        distance = np.empty(bh * bw, np.float32)
+        for y in range(bh):
+            for x in range(bw):
+                p = (y + y0) * width + x + x0
+                if ids[p] != r:
+                    distance[y * bw + x] = -1
+                elif unreached[p]:
+                    distance[y * bw + x] = far
+                else:
+                    distance[y * bw + x] = 0
+        for _ in range(2):
+            for y in range(bh):
+                for x in range(bw):
+                    p = y * bw + x
+                    d = distance[p]
+                    if d <= 0:
+                        continue
+                    if x > 0 and distance[p - 1] >= 0:
+                        d = min(d, distance[p - 1] + 1)
+                    if y > 0:
+                        q = p - bw
+                        if distance[q] >= 0:
+                            d = min(d, distance[q] + 1)
+                        if x > 0 and distance[q - 1] >= 0:
+                            d = min(d, distance[q - 1] + diagonal)
+                        if x + 1 < bw and distance[q + 1] >= 0:
+                            d = min(d, distance[q + 1] + diagonal)
+                    distance[p] = d
+            for y in range(bh - 1, -1, -1):
+                for x in range(bw - 1, -1, -1):
+                    p = y * bw + x
+                    d = distance[p]
+                    if d <= 0:
+                        continue
+                    if x + 1 < bw and distance[p + 1] >= 0:
+                        d = min(d, distance[p + 1] + 1)
+                    if y + 1 < bh:
+                        q = p + bw
+                        if distance[q] >= 0:
+                            d = min(d, distance[q] + 1)
+                        if x + 1 < bw and distance[q + 1] >= 0:
+                            d = min(d, distance[q + 1] + diagonal)
+                        if x > 0 and distance[q - 1] >= 0:
+                            d = min(d, distance[q - 1] + diagonal)
+                    distance[p] = d
+        for y in range(box[k, 0], box[k, 2] + 1):
+            for x in range(box[k, 1], box[k, 3] + 1):
+                if pieces[y * width + x] == k:
+                    d = distance[(y - y0) * bw + x - x0]
+                    if d > length[k]:
+                        length[k] = d
+    return length
+
+
+@njit(cache=True, nogil=True)
+def near_another(ys, xs, limit):
+    """For each point (``ys``, ``xs``, sorted by ``xs``), whether another lies nearer than ``limit``."""
+    count = ys.shape[0]
+    near = np.zeros(count, np.bool_)
+    limit_sq = limit * limit
+    for i in range(count):
+        j = i + 1
+        while j < count and xs[j] - xs[i] < limit:
+            dy = ys[j] - ys[i]
+            dx = xs[j] - xs[i]
+            if dy * dy + dx * dx < limit_sq:
+                near[i] = True
+                near[j] = True
+            j += 1
+    return near
+
+
+@njit(cache=True, nogil=True)
 def pocket_contacts(pocket, ids, walls, count, height, width):
     """For each pocket (``pocket`` > 0, numbered below ``count``), its contacts and how many of them are ``walls``.
 
@@ -1825,6 +2107,12 @@ def warm_up() -> None:
     seams_round(ids, printed, flags, 3, 3, ids32, taken)
     region_census(ids, printed, count, 3, 3)
     unreached_by_brush(ids, np.ones(9, dtype=np.float32), 1.5, taken)
+    _area, box = brush_pieces(ids, np.ones(9, dtype=np.float32), 0.5, 3, 3, taken, ids32)
+    piece_bases(labels - 1, ids, taken, 3, 3, 3, ids32)
+    count_stretches(labels - 1, 3, 3, 3)
+    piece_lengths(labels - 1, ids, taken, box, np.ones(box.shape[0], dtype=np.bool_), 3, 3)
+    near_another(np.zeros(2), np.arange(2.0), 1.5)
+    tip_rims(labels - 1, ids, taken, np.arange(9, dtype=np.int64), 2, 3, 3)
     pocket_contacts(labels, ids, printed, 3, 3, 3)
     thin_ink_to_nearest(ids, printed, labels, np.ones(9, dtype=np.float32), 1.5, 3, 3, ids32, taken)
     keep_anchored(ids, ids, printed, ids32)

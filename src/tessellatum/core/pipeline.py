@@ -21,6 +21,7 @@ from tessellatum.core.painting import Painting, Version, render_version
 from tessellatum.core.print_size import long_edge_at_dpi, print_scale
 from tessellatum.core.quantize import quantize
 from tessellatum.core.regions import (
+    CornerRule,
     Region,
     build_regions,
     detail_ink,
@@ -500,15 +501,20 @@ def generate(
         detail = in_subject | in_faces if in_faces is not None else in_subject
         if not detail.any():
             detail = None
+    # A region's corners keep their points, where the picture shows them plainly, rather than being rounded to the
+    # brush.
+    corner_rule = None
+    if params.sharpest_corner_deg < 180:
+        corner_rule = CornerRule(params.sharpest_corner_deg, params.corner_contrast_de00, resized, palette_bgr)
     region_id_map, region_color = build_regions(
-        region_labels, len(palette_bgr), min_area_px, min_width_px, detail, params.detail_weight
+        region_labels, len(palette_bgr), min_area_px, min_width_px, detail, params.detail_weight, corner_rule
     )
     if ink_mask is None:
         # Fur, foliage and stone leave the regions ragged edges no brush can follow: they are settled by a vote of
         # the page around each pixel, held to the picture's own edges. Line art's edges are its ink.
         region_id_map, region_color = smooth_regions(
             resized, region_id_map, region_color, palette_bgr, min_area_px, min_width_px, detail,
-            params.edge_settling, params.edge_color_step_de00, params.detail_weight,
+            params.edge_settling, params.edge_color_step_de00, params.detail_weight, corner_rule,
         )
     if in_faces is not None:
         # A face's skin or fur is painted in a few large tones: each region there in the color nearest it, and the ones

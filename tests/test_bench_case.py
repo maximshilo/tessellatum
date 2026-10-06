@@ -355,7 +355,11 @@ def test_case_runner_scores_the_slivers_in_the_gradient_areas_and_the_page_s_ban
     ids = np.load(out / "regions.npz")["region_id_map"]
     assert ids.shape == (300, 400)  # the boxes scale by 5/8: rows 0-99, and columns 0-99
     scale = bm.print_size.print_scale((400, 300))
-    slivers = bm.sliver_mask(ids, scale.mm_to_px(bm.print_size.MIN_PAINTABLE_WIDTH_MM))
+    brush = scale.mm_to_px(bm.print_size.MIN_PAINTABLE_WIDTH_MM)
+    corners = bm.corner_tips(ids, brush)
+    slivers = bm.sliver_mask(ids, brush) & ~corners  # what a brush can't reach, but for the corners' points
+    assert quality["sliver_area_fraction"] == pytest.approx(slivers.mean(), rel=1e-12)
+    assert quality["corner_tip_fraction"] == pytest.approx(corners.mean(), rel=1e-12)
     gradient = np.zeros(ids.shape, dtype=bool)
     gradient[:100], gradient[:, :100] = True, True
     # Slivers in the gradient areas, their overlap counted once and the texture area not at all; and in the one most.

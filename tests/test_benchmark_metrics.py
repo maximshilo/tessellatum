@@ -1480,3 +1480,37 @@ def test_subject_fidelity_scores_the_subject_as_face_fidelity_scores_a_box():
         "subject_de00_mean": None,
         "subject_ssim": None,
     }
+
+
+def _corner(apex_deg: float) -> np.ndarray:
+    """A triangle of region 1 in region 0, 160 x 140, its point ``apex_deg`` sharp at row 80, column 125."""
+    half = np.radians(apex_deg) / 2
+    point = np.array([125.0, 80.0])
+    corners = [point, point + (-70, -70 * np.tan(half)), point + (-70, 70 * np.tan(half))]
+    page = np.zeros((160, 140), dtype=np.int32)
+    cv2.fillPoly(page, [np.round(np.array(corners) * 16).astype(np.int32)], 1, cv2.LINE_8, shift=4)
+    return page
+
+
+@pytest.mark.parametrize("apex_deg", [15, 20, 30, 60])
+def test_a_corner_s_tip_is_paintable_down_to_the_sharpest_corner_counted(apex_deg):
+    from tessellatum.core import regions
+
+    page = _corner(apex_deg)
+    slivers = bm.sliver_mask(page, 10.0)
+    tips = bm.corner_tips(page, 10.0)
+
+    assert slivers[80, 124] and not (tips & ~slivers).any()  # its point is beyond the brush; tips are never reached
+    assert tips[80, 124] == (apex_deg >= bm.CORNER_SHARPEST_DEG)  # a corner sharper than that is a sliver still
+    # The pipeline keeps the same tips (``regions.corner_tips``), measured on its own.
+    np.testing.assert_array_equal(tips, regions.corner_tips(page, 2, 10.0, bm.CORNER_SHARPEST_DEG))
+
+
+def test_a_bar_or_a_ring_thinner_than_the_brush_has_no_corners_to_paint():
+    narrow = _bands(4)
+    ring = np.ones((40, 40), dtype=np.int32)
+    ring[10:30, 10:30] = 2  # a square in a ring 10 px wide, which a 10 px brush fits nowhere along its sides
+
+    assert not bm.corner_tips(narrow, BRUSH_5PX)[narrow == 20].any()
+    tips = bm.corner_tips(ring, 10.0)
+    assert not tips[12:28, :8].any() and not tips[:8, 12:28].any()

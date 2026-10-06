@@ -892,4 +892,24 @@ def test_a_face_s_tones_and_marks_and_the_vote_follow_their_settings(monkeypatch
     pipeline.clear_cache()
     generate(image, params, pipeline.PREVIEW_LONG_EDGE, handling=handling)
     pipeline.clear_cache()
-    assert seen == {"vote": (0.5, 6.0, 3), "tones": (0.5,), "marks": (2.0, 20.0, 3.0)}
+    corners = seen["vote"][3]
+    assert {**seen, "vote": seen["vote"][:3]} == {"vote": (0.5, 6.0, 3), "tones": (0.5,), "marks": (2.0, 20.0, 3.0)}
+    assert (corners.sharpest_deg, corners.contrast_de00) == (params.sharpest_corner_deg, params.corner_contrast_de00)
+
+
+def test_a_triangle_s_point_is_kept_sharp_unless_corners_are_rounded():
+    # A 30 degree triangle, dark blue on pale gray, its point at column 520 of a 600 px page (a brush of 6.7 px).
+    picture = np.full((424, 600, 3), (215, 225, 230), dtype=np.uint8)
+    half = math.radians(30) / 2
+    point = np.array([520.0, 212.0])
+    side = 380 * np.array([math.cos(half), math.sin(half)])
+    corners = [point, point - side, point - side * (1, -1)]
+    cv2.fillPoly(picture, [np.round(np.array(corners) * 16).astype(np.int32)], (120, 40, 30), cv2.LINE_AA, shift=4)
+    reach = {}
+    for sharpest in (difficulty.params_for_preset("Medium").sharpest_corner_deg, 180.0):
+        params = dataclasses.replace(difficulty.params_for_preset("Medium"), sharpest_corner_deg=sharpest)
+        pipeline.clear_cache()
+        ids = generate(picture, params, 600, collect_analysis=True).analysis.region_id_map
+        reach[sharpest] = int(np.nonzero((ids == ids[212, 300]).any(axis=0))[0].max())
+    pipeline.clear_cache()
+    assert reach == {20.0: 520, 180.0: 515}  # to its point, or rounded to the brush 5 px short of it
