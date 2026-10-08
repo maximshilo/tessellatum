@@ -175,12 +175,14 @@ def _settle(
     leader = rows.copy()  # the region each has joined, itself until it does
     open_ = np.ones(count, dtype=bool)  # still looked at: not joined to another, nor to a region outside
 
-    def steps(which: np.ndarray) -> np.ndarray:
-        """What a pixel of each region in ``which`` would lose in each neighbor's color: the other settled regions',
-        then the rest's -- a row of the whole page's steps each, computed as it would be with all of them."""
+    def steps(which: np.ndarray, near: np.ndarray) -> np.ndarray:
+        """What a pixel of each region in ``which`` would lose in each neighbor's color: the settled regions' in
+        ``near``, then the rest's -- each step computed as it would be in a row of the whole page's."""
         own = error[which, colors[which]]
         to_region = np.where(
-            touching[which] & open_[which, None] & open_[None, :], error[which][:, colors] - own[:, None], np.inf
+            touching[np.ix_(which, near)] & open_[which, None] & open_[None, near],
+            error[np.ix_(which, colors[near])] - own[:, None],
+            np.inf,
         )
         to_color = np.where(beside[which] & open_[which, None], error[which] - own[:, None], np.inf)
         return np.concatenate([to_region, to_color], axis=1) / pixels[which, None]
@@ -195,9 +197,13 @@ def _settle(
     def update(which: np.ndarray) -> None:
         for start in range(0, len(which), _STEP_BLOCK):
             block = which[start : start + _STEP_BLOCK]
-            step = steps(block)
-            where_to[block] = step.argmin(axis=1)
-            least[block] = step[np.arange(len(block)), where_to[block]]
+            # Only the open regions beside the block: a step to any other is infinite, so the first of a row's least is
+            # where it is in the page's row -- and a row with no step but infinite ones is never moved.
+            near = np.flatnonzero((touching[block] & open_[None, :]).any(axis=0))
+            step = steps(block, near)
+            first = step.argmin(axis=1)
+            where_to[block] = np.concatenate([near, count + np.arange(error.shape[1])])[first]
+            least[block] = step[np.arange(len(block)), first]
 
     update(rows)
     for _ in rows:  # every join closes a region, so there are at most as many as regions
