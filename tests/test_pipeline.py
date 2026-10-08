@@ -563,9 +563,9 @@ def test_the_paint_goes_over_ink_thinner_than_thin_ink_mm_and_the_numbers_keep_o
         seen["reach_px"], seen["apart_px"] = reach_px, apart_px
         return real_detail(ids, printed, reach_px, apart_px)
 
-    def extract_spy(ids, colors, min_contour_area=1.0, printed=None):
+    def extract_spy(ids, colors, printed=None):
         seen["extract_printed"] = printed
-        return real_extract(ids, colors, min_contour_area, printed=printed)
+        return real_extract(ids, colors, printed=printed)
 
     monkeypatch.setattr(pipeline, "paint_over_thin_ink", paint_spy)
     monkeypatch.setattr(pipeline, "detail_ink", detail_spy)

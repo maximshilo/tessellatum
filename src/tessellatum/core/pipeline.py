@@ -75,10 +75,9 @@ class PageAnalysis:
     are the legend's, in legend order, so color ``i`` is numbered ``i + 1`` on
     the page. The rest are quantized colors no drawn region has.
 
-    A region in ``region_id_map`` with no entry in ``regions`` has an outline
-    that encloses no area (e.g. it is one pixel wide), so it gets no number.
-    Its boundaries are still drawn: the lines come from the region map, not
-    from the regions.
+    Every region in ``region_id_map`` has an entry in ``regions``, and a
+    number, a speck a pixel wide too (see ``regions.extract_regions``). The
+    lines come from the region map, not from the regions.
 
     On line art, the pixels in no region (-1) are the bold printed ink, the
     seam down the middle of a thin line between two regions (or between two

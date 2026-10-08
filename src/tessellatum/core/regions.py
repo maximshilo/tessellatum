@@ -1269,9 +1269,13 @@ def _brush_fits(region_id_map: np.ndarray, num_regions: int, radius: float) -> n
 
 
 def extract_regions(
-    region_id_map: np.ndarray, region_color: np.ndarray, min_contour_area: float = 1.0, printed: np.ndarray | None = None
+    region_id_map: np.ndarray, region_color: np.ndarray, printed: np.ndarray | None = None
 ) -> list[Region]:
     """Extract one outer contour + label point per surviving region id.
+
+    Every region on the map gets one, and so a number, a speck whose outline
+    encloses no area too -- a pixel, or a stroke a pixel wide, which the
+    finest brush leaves (its number goes beside it, with a leader).
 
     Each region is processed inside its own one-pixel-padded bounding box
     rather than across the whole image (same result: nothing outside the box
@@ -1307,8 +1311,6 @@ def extract_regions(
         if not contours:
             return None
         contour = contours[0] if len(contours) == 1 else max(contours, key=cv2.contourArea)
-        if cv2.contourArea(contour) < min_contour_area:
-            return None
         contour = cv2.approxPolyDP(contour, epsilon=1.2, closed=True)
 
         # The zero padding also makes the distance transform treat the image
