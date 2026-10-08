@@ -392,7 +392,10 @@ How the paintability metrics are defined:
   ledge and the pole on it, and at two presets a billboard's lit edge and the
   phone pictured beside it.
 - **Unlabeled** regions are counted from the region map, so a region too small
-  to get an outline counts too.
+  to get an outline counts too. Until 0.1.50 the pipeline numbered no region
+  whose outline encloses no area -- a pixel, or a stroke a pixel wide, which
+  only a brush under two pixels wide leaves (0.5 mm on a preview, far past
+  the presets' 3 mm); from 0.1.51 it numbers every region.
 - **Label size** is each number's em size in points. Versions before 0.1.10
   don't report their numbers, so the harness rebuilds the sizes from the
   renderer's formula, which all of those versions share.
