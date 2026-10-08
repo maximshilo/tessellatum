@@ -291,6 +291,30 @@ def test_no_leader_s_line_or_dot_reaches_a_number_its_own_included(seed):
             assert not leader_ink[rows, columns].any()
 
 
+def test_placing_the_numbers_can_be_stopped_before_any_of_them():
+    # A page of thousands of regions takes seconds to number, so the caller is asked before each number is tried in
+    # its region, and again before each that has no room there is written beside it; it stops the placement by raising.
+    ids = _small_squares(3, side=6, spacing=30)
+    regions, free = _page(ids)
+    asked = []
+
+    labels = place_labels(regions, ids, free, SPACING, check_cancelled=lambda: asked.append(True))
+
+    leaders = sum(label.leader is not None for label in labels)
+    assert len(labels) == len(regions) == 4 and leaders == 3 and len(asked) == len(regions) + leaders
+
+    class Stop(Exception):
+        pass
+
+    def stop_before_the_last():
+        if len(asked) == 2 * (len(regions) + leaders) - 1:
+            raise Stop
+        asked.append(True)
+
+    with pytest.raises(Stop):
+        place_labels(regions, ids, free, SPACING, check_cancelled=stop_before_the_last)
+
+
 def test_a_leader_once_placed_holds_its_path_against_the_numbers_after_it():
     ids = _small_squares(1, side=6, spacing=0)
     regions, free = _page(ids)
@@ -558,9 +582,9 @@ def test_numbers_see_the_ink_a_region_s_paint_goes_over_as_in_no_region(monkeypa
     seen = {}
     real = render_module.place_labels
 
-    def spy(regions, region_id_map, free, spacing, clearable=None, text=None):
+    def spy(regions, region_id_map, free, spacing, clearable=None, text=None, **kwargs):
         seen["ids"], seen["clearable"] = region_id_map, clearable
-        return real(regions, region_id_map, free, spacing, clearable, text=text)
+        return real(regions, region_id_map, free, spacing, clearable, text=text, **kwargs)
 
     monkeypatch.setattr(render_module, "place_labels", spy)
     regions = extract_regions(ids, np.arange(2, dtype=np.int32), printed=printed)

@@ -446,9 +446,9 @@ def test_numbers_keep_half_a_millimeter_from_the_lines_of_text(size, monkeypatch
     seen = []
     real = render_module.place_labels
 
-    def spy(regions, region_id_map, free, spacing, clearable=None, text=None):
+    def spy(regions, region_id_map, free, spacing, clearable=None, text=None, **kwargs):
         seen.append((spacing, text))
-        return real(regions, region_id_map, free, spacing, clearable, text=text)
+        return real(regions, region_id_map, free, spacing, clearable, text=text, **kwargs)
 
     monkeypatch.setattr(render_module, "place_labels", spy)
 
@@ -471,9 +471,9 @@ def test_the_line_smoothing_and_the_numbers_follow_the_style(monkeypatch):
     spacings = []
     real = render_module.place_labels
 
-    def spy(regions, region_id_map, free, spacing, clearable=None, text=None):
+    def spy(regions, region_id_map, free, spacing, clearable=None, text=None, **kwargs):
         spacings.append(spacing)
-        return real(regions, region_id_map, free, spacing, clearable, text)
+        return real(regions, region_id_map, free, spacing, clearable, text, **kwargs)
 
     monkeypatch.setattr(render_module, "place_labels", spy)
     smoothing = []

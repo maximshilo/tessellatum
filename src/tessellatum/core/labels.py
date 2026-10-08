@@ -24,6 +24,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Callable
 
 import cv2
 import numpy as np
@@ -107,6 +108,7 @@ def place_labels(
     spacing: LabelSpacing,
     clearable: np.ndarray | None = None,
     text: np.ndarray | None = None,
+    check_cancelled: Callable[[], None] | None = None,
 ) -> list[Label]:
     """A number for every region in ``regions``, placed where no line runs through it.
 
@@ -131,6 +133,10 @@ def place_labels(
     a region lying in one. Only a number with no room anywhere, which lands
     where lines may run through it, may land on text too.
 
+    ``check_cancelled``, if given, is called before each number is placed,
+    and stops the placement by raising: a page of thousands of regions takes
+    seconds to number.
+
     Returns the labels in drawing order: the numbers inside their regions, in
     the order of ``regions``, then the others.
     """
@@ -145,6 +151,8 @@ def place_labels(
     homeless = []
     bounds = None  # every region's bounding box, found the first time a number does not fit at its region's middle
     for region in regions:
+        if check_cancelled is not None:
+            check_cancelled()
         label = _label_at_middle(region, ids, free, spacing.min_font_size)
         if label is None:
             if bounds is None:
@@ -159,7 +167,10 @@ def place_labels(
 
     if homeless:
         room = _LeaderRoom(ids, free, labels, [region.interior_point for region in homeless], spacing, clearable)
-        labels.extend(room.place(region) for region in homeless)
+        for region in homeless:
+            if check_cancelled is not None:
+                check_cancelled()
+            labels.append(room.place(region))
     return labels
 
 

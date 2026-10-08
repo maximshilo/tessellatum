@@ -395,8 +395,9 @@ def generate(
 
     ``progress_callback``, if given, is called after each pipeline stage with
     a 0-100 percentage reflecting real work completed (not a fake animation).
-    ``should_cancel``, if given, is polled between stages; when it returns
-    True, ``PipelineCancelled`` is raised and no more work is done.
+    ``should_cancel``, if given, is polled between stages, and as the
+    numbers are placed, one at a time; when it returns True,
+    ``PipelineCancelled`` is raised and no more work is done.
     ``collect_analysis`` also returns what the page is made of in
     ``GeneratedPage.analysis`` (see ``PageAnalysis``), for benchmarks and
     tests, with the faces in the picture (on line art, looked for only then).
@@ -587,7 +588,9 @@ def generate(
 
     check_cancelled()
     printing = dict(ink=printed_ink, ink_gray=ink_gray, lettering=letters)
-    rendered = render_page((w, h), regions, region_id_map, style, clearable=clearable, **printing)
+    rendered = render_page(
+        (w, h), regions, region_id_map, style, clearable=clearable, check_cancelled=check_cancelled, **printing
+    )
     for _ in range(_MERGE_ROUNDS):
         # On line art, a region whose number found no room anywhere joins the area beside it, and the page is drawn
         # again -- until every number has room, no region moves, or _MERGE_ROUNDS are done. Every other picture is
@@ -603,7 +606,9 @@ def generate(
         if letters is not None:
             clearable = clearable & ~letters.area
         regions, used_color_indices, remap = numbered(region_id_map)
-        rendered = render_page((w, h), regions, region_id_map, style, clearable=clearable, **printing)
+        rendered = render_page(
+            (w, h), regions, region_id_map, style, clearable=clearable, check_cancelled=check_cancelled, **printing
+        )
     if rendered.printed_ink is not None:
         printed_ink = rendered.printed_ink  # less the hatching cleared behind numbers
     used_palette_bgr = palette_bgr[used_color_indices]
