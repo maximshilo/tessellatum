@@ -1275,7 +1275,8 @@ def extract_regions(
 
     Every region on the map gets one, and so a number, a speck whose outline
     encloses no area too -- a pixel, or a stroke a pixel wide, which the
-    finest brush leaves (its number goes beside it, with a leader).
+    finest brush leaves: its number goes beside it, on a leader where there
+    is room (see ``labels.place_labels``).
 
     Each region is processed inside its own one-pixel-padded bounding box
     rather than across the whole image (same result: nothing outside the box

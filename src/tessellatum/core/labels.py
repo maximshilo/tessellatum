@@ -133,9 +133,10 @@ def place_labels(
     a region lying in one. Only a number with no room anywhere, which lands
     where lines may run through it, may land on text too.
 
-    ``check_cancelled``, if given, is called before each number is placed,
-    and stops the placement by raising: a page of thousands of regions takes
-    seconds to number.
+    ``check_cancelled``, if given, is called before each number is tried in
+    its region, and again before each with no room there is written beside
+    it, and stops the placement by raising: a page of thousands of regions
+    takes seconds to number.
 
     Returns the labels in drawing order: the numbers inside their regions, in
     the order of ``regions``, then the others.

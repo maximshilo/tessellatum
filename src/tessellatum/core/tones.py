@@ -33,7 +33,8 @@ from tessellatum.core.color import bgr_to_lab, ciede2000
 # neighbor's color than in its own, in CIEDE2000, averaged over them.
 MIN_STEP_DE00 = 1.0
 
-# How many regions' steps are worked out at a time: a block's steps to every region and color stay a few MB.
+# How many regions' steps are worked out at a time: a block's steps to the regions beside it and to every color stay a
+# few MB.
 _STEP_BLOCK = 256
 
 # A region's pixels are counted by color in cells of the sRGB cube this many bits a channel across -- 32 steps of 8 --
