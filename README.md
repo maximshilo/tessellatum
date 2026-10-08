@@ -204,9 +204,14 @@ paints with a 3 mm brush and keeps colors 10 ΔE00 apart, which the quality
 benchmarks hold every page to; Custom reaches past both, for pages with more
 detail than that: below 30 mm² regions at the 3 mm brush, more than 1% of a
 detailed page is out of the brush's reach, and a scanned drawing's hatched
-areas get numbers with no room off its lines. Every setting the app offers,
-with its range and unit, is listed in `src/tessellatum/core/settings.py`;
-the print model's own thresholds are in `src/tessellatum/core/print_size.py`.
+areas get numbers with no room off its lines. At the sliders' finest -- a
+0.5 mm brush, 2 mm² regions, 64 colors with no margin -- a detailed
+photograph's preview has 2,000–7,000 regions and takes 2–6 s, line art up to
+about 11 s; half to nine tenths of such a photograph's numbers find no room
+off the lines. **Abort** stops a page between two numbers. Every setting the
+app offers, with its range and unit, is listed in
+`src/tessellatum/core/settings.py`; the print model's own thresholds are in
+`src/tessellatum/core/print_size.py`.
 
 ### Line art
 

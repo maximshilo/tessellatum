@@ -56,6 +56,32 @@ def test_generate_can_be_cancelled_mid_pipeline(sample_image_bgr):
         generate(sample_image_bgr, params, long_edge=200, should_cancel=should_cancel)
 
 
+def test_generate_can_be_cancelled_while_the_numbers_are_placed(sample_image_bgr, monkeypatch):
+    # Numbering a page of thousands of regions takes seconds, all in one stage: Abort is heard between two numbers.
+    params = difficulty.params_for_preset("Medium")
+    polled, started, finished = [], [], []
+    real = render.place_labels
+
+    def spy(*args, **kwargs):
+        started.append(len(polled))
+        result = real(*args, **kwargs)
+        finished.append(result)
+        return result
+
+    monkeypatch.setattr(render, "place_labels", spy)
+
+    def should_cancel():
+        polled.append(True)
+        return bool(started) and len(polled) == started[0] + 2  # before the second number
+
+    pipeline.clear_cache()
+    with pytest.raises(PipelineCancelled):
+        generate(sample_image_bgr, params, long_edge=200, should_cancel=should_cancel)
+    assert started and not finished
+    page = generate(sample_image_bgr, params, long_edge=200, should_cancel=lambda: False)
+    assert page.num_regions >= 2 and finished
+
+
 def test_generate_reuses_quantization_across_region_size_changes(sample_image_bgr, monkeypatch):
     quantize_calls = []
     real_quantize = pipeline.quantize
@@ -537,9 +563,9 @@ def test_the_paint_goes_over_ink_thinner_than_thin_ink_mm_and_the_numbers_keep_o
         seen["reach_px"], seen["apart_px"] = reach_px, apart_px
         return real_detail(ids, printed, reach_px, apart_px)
 
-    def extract_spy(ids, colors, min_contour_area=1.0, printed=None):
+    def extract_spy(ids, colors, printed=None):
         seen["extract_printed"] = printed
-        return real_extract(ids, colors, min_contour_area, printed=printed)
+        return real_extract(ids, colors, printed=printed)
 
     monkeypatch.setattr(pipeline, "paint_over_thin_ink", paint_spy)
     monkeypatch.setattr(pipeline, "detail_ink", detail_spy)

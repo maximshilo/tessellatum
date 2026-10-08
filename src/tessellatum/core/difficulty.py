@@ -99,9 +99,10 @@ PRESETS: dict[str, DifficultyParams] = {
 # sliders now reach well past it -- smaller regions, a finer brush, closer colors -- for pages with more detail than
 # those limits allow; how paintable such a page is, is the user's choice.
 #
-# They reach a 0.5 mm brush and 2 mm² regions, where a page is slow to draw: with every one at its finest, the lion's
-# and the Palermo castle's previews have over 7,000 regions and take about 100 s, almost all of it placing their
-# numbers, which Abort doesn't stop. At a 1 mm brush and 5 mm², 1,000-2,700 regions and 4-12 s.
+# They reach a 0.5 mm brush and 2 mm² regions, where a page is slower to draw, and half to nine tenths of a detailed
+# photograph's numbers find no room off the lines: with every one at its finest, the lion's and the Palermo castle's
+# previews have over 7,000 regions and take 4-6 s, the complex cartoon's 11 s (line art places its numbers again as the
+# regions without room merge), most of it placing the numbers, which Abort stops between two of them.
 CUSTOM_RANGES: dict[str, tuple[float, float]] = {
     "num_colors": (2, 64),
     "min_region_area_mm2": (2.0, 500.0),

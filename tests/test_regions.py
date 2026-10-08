@@ -24,6 +24,25 @@ def test_small_regions_get_merged_away():
     assert regions[0].area == 400
 
 
+def test_every_region_on_the_map_is_extracted_a_speck_a_pixel_wide_too():
+    # The finest brush leaves regions a pixel wide -- a speck, a stroke -- whose outline encloses no area. Each still
+    # gets its entry, with its label point on it, and so its number.
+    ids = np.zeros((40, 60), dtype=np.int32)
+    ids[10, 10] = 1  # a speck
+    ids[20:35, 30] = 2  # a stroke a pixel wide
+    ids[5:9, 40:44] = 3  # a square, which always had one
+    for row in range(10):
+        ids[25 + row, 45 + row] = 4  # a diagonal stroke
+
+    regions = extract_regions(ids, np.arange(5, dtype=np.int32))
+
+    assert [region.region_id for region in regions] == [0, 1, 2, 3, 4]
+    assert [region.area for region in regions[1:]] == [1, 15, 16, 10]
+    for region in regions:
+        x, y = region.interior_point
+        assert ids[y, x] == region.region_id and region.interior_radius >= 1.0
+
+
 def test_large_regions_survive_merging():
     labels = np.zeros((20, 20), dtype=np.int32)
     labels[:, 10:] = 1  # two equal halves, both well above threshold

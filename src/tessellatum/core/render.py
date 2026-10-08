@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Callable
 
 import cv2
 import numpy as np
@@ -168,6 +169,7 @@ def render_page(
     ink_gray: int = 0,
     clearable: np.ndarray | None = None,
     lettering: Lettering | None = None,
+    check_cancelled: Callable[[], None] | None = None,
 ) -> RenderedPage:
     """Draw the boundaries of ``region_id_map`` + numbers for ``regions`` onto a white ``size`` canvas.
 
@@ -200,6 +202,9 @@ def render_page(
     the letters cover at least half of are in ``ink`` as well, which ends the
     lines crossing them and keeps label points off them. The page's drawing
     has the letters' outline, ``lettering.outline``.
+
+    ``check_cancelled``, if given, is called as the numbers are placed, and
+    stops the page by raising (see ``labels.place_labels``).
 
     Returns the page, plus what it was built from: the ink the lines and the
     printed ink put on it, the geometry each line was drawn from, where each
@@ -242,7 +247,10 @@ def render_page(
     # A number goes on no printed ink, and a leader runs through none, whichever region's paint goes over it.
     seen = np.where(ink, -1, region_id_map) if inked else region_id_map
     detail = np.where(clearable, region_id_map, -1).astype(np.int32) if inked and clearable is not None else None
-    labels = place_labels(regions, seen, coverage == 0, spacing, detail, text=lettering_area if lettered else None)
+    labels = place_labels(
+        regions, seen, coverage == 0, spacing, detail, text=lettering_area if lettered else None,
+        check_cancelled=check_cancelled,
+    )
     if detail is not None and any(label.clears for label in labels):
         ink = ink & ~cleared(labels, detail, spacing.label_gap_px)
         coverage = all_ink(ink)

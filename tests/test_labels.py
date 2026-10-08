@@ -291,6 +291,49 @@ def test_no_leader_s_line_or_dot_reaches_a_number_its_own_included(seed):
             assert not leader_ink[rows, columns].any()
 
 
+@pytest.mark.parametrize("size", [(1100, 825), (2400, 1800)])
+def test_a_speck_or_a_stroke_a_pixel_wide_gets_its_number_beside_it_with_a_leader(size):
+    # The finest brush leaves regions a pixel wide, whose outline encloses no area: they are numbered all the same.
+    width, height = size
+    ids = np.zeros((height, width), dtype=np.int32)
+    ids[height // 2, width // 3] = 1
+    ids[height // 3 : height // 3 + 40, 2 * width // 3] = 2
+    regions = extract_regions(ids, np.array([0, 1, 2], dtype=np.int32))
+
+    rendered = render_page(size, regions, ids)
+
+    numbers = {label.region_id: label for label in rendered.labels}
+    assert sorted(numbers) == [0, 1, 2]
+    for region_id in (1, 2):
+        _end, anchor = numbers[region_id].leader
+        assert ids[int(anchor[1]), int(anchor[0])] == region_id
+    _clear_of_everything(rendered)
+
+
+def test_placing_the_numbers_can_be_stopped_before_any_of_them():
+    # A page of thousands of regions takes seconds to number, so the caller is asked before each number is tried in
+    # its region, and again before each that has no room there is written beside it; it stops the placement by raising.
+    ids = _small_squares(3, side=6, spacing=30)
+    regions, free = _page(ids)
+    asked = []
+
+    labels = place_labels(regions, ids, free, SPACING, check_cancelled=lambda: asked.append(True))
+
+    leaders = sum(label.leader is not None for label in labels)
+    assert len(labels) == len(regions) == 4 and leaders == 3 and len(asked) == len(regions) + leaders
+
+    class Stop(Exception):
+        pass
+
+    def stop_before_the_last():
+        if len(asked) == 2 * (len(regions) + leaders) - 1:
+            raise Stop
+        asked.append(True)
+
+    with pytest.raises(Stop):
+        place_labels(regions, ids, free, SPACING, check_cancelled=stop_before_the_last)
+
+
 def test_a_leader_once_placed_holds_its_path_against_the_numbers_after_it():
     ids = _small_squares(1, side=6, spacing=0)
     regions, free = _page(ids)
@@ -558,9 +601,9 @@ def test_numbers_see_the_ink_a_region_s_paint_goes_over_as_in_no_region(monkeypa
     seen = {}
     real = render_module.place_labels
 
-    def spy(regions, region_id_map, free, spacing, clearable=None, text=None):
+    def spy(regions, region_id_map, free, spacing, clearable=None, text=None, **kwargs):
         seen["ids"], seen["clearable"] = region_id_map, clearable
-        return real(regions, region_id_map, free, spacing, clearable, text=text)
+        return real(regions, region_id_map, free, spacing, clearable, text=text, **kwargs)
 
     monkeypatch.setattr(render_module, "place_labels", spy)
     regions = extract_regions(ids, np.arange(2, dtype=np.int32), printed=printed)

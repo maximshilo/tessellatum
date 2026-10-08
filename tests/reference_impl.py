@@ -17,7 +17,9 @@ paper asks for instead of a two-pixel band, and ``_place_labels``, which gives
 every region a number no line runs through, at least as large as the paper
 needs, instead of numbering only the regions roomy enough at their middle.
 And ``build_regions`` takes ``detail``, where a region may be half as large:
-each of its pixels there counts twice towards the smallest size.
+each of its pixels there counts twice towards the smallest size. And
+``extract_regions`` keeps every region, a speck whose outline encloses no
+area too, so that it gets a number.
 """
 
 from __future__ import annotations
@@ -156,7 +158,7 @@ def _absorb_thin_parts(
     return widened
 
 
-def extract_regions(region_id_map: np.ndarray, region_color: np.ndarray, min_contour_area: float = 1.0) -> list[Region]:
+def extract_regions(region_id_map: np.ndarray, region_color: np.ndarray) -> list[Region]:
     regions: list[Region] = []
     unique_ids = np.unique(region_id_map)
 
@@ -168,8 +170,6 @@ def extract_regions(region_id_map: np.ndarray, region_color: np.ndarray, min_con
         if not contours:
             continue
         contour = max(contours, key=cv2.contourArea)
-        if cv2.contourArea(contour) < min_contour_area:
-            continue
         contour = cv2.approxPolyDP(contour, epsilon=1.2, closed=True)
 
         pad = 1
@@ -511,6 +511,8 @@ def _with_leader(region, ids, free, boxes, spaced, leaders, dots, others, font_s
 def _boxes_within(mask, box_width: int, box_height: int, point, reach_px: float) -> list[tuple[float, int, int]]:
     """(distance, top, left) of every box inside ``mask`` no farther than ``reach_px`` from ``point``, nearest first."""
     height, width = mask.shape
+    if box_height > height or box_width > width:  # a page smaller than the box, a row of specks on it
+        return []
     x, y = point
     tops, lefts = np.mgrid[: height - box_height + 1, : width - box_width + 1]
     dx = np.maximum(np.maximum(lefts - x, x - (lefts + box_width - 1)), 0)
