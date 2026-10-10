@@ -82,14 +82,16 @@ def test_the_panel_starts_at_the_defaults(panel):
 
 
 def test_a_preset_shows_its_values_and_is_passed_as_it_is(panel):
+    levels = [panel.preset_combo.itemText(i) for i in range(panel.preset_combo.count())]
+    assert levels == ["Beginner", "Easy", "Medium", "Hard", "Realistic", "Custom"]
     panel.preset_combo.setCurrentText("Hard")
     hard = difficulty.params_for_preset("Hard")
     assert panel.get_difficulty_params() == hard
     for name, control in panel.controls.items():
         if control.setting.owner == settings.DIFFICULTY:
-            assert control.value() == getattr(hard, name)  # exactly, though 40 mm² falls between two steps
+            assert control.value() == getattr(hard, name)  # exactly, wherever the slider's steps fall
     tooltip = panel.preset_combo.itemData(panel.preset_combo.findText("Hard"), Qt.ToolTipRole)
-    assert tooltip == difficulty.describe(hard) and "40 mm²" in tooltip
+    assert tooltip == difficulty.describe(hard) and "4 mm²" in tooltip
     assert panel.preset_combo.itemData(panel.preset_combo.findText("Custom"), Qt.ToolTipRole)
 
 
@@ -109,7 +111,7 @@ def test_moving_a_difficulty_setting_picks_custom_and_keeps_the_preset_s_others(
     # Picking a preset again shows the preset's values.
     panel.preset_combo.setCurrentText("Easy")
     assert panel.get_difficulty_params() == difficulty.params_for_preset("Easy")
-    assert panel.controls["min_width_mm"].value() == 3.0
+    assert panel.controls["min_width_mm"].value() == 0.8
 
 
 def test_the_sliders_reach_past_the_old_finest_page(panel):
@@ -140,8 +142,8 @@ def test_the_style_and_the_handling_settings_leave_the_preset_alone(panel):
 def test_line_widths_from_0_1_to_1_mm(panel):
     slider = panel.controls["line_width_mm"].slider
     widths = [controls_panel.slider_value(settings.setting("line_width_mm"), p) for p in range(slider.maximum() + 1)]
-    assert widths[0] == 0.1 and widths[-1] == 1.0 and 0.3 in widths and len(widths) == 19
-    assert panel.controls["line_width_mm"].value_label.text() == "0.30 mm"
+    assert widths[0] == 0.1 and widths[-1] == 1.0 and 0.2 in widths and len(widths) == 19
+    assert panel.controls["line_width_mm"].value_label.text() == "0.20 mm"
 
 
 def test_a_tone_sets_both_grays(panel):

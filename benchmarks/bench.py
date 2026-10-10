@@ -63,7 +63,10 @@ def main(argv: list[str] | None = None) -> int:
         help="only images in any of these categories, per the manifest next to the images",
     )
     run_p.add_argument(
-        "--presets", nargs="+", default=["Easy", "Medium", "Hard"], help="difficulty presets (also: Max, the most granular Custom setting)"
+        "--presets",
+        nargs="+",
+        default=["Beginner", "Easy", "Medium", "Hard", "Realistic"],
+        help="difficulty presets (also: Max, the setting every version is compared at)",
     )
     run_p.add_argument("--long-edge", nargs="+", type=int, default=[1100], dest="long_edges", help="output long edge(s) in px (preview is 1100, export 2400)")
     run_p.add_argument("--repeats", type=int, default=3, help="measured runs per case (the median is reported)")

@@ -91,24 +91,30 @@ images x presets x output sizes:
 - Cases exceeding `--timeout` (default 30 min) are killed and recorded as
   timeouts; speedups against them are reported as lower bounds.
 
-Defaults: every image in `tests/sample_images/`, presets Easy/Medium/Hard, at
-preview size (1100 px). `--presets Max` adds the most granular Custom setting
-(the worst case for region handling); `--long-edge 1100 2400` adds export size;
+Defaults: every image in `tests/sample_images/`, the five presets
+Beginner/Easy/Medium/Hard/Realistic (from 0.1.52; Easy/Medium/Hard before, so a
+version older than that has no Beginner or Realistic, and its Easy, Medium and
+Hard are other settings than 0.1.52's), at preview size (1100 px). `--presets
+Max` adds the setting every version is compared at; `--long-edge 1100 2400` adds export size;
 `--threads N` caps worker threads to test scaling; `--category face text` runs
 only the images in those categories (see the image manifest below).
 
 `Max` is the setting the version's own `difficulty.finest_params()` gives:
 from 0.1.26, 40 colors, regions of at least 30 mm² on paper, no smoothing,
-every other setting at its default. Until 0.1.48 that was the finest page the
-Custom sliders allowed; from 0.1.49 the sliders reach further (a finer brush,
-closer colors, smaller regions), and `Max` stays where it was, so that result
-sets of every version compare at it. Older versions don't have that function,
+the 3 mm brush and 10 ΔE00 (from 0.1.52 spelled out; before, every other
+setting at its default). Until 0.1.48 that was the finest page the Custom
+sliders allowed; from 0.1.49 the sliders reach further (a finer brush, closer
+colors, smaller regions), from 0.1.52 the presets too, and `Max` stays where it
+was, so that result sets of every version compare at it. Its pages still
+change with the default style: from 0.1.52 they print 0.2 mm lines and
+numbers down to 3 pt. Older versions don't have that function,
 and their sliders stopped at 40 colors, 0.0002 of the image and no smoothing,
 which is what they get. `case.json` records the settings a case ran with under `params`,
 with the version's own field names.
 
 Every case is drawn as the app draws a page by default: in the default
-`PageStyle` (0.3 mm lines, D-030's grays) and with every step of the pipeline's
+`PageStyle` (0.2 mm lines and numbers down to 3 pt from 0.1.52, 0.3 mm and 6 pt
+before; D-030's grays) and with every step of the pipeline's
 `Handling` on -- line art, the detail on faces and the subject, the text. From
 0.1.43 the app lets the user change both; the harness measures the defaults.
 
@@ -234,11 +240,20 @@ versions older than the model.
 - **Label size** is the font size (the em) in points. A digit is about 0.73 em
   tall in the default font.
 
+A page is held to its own settings (from 0.1.49 a version sets them): the
+paintable width is its difficulty's brush, the smallest number its style's,
+and the palette's margin its difficulty's; `case.json` records them in
+`quality` as `brush_mm`, `label_floor_pt` and `palette_margin_de00`. A version
+that sets none is held to the 3 mm brush, 6 pt and 10 ΔE00 every page had
+until then (`bench_metrics.PAINTABLE_WIDTH_MM`, `LABEL_MIN_PT`,
+`PALETTE_MIN_DE00`; see `bench_case.page_limits`). At Realistic and at Max:
+
 | threshold | print size | 825 × 1100 px (3:4) | 1800 × 2400 px (3:4) | at 300 dpi |
 |---|---|---|---|---|
-| paintable width | ≥ 3 mm | 13 px | 28 px | 35 px |
-| region number | ≥ 6 pt | 9.2 px | 20 px | 25 px |
-| outline | ≈ 0.3 mm | 1.3 px | 2.8 px | 3.5 px |
+| paintable width, Realistic | ≥ 0.5 mm | 2.2 px | 4.7 px | 5.9 px |
+| paintable width, Max | ≥ 3 mm | 13 px | 28 px | 35 px |
+| region number | ≥ 3 pt | 4.6 px (10 px drawn) | 10 px | 12.5 px |
+| outline | ≈ 0.2 mm | 0.87 px (drawn at the floor) | 1.9 px | 2.4 px |
 
 `print_scale((width, height))` gives an output image's scale: `px_per_mm`,
 `px_per_pt`, `dpi`, `printed_size_mm` and `landscape`, plus the conversions
@@ -246,7 +261,7 @@ versions older than the model.
 `case.json` records it under `print`.
 
 The pipeline never upscales, so a small source prints at a low resolution:
-`scene.png` (600 × 450 px) comes out at 60 dpi, where a 0.3 mm line is less
+`scene.png` (600 × 450 px) comes out at 60 dpi, where a 0.2 mm line is less
 than a pixel wide.
 
 From 0.1.43 the app exports at 300 dpi on A4: at the long edge that fills the
@@ -292,10 +307,10 @@ whether a brush can paint the bands a gradient breaks into:
 | SSIM | structural similarity of luma between painting and source | higher |
 | labeled area | share of the area to paint (the regions: the page less what it prints, but for the thin ink paint goes over from 0.1.30) inside regions that carry a number | higher |
 | unlabeled | regions without a number | lower (0) |
-| slivers | share of the page a round brush 3 mm wide can't paint without crossing into another region, but for the points of corners down to 20° (from 0.1.50); `case.json` also records the share of the page in those points, as `corner_tip_fraction` | lower |
+| slivers | share of the page a round brush as wide as the page's own (3 mm until 0.1.48) can't paint without crossing into another region, but for the points of corners down to 20° (from 0.1.50); `case.json` also records the share of the page in those points, as `corner_tip_fraction` | lower |
 | gradient slivers | the same share of the image's gradient areas, where a gradient breaking into thin bands would show; `case.json` also records the largest share inside one area, as `gradient_sliver_fraction_max` | lower |
-| bands | regions no brush 6 mm wide fits in, and at least 4 times as long as they are wide: the shape of the bands a gradient breaks into; `case.json` also records their share of the page, as `band_area_fraction` | informational |
-| labels < 6 pt | share of numbers printing smaller than 6 pt; `case.json` also records the smallest, as `min_label_pt` | lower (0) |
+| bands | regions no brush twice the page's own wide fits in, and at least 4 times as long as they are wide: the shape of the bands a gradient breaks into; `case.json` also records their share of the page, as `band_area_fraction` | informational |
+| labels too small | share of numbers printing smaller than the page's smallest number (6 pt until 0.1.48; "labels < 6 pt" until 0.1.51); `case.json` also records the smallest, as `min_label_pt` | lower (0) |
 | labels on lines | numbers with any ink of a line in their box: of the page's lines, or of the leader lines that point a number into its region | lower (0) |
 | overlapping labels | numbers whose box overlaps another number's | lower (0) |
 | leaders | numbers written outside their region, with a leader pointing in | informational |
@@ -306,8 +321,9 @@ whether a brush can paint the bands a gradient breaks into:
 | same-color boundary | share of the boundary length that lies between two regions of the same color | lower (0) |
 | jaggedness | length of the drawn lines over their length with wiggles under 0.5 mm smoothed away | lower (1) |
 | edge F1 | how well region boundaries and the source's edges line up, within 0.5 mm; `case.json` also records `edge_precision` and `edge_recall` | higher |
-| palette min ΔE00 | smallest CIEDE2000 color difference between two colors on the legend | higher |
-| color pairs < 10 ΔE00 | pairs of legend colors that differ by less than 10 ΔE00 | lower (0) |
+| color margin | the page's color margin, which the palette min is held to (10 ΔE00 where a version sets none) | informational |
+| palette min ΔE00 | smallest CIEDE2000 color difference between two colors on the legend | higher (≥ the color margin) |
+| close color pairs | pairs of legend colors that differ by less than the page's color margin ("color pairs < 10 ΔE00" until 0.1.51) | lower (0) |
 | ink line F1 | how well drawn lines, and the centerlines of the ink the page prints, run down the middle of the artwork's ink lines, within 0.5 mm; `case.json` also records `ink_line_precision` and `ink_line_recall` | higher |
 | ink printed recall / precision | on line art, how much of the artwork's ink lines the page prints, and how much of what it prints is the artwork's ink, each pixel within 0.5 mm (from 0.1.28); `case.json` also records `ink_print_f1` | higher |
 | tubes | regions at least half made of the artwork's ink lines | lower (0) |
@@ -382,8 +398,8 @@ How the paintability metrics are defined:
   region's width is the widest brush that fits in it, as a brush fits for
   slivers: twice the largest distance from one of its pixels' middles to the
   middle of a pixel outside it (another region's, one in no region, or one just
-  off the page). A band is a region 6 mm wide at most -- no brush twice the
-  paintable width fits -- whose area is at least 4 times its width squared, as a
+  off the page). A band is a region no wider than twice the page's brush (6 mm
+  at the 3 mm brush) -- no brush that wide fits -- whose area is at least 4 times its width squared, as a
   strip at least 4 times as long as it is wide. They only inform, since a thin
   streak of cloud is rightly a band too: over the 56 pages of the six
   photographs and the Vermeer, T1.8's baseline has 1,904 and the pages of 0.1.37
@@ -394,8 +410,8 @@ How the paintability metrics are defined:
 - **Unlabeled** regions are counted from the region map, so a region too small
   to get an outline counts too. Until 0.1.50 the pipeline numbered no region
   whose outline encloses no area -- a pixel, or a stroke a pixel wide, which
-  only a brush under two pixels wide leaves (0.5 mm on a preview, far past
-  the presets' 3 mm); from 0.1.51 it numbers every region.
+  only a brush under two pixels wide leaves (0.5 mm on a preview: Realistic's
+  brush from 0.1.52); from 0.1.51 it numbers every region.
 - **Label size** is each number's em size in points. Versions before 0.1.10
   don't report their numbers, so the harness rebuilds the sizes from the
   renderer's formula, which all of those versions share.
@@ -522,8 +538,9 @@ How the palette metrics are defined:
 - Colors are compared with CIEDE2000, after converting sRGB to CIE Lab (D65)
   exactly as the standards define it. Fidelity uses OpenCV's conversion, whose
   lookup tables put a color up to about 0.5 ΔE00 from its exact value; that
-  averages out over an image, but not over a few colors near a threshold. 10 ΔE00
-  is the clear margin `QUALITY_BENCHMARKS.md` asks for.
+  averages out over an image, but not over a few colors near a threshold. The
+  margin `QUALITY_BENCHMARKS.md` asks for is the page's own: 4 ΔE00 at every
+  level from 0.1.52, 10 at Max and before.
 - Every pair counts: five near-identical browns make 10 close pairs.
 - Since 0.1.24 the pipeline keeps that margin itself, with its own copy of this
   math (`tessellatum.core.color`): the harness has to score versions that
@@ -588,7 +605,8 @@ How the line-art metrics are defined:
     floor beside it. **Flat colors ΔE00 best** is the lowest mean a legend of
     the difficulty's color count could reach on that artwork: the best set of
     the artwork's *own* flat colors, at most that many of them and no two
-    closer than the 10 ΔE00 the palette keeps. A page cannot do better without
+    closer than the margin the palette keeps (10 ΔE00 until 0.1.51; the page's
+    own from 0.1.52). A page cannot do better without
     offering colors the artwork does not have, and no page can reach 0 where
     the artwork's own colors crowd closer than the margin (of the benchmark
     set: 13 of the bold-line girl's 15, 10 of the reaper's 14, 10 of the
@@ -833,7 +851,7 @@ page of 1100 px, and **export**, a page at the image's own size (see
 | unlabeled | paintable | 69 | 18 | 0 |
 | slivers | paintable | 1.5 points | 1.4 points | ≤ 1% |
 | gradient slivers | paintable | 0.017 points | 0.014 points | ≤ 1% |
-| labels < 6 pt | paintable | 2.1 points | 2.2 points | 0 |
+| labels too small | paintable | 2.1 points | 2.2 points | 0 |
 | labels on lines | paintable | 0 | 0 | 0 |
 | overlapping labels | paintable | 0 | 0 | 0 |
 | compactness p10 | paintable | 0.023 | 0.020 | – |
@@ -853,8 +871,8 @@ page of 1100 px, and **export**, a page at the image's own size (see
 | labels on features | clean drawing | 1.6 | 3.6 | – |
 | text CER page | clean drawing | 0.017 | 0.018 | ≤ text CER source + 0.1 |
 | labels on text | clean drawing | 1.3 | 2.7 | 0 |
-| palette min ΔE00 | palette | 1.3 | 0.93 | ≥ 10 |
-| color pairs < 10 ΔE00 | palette | 3.2 | 3.1 | – |
+| palette min ΔE00 | palette | 1.3 | 0.93 | ≥ color margin |
+| close color pairs | palette | 3.2 | 3.1 | – |
 | flat colors ΔE00 | palette | 1.2 | 0.81 | ≤ flat colors ΔE00 best + 2.5 on exact colors |
 
 Colors, regions, bands, background regions, face regions, subject detail, ink, text CER source and flat colors ΔE00 best
@@ -934,7 +952,7 @@ spell out the four jobs:
     manifest's colors are exact;
   - text still readable, with no numbers on it;
 - **resembles:** faces keep their eyes, noses and mouths;
-- **palette:** every two colors at least 10 ΔE00 apart, and the artwork's own
+- **palette:** every two colors at least the page's color margin apart, and the artwork's own
   flat colors offered as closely as a legend of that many colors can, where the
   manifest's colors are exact.
 
@@ -993,6 +1011,10 @@ by 0.038 rather than 0.016, labels on features by 3.6 rather than 1.6.
   pairs, and 48–60. A case counts as an export where its page is within 1% of its
   image's own long edge (`source_size` in `case.json`), or, for result sets from
   before that was recorded, where the size asked for is at least 1375 px.
+- Both were measured at the presets before 0.1.52 (Easy, Medium, Hard and Max,
+  every one at the 3 mm brush). The five levels of 0.1.52 have many more,
+  smaller regions, so their own noise is likely different; until it is measured
+  at them, a regression at a level reads against tolerances from coarser pages.
 
 - **A regression** is a category, or all cases together, whose mean change
   against the reference is worse than 3 standard errors of the mean:

@@ -13,32 +13,44 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
 import bench_case  # noqa: E402
 
 
-def test_presets_ask_for_more_smaller_regions_from_easy_to_hard():
-    easy, medium, hard = (difficulty.params_for_preset(name) for name in ("Easy", "Medium", "Hard"))
+def test_presets_ask_for_more_smaller_regions_from_beginner_to_realistic():
+    levels = [difficulty.params_for_preset(name) for name in ("Beginner", "Easy", "Medium", "Hard", "Realistic")]
 
-    assert easy.num_colors < medium.num_colors < hard.num_colors
-    assert easy.min_region_area_mm2 > medium.min_region_area_mm2 > hard.min_region_area_mm2
-    assert easy.blur_sigma > medium.blur_sigma > hard.blur_sigma
+    for coarser, finer in zip(levels, levels[1:]):
+        assert coarser.num_colors < finer.num_colors
+        assert coarser.min_region_area_mm2 > finer.min_region_area_mm2
+        assert coarser.min_width_mm > finer.min_width_mm
+        assert coarser.blur_sigma > finer.blur_sigma
 
 
-def test_the_presets_are_the_ones_agreed_in_print_units():
-    # D-034: today's presets restated on paper, every one painted with the 3 mm brush.
-    assert {name: (p.num_colors, p.min_region_area_mm2, p.blur_sigma, p.min_width_mm) for name, p in difficulty.PRESETS.items()} == {
-        "Easy": (6, 300.0, 9.0, 3.0),
-        "Medium": (12, 125.0, 5.0, 3.0),
-        "Hard": (20, 40.0, 2.5, 3.0),
+def test_the_presets_are_the_ones_the_user_chose():
+    # The user's five levels (0.1.52), chosen from their own pages: colors, smallest region, brush, smoothing.
+    assert list(difficulty.PRESETS) == ["Beginner", "Easy", "Medium", "Hard", "Realistic"]
+    assert {name: (p.num_colors, p.min_region_area_mm2, p.min_width_mm, p.blur_sigma) for name, p in difficulty.PRESETS.items()} == {
+        "Beginner": (16, 10.0, 1.0, 1.2),
+        "Easy": (20, 8.0, 0.8, 1.0),
+        "Medium": (24, 6.0, 0.7, 0.9),
+        "Hard": (28, 4.0, 0.6, 0.8),
+        "Realistic": (32, 2.0, 0.5, 0.7),
     }
-    assert difficulty.DifficultyParams(4, 100.0, 1.0).min_width_mm == print_size.MIN_PAINTABLE_WIDTH_MM == 3.0
-    # Every preset keeps the palette's 10 ΔE00, the vote as it was and half-sized regions in faces and the subject.
+    assert difficulty.DEFAULT_PRESET == "Medium"
+    # Every level keeps colors 4 ΔE00 apart, settles edges three times as far, held to the picture's within 1 ΔE00,
+    # allows regions a quarter the size in faces and the subject, and rounds corners to the brush.
     for p in difficulty.PRESETS.values():
-        assert (p.palette_margin_de00, p.edge_settling, p.edge_color_step_de00, p.detail_weight) == (10.0, 1.0, 10.0, 2)
+        assert (
+            p.palette_margin_de00, p.edge_settling, p.edge_color_step_de00, p.detail_weight, p.sharpest_corner_deg,
+            p.corner_contrast_de00,
+        ) == (4.0, 3.0, 1.0, 4, 180.0, 0.0)
+    # The pipeline's own defaults, which Max keeps, are where they were.
+    assert difficulty.DifficultyParams(4, 100.0, 1.0).min_width_mm == print_size.MIN_PAINTABLE_WIDTH_MM == 3.0
 
 
 def test_the_benchmark_s_max_is_pinned_where_the_sliders_used_to_stop():
     finest = difficulty.finest_params()
 
     assert (finest.num_colors, finest.min_region_area_mm2, finest.blur_sigma) == (40, 30.0, 0.0)
-    assert finest == difficulty.DifficultyParams(40, 30.0, 0.0)  # every other setting at its default
+    assert finest == difficulty.DifficultyParams(40, 30.0, 0.0)  # every other setting at the pipeline's default
+    assert finest == difficulty.DifficultyParams(40, 30.0, 0.0, 3.0, 10.0, 1.0, 10.0, 2, 180.0, 20.0)
     # The sliders reach past it now, and every preset lies within their range.
     lo, hi = difficulty.CUSTOM_MIN_REGION_AREA_MM2_RANGE
     assert lo < finest.min_region_area_mm2 and difficulty.CUSTOM_COLORS_RANGE[1] > finest.num_colors
@@ -74,10 +86,15 @@ def test_unknown_presets_are_refused():
 
 
 def test_describe_speaks_in_print_units():
-    assert difficulty.describe(difficulty.params_for_preset("Easy")) == (
-        "Up to 6 colors, at least 10 ΔE00 apart. Regions of at least 300 mm² (about 17 × 17 mm; half that on a "
+    assert difficulty.describe(difficulty.finest_params()) == (
+        "Up to 40 colors, at least 10 ΔE00 apart. Regions of at least 30 mm² (about 5 × 5 mm; half that on a "
         "photograph's or painting's subject and faces) "
         "and 3 mm wide on the printed A4 page, corners rounded to the brush."
+    )
+    assert difficulty.describe(difficulty.params_for_preset("Easy")) == (
+        "Up to 20 colors, at least 4 ΔE00 apart. Regions of at least 8 mm² (about 3 × 3 mm; 1/4 of that on a "
+        "photograph's or painting's subject and faces) and 0.8 mm wide on the printed A4 page, corners rounded to the "
+        "brush."
     )
     fine = difficulty.custom_params(
         30, 16.0, 0.0, min_width_mm=1.5, palette_margin_de00=6.0, detail_weight=3, sharpest_corner_deg=20.0

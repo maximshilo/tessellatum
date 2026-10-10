@@ -8,8 +8,9 @@ import numpy as np
 import pytest
 
 from tessellatum.core import faces, ink, marks, pipeline
-from tessellatum.core.difficulty import params_for_preset
 from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, print_scale
+
+from difficulty_levels import MIDDLE
 
 SAMPLES = Path(__file__).resolve().parent / "sample_images"
 
@@ -204,7 +205,7 @@ def test_a_photographed_face_prints_its_marks_and_keeps_its_regions(monkeypatch)
     # Q27: inside the faces found on a photograph, thin dark marks are printed, in their own tone; the regions stay.
     pipeline.clear_cache()
     image = pipeline.load_image_bgr(SAMPLES / "l-photo-lion.jpg")
-    params = params_for_preset("Medium")
+    params = MIDDLE
     result = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     analysis = result.analysis
     printed = analysis.printed_ink
@@ -239,7 +240,7 @@ def test_marks_are_looked_for_only_in_the_faces_of_a_picture_drawn_from_its_colo
     for name in ("scene.png", "m-cartoon-bold-lines-girl.png"):  # no faces found; line art, whose face is its own ink
         pipeline.clear_cache()
         image = pipeline.load_image_bgr(SAMPLES / name)
-        pipeline.generate(image, params_for_preset("Medium"), pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
+        pipeline.generate(image, MIDDLE, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     pipeline.clear_cache()
 
 
