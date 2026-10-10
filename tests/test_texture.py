@@ -9,8 +9,9 @@ import pytest
 
 from tessellatum.core import kernels, pipeline, texture
 from tessellatum.core.color import MIN_PALETTE_DE00
-from tessellatum.core.difficulty import params_for_preset
 from tessellatum.core.regions import build_regions
+
+from difficulty_levels import FINE, MIDDLE
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
 
@@ -453,7 +454,7 @@ def _mean_distance(picture: np.ndarray, painting: np.ndarray) -> float:
 def test_a_photograph_s_edges_are_settled_and_its_page_is_easier_to_paint_and_no_further_from_it(monkeypatch):
     pipeline.clear_cache()
     image = pipeline.load_image_bgr(SAMPLES / "l-photo-lion.jpg")
-    params = params_for_preset("Hard")
+    params = FINE
     calls, results = [], []
     real = pipeline.smooth_regions
 
@@ -519,7 +520,7 @@ def test_the_tones_and_the_marks_of_a_face_are_settled_on_the_smoothed_regions(m
 
     monkeypatch.setattr(pipeline, "smooth_regions", spy)
     monkeypatch.setattr(tones, "settle_tones", tones_spy)
-    pipeline.generate(image, params_for_preset("Medium"), pipeline.PREVIEW_LONG_EDGE)
+    pipeline.generate(image, MIDDLE, pipeline.PREVIEW_LONG_EDGE)
     assert len(smoothed) == 1 and len(toned) == 1
     assert toned[0][0] is smoothed[0][0] and toned[0][1] is smoothed[0][1]
     pipeline.clear_cache()
@@ -532,7 +533,7 @@ def test_line_art_s_edges_are_its_ink_and_are_not_voted_on(monkeypatch):
     monkeypatch.setattr(pipeline, "smooth_regions", refuse)
     pipeline.clear_cache()
     image = pipeline.load_image_bgr(SAMPLES / "m-cartoon-bold-lines-girl.png")
-    pipeline.generate(image, params_for_preset("Medium"), pipeline.PREVIEW_LONG_EDGE)
+    pipeline.generate(image, MIDDLE, pipeline.PREVIEW_LONG_EDGE)
     pipeline.clear_cache()
 
 

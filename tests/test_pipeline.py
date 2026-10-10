@@ -12,9 +12,11 @@ from tessellatum.core.painting import Version, tint_rgb
 from tessellatum.core.color import MIN_PALETTE_DE00, pairwise_de00
 from tessellatum.core.pipeline import Handling, PipelineCancelled, generate
 
+from difficulty_levels import BY_OLD_NAME, COARSE, FINE, MIDDLE
+
 
 def test_generate_produces_page_and_legend(sample_image_bgr):
-    params = difficulty.params_for_preset("Medium")
+    params = MIDDLE
     result = generate(sample_image_bgr, params, long_edge=200)
 
     assert result.page.size == (200, 200)
@@ -26,15 +28,15 @@ def test_generate_produces_page_and_legend(sample_image_bgr):
 
 
 def test_generate_respects_difficulty_color_count(sample_image_bgr):
-    easy = generate(sample_image_bgr, difficulty.params_for_preset("Easy"), long_edge=200)
-    hard = generate(sample_image_bgr, difficulty.params_for_preset("Hard"), long_edge=200)
+    easy = generate(sample_image_bgr, COARSE, long_edge=200)
+    hard = generate(sample_image_bgr, FINE, long_edge=200)
 
-    assert easy.num_colors_used <= difficulty.params_for_preset("Easy").num_colors
-    assert hard.num_colors_used <= difficulty.params_for_preset("Hard").num_colors
+    assert easy.num_colors_used <= COARSE.num_colors
+    assert hard.num_colors_used <= FINE.num_colors
 
 
 def test_generate_reports_monotonic_progress_to_100(sample_image_bgr):
-    params = difficulty.params_for_preset("Medium")
+    params = MIDDLE
     reported = []
 
     generate(sample_image_bgr, params, long_edge=200, progress_callback=reported.append)
@@ -45,7 +47,7 @@ def test_generate_reports_monotonic_progress_to_100(sample_image_bgr):
 
 
 def test_generate_can_be_cancelled_mid_pipeline(sample_image_bgr):
-    params = difficulty.params_for_preset("Medium")
+    params = MIDDLE
     calls = {"n": 0}
 
     def should_cancel():
@@ -58,7 +60,7 @@ def test_generate_can_be_cancelled_mid_pipeline(sample_image_bgr):
 
 def test_generate_can_be_cancelled_while_the_numbers_are_placed(sample_image_bgr, monkeypatch):
     # Numbering a page of thousands of regions takes seconds, all in one stage: Abort is heard between two numbers.
-    params = difficulty.params_for_preset("Medium")
+    params = MIDDLE
     polled, started, finished = [], [], []
     real = render.place_labels
 
@@ -92,7 +94,7 @@ def test_generate_reuses_quantization_across_region_size_changes(sample_image_bg
 
     monkeypatch.setattr(pipeline, "quantize", counting_quantize)
     pipeline.clear_cache()
-    medium = difficulty.params_for_preset("Medium")
+    medium = MIDDLE
     finer = difficulty.DifficultyParams(medium.num_colors, medium.min_region_area_mm2 / 4, medium.blur_sigma)
 
     first = generate(sample_image_bgr, medium, long_edge=200)
@@ -111,7 +113,7 @@ def test_warm_up_runs_the_pipeline_without_error():
 
 
 def test_analysis_is_collected_only_on_request_and_leaves_the_page_unchanged(sample_image_bgr):
-    params = difficulty.params_for_preset("Hard")
+    params = FINE
 
     plain = generate(sample_image_bgr, params, long_edge=200)
     analyzed = generate(sample_image_bgr, params, long_edge=200, collect_analysis=True)
@@ -122,7 +124,7 @@ def test_analysis_is_collected_only_on_request_and_leaves_the_page_unchanged(sam
 
 
 def test_analysis_regions_colors_and_labels_match_the_page(sample_image_bgr):
-    result = generate(sample_image_bgr, difficulty.params_for_preset("Hard"), long_edge=200, collect_analysis=True)
+    result = generate(sample_image_bgr, FINE, long_edge=200, collect_analysis=True)
     analysis = result.analysis
 
     assert analysis.region_id_map.shape == analysis.outlines.shape == (200, 200)
@@ -156,8 +158,8 @@ def test_analysis_regions_colors_and_labels_match_the_page(sample_image_bgr):
 
 
 def test_every_region_carries_a_number_clear_of_the_lines(sample_image_bgr):
-    for preset in ("Easy", "Hard"):
-        result = generate(sample_image_bgr, difficulty.params_for_preset(preset), long_edge=400, collect_analysis=True)
+    for params in (COARSE, FINE):
+        result = generate(sample_image_bgr, params, long_edge=400, collect_analysis=True)
         analysis = result.analysis
         ink = (analysis.outlines != render.PAPER) | (analysis.leaders != render.PAPER)
         scale = print_size.print_scale((400, 400))
@@ -173,7 +175,7 @@ def test_every_region_carries_a_number_clear_of_the_lines(sample_image_bgr):
 def test_page_is_the_line_layer_inked_in_gray_plus_the_numbers(sample_image_bgr):
     style = render.PageStyle()
     result = generate(
-        sample_image_bgr, difficulty.params_for_preset("Hard"), long_edge=200, collect_analysis=True, style=style
+        sample_image_bgr, FINE, long_edge=200, collect_analysis=True, style=style
     )
     page = np.asarray(result.page)
     outlines = result.analysis.outlines
@@ -197,7 +199,7 @@ def test_page_is_the_line_layer_inked_in_gray_plus_the_numbers(sample_image_bgr)
 
 
 def test_the_line_layer_says_where_the_ink_is_whatever_tone_it_is_printed_in(sample_image_bgr):
-    params = difficulty.params_for_preset("Hard")
+    params = FINE
     kwargs = dict(long_edge=200, collect_analysis=True)
 
     default = generate(sample_image_bgr, params, **kwargs)
@@ -223,7 +225,7 @@ def test_analysis_lists_legend_colors_first(speckled_image_bgr):
 
 
 def test_analysis_arrays_are_not_the_cached_ones(sample_image_bgr):
-    params = difficulty.params_for_preset("Medium")
+    params = MIDDLE
     pipeline.clear_cache()
     first = generate(sample_image_bgr, params, long_edge=200, collect_analysis=True)
     first.analysis.palette_bgr[:] = 0
@@ -249,7 +251,7 @@ def test_every_two_colors_on_the_legend_stand_clearly_apart():
 
 
 def test_no_boundary_separates_two_regions_of_one_color(sample_image_bgr):
-    result = generate(sample_image_bgr, difficulty.params_for_preset("Hard"), long_edge=200, collect_analysis=True)
+    result = generate(sample_image_bgr, FINE, long_edge=200, collect_analysis=True)
     ids = result.analysis.region_id_map.astype(np.int64)
     color = result.analysis.region_color
 
@@ -310,7 +312,7 @@ def test_the_region_limits_come_from_the_printed_page():
 
 
 def test_a_preview_and_an_export_are_held_to_the_same_sizes_on_paper():
-    params = difficulty.params_for_preset("Hard")
+    params = FINE
     preview_area, preview_width = pipeline._paintable_limits(params, (1100, 825))
     export_area, export_width = pipeline._paintable_limits(params, (2200, 1650))
 
@@ -338,7 +340,7 @@ def _line_drawing(width: int, height: int) -> np.ndarray:
 def test_analysis_says_whether_the_picture_is_line_art_and_where_its_ink_lines_are():
     drawing = _line_drawing(300, 220)
 
-    result = generate(drawing, difficulty.params_for_preset("Hard"), long_edge=300, collect_analysis=True)
+    result = generate(drawing, FINE, long_edge=300, collect_analysis=True)
 
     analysis = result.analysis
     assert analysis.line_art == ink.line_art(drawing)
@@ -348,7 +350,7 @@ def test_analysis_says_whether_the_picture_is_line_art_and_where_its_ink_lines_a
 
 
 def test_a_picture_that_is_not_line_art_has_no_ink_lines(sample_image_bgr):
-    result = generate(sample_image_bgr, difficulty.params_for_preset("Hard"), long_edge=200, collect_analysis=True)
+    result = generate(sample_image_bgr, FINE, long_edge=200, collect_analysis=True)
 
     assert not result.analysis.line_art.is_line_art
     assert result.analysis.ink_lines.shape == (200, 200) and not result.analysis.ink_lines.any()
@@ -357,7 +359,7 @@ def test_a_picture_that_is_not_line_art_has_no_ink_lines(sample_image_bgr):
 def test_line_art_is_decided_on_the_picture_at_preview_size(monkeypatch):
     monkeypatch.setattr(pipeline, "PREVIEW_LONG_EDGE", 300)
     drawing = _line_drawing(450, 330)
-    params = difficulty.params_for_preset("Hard")
+    params = FINE
 
     preview = generate(drawing, params, long_edge=300, collect_analysis=True).analysis
     export = generate(drawing, params, long_edge=450, collect_analysis=True).analysis
@@ -387,7 +389,7 @@ def _outlined_shapes() -> tuple[np.ndarray, dict]:
 def test_line_art_prints_its_ink_and_paints_the_areas_it_encloses():
     drawing, shapes = _outlined_shapes()
 
-    result = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True)
+    result = generate(drawing, COARSE, long_edge=800, collect_analysis=True)
 
     analysis = result.analysis
     assert analysis.line_art.is_line_art
@@ -427,7 +429,7 @@ def test_line_art_prints_its_ink_and_paints_the_areas_it_encloses():
 
 
 def test_a_picture_that_is_not_line_art_prints_no_ink(sample_image_bgr):
-    analysis = generate(sample_image_bgr, difficulty.params_for_preset("Hard"), long_edge=200, collect_analysis=True).analysis
+    analysis = generate(sample_image_bgr, FINE, long_edge=200, collect_analysis=True).analysis
 
     assert not analysis.printed_ink.any() and analysis.ink_gray == 0
     assert (analysis.region_id_map >= 0).all()
@@ -439,8 +441,8 @@ def test_the_ink_is_found_once_per_picture_and_size(monkeypatch):
     find = ink.find_ink
     monkeypatch.setattr(ink, "find_ink", lambda *args, **kwargs: calls.append(1) or find(*args, **kwargs))
 
-    for preset in ("Easy", "Medium", "Hard"):
-        generate(drawing, difficulty.params_for_preset(preset), long_edge=800)
+    for params in (COARSE, MIDDLE, FINE):
+        generate(drawing, params, long_edge=800)
 
     assert len(calls) == 1
 
@@ -449,7 +451,7 @@ def test_the_ink_prints_in_the_drawing_s_own_tone():
     drawing, _shapes = _outlined_shapes()
     drawing[(drawing == 0).all(axis=2)] = 60  # outlines in dark gray instead of black
 
-    result = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True)
+    result = generate(drawing, COARSE, long_edge=800, collect_analysis=True)
 
     analysis = result.analysis
     assert analysis.ink_gray == 60
@@ -478,7 +480,7 @@ def test_the_ink_s_edge_is_left_out_by_at_least_a_pixel_and_the_enclosed_shapes_
     monkeypatch.setattr(pipeline, "quantize", quantize_spy)
     monkeypatch.setattr(pipeline, "join_ink", join_spy)
     monkeypatch.setattr(pipeline, "settle_enclosed", settle_spy)
-    result = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True)
+    result = generate(drawing, COARSE, long_edge=800, collect_analysis=True)
 
     assert seen["halo_px"] == 1.0
     assert (seen["own"] == ~ink.near(result.analysis.ink_lines, 1.0)).all()  # colors judged off the ink's edge
@@ -489,7 +491,7 @@ def test_the_ink_s_edge_is_left_out_by_at_least_a_pixel_and_the_enclosed_shapes_
 def test_a_line_art_legend_offers_the_artwork_s_own_colors():
     drawing, _shapes = _outlined_shapes()
 
-    analysis = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True).analysis
+    analysis = generate(drawing, COARSE, long_edge=800, collect_analysis=True).analysis
 
     # Easy asks for 6 colors and the drawing has 5, so every one of them is on the legend, exactly as painted --
     # not the mean of a fill and the blends along its edges, which is what minimizing distance lands on.
@@ -510,9 +512,9 @@ def test_only_line_art_takes_the_flat_color_palette(sample_image_bgr, monkeypatc
 
     monkeypatch.setattr(pipeline, "quantize", spy)
     pipeline.clear_cache()
-    generate(sample_image_bgr, difficulty.params_for_preset("Hard"), long_edge=200)
+    generate(sample_image_bgr, FINE, long_edge=200)
     pipeline.clear_cache()
-    generate(_outlined_shapes()[0], difficulty.params_for_preset("Easy"), long_edge=400)
+    generate(_outlined_shapes()[0], COARSE, long_edge=400)
 
     assert calls == [False, True]  # a photograph's colors still come from k-means; a drawing's from its fills
 
@@ -529,7 +531,7 @@ def _hatched_sheet() -> np.ndarray:
 def test_paint_goes_over_hatching_and_a_number_on_it_clears_its_strokes():
     sheet = _hatched_sheet()
 
-    result = generate(sheet, difficulty.params_for_preset("Easy"), long_edge=400, collect_analysis=True)
+    result = generate(sheet, COARSE, long_edge=400, collect_analysis=True)
 
     analysis = result.analysis
     assert analysis.line_art.is_line_art
@@ -570,7 +572,7 @@ def test_the_paint_goes_over_ink_thinner_than_thin_ink_mm_and_the_numbers_keep_o
     monkeypatch.setattr(pipeline, "paint_over_thin_ink", paint_spy)
     monkeypatch.setattr(pipeline, "detail_ink", detail_spy)
     monkeypatch.setattr(pipeline, "extract_regions", extract_spy)
-    analysis = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True).analysis
+    analysis = generate(drawing, COARSE, long_edge=800, collect_analysis=True).analysis
 
     thin_px = print_size.print_scale((600, 800)).mm_to_px(ink.THIN_INK_MM)
     printed, width, own = seen["paint"]
@@ -605,7 +607,7 @@ def _white_areas_per_region(analysis) -> np.ndarray:
 @pytest.mark.parametrize("preset, long_edge", [("Max", 1100), ("Hard", 2400)])
 def test_a_densely_hatched_scan_numbers_every_white_area_and_no_number_sits_on_a_line(preset, long_edge):
     image = pipeline.load_image_bgr(SAMPLE_IMAGES / "m-cartoon-complex.jpg")
-    params = difficulty.finest_params() if preset == "Max" else difficulty.params_for_preset(preset)
+    params = difficulty.finest_params() if preset == "Max" else BY_OLD_NAME[preset]
 
     analysis = generate(image, params, long_edge=long_edge, collect_analysis=True).analysis
 
@@ -626,7 +628,7 @@ def test_a_hatched_patch_is_painted_in_its_own_gaps_color_not_the_color_beyond_i
     for x in range(200, 600, 6):
         image[150:450, x : x + 2] = 0  # strokes 2 px wide, 4 px apart, open at both ends to the sky
 
-    analysis = generate(image, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True).analysis
+    analysis = generate(image, COARSE, long_edge=800, collect_analysis=True).analysis
 
     assert analysis.line_art.is_line_art
     gaps = analysis.region_id_map[200:400, 203:596:6]  # the middle of every gap, well inside the patch
@@ -641,7 +643,7 @@ def test_a_one_pixel_diagonal_line_keeps_the_two_areas_it_divides_apart_and_is_p
     steps = np.arange(242)
     drawing[y0 + steps, x0 + steps] = 0  # a line one pixel wide, corner to corner
 
-    analysis = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True).analysis
+    analysis = generate(drawing, COARSE, long_edge=800, collect_analysis=True).analysis
 
     ids, printed = analysis.region_id_map, analysis.printed_ink
     below, above = ids[y0 + 180, x0 + 40], ids[y0 + 40, x0 + 180]
@@ -668,7 +670,7 @@ def test_the_pixels_splitting_takes_for_ink_are_printed(monkeypatch):
         return split, split_colors, corners
 
     monkeypatch.setattr(pipeline, "split_areas", split_spy)
-    analysis = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True).analysis
+    analysis = generate(drawing, COARSE, long_edge=800, collect_analysis=True).analysis
 
     assert analysis.printed_ink[taken["at"]]
 
@@ -684,7 +686,7 @@ def test_an_export_renders_at_300_dpi_on_a4_and_never_upscales():
 
 
 def test_the_legend_is_drawn_at_the_page_s_print_scale(sample_image_bgr):
-    result = generate(sample_image_bgr, difficulty.params_for_preset("Easy"), long_edge=200)
+    result = generate(sample_image_bgr, COARSE, long_edge=200)
 
     palette_bgr = np.array([rgb[::-1] for rgb in result.palette_rgb], dtype=np.uint8)
     expected = render_legend(palette_bgr, result.page.width, print_size.print_scale(result.page.size).px_per_mm)
@@ -693,7 +695,7 @@ def test_the_legend_is_drawn_at_the_page_s_print_scale(sample_image_bgr):
 
 def test_every_step_runs_by_default(sample_image_bgr):
     assert Handling() == Handling(line_art=True, detail=True, text=True)
-    params = difficulty.params_for_preset("Medium")
+    params = MIDDLE
 
     plain = generate(sample_image_bgr, params, long_edge=200)
     explicit = generate(sample_image_bgr, params, long_edge=200, handling=Handling(line_art=True, detail=True, text=True))
@@ -704,7 +706,7 @@ def test_with_line_art_off_a_drawing_is_drawn_from_its_colors_and_the_cache_keep
     # D-052 (Q36). Its colors are quantized without holding out the ink, so the cache must not hand back the colors
     # taken around it: the page with line art off is the same after a page with it on as before one.
     drawing, _shapes = _outlined_shapes()
-    params = difficulty.params_for_preset("Easy")
+    params = COARSE
     pipeline.clear_cache()
     cold = generate(drawing, params, long_edge=800, collect_analysis=True, handling=Handling(line_art=False))
     on = generate(drawing, params, long_edge=800, collect_analysis=True).analysis
@@ -726,7 +728,7 @@ def test_with_detail_off_no_face_or_subject_is_looked_for_and_the_page_is_drawn_
     face = faces.Face(box=(50.0, 50.0, 100.0, 100.0), score=0.9, detector="yunet")
     monkeypatch.setattr(faces, "find_faces", lambda picture: calls.append("faces") or [face])
     monkeypatch.setattr(subject, "find_subject", lambda picture: calls.append("subject") or np.ones((40, 40), np.float32))
-    params = difficulty.params_for_preset("Hard")
+    params = FINE
     pipeline.clear_cache()
     off = generate(sample_image_bgr, params, long_edge=200, handling=Handling(detail=False))
     assert calls == []
@@ -748,7 +750,7 @@ def test_with_text_off_no_text_is_looked_for_and_no_lettering_is_printed(monkeyp
     line = text.TextLine(quad=((50.0, 130.0), (350.0, 130.0), (350.0, 160.0), (50.0, 160.0)), score=0.9)
     calls = []
     monkeypatch.setattr(text, "find_text", lambda picture, source=None, max_height_mm=None: calls.append(1) or [line])
-    params = difficulty.params_for_preset("Easy")
+    params = COARSE
     pipeline.clear_cache()
     off = generate(picture, params, long_edge=400, collect_analysis=True, handling=Handling(text=False))
     assert calls == []
@@ -767,7 +769,7 @@ def test_the_page_comes_with_what_it_was_drawn_from_to_draw_it_again_off_the_pix
     # T7.3: the vector PDF draws the page again from these (see export.save_pdf).
     style = render.PageStyle.from_settings(0.45, "Dark")
     drawing, _ = _outlined_shapes()
-    result = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True, style=style)
+    result = generate(drawing, COARSE, long_edge=800, collect_analysis=True, style=style)
     drawn, analysis = result.drawing, result.analysis
     assert drawn.size == result.page.size and drawn.style == style
     assert drawn.strokes is analysis.strokes and drawn.labels is analysis.labels
@@ -781,7 +783,7 @@ def test_the_page_comes_with_what_it_was_drawn_from_to_draw_it_again_off_the_pix
     line = text.TextLine(quad=((50.0, 130.0), (350.0, 130.0), (350.0, 160.0), (50.0, 160.0)), score=0.9)
     monkeypatch.setattr(text, "find_text", lambda picture, source=None, max_height_mm=None: [line])
     pipeline.clear_cache()
-    result = generate(picture, difficulty.params_for_preset("Easy"), long_edge=400, collect_analysis=True)
+    result = generate(picture, COARSE, long_edge=400, collect_analysis=True)
     drawn, analysis = result.drawing, result.analysis
     letters = text.lettering(pipeline.resize_to_long_edge(picture, 400), [line])
     assert len(drawn.lettering) == len(letters.outline) == len(range(60, 340, 6))  # a ring round each stroke
@@ -794,7 +796,7 @@ def test_the_page_comes_with_what_it_was_drawn_from_to_draw_it_again_off_the_pix
 
 
 def test_the_page_comes_with_what_it_is_painted_with_legend_colors_first(speckled_image_bgr):
-    result = generate(speckled_image_bgr, difficulty.params_for_preset("Easy"), long_edge=80, collect_analysis=True)
+    result = generate(speckled_image_bgr, COARSE, long_edge=80, collect_analysis=True)
 
     painting, analysis = result.painting, result.analysis
     assert painting.region_id_map is analysis.region_id_map
@@ -808,7 +810,7 @@ def test_the_page_comes_with_what_it_is_painted_with_legend_colors_first(speckle
 def test_the_completed_version_is_the_painting_the_benchmarks_score():
     # Line art: its ink printed solid over the paint, the speck left as bare paper (see the line art test above).
     drawing, shapes = _outlined_shapes()
-    result = generate(drawing, difficulty.params_for_preset("Easy"), long_edge=800, collect_analysis=True)
+    result = generate(drawing, COARSE, long_edge=800, collect_analysis=True)
 
     analysis = result.analysis
     expected = np.array(analysis.palette_bgr[:, ::-1])[analysis.region_color][np.clip(analysis.region_id_map, 0, None)]
@@ -822,7 +824,7 @@ def test_the_completed_version_is_the_painting_the_benchmarks_score():
 
 
 def test_the_tinted_version_is_the_page_under_a_wash_of_its_paint(sample_image_bgr):
-    result = generate(sample_image_bgr, difficulty.params_for_preset("Medium"), long_edge=200, collect_analysis=True)
+    result = generate(sample_image_bgr, MIDDLE, long_edge=200, collect_analysis=True)
 
     analysis, page = result.analysis, np.asarray(result.page).astype(int)
     tinted = np.asarray(result.image(Version.TINTED)).astype(int)
@@ -885,7 +887,7 @@ def test_the_ink_and_the_text_found_are_cached_by_their_settings(monkeypatch):
     monkeypatch.setattr(
         ink, "find_ink", lambda *args, **kwargs: gaps.append(kwargs.get("gap_mm")) or real(*args, **kwargs)
     )
-    params = difficulty.params_for_preset("Easy")
+    params = COARSE
     pipeline.clear_cache()
     # Each found once for a setting, again for another.
     for handling in (Handling(), Handling(), Handling(text_max_height_mm=30.0), Handling(ink_gap_mm=1.0)):
@@ -932,7 +934,7 @@ def test_a_triangle_s_point_is_rounded_unless_corners_are_asked_to_keep_their_po
     side = 380 * np.array([math.cos(half), math.sin(half)])
     corners = [point, point - side, point - side * (1, -1)]
     cv2.fillPoly(picture, [np.round(np.array(corners) * 16).astype(np.int32)], (120, 40, 30), cv2.LINE_AA, shift=4)
-    medium = difficulty.params_for_preset("Medium")
+    medium = MIDDLE
     reach = {}
     for name, params in (("default", medium), ("20 degrees", dataclasses.replace(medium, sharpest_corner_deg=20.0))):
         pipeline.clear_cache()

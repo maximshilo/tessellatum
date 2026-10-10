@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 import reference_line_art as ref
+from difficulty_levels import BY_OLD_NAME
 from tessellatum.core import difficulty, ink, kernels, pipeline, regions
 from tessellatum.core.print_size import print_scale
 from tessellatum.core.quantize import quantize
@@ -74,7 +75,7 @@ def _run_steps(labels, palette_bgr, image_bgr, own, ink_gray, min_area_px, min_w
 def _page_inputs(name: str, preset: str, long_edge: int):
     """What the pipeline's line-art region stage starts from on a sample image (see ``pipeline.generate``)."""
     image = pipeline.load_image_bgr(SAMPLE_IMAGES / name)
-    params = difficulty.finest_params() if preset == "Max" else difficulty.params_for_preset(preset)
+    params = difficulty.finest_params() if preset == "Max" else BY_OLD_NAME[preset]
     resized = pipeline.resize_to_long_edge(image, long_edge)
     h, w = resized.shape[:2]
     pipeline.clear_cache()

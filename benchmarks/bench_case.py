@@ -266,6 +266,27 @@ def preset_params(difficulty, name: str):
     return difficulty.params_for_preset(name)
 
 
+def page_limits(params, render_module) -> dict[str, float]:
+    """What a page is held to: the brush, the smallest number and the colors' margin, as the version measured sets them.
+
+    From 0.1.49 a page has its own: ``brush_mm`` and ``palette_margin_de00``
+    are its difficulty's, ``label_floor_pt`` the default style's smallest
+    number (the harness draws every page in that style). A version that doesn't set one is held to what
+    every page had until then (``bench_metrics.PAINTABLE_WIDTH_MM``,
+    ``LABEL_MIN_PT``, ``PALETTE_MIN_DE00``). ``render_module`` is the
+    version's ``tessellatum.core.render``, or None.
+    """
+    import bench_metrics as bm  # imported late in this module, after the measured version's package
+
+    style = getattr(render_module, "PageStyle", None)
+    min_label_pt = getattr(style(), "min_label_pt", None) if style is not None else None
+    return {
+        "brush_mm": float(getattr(params, "min_width_mm", bm.PAINTABLE_WIDTH_MM)),
+        "label_floor_pt": float(bm.LABEL_MIN_PT if min_label_pt is None else min_label_pt),
+        "palette_margin_de00": float(getattr(params, "palette_margin_de00", bm.PALETTE_MIN_DE00)),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--src", type=Path, required=True)
@@ -350,10 +371,12 @@ def main() -> int:
 
     print_scale = bm.print_size.print_scale(result.page.size)
     page_rgb = np.asarray(result.page.convert("RGB"))
+    limits = page_limits(params, sys.modules.get("tessellatum.core.render"))
     quality: dict[str, float | int | None] = {
         "colors_used": int(result.num_colors_used),
         "regions": int(result.num_regions),
         "ink_fraction": bm.ink_fraction(page_rgb),
+        **limits,
     }
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -383,14 +406,16 @@ def main() -> int:
             bm.label_coverage(page_data.regions, page_data.labeled_region_ids, int((page_data.region_id_map >= 0).sum()))
         )
         quality.update(bm.unlabeled_regions(page_data.region_id_map, page_data.labeled_region_ids))
-        brush_px = print_scale.mm_to_px(bm.print_size.MIN_PAINTABLE_WIDTH_MM)
+        brush_px = print_scale.mm_to_px(limits["brush_mm"])
         # What the brush can't reach, but for the corners' points it fills with its own (from 0.1.50).
         corners = bm.corner_tips(page_data.region_id_map, brush_px)
         slivers = bm.sliver_mask(page_data.region_id_map, brush_px) & ~corners
         quality["sliver_area_fraction"] = float(slivers.mean()) if slivers.size else 0.0
         quality["corner_tip_fraction"] = float(corners.mean()) if corners.size else 0.0
-        quality.update(bm.band_regions(page_data.region_id_map, print_scale.mm_to_px(bm.BAND_MAX_WIDTH_MM)))
-        quality.update(label_scores(page_data, print_scale))
+        quality.update(
+            bm.band_regions(page_data.region_id_map, print_scale.mm_to_px(bm.BAND_WIDTH_BRUSHES * limits["brush_mm"]))
+        )
+        quality.update(label_scores(page_data, print_scale, limits["label_floor_pt"]))
         quality.update(bm.compactness_stats(page_data.region_id_map))
         quality.update(bm.boundary_lines(page_data.region_id_map, page_data.strokes, printed=page_data.printed_ink))
         quality.update(
@@ -411,13 +436,17 @@ def main() -> int:
                 page_data.region_id_map, edges, print_scale.mm_to_px(bm.EDGE_TOLERANCE_MM), page_data.printed_ink
             )
         )
-        quality.update(bm.palette_separation(page_data.legend_bgr))
+        quality.update(bm.palette_separation(page_data.legend_bgr, limits["palette_margin_de00"]))
         # Line art is scored against the image's manifest entry: its flat colors, and its ink lines if it has ink colors.
         flat_colors, ink_colors = (
             np.array(getattr(image_info, name, ()), dtype=np.uint8).reshape(-1, 3)[:, ::-1]  # the manifest's are RGB
             for name in ("flat_colors", "ink_colors")
         )
-        quality.update(bm.flat_color_match(flat_colors, page_data.legend_bgr, getattr(params, "num_colors", None)))
+        quality.update(
+            bm.flat_color_match(
+                flat_colors, page_data.legend_bgr, getattr(params, "num_colors", None), limits["palette_margin_de00"]
+            )
+        )
         # Whether those colors are the file's own: a scan's are cluster centers, some of them colors its fills hardly
         # hold, so its flat colors are reported but not held to their target (see bench_report).
         exact_colors = bool(getattr(image_info, "exact_colors", False))
@@ -525,14 +554,14 @@ def main() -> int:
     return 0
 
 
-def label_scores(page_data: PageData, scale) -> dict:
+def label_scores(page_data: PageData, scale, min_pt: float) -> dict:
     """The quality fields about the numbers: how large they print, what is drawn through them, and how many have a leader.
 
-    ``scale`` is the page's ``print_size.PrintScale``.
+    ``scale`` is the page's ``print_size.PrintScale``, ``min_pt`` the smallest its numbers should print.
     """
     import bench_metrics as bm  # imported late in this module, after the measured version's package
 
-    quality = bm.label_sizes(page_data.label_font_sizes_px, scale)
+    quality = bm.label_sizes(page_data.label_font_sizes_px, scale, min_pt)
     quality.update(bm.label_clearance(page_data.label_boxes, page_data.outlines, page_data.leaders))
     quality["leader_labels"] = page_data.leader_labels
     return quality

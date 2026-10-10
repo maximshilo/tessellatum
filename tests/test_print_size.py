@@ -64,8 +64,8 @@ def test_default_thresholds_at_print_resolution():
 
     assert scale.dpi == pytest.approx(300.0)
     assert scale.mm_to_px(ps.MIN_PAINTABLE_WIDTH_MM) == pytest.approx(35.43, abs=0.01)
-    assert scale.pt_to_px(ps.MIN_LABEL_SIZE_PT) == pytest.approx(25.0)
-    assert scale.mm_to_px(ps.OUTLINE_WIDTH_MM) == pytest.approx(3.54, abs=0.01)
+    assert scale.pt_to_px(ps.MIN_LABEL_SIZE_PT) == pytest.approx(12.5)
+    assert scale.mm_to_px(ps.OUTLINE_WIDTH_MM) == pytest.approx(2.36, abs=0.01)
 
 
 def test_other_paper_formats():

@@ -20,13 +20,15 @@ import bench_case  # noqa: E402
 import bench_metrics as bm  # noqa: E402
 from tessellatum.core import difficulty, pipeline, render  # noqa: E402
 
+from difficulty_levels import MIDDLE  # noqa: E402
+
 
 def test_the_probe_times_the_vote_that_settles_a_picture_s_edges(sample_image_bgr, monkeypatch):
     for name in bench_case.PROBED_STAGES:
         monkeypatch.setattr(pipeline, name, getattr(pipeline, name))  # undoes the probe's wrapping afterwards
     probe = bench_case.Probe(pipeline)
     pipeline.clear_cache()
-    pipeline.generate(sample_image_bgr, difficulty.params_for_preset("Medium"), long_edge=200)
+    pipeline.generate(sample_image_bgr, MIDDLE, long_edge=200)
     pipeline.clear_cache()
     assert {"build_regions", "smooth_regions", "extract_regions"} <= probe.timings.keys()
 
@@ -94,9 +96,25 @@ def test_label_scores_read_the_leaders_ink_and_count_the_numbers_with_a_leader()
         leaders=leaders,
     )
 
-    scores = bench_case.label_scores(bench_case.page_data_from_analysis(analysis), bm.print_size.print_scale((60, 40)))
+    scores = bench_case.label_scores(
+        bench_case.page_data_from_analysis(analysis), bm.print_size.print_scale((60, 40)), bm.LABEL_MIN_PT
+    )
 
     assert (scores["labels_on_lines"], scores["overlapping_labels"], scores["leader_labels"]) == (1, 0, 1)
+
+
+def test_a_page_is_held_to_its_own_brush_smallest_number_and_color_margin():
+    realistic = bench_case.page_limits(difficulty.params_for_preset("Realistic"), render)
+    assert realistic == {"brush_mm": 0.5, "label_floor_pt": 3.0, "palette_margin_de00": 4.0}
+    assert bench_case.page_limits(difficulty.finest_params(), render) == {
+        "brush_mm": 3.0, "label_floor_pt": 3.0, "palette_margin_de00": 10.0
+    }
+    # A version that sets none of them: what every page had until then.
+    old = SimpleNamespace(num_colors=20, min_region_area_mm2=40.0, blur_sigma=2.5)
+    assert bench_case.page_limits(old, None) == {"brush_mm": 3.0, "label_floor_pt": 6.0, "palette_margin_de00": 10.0}
+    assert bench_case.page_limits(old, SimpleNamespace(PageStyle=lambda: SimpleNamespace(line_width_mm=0.3)))[
+        "label_floor_pt"
+    ] == 6.0
 
 
 def test_background_regions_leave_out_the_regions_on_any_face_annotated_or_found():
@@ -355,7 +373,7 @@ def test_case_runner_scores_the_slivers_in_the_gradient_areas_and_the_page_s_ban
     ids = np.load(out / "regions.npz")["region_id_map"]
     assert ids.shape == (300, 400)  # the boxes scale by 5/8: rows 0-99, and columns 0-99
     scale = bm.print_size.print_scale((400, 300))
-    brush = scale.mm_to_px(bm.print_size.MIN_PAINTABLE_WIDTH_MM)
+    brush = scale.mm_to_px(3.0)  # Max's brush
     corners = bm.corner_tips(ids, brush)
     slivers = bm.sliver_mask(ids, brush) & ~corners  # what a brush can't reach, but for the corners' points
     assert quality["sliver_area_fraction"] == pytest.approx(slivers.mean(), rel=1e-12)
@@ -367,7 +385,8 @@ def test_case_runner_scores_the_slivers_in_the_gradient_areas_and_the_page_s_ban
     assert quality["gradient_sliver_fraction"] > 0
     assert quality["gradient_sliver_fraction_max"] == pytest.approx(max(slivers[:100].mean(), slivers[:, :100].mean()))
     # The stripe is the page's one band: too narrow for a brush 6 mm wide, and running most of the way across.
-    bands = bm.band_regions(ids, scale.mm_to_px(bm.BAND_MAX_WIDTH_MM))
+    bands = bm.band_regions(ids, scale.mm_to_px(6.0))
+    assert (quality["brush_mm"], quality["palette_margin_de00"], quality["label_floor_pt"]) == (3.0, 10.0, 3.0)
     assert quality["band_regions"] == bands["band_regions"] == 1
     assert quality["band_area_fraction"] == pytest.approx(bands["band_area_fraction"], rel=1e-12)
     assert np.unique(ids[189:193, 50:350]).size == 1  # the stripe (rows 187.5-193.75 once scaled) is one region

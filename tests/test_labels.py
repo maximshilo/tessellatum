@@ -62,9 +62,11 @@ def test_the_smallest_number_prints_at_least_six_points_and_is_never_under_ten_p
     assert smallest == MIN_FONT_SIZE or (smallest - 1) / scale.px_per_pt < MIN_LABEL_SIZE_PT  # and no larger than that
 
 
-def test_the_preview_keeps_its_ten_pixel_floor_and_an_export_gets_six_points():
-    assert min_font_size((825, 1100)) == 10  # 6 pt is 8.4 px here
-    assert min_font_size((1800, 2400)) == 21  # 6 pt is 20.05 px here: the whole pixel above it
+def test_the_preview_keeps_its_ten_pixel_floor_and_an_export_gets_three_points():
+    assert min_font_size((825, 1100)) == 10  # 3 pt is 4.2 px here
+    assert min_font_size((1800, 2400)) == 11  # 3 pt is 10.02 px here: the whole pixel above it
+    assert min_font_size((825, 1100), 6.0) == 10  # 6 pt is 8.4 px here
+    assert min_font_size((1800, 2400), 6.0) == 21  # 6 pt is 20.05 px here
 
 
 def test_a_roomy_region_keeps_its_number_at_its_middle_at_the_size_it_prefers():

@@ -81,13 +81,33 @@ class DifficultyParams:
     corner_contrast_de00: float = CORNER_CONTRAST_DE00
 
 
-# Every preset paints with the same 3 mm brush; they differ in how many regions
-# they ask for. Median regions over the benchmark images (preview / export):
-# Easy 13.5 / 13, Medium 26.5 / 23.5, Hard 69.5 / 53.
+
+
+def _level(num_colors: int, min_region_area_mm2: float, min_width_mm: float, blur_sigma: float) -> DifficultyParams:
+    """A preset: the user's levels share every setting but these four (chosen by the user from their own pages)."""
+    return DifficultyParams(
+        num_colors=num_colors,
+        min_region_area_mm2=min_region_area_mm2,
+        blur_sigma=blur_sigma,
+        min_width_mm=min_width_mm,
+        palette_margin_de00=4.0,
+        edge_settling=3.0,
+        edge_color_step_de00=1.0,
+        detail_weight=4,
+        sharpest_corner_deg=180.0,
+        corner_contrast_de00=0.0,
+    )
+
+
+# From Beginner to Realistic, more colors, smaller regions, a finer brush and less smoothing; every level keeps
+# colors 4 ΔE00 apart, settles the edges a long way while holding them to the picture's, gives faces and the subject
+# a quarter of the smallest region, and rounds corners to the brush.
 PRESETS: dict[str, DifficultyParams] = {
-    "Easy": DifficultyParams(num_colors=6, min_region_area_mm2=300.0, blur_sigma=9.0),
-    "Medium": DifficultyParams(num_colors=12, min_region_area_mm2=125.0, blur_sigma=5.0),
-    "Hard": DifficultyParams(num_colors=20, min_region_area_mm2=40.0, blur_sigma=2.5),
+    "Beginner": _level(16, 10.0, 1.0, 1.2),
+    "Easy": _level(20, 8.0, 0.8, 1.0),
+    "Medium": _level(24, 6.0, 0.7, 0.9),
+    "Hard": _level(28, 4.0, 0.6, 0.8),
+    "Realistic": _level(32, 2.0, 0.5, 0.7),
 }
 
 # Bounds of the Custom settings, by field. The app's sliders and ``custom_params`` keep to them.
@@ -95,9 +115,9 @@ PRESETS: dict[str, DifficultyParams] = {
 # At the 3 mm brush and 10 ΔE00, the finest region the sliders offered was 30 mm²: a round brush can't reach into a
 # region's corners, and with smaller regions a detailed photograph had more than 1% of an A4 page in paint the brush
 # can't put down without crossing a line (25 mm² left one page at 1.01%), and the scanned postcard's hatched areas got
-# numbers with no room off its lines (20 mm²). That is still the benchmark's finest page (``finest_params``). The
-# sliders now reach well past it -- smaller regions, a finer brush, closer colors -- for pages with more detail than
-# those limits allow; how paintable such a page is, is the user's choice.
+# numbers with no room off its lines (20 mm²). That is still the benchmark's Max (``finest_params``). The sliders,
+# and from 0.1.52 the presets, reach well past it -- smaller regions, a finer brush, closer colors -- for pages with
+# more detail than those limits allow; how paintable such a page is, is the user's choice.
 #
 # They reach a 0.5 mm brush and 2 mm² regions, where a page is slower to draw, and half to nine tenths of a detailed
 # photograph's numbers find no room off the lines: with every one at its finest, the lion's and the Palermo castle's
@@ -157,13 +177,24 @@ def clamp(name: str, value: float) -> float:
 
 
 def finest_params() -> DifficultyParams:
-    """The benchmark's Max: 40 colors, regions of 30 mm², no smoothing, every other setting at its default.
+    """The benchmark's Max: 40 colors, regions of 30 mm², no smoothing, the 3 mm brush and 10 ΔE00.
 
     It was the finest page the Custom sliders could ask for until they reached
-    past the 3 mm brush and 10 ΔE00. It is kept as it was, so that result sets
-    of every version compare at it.
+    past the 3 mm brush and 10 ΔE00. It is kept as it was, every setting
+    spelled out, so that result sets of every version compare at it.
     """
-    return DifficultyParams(num_colors=40, min_region_area_mm2=30.0, blur_sigma=0.0)
+    return DifficultyParams(
+        num_colors=40,
+        min_region_area_mm2=30.0,
+        blur_sigma=0.0,
+        min_width_mm=3.0,
+        palette_margin_de00=10.0,
+        edge_settling=1.0,
+        edge_color_step_de00=10.0,
+        detail_weight=2,
+        sharpest_corner_deg=180.0,
+        corner_contrast_de00=20.0,
+    )
 
 
 def describe(params: DifficultyParams) -> str:
