@@ -56,21 +56,23 @@ The settings (every one has a tooltip saying what it does; sizes are on the
 printed A4 page; the panel keeps them between runs, and **Reset** puts them
 all back):
 
-- **Difficulty**: Easy, Medium or Hard fill in the settings below it;
-  moving any of them picks Custom (see "How it works").
+- **Difficulty**: Beginner, Easy, Medium (the default), Hard or Realistic
+  fill in the settings below it; moving any of them picks Custom (see "How
+  it works").
 - **Regions and colors**: how many colors to look for and how different
-  every two must be (the *color margin*, 10 ΔE00 by default; lower keeps
+  every two must be (the *color margin*, 4 ΔE00 at every level; lower keeps
   more, subtler colors), the smallest region (2 to 500 mm²), the *brush
-  width* -- the narrowest any part of a region may be, 3 mm by default, 0.5
-  to 6 mm -- which corners keep their points (the *sharpest corner*: 180°,
+  width* -- the narrowest any part of a region may be, 1 mm at Beginner to
+  0.5 mm at Realistic, 0.5 to 6 mm -- which corners keep their points (the *sharpest corner*: 180°,
   the default, rounds every corner to the brush; 20° keeps a triangle's
   points) and how plainly the picture must show one (the *corner contrast*,
   20 ΔE00), the smoothing before the colors are found, and how far and how
   firmly the vote that settles ragged edges reaches (*edge settling*, *edge
   hold*).
-- **Lines and numbers**: how wide the lines print, 0.1 to 1 mm (0.3 mm by
+- **Lines and numbers**: how wide the lines print, 0.1 to 1 mm (0.2 mm by
   default), and their tone, Light, Medium or Dark; how far along a line its
-  pixel staircase is smoothed; the smallest number (6 pt by default); how
+  pixel staircase is smoothed; the smallest number (3 pt by default; a
+  preview draws none under 10 px); how
   far outside a small region its number may go, on a leader; and how far
   numbers keep from text. The numbers are always a step lighter than the
   lines, so they read as the page's own apparatus rather than as writing in
@@ -140,7 +142,8 @@ step 5: their letters are printed, and step 7 keeps the numbers off them
    one region, so the page never draws a line between two areas the painter
    fills alike.
 3. **Widen**: anything a brush cannot paint is given away. Every part of a
-   region narrower than the brush — 3 mm on the printed page — goes to the
+   region narrower than the brush — the difficulty's brush width on the
+   printed page, 1 mm at Beginner to 0.5 mm at Realistic — goes to the
    region whose paint reaches it first, and a region thinner than that
    everywhere disappears into its neighbors, so the page asks for no stroke
    too fine to make. A corner's point can be the exception: a round brush
@@ -169,7 +172,7 @@ step 5: their letters are printed, and step 7 keeps the numbers off them
    boundary is doubled or left out. Each line is then smoothed along its
    length to take the pixel grid's staircase off it, but never by more than a
    pixel, so it stays on the boundary it draws and the page still closes.
-6. **Ink**: the lines go down as a round pen 0.3 mm across (by default; see
+6. **Ink**: the lines go down as a round pen 0.2 mm across (by default; see
    "Settings and export") — a size on paper,
    so a preview and an export of one image print the same line — laid on a
    grid four times finer than the page and averaged back down, which
@@ -179,7 +182,7 @@ step 5: their letters are printed, and step 7 keeps the numbers off them
    and tone are `PageStyle` in `src/tessellatum/core/render.py`, the tones the
    app offers its `TONES`.
 7. **Number**: every region gets its number (matched to a legend swatch),
-   never smaller than 6 pt on paper (nor than 10 px), and never where any of
+   never smaller than 3 pt on paper (nor than 10 px), and never where any of
    a line's ink falls, however faint. It goes at the region's most interior
    point if it fits there; otherwise wherever in the region it keeps farthest
    from the lines, made smaller if it has to be. A region too small to hold
@@ -195,20 +198,34 @@ Difficulty controls how many colors k-means looks for and how far apart
 they must be, how small a region may be on the printed page before it is
 merged away, how narrow any part of one may be (the brush), how much
 smoothing is applied before quantizing, and how the ragged edges are settled
-— see `src/tessellatum/core/difficulty.py`. Region sizes are areas on paper:
-300 mm² at Easy, 125 mm² at Medium, 40 mm² at Hard, and 2–500 mm² in
-Custom, never below the brush's own footprint. So a preview and an export of
-one image get regions of the same size, and a long, narrow picture, which
-prints smaller, gets fewer regions rather than smaller ones. Every preset
-paints with a 3 mm brush and keeps colors 10 ΔE00 apart, which the quality
-benchmarks hold every page to; Custom reaches past both, for pages with more
-detail than that: below 30 mm² regions at the 3 mm brush, more than 1% of a
-detailed page is out of the brush's reach, and a scanned drawing's hatched
-areas get numbers with no room off its lines. At the sliders' finest -- a
-0.5 mm brush, 2 mm² regions, 64 colors with no margin -- a detailed
-photograph's preview has 2,000–7,000 regions and takes 2–6 s, line art up to
-about 11 s; half to nine tenths of such a photograph's numbers find no room
-off the lines. **Abort** stops a page between two numbers. Every setting the
+— see `src/tessellatum/core/difficulty.py`. The five levels:
+
+| level | colors | smallest region | brush | smoothing |
+|---|---|---|---|---|
+| Beginner | 16 | 10 mm² | 1.0 mm | 1.2 |
+| Easy | 20 | 8 mm² | 0.8 mm | 1.0 |
+| Medium | 24 | 6 mm² | 0.7 mm | 0.9 |
+| Hard | 28 | 4 mm² | 0.6 mm | 0.8 |
+| Realistic | 32 | 2 mm² | 0.5 mm | 0.7 |
+
+Every level keeps colors 4 ΔE00 apart, settles ragged edges three times as far
+as the brush alone would, holding them within 1 ΔE00 of the picture's, lets a
+region in a face or the subject be a quarter of the smallest, and rounds
+corners to the brush. Region sizes are areas on paper, 2–500 mm² in Custom,
+never below the brush's own footprint. So a preview and an export of one
+image get regions of the same size, and a long, narrow picture, which prints
+smaller, gets fewer regions rather than smaller ones.
+
+Over the 12 benchmark images, a preview has a median of 308 regions at
+Beginner, 614 at Medium and 1,413 at Realistic (up to 7,090 on the lion), and
+takes a median of 0.7 s, 1.1 s and 3.0 s (up to 14 s on the complex
+cartoon); an export takes 2.0, 2.5 and 5.0 s (up to 12 s). That detail has a
+price the quality benchmarks show (see `benchmarks/QUALITY_BENCHMARKS.md`):
+lines that follow bends finer than half a millimeter, and on a preview, which
+draws no number under 10 px, many numbers that find no room off the lines.
+The benchmark's Max -- 40 colors, 30 mm², no smoothing, a 3 mm brush and
+10 ΔE00 -- is the page that meets every target. **Abort** stops a page
+between two numbers. Every setting the
 app offers, with its range and unit, is listed in
 `src/tessellatum/core/settings.py`; the print model's own thresholds are in
 `src/tessellatum/core/print_size.py`.
@@ -240,7 +257,7 @@ ink:
   the one it looks closest to;
 - the regions are the areas the ink encloses; a boundary between two fills
   that no ink divides is drawn as on any page. Hatching encloses nothing: the
-  white areas a 3 mm brush fits in are what a painter sees as areas, and the
+  white areas the brush fits in are what a painter sees as areas, and the
   regions are built through every thin stroke but those that keep two such
   areas apart, so a hatched patch is one run of its own gaps' colors — the
   policeman's hatched coat is painted blue, not the sky's gray around it.
@@ -254,7 +271,7 @@ ink:
   Bolder ink, an outline or a black shape, is never painted. The ink is
   printed all the same;
 - a shape the ink encloses on its own, a finger or a button, keeps its number
-  whatever the difficulty's smallest region, as long as a 3 mm brush fits in
+  whatever the difficulty's smallest region, as long as the brush fits in
   it; one too small for the brush is left as bare paper — unless it is a gap
   between thin strokes in the color of the area round it, which is painted
   with it — and a small patch in the ink's own color, edged mostly by the ink,
@@ -283,10 +300,11 @@ narrower than 15 mm on paper is left out: its eyes would be narrower than the
 brush. See `src/tessellatum/core/faces.py`; the models' sources and licenses
 are in `src/tessellatum/resources/MODELS.md`.
 
-On a photograph or a painting, a region inside a face found may be half the
-difficulty's smallest area — each of its pixels there counts twice — so eyes,
-a nose or a mouth that would merge into the skin keep regions of their own.
-The rest of the page is drawn as before, and the brush is 3 mm everywhere, so
+On a photograph or a painting, a region inside a face found may be a quarter
+of the difficulty's smallest area at every level — each of its pixels there
+counts four times (the *face and subject detail* setting) — so eyes, a nose or
+a mouth that would merge into the skin keep regions of their own. The rest of
+the page is drawn as before, and the brush is the same everywhere, so
 a feature no wider than that would still merge away. Those thin dark marks
 inside a face — pupils, the lines of the eyelids and lips, a nose's rim, the
 dots whiskers grow from — are printed on the page instead, solid, in their own
@@ -308,8 +326,8 @@ A page should also spend its detail on what the picture is of — the person,
 animal or building — rather than the wall, sky or grass behind it. A third small
 network ships with the app for that: U²-Net-p (4.6 MB), which looks at the whole
 picture squeezed to 320 px square and says where its one salient object is. On
-a photograph or a painting, a region inside that subject may be half the
-difficulty's smallest area too, as inside a face; the background is drawn as
+a photograph or a painting, a region inside that subject may be a quarter of
+the difficulty's smallest area too, as inside a face; the background is drawn as
 before. A picture with no one thing to look at, such as a crowded street, has
 little or no subject, and its page is the one it would be without. See
 `src/tessellatum/core/subject.py`.
