@@ -6,8 +6,7 @@ import math
 import threading
 import weakref
 from collections import OrderedDict
-import dataclasses
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Hashable, TypeVar
 
@@ -416,7 +415,8 @@ def _scaled_label(label: Label, sx: float, sy: float, size: tuple[int, int]) -> 
     leader = None
     if label.leader is not None:
         leader = tuple(tuple(redraw.scaled_points(np.array([point]), sx, sy)[0]) for point in label.leader)
-    return dataclasses.replace(label, font_size=font_size, box=(left, top, left + box_width, top + box_height), leader=leader)
+    box = (left, top, left + box_width, top + box_height)
+    return replace(label, font_size=font_size, box=box, leader=leader)
 
 
 def _with_room(
@@ -511,7 +511,8 @@ def draw_page(
     white = (ink_coverage((w, h), strokes, style.line_width_px((w, h))) == 0) & ~solid
     if letters is not None:
         white &= ~(letters.area & (letters.ink > 0))
-    strokes += [np.repeat(point[None], 2, axis=0) for point in np.argwhere(redraw.gaps(region_id_map, white))[:, ::-1].astype(np.float64)]
+    gap_points = np.argwhere(redraw.gaps(region_id_map, white))[:, ::-1].astype(np.float64)
+    strokes += [np.repeat(point[None], 2, axis=0) for point in gap_points]
     if progress_callback is not None:
         progress_callback(_STAGE_PROGRESS["contours"])
 

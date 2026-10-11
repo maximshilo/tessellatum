@@ -210,7 +210,7 @@ def render_page(
 
     ``strokes`` and ``labels``, if given, are the lines and the numbers to draw, in this page's pixels, instead of
     tracing the lines from ``region_id_map`` and placing the numbers: a page drawn again at another size than it was
-    made at draws its own (see ``pipeline.generate``).
+    made at draws its own (see ``pipeline.draw_page``).
 
     Returns the page, plus what it was built from: the ink the lines and the
     printed ink put on it, the geometry each line was drawn from, where each
