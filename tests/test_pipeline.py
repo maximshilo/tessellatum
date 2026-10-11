@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 import pytest
 
-from tessellatum.core import boundaries, difficulty, faces, ink, labels, pipeline, print_size, render, subject, text
+from tessellatum.core import boundaries, difficulty, faces, ink, labels, pipeline, print_size, redraw, render, subject, text
 from tessellatum.core.legend import render_legend
 from tessellatum.core.painting import Version, tint_rgb
 from tessellatum.core.color import MIN_PALETTE_DE00, pairwise_de00
@@ -384,7 +384,9 @@ def test_line_art_is_decided_on_the_picture_at_preview_size(monkeypatch):
     at_preview_size = ink.line_art(pipeline.resize_to_long_edge(drawing, 300))
     assert preview.line_art == export.line_art == smaller.line_art == at_preview_size
     assert export.ink_lines.shape == (330, 450) and smaller.ink_lines.shape == (147, 200)
-    assert (export.ink_lines == ink.ink_lines(drawing)).all()
+    # A page smaller than the preview finds its own ink; an export is its preview's page drawn larger (D-006).
+    assert (smaller.ink_lines == ink.ink_lines(pipeline.resize_to_long_edge(drawing, 200))).all()
+    np.testing.assert_array_equal(export.ink_lines, redraw.scaled_up(preview.ink_lines, (450, 330)))
 
 
 def _outlined_shapes() -> tuple[np.ndarray, dict]:

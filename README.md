@@ -36,7 +36,10 @@ run the binary from a terminal to see the error.
 ## Settings and export
 
 The panel on the left holds every setting; "Generate Preview" draws the page
-with them, and "Export…" draws it again at print resolution.
+with them, and "Export…" draws that same page at print resolution: the regions,
+colors and legend the preview shows, its lines smoothed as they are there, and
+its numbers placed again, as small as the style lets them print. If a setting
+changed since the preview, the export makes the page with it first.
 
 Every preview is drawn in three versions, and the bar above it switches
 between them, keeping the zoom and the scroll:
@@ -93,7 +96,9 @@ all back):
     printed, their ground left bare, and no number goes on them.
 - **Export** renders the page at 300 dpi on A4: a long edge of 2244 to
   3272 px, depending on the picture's shape, or the picture's own size where
-  that is smaller, since nothing is upscaled. *Version* picks which of the
+  that is smaller, since nothing is upscaled. The page is the preview's, made
+  at its 1100 px and drawn larger: the letters of signs and captions are taken
+  again from the picture at print size. *Version* picks which of the
   three versions to export, in either format; the legend comes with each.
   - **PDF**: two A4 sheets of vector art. The page fills the printable area
     inside 10 mm margins, centered, on a landscape sheet when the picture is
@@ -190,6 +195,14 @@ step 5: their letters are printed, and step 7 keeps the numbers off them
    text found, nor within about 0.5 mm of one, where it would read as part of
    a sign or a caption; a region lying in one gets its number outside, with a
    leader that crosses the lettering. See `src/tessellatum/core/labels.py`.
+8. **Print size**: a page is made once, at the preview's 1100 px, and an
+   export is that page drawn at 300 dpi: each region filled inside its
+   outline, smoothed as its lines are, scaled, and touching only the regions
+   it touched; the lines the preview's, scaled; the printed ink inside its
+   own smoothed outline; the letters of signs and captions taken again from
+   the picture at that size; and the numbers placed again, down to the 3 pt
+   the style asks for. So an export has its preview's regions, colors and
+   legend. See `src/tessellatum/core/redraw.py` and `pipeline.draw_page`.
 
 ### Difficulty
 
@@ -211,17 +224,20 @@ Every level keeps colors 4 ΔE00 apart, settles ragged edges three times as far
 as the brush alone would, with the edge hold at 1 ΔE00, which keeps them
 closest to the picture's, lets a region in a face or the subject be a quarter
 of the smallest, and rounds corners to the brush. Region sizes are areas on paper, 2–500 mm² in Custom,
-never below the brush's own footprint. So a preview and an export of one
-image get regions of the same size, and a long, narrow picture, which prints
-smaller, gets fewer regions rather than smaller ones.
+never below the brush's own footprint. So a page's regions are the same
+size on paper whatever its pixel count, and a long, narrow picture, which
+prints smaller, gets fewer regions rather than smaller ones.
 
 Over the 12 benchmark images, a preview has a median of 308 regions at
 Beginner, 614 at Medium and 1,413 at Realistic (up to 7,090 on the lion), and
-takes a median of 0.7 s, 1.1 s and 3.0 s (up to 14 s on the complex
-cartoon); an export takes 2.0, 2.5 and 5.0 s (up to 12 s). That detail has a
-price the quality benchmarks show (see `benchmarks/QUALITY_BENCHMARKS.md`):
-lines that follow bends finer than half a millimeter, and on a preview, which
-draws no number under 10 px, many numbers that find no room off the lines.
+takes a median of 0.7 s, 1.0 s and 1.7 s (up to 7 s on the complex
+cartoon); exporting it, drawing that page at print size, takes 0.5, 0.8 and
+2.0 s more (up to 7 s, the lion at Realistic). That detail has a price the
+quality benchmarks show (see `benchmarks/QUALITY_BENCHMARKS.md`): lines that
+follow bends finer than half a millimeter; on a preview, which draws no
+number under 10 px, many numbers that find no room off the lines; and at
+Realistic, whose 0.5 mm brush is 2 px wide on a preview, regions narrower
+than the brush on up to 5% of a photograph's export.
 The benchmark's Max -- 40 colors, 30 mm², no smoothing, a 3 mm brush and
 10 ΔE00 -- is the setting the targets are held at: there every page meets
 them but Times Square's preview, whose lettering reads less well than the

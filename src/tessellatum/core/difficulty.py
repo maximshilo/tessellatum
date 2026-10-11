@@ -5,9 +5,10 @@ the source image's detail survives into separate regions).
 
 Sizes are set on the printed page, in square millimeters and millimeters (see
 ``print_size``): a page prints at the same physical size whatever its pixel
-count, so a preview and an export of one image are held to the same limits,
+count, so a page is held to the same limits at whatever size it is made,
 and a long, narrow picture, which prints smaller, gets fewer regions rather
-than smaller ones.
+than smaller ones. (From 0.1.53 a page is made once, at the preview's size,
+and an export is that page drawn at print size: see ``pipeline.draw_page``.)
 """
 
 from __future__ import annotations
@@ -118,9 +119,11 @@ PRESETS: dict[str, DifficultyParams] = {
 # more detail than those limits allow; how paintable such a page is, is the user's choice.
 #
 # They reach a 0.5 mm brush and 2 mm² regions, where a page is slower to draw, and half to nine tenths of a detailed
-# photograph's numbers find no room off the lines: with every one at its finest, the lion's and the Palermo castle's
-# previews have over 7,000 regions and take 4-6 s, the complex cartoon's 11 s (line art places its numbers again as the
-# regions without room merge), most of it placing the numbers, which Abort stops between two of them.
+# photograph's numbers find no room off the lines: with every one at its finest (64 colors with no margin, the rest at
+# their defaults), the lion's and the Palermo castle's previews have about 5,000 regions and take 3-4 s, the complex
+# cartoon's 7 s (line art places its numbers again as the regions without room merge), most of it drawing the page
+# and placing its numbers, which Abort stops between two of them; drawing one at print size, to export it, takes 2-4 s
+# more.
 CUSTOM_RANGES: dict[str, tuple[float, float]] = {
     "num_colors": (2, 64),
     "min_region_area_mm2": (2.0, 500.0),

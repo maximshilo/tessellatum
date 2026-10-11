@@ -272,6 +272,29 @@ its 300 dpi size, so the app exports each at its own size: the page the
 harness's export cases (2400 px asked for) measure. Until 0.1.42 the app
 exported at 2400 px, which for these images was the same page.
 
+From 0.1.53 an export is its preview's page, drawn at that size
+(`pipeline.draw_page`): a page asked for at more than the preview's 1100 px is
+made at 1100 px and drawn at the size asked for. Its regions are filled inside
+their outlines smoothed as the lines are, scaled; its lines are the preview's,
+scaled; its printed ink is filled inside its own smoothed outline; a dot of line
+goes wherever the regions and the lines still part by a pixel, so every region
+stays closed; the letters in the lines of text are taken again from the picture
+at that size; and the numbers are placed again there, as small as the style
+lets them print. So an export has its preview's regions, colors and legend, and
+the export cases measure the preview's page at print size. Until 0.1.52 an
+export was made again from the picture at its own size, with regions, colors and
+numbers of its own: a photograph's had a median 0.90 of its preview's regions
+at the five levels (0.85 at Realistic).
+
+Two metrics read such a page differently from one made at its own size.
+Jaggedness and lines per boundary (clear) look for the junctions where three
+regions meet at a pixel's corner, and regions filled inside smoothed outlines
+meet at fewer of those corners than a pixel map's staircase does, so near a
+junction the metrics read the lines ending there as turns and as doubled
+lines. The lion's export at Realistic reads 1.21 and 1.34; with its preview's
+junctions scaled up (and the 2.5 px clearance scaled with them), 1.14, its
+preview's own, and 1.005.
+
 From 0.1.44 the PDF draws that page again as vector art, from what it was drawn
 from (`GeneratedPage.drawing`): its lines as paths at the width asked for, never
 widened to a pixel, its numbers as text in the page's own font, the ink it prints
@@ -1012,7 +1035,9 @@ by 0.038 rather than 0.016, labels on features by 3.6 rather than 1.6.
   image's own long edge (`source_size` in `case.json`), or, for result sets from
   before that was recorded, where the size asked for is at least 1375 px.
 - Both were measured at the presets before 0.1.52 (Easy, Medium, Hard and Max,
-  every one at the 3 mm brush). The five levels of 0.1.52 have many more,
+  every one at the 3 mm brush), and **σ export** on pages made at the image's own
+  size: from 0.1.53 an export is its preview's page drawn larger, whose pages move
+  between two sizes as previews do. The five levels of 0.1.52 have many more,
   smaller regions, so their own noise is likely different; until it is measured
   at them, a regression at a level reads against tolerances from coarser pages.
 

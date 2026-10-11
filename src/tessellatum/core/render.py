@@ -170,6 +170,8 @@ def render_page(
     clearable: np.ndarray | None = None,
     lettering: Lettering | None = None,
     check_cancelled: Callable[[], None] | None = None,
+    strokes: list[np.ndarray] | None = None,
+    labels: list[Label] | None = None,
 ) -> RenderedPage:
     """Draw the boundaries of ``region_id_map`` + numbers for ``regions`` onto a white ``size`` canvas.
 
@@ -206,6 +208,10 @@ def render_page(
     ``check_cancelled``, if given, is called as the numbers are placed, and
     stops the page by raising (see ``labels.place_labels``).
 
+    ``strokes`` and ``labels``, if given, are the lines and the numbers to draw, in this page's pixels, instead of
+    tracing the lines from ``region_id_map`` and placing the numbers: a page drawn again at another size than it was
+    made at draws its own (see ``pipeline.draw_page``).
+
     Returns the page, plus what it was built from: the ink the lines and the
     printed ink put on it, the geometry each line was drawn from, where each
     number went, the ink of the leader lines that point a number written
@@ -213,7 +219,8 @@ def render_page(
     the picture itself, without the lines and numbers.
     """
     inked = ink is not None and bool(ink.any())
-    strokes = trace_boundaries(region_id_map, smoothing_px=style.smoothing_px(size), ink=ink if inked else None)
+    if strokes is None:
+        strokes = trace_boundaries(region_id_map, smoothing_px=style.smoothing_px(size), ink=ink if inked else None)
     line_width = style.line_width_px(size)
     lines_only = ink_coverage(size, strokes, line_width)
     lettered = lettering is not None and bool(lettering.area.any())
@@ -247,10 +254,11 @@ def render_page(
     # A number goes on no printed ink, and a leader runs through none, whichever region's paint goes over it.
     seen = np.where(ink, -1, region_id_map) if inked else region_id_map
     detail = np.where(clearable, region_id_map, -1).astype(np.int32) if inked and clearable is not None else None
-    labels = place_labels(
-        regions, seen, coverage == 0, spacing, detail, text=lettering_area if lettered else None,
-        check_cancelled=check_cancelled,
-    )
+    if labels is None:
+        labels = place_labels(
+            regions, seen, coverage == 0, spacing, detail, text=lettering_area if lettered else None,
+            check_cancelled=check_cancelled,
+        )
     if detail is not None and any(label.clears for label in labels):
         ink = ink & ~cleared(labels, detail, spacing.label_gap_px)
         coverage = all_ink(ink)

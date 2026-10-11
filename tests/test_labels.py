@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import pytest
 
+from tessellatum.core import kernels
 from tessellatum.core import render as render_module
 from tessellatum.core.boundaries import trace_boundaries
 from tessellatum.core.labels import (
@@ -18,6 +19,7 @@ from tessellatum.core.labels import (
     Label,
     LabelSpacing,
     _LeaderRoom,
+    _leader_end,
     _pixels_along,
     cleared,
     min_font_size,
@@ -695,3 +697,60 @@ def test_a_number_clearing_solid_detail_ink_keeps_its_gap_from_a_line_of_text():
     for label in labels:
         assert away[_pixels(label.box)].min() > TEXT_SPACING.text_gap_px
     assert not (cleared(labels, detail, TEXT_SPACING.label_gap_px) & (away <= TEXT_SPACING.text_gap_px)).any()
+
+
+def _first_leader_as_looped(anchor, lefts, tops, box_width, box_height, clear_px, blocked, ids, region_id, region_of,
+                            next_door, wx0, wy0):
+    """The loop ``_LeaderRoom.place`` tried its leaders in before ``kernels.first_leader`` took it over: the index of
+    the box it takes, -1 if none."""
+    known_blocked = np.zeros(len(tops), dtype=bool)
+    for crossing_others in (False, True):
+        for k in range(len(tops)):
+            if known_blocked[k] or not (crossing_others or next_door[k]):
+                continue
+            left, top = int(lefts[k]) + wx0, int(tops[k]) + wy0
+            box = (left, top, left + box_width, top + box_height)
+            end = _leader_end(anchor, box, clear_px)
+            if end is None:
+                continue
+            rows, columns = _pixels_along(anchor, end)
+            rows, columns = rows - wy0, columns - wx0
+            if blocked[rows, columns].any():
+                known_blocked[k] = True
+                continue
+            if not crossing_others:
+                along = ids[rows, columns]
+                if not ((along == region_id) | (along == region_of[k])).all():
+                    continue
+            return k
+    return -1
+
+
+def test_the_compiled_leader_search_takes_the_box_the_loop_took():
+    rng = np.random.default_rng(11)
+    taken = 0
+    for _ in range(400):
+        height, width = (int(v) for v in rng.integers(12, 90, size=2))
+        wx0, wy0 = (int(v) for v in rng.integers(0, 3000, size=2))
+        cells = rng.integers(0, 5, size=(height // 6 + 1, width // 6 + 1)).astype(np.int32)
+        ids = np.ascontiguousarray(np.kron(cells, np.ones((6, 6), dtype=np.int32))[:height, :width])
+        blocked = rng.random((height, width)) < rng.choice([0.0, 0.002, 0.02, 0.1])
+        box_width, box_height = (int(v) for v in rng.integers(2, 9, size=2))
+        ax, ay = int(rng.integers(0, width)), int(rng.integers(0, height))
+        lefts = rng.integers(0, width - box_width + 1, size=int(rng.integers(0, 60))).astype(np.int64)
+        tops = rng.integers(0, height - box_height + 1, size=lefts.size).astype(np.int64)
+        region_of = ids[tops, lefts]
+        next_door = rng.random(lefts.size) < 0.6
+        region_id = int(ids[ay, ax])
+        clear_px = float(rng.uniform(0.3, 4.0))
+        anchor = (float(ax + wx0), float(ay + wy0))
+        expected = _first_leader_as_looped(
+            anchor, lefts, tops, box_width, box_height, clear_px, blocked, ids, region_id, region_of, next_door, wx0, wy0
+        )
+        found = kernels.first_leader(
+            anchor[0], anchor[1], lefts, tops, box_width, box_height, clear_px, blocked, ids, region_id, region_of,
+            next_door, wx0, wy0,
+        )
+        assert found == expected
+        taken += found >= 0
+    assert 50 < taken < 400  # both outcomes tried

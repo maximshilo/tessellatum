@@ -16,9 +16,12 @@ neighbor for. Those give exactly what the NumPy code they replace gave
 (``tests/reference_line_art.py`` keeps it). So does the window search of the
 cascade that finds drawn faces (see ``faces``), the count of a face's
 regions' pixels by color, with what each region touches (see ``tones``), and
-the vote that settles the regions' edges (see ``texture``).
+the vote that settles the regions' edges (see ``texture``). So do the search
+for a number's leader (see ``labels``), which picks the box the Python loop
+it replaces picked (``tests/test_labels.py`` keeps that loop), and the
+even-odd fill of a page's outlines drawn larger (see ``redraw``).
 Arrays are passed flattened (row-major) with explicit ``height``/``width``,
-but for the cascade's integral images.
+but for the cascade's integral images, a leader's window and a filled page.
 
 Kernels compile on first call and are cached on disk (``cache=True``), so only
 the first run after an install pays the compile cost; ``warm_up`` pays it
@@ -26,6 +29,8 @@ ahead of time.
 """
 
 from __future__ import annotations
+
+import math
 
 import numpy as np
 from numba import njit
@@ -2061,6 +2066,133 @@ def lbp_cascade_rows(
             x += step
 
 
+@njit(cache=True, nogil=True)
+def fill_rings(xs, ys, ring_starts, group_starts, values, height, width, out):
+    """Fill each group of rings on ``out`` (HxW int32) with its value, by the even-odd rule: the pixels whose middles
+    lie inside (see ``redraw.fill``).
+
+    Ring ``r``'s points are ``xs``/``ys[ring_starts[r]:ring_starts[r + 1]]``, pixel middles at whole numbers, the ring
+    closed from its last point back to its first; group ``g``'s rings are ``group_starts[g]`` to
+    ``group_starts[g + 1]``, filled with ``values[g]``, in order. Each row of pixel middles is crossed at the edges
+    that start at or above it and end below it, either way, and the pixels from a crossing up to the next are
+    filled, the first one's included and the next one's not: so rings side by side along one line fill each pixel
+    once.
+    """
+    for g in range(group_starts.shape[0] - 1):
+        r0, r1 = group_starts[g], group_starts[g + 1]
+        p0, p1 = ring_starts[r0], ring_starts[r1]
+        if p1 - p0 < 3:
+            continue
+        low, high = ys[p0], ys[p0]
+        for p in range(p0, p1):
+            low = min(low, ys[p])
+            high = max(high, ys[p])
+        top = max(0, int(math.ceil(low)))
+        bottom = min(height - 1, int(math.ceil(high)) - 1)
+        if bottom < top:
+            continue
+        rows = bottom - top + 1
+        # Each row's crossings, counted, then written in place: offsets[row] up to offsets[row + 1].
+        offsets = np.zeros(rows + 1, dtype=np.int64)
+        crossings = np.empty(0, dtype=np.float64)
+        cursor = np.zeros(rows, dtype=np.int64)
+        for pass_ in range(2):
+            if pass_ == 1:
+                for row in range(rows):
+                    offsets[row + 1] += offsets[row]
+                crossings = np.empty(offsets[rows], dtype=np.float64)
+                cursor = offsets[:rows].copy()
+            for r in range(r0, r1):
+                a, b = ring_starts[r], ring_starts[r + 1]
+                for p in range(a, b):
+                    q = p + 1 if p + 1 < b else a
+                    x0, y0, x1, y1 = xs[p], ys[p], xs[q], ys[q]
+                    if y0 == y1:
+                        continue
+                    first = max(top, int(math.ceil(min(y0, y1))))
+                    last = min(bottom, int(math.ceil(max(y0, y1))) - 1)
+                    for row in range(first, last + 1):
+                        if pass_ == 0:
+                            offsets[row - top + 1] += 1
+                        else:
+                            crossings[cursor[row - top]] = x0 + (row - y0) * (x1 - x0) / (y1 - y0)
+                            cursor[row - top] += 1
+        for row in range(rows):
+            line = crossings[offsets[row]:offsets[row + 1]]
+            line.sort()
+            y = row + top
+            for i in range(0, line.shape[0] - 1, 2):
+                start = max(0, int(math.ceil(line[i])))
+                stop = min(width, int(math.ceil(line[i + 1])))
+                for x in range(start, stop):
+                    out[y, x] = values[g]
+
+
+@njit(cache=True, nogil=True)
+def first_leader(
+    x, y, lefts, tops, box_width, box_height, clear_px, blocked, ids, region_id, region_of, next_door, wx0, wy0
+):
+    """Which of the boxes ``labels._LeaderRoom.place`` tries a number's leader to first takes it: the index into
+    ``lefts``/``tops``, -1 if none.
+
+    As it tries them: the boxes in order, at their ``lefts`` and ``tops`` in the window (whose top left corner is
+    ``wx0``, ``wy0`` on the page), first only those in a region next door (``next_door``) whose leader, from the
+    anchor (``x``, ``y``, a page pixel) to ``clear_px`` short of the box (``labels._leader_end``), crosses only the
+    number's region (``region_id``) and the box's (``region_of``), then any box; in both rounds, a leader on a pixel
+    of ``blocked`` is no leader, and a box too near the anchor for one is passed over. A leader runs through the
+    pixels ``labels._pixels_along`` gives, worked out as it works them out, so the box is the one it would find.
+    """
+    count = lefts.shape[0]
+    height, width = blocked.shape
+    known_blocked = np.zeros(count, dtype=np.bool_)
+    for crossing_others in range(2):
+        for k in range(count):
+            if known_blocked[k] or not (crossing_others == 1 or next_door[k]):
+                continue
+            # labels._leader_end. Its math.hypot is the square root of the exact sum of squares here, where both
+            # differences are whole or half pixels.
+            left = (lefts[k] + wx0) - 0.5
+            top = (tops[k] + wy0) - 0.5
+            right = (lefts[k] + wx0 + box_width) - 0.5
+            bottom = (tops[k] + wy0 + box_height) - 0.5
+            near_x = min(max(x, left), right)
+            near_y = min(max(y, top), bottom)
+            dx, dy = x - near_x, y - near_y
+            length = math.sqrt(dx * dx + dy * dy)
+            if length <= clear_px:
+                continue
+            end_x = near_x + dx * clear_px / length
+            end_y = near_y + dy * clear_px / length
+            # labels._pixels_along, from the anchor to the end.
+            steps = int(math.ceil(2 * max(abs(end_x - x), abs(end_y - y)))) + 1
+            step = 1.0 / (steps - 1) if steps > 1 else 0.0
+            along_x, along_y = end_x - x, end_y - y
+            hit = False
+            outside = False
+            for i in range(steps):
+                t = 1.0 if (steps > 1 and i == steps - 1) else i * step
+                column = int(np.rint(x + t * along_x)) - wx0
+                row = int(np.rint(y + t * along_y)) - wy0
+                if row < 0:
+                    row += height
+                if column < 0:
+                    column += width
+                if blocked[row, column]:
+                    hit = True
+                    break
+                if crossing_others == 0:
+                    here = ids[row, column]
+                    if here != region_id and here != region_of[k]:
+                        outside = True
+            if hit:
+                known_blocked[k] = True
+                continue
+            if crossing_others == 0 and outside:
+                continue
+            return k
+    return -1
+
+
 def warm_up() -> None:
     """Compile (or load from cache) every kernel using tiny inputs.
 
@@ -2126,6 +2258,16 @@ def warm_up() -> None:
     right, down, degree, num_edges = crack_edges(ids.reshape(3, 3))
     trace_boundary_paths(right, down, degree, 4, num_edges)
     trace_ink_rings(np.pad(np.eye(3, dtype=np.bool_), 1).reshape(-1), 3, 3)
+
+    # A page's outlines filled at a larger size (see ``redraw``), and a number's leader (see ``labels``).
+    fill_rings(
+        np.array([0.0, 2.0, 2.0, 0.0]), np.array([0.0, 0.0, 2.0, 2.0]), np.array([0, 4], dtype=np.int64),
+        np.array([0, 1], dtype=np.int64), np.ones(1, dtype=np.int32), 3, 3, np.zeros((3, 3), dtype=np.int32),
+    )
+    first_leader(
+        1.0, 1.0, np.zeros(1, dtype=np.int64), np.zeros(1, dtype=np.int64), 1, 1, 0.5, np.zeros((3, 3), dtype=np.bool_),
+        np.zeros((3, 3), dtype=np.int32), 0, np.zeros(1, dtype=np.int32), np.ones(1, dtype=np.bool_), 0, 0,
+    )
 
     padded = np.zeros(5 * 5 * 3, dtype=np.uint8)
     out = np.empty(3 * 3 * 3, dtype=np.uint8)
