@@ -173,6 +173,31 @@ def test_a_png_and_a_pdf_are_exported_at_300_dpi_on_a4(drive, tmp_path):
     assert len(drive.dialogs) == 2 and drive.dialogs[-1][1] == "Export complete"
 
 
+def test_an_export_is_its_preview_s_page_drawn_at_print_size(drive, tmp_path, monkeypatch):
+    # D-006: the export draws the page the preview shows, unless the settings changed since.
+    drawn = []
+    real = pipeline.draw_page
+    monkeypatch.setattr(pipeline, "draw_page", lambda page, *args, **kwargs: drawn.append(page) or real(page, *args, **kwargs))
+    drive.window.current_image_bgr = _blocks((4000, 2000))
+    drive.window.generate_preview()
+    drive.wait()
+    preview = drive.window.current_page
+    calls = len(drive.calls)
+
+    drive.save_path = str(tmp_path / "page")
+    drive.window.export_page()
+    drive.wait()
+    assert len(drive.calls) == calls and drawn == [preview]  # drawn from the preview, not made again
+    with Image.open(tmp_path / "page.png") as png:
+        assert png.width == 3272
+
+    drive.window.controls.preset_combo.setCurrentText("Hard")  # a setting the preview wasn't made with
+    drive.window.export_page()
+    drive.wait()
+    (_image, params, long_edge), _kwargs = drive.calls[-1]
+    assert len(drive.calls) == calls + 1 and long_edge == 3272 and params == difficulty.params_for_preset("Hard")
+
+
 def test_a_running_generation_can_be_cancelled(drive, monkeypatch):
     def until_cancelled(*args, should_cancel, **kwargs):
         deadline = time.monotonic() + TIMEOUT_S

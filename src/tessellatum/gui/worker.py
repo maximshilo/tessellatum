@@ -28,9 +28,12 @@ class PipelineWorker(QThread):
         style: PageStyle = PageStyle(),
         handling: Handling = Handling(),
         versions: Sequence[Version] = (),
+        drawn_from: GeneratedPage | None = None,
     ):
         """``versions`` are the versions of the page (see ``painting``) to draw here too, off the UI thread, before the
-        page is handed over: ``GeneratedPage.image`` keeps them."""
+        page is handed over: ``GeneratedPage.image`` keeps them. With ``drawn_from``, a page of the same picture made
+        with these settings at a smaller size, the page is that one drawn at ``long_edge`` (see
+        ``pipeline.draw_page``) rather than made again."""
         super().__init__()
         self._image_bgr = image_bgr
         self._params = params
@@ -38,18 +41,28 @@ class PipelineWorker(QThread):
         self._style = style
         self._handling = handling
         self._versions = tuple(versions)
+        self._drawn_from = drawn_from
 
     def run(self) -> None:
         try:
-            result: GeneratedPage = pipeline.generate(
-                self._image_bgr,
-                self._params,
-                self._long_edge,
-                progress_callback=self.progress.emit,
-                should_cancel=self.isInterruptionRequested,
-                style=self._style,
-                handling=self._handling,
-            )
+            if self._drawn_from is not None:
+                result: GeneratedPage = pipeline.draw_page(
+                    self._drawn_from,
+                    self._image_bgr,
+                    self._long_edge,
+                    progress_callback=self.progress.emit,
+                    should_cancel=self.isInterruptionRequested,
+                )
+            else:
+                result = pipeline.generate(
+                    self._image_bgr,
+                    self._params,
+                    self._long_edge,
+                    progress_callback=self.progress.emit,
+                    should_cancel=self.isInterruptionRequested,
+                    style=self._style,
+                    handling=self._handling,
+                )
             for version in self._versions:
                 if self.isInterruptionRequested():
                     raise PipelineCancelled()

@@ -174,10 +174,13 @@ class MainWindow(QMainWindow):
         self.controls.set_busy(True)
         self.statusBar().showMessage(f"Rendering the {fmt} at print resolution…")
 
-        # 300 dpi on A4, or the picture's own size where that is less: the pipeline never upscales. A PNG's image is
-        # drawn with the page; a PDF draws the version again from what the page is made of.
+        # 300 dpi on A4, or the picture's own size where that is less: the pipeline never upscales. The export is the
+        # preview's page drawn at that size, so that it has the regions and numbering the preview shows; made first if
+        # the settings changed since. A PNG's image is drawn with the page; a PDF draws the version again from what the
+        # page is made of.
+        long_edge = pipeline.export_long_edge(self.current_image_bgr)
         self._worker = self._make_worker(
-            pipeline.export_long_edge(self.current_image_bgr), versions=(version,) if fmt == "PNG" else ()
+            long_edge, versions=(version,) if fmt == "PNG" else (), drawn_from=self._preview_to_draw(long_edge)
         )
         self._worker.succeeded.connect(self._on_export_ready)
         self._worker.start()
@@ -211,9 +214,21 @@ class MainWindow(QMainWindow):
         self._pending_export_format = None
         self._pending_export_version = None
 
-    def _make_worker(self, long_edge: int, versions: tuple[Version, ...] = ()) -> PipelineWorker:
-        """A worker generating the current image at ``long_edge`` with the panel's settings, wired to its progress, and
-        drawing ``versions`` of the page too."""
+    def _preview_to_draw(self, long_edge: int) -> GeneratedPage | None:
+        """The page previewed, if an export at ``long_edge`` is drawn from it: it is smaller, and made with the panel's
+        settings as they are now. None if not, and the export is made of the picture itself."""
+        page = self.current_page
+        if page is None or page.model is None or long_edge <= max(page.page.size):
+            return None
+        model = page.model
+        current = (self.controls.get_difficulty_params(), self.controls.get_page_style(), self.controls.get_handling())
+        return page if (model.params, model.style, model.handling) == current else None
+
+    def _make_worker(
+        self, long_edge: int, versions: tuple[Version, ...] = (), drawn_from: GeneratedPage | None = None
+    ) -> PipelineWorker:
+        """A worker generating the current image at ``long_edge`` with the panel's settings -- or drawing ``drawn_from``
+        there -- wired to its progress, and drawing ``versions`` of the page too."""
         worker = PipelineWorker(
             self.current_image_bgr,
             self.controls.get_difficulty_params(),
@@ -221,6 +236,7 @@ class MainWindow(QMainWindow):
             style=self.controls.get_page_style(),
             handling=self.controls.get_handling(),
             versions=versions,
+            drawn_from=drawn_from,
         )
         worker.failed.connect(self._on_worker_failed)
         worker.cancelled.connect(self._on_worker_cancelled)

@@ -830,6 +830,25 @@ def _paintable_pieces(
     return paintable
 
 
+def white_areas(region_id_map: np.ndarray, printed: np.ndarray, radius: float) -> np.ndarray:
+    """How many white areas a brush of ``radius`` fits in each region holds, by region id: the 4-connected runs of
+    its pixels not ``printed`` with a pixel farther than ``radius`` from everything else, as ``split_areas`` counts
+    them."""
+    ids = np.ascontiguousarray(region_id_map, dtype=np.int32)
+    count = int(ids.max()) + 1 if ids.size and ids.max() >= 0 else 0
+    if count == 0:
+        return np.zeros(0, dtype=np.int64)
+    h, w = ids.shape
+    white = np.empty((h, w), dtype=np.int32)
+    kernels.white_of(ids.reshape(-1), np.ascontiguousarray(printed, dtype=bool).reshape(-1), np.ones(count, dtype=bool),
+                     white.reshape(-1))
+    piece = np.empty((h, w), dtype=np.int32)
+    piece_region = kernels.white_pieces(white.reshape(-1), h, w, piece.reshape(-1))
+    paintable = np.zeros(piece_region.size, dtype=bool)
+    paintable[piece[_brush_fits(white, count, radius)]] = True
+    return np.bincount(piece_region[paintable], minlength=count)
+
+
 def _painted(ids: np.ndarray, colors: np.ndarray, num_colors: int) -> np.ndarray:
     """Each pixel's color, ``num_colors`` where it is in no region: labels to rebuild regions from."""
     labels = np.empty(ids.shape, dtype=np.int32)

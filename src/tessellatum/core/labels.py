@@ -341,28 +341,21 @@ class _LeaderRoom:
             region_of = local_ids[tops, lefts]
             next_door = np.isin(region_of, neighbors)
 
-            known_blocked = np.zeros(len(tops), dtype=bool)
-            for crossing_others in (False, True):
-                for k in range(len(tops)):
-                    if known_blocked[k] or not (crossing_others or next_door[k]):
-                        continue
-                    left, top = int(lefts[k]) + wx0, int(tops[k]) + wy0
-                    box = (left, top, left + box_width, top + box_height)
-                    end = _leader_end(anchor, box, self.line_reach)
-                    if end is None:  # too near to leave room for a leader: only a dot smaller than its line allows it
-                        continue
-                    rows, columns = _pixels_along(anchor, end)
-                    rows, columns = rows - wy0, columns - wx0
-                    if blocked[rows, columns].any():
-                        known_blocked[k] = True
-                        continue
-                    if not crossing_others:
-                        along = local_ids[rows, columns]
-                        if not ((along == region.region_id) | (along == region_of[k])).all():
-                            continue
-                    self._take_box(box)
-                    self._take_leader((rows + wy0, columns + wx0))
-                    return Label(region.region_id, text, font_size, box, leader=(end, anchor))
+            # The boxes in order, first those next door whose leader crosses only the two regions, then any whose leader
+            # is clear; a box too near to leave room for a leader is passed over (only a dot smaller than its line
+            # allows it). Tried in compiled code: a page crowded with numbers tries hundreds of thousands of leaders.
+            k = kernels.first_leader(
+                float(x), float(y), lefts.astype(np.int64), tops.astype(np.int64), box_width, box_height,
+                float(self.line_reach), np.ascontiguousarray(blocked), np.ascontiguousarray(local_ids, dtype=np.int32),
+                int(region.region_id), region_of.astype(np.int32), next_door, wx0, wy0,
+            )
+            if k >= 0:
+                left, top = int(lefts[k]) + wx0, int(tops[k]) + wy0
+                box = (left, top, left + box_width, top + box_height)
+                end = _leader_end(anchor, box, self.line_reach)
+                self._take_box(box)
+                self._take_leader(_pixels_along(anchor, end))
+                return Label(region.region_id, text, font_size, box, leader=(end, anchor))
 
         others_dots = self.dot_count[window] > own_dot
         if self.clearable is not None:
