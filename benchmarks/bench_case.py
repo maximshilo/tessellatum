@@ -271,10 +271,11 @@ def page_limits(params, render_module) -> dict[str, float]:
 
     From 0.1.49 a page has its own: ``brush_mm`` and ``palette_margin_de00``
     are its difficulty's, ``label_floor_pt`` the default style's smallest
-    number (the harness draws every page in that style). A version that doesn't set one is held to what
-    every page had until then (``bench_metrics.PAINTABLE_WIDTH_MM``,
-    ``LABEL_MIN_PT``, ``PALETTE_MIN_DE00``). ``render_module`` is the
-    version's ``tessellatum.core.render``, or None.
+    number (the harness draws every page in that style). A version that
+    doesn't set one is held to what every page had until then
+    (``bench_metrics.PAINTABLE_WIDTH_MM``, ``LABEL_MIN_PT``,
+    ``PALETTE_MIN_DE00``). ``render_module`` is the version's
+    ``tessellatum.core.render``, or None.
     """
     import bench_metrics as bm  # imported late in this module, after the measured version's package
 

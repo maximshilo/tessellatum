@@ -172,6 +172,22 @@ def test_every_region_carries_a_number_clear_of_the_lines(sample_image_bgr):
             assert scale.px_to_pt(label.font_size) >= print_size.MIN_LABEL_SIZE_PT
 
 
+@pytest.mark.parametrize("level", list(difficulty.PRESETS))
+def test_every_level_the_app_offers_numbers_every_region_and_keeps_its_color_margin(sample_image_bgr, level):
+    # The other tests run at the presets before 0.1.52 (``difficulty_levels``); this one at the levels the app offers,
+    # whose numbers may find no room off the lines (see benchmarks/QUALITY_BENCHMARKS.md, "At the levels").
+    params = difficulty.params_for_preset(level)
+
+    result = generate(sample_image_bgr, params, long_edge=400, collect_analysis=True)
+
+    analysis = result.analysis
+    regions = set(np.unique(analysis.region_id_map[analysis.region_id_map >= 0]).tolist())
+    assert {label.region_id for label in analysis.labels} == regions
+    assert 0 < result.num_colors_used <= params.num_colors
+    legend = analysis.palette_bgr[: analysis.legend_size]
+    assert pairwise_de00(legend).min() >= params.palette_margin_de00
+
+
 def test_page_is_the_line_layer_inked_in_gray_plus_the_numbers(sample_image_bgr):
     style = render.PageStyle()
     result = generate(

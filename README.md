@@ -62,19 +62,18 @@ all back):
 - **Regions and colors**: how many colors to look for and how different
   every two must be (the *color margin*, 4 ΔE00 at every level; lower keeps
   more, subtler colors), the smallest region (2 to 500 mm²), the *brush
-  width* -- the narrowest any part of a region may be, 1 mm at Beginner to
-  0.5 mm at Realistic, 0.5 to 6 mm -- which corners keep their points (the *sharpest corner*: 180°,
-  the default, rounds every corner to the brush; 20° keeps a triangle's
-  points) and how plainly the picture must show one (the *corner contrast*,
-  20 ΔE00), the smoothing before the colors are found, and how far and how
-  firmly the vote that settles ragged edges reaches (*edge settling*, *edge
-  hold*).
+  width* -- the narrowest any part of a region may be, 0.5 to 6 mm: 1 mm at
+  Beginner down to 0.5 mm at Realistic -- which corners keep their points
+  (the *sharpest corner*: 180°, as at every level, rounds every corner to
+  the brush; 20° keeps a triangle's points) and how plainly the picture must
+  show one (the *corner contrast*), the smoothing before the colors are
+  found, and how far and how firmly the vote that settles ragged edges
+  reaches (*edge settling*, *edge hold*).
 - **Lines and numbers**: how wide the lines print, 0.1 to 1 mm (0.2 mm by
   default), and their tone, Light, Medium or Dark; how far along a line its
   pixel staircase is smoothed; the smallest number (3 pt by default; a
-  preview draws none under 10 px); how
-  far outside a small region its number may go, on a leader; and how far
-  numbers keep from text. The numbers are always a step lighter than the
+  preview draws none under 10 px); how far outside a small region its
+  number may go, on a leader; and how far numbers keep from text. The numbers are always a step lighter than the
   lines, so they read as the page's own apparatus rather than as writing in
   the picture. Light is for pale paints, under which darker lines would show.
 - **Faces and subject**, **Line art**, **Text**: how much smaller regions may
@@ -209,9 +208,9 @@ smoothing is applied before quantizing, and how the ragged edges are settled
 | Realistic | 32 | 2 mm² | 0.5 mm | 0.7 |
 
 Every level keeps colors 4 ΔE00 apart, settles ragged edges three times as far
-as the brush alone would, holding them within 1 ΔE00 of the picture's, lets a
-region in a face or the subject be a quarter of the smallest, and rounds
-corners to the brush. Region sizes are areas on paper, 2–500 mm² in Custom,
+as the brush alone would, with the edge hold at 1 ΔE00, which keeps them
+closest to the picture's, lets a region in a face or the subject be a quarter
+of the smallest, and rounds corners to the brush. Region sizes are areas on paper, 2–500 mm² in Custom,
 never below the brush's own footprint. So a preview and an export of one
 image get regions of the same size, and a long, narrow picture, which prints
 smaller, gets fewer regions rather than smaller ones.
@@ -224,8 +223,9 @@ price the quality benchmarks show (see `benchmarks/QUALITY_BENCHMARKS.md`):
 lines that follow bends finer than half a millimeter, and on a preview, which
 draws no number under 10 px, many numbers that find no room off the lines.
 The benchmark's Max -- 40 colors, 30 mm², no smoothing, a 3 mm brush and
-10 ΔE00 -- is the page that meets every target. **Abort** stops a page
-between two numbers. Every setting the
+10 ΔE00 -- is the setting the targets are held at: there every page meets
+them but Times Square's preview, whose lettering reads less well than the
+target asks. **Abort** stops a page between two numbers. Every setting the
 app offers, with its range and unit, is listed in
 `src/tessellatum/core/settings.py`; the print model's own thresholds are in
 `src/tessellatum/core/print_size.py`.

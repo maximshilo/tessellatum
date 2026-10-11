@@ -875,8 +875,8 @@ page of 1100 px, and **export**, a page at the image's own size (see
 | close color pairs | palette | 3.2 | 3.1 | – |
 | flat colors ΔE00 | palette | 1.2 | 0.81 | ≤ flat colors ΔE00 best + 2.5 on exact colors |
 
-Colors, regions, bands, background regions, face regions, subject detail, ink, text CER source and flat colors ΔE00 best
-only inform. The per-case tables add the
+Colors, color margin, regions, bands, background regions, face regions, subject detail, ink, text CER source and flat
+colors ΔE00 best only inform. The per-case tables add the
 number of targets each case misses.
 
 The printed-ink metrics' tolerances come from 48 pairs at each size, the four line-art

@@ -34,7 +34,7 @@ def test_the_presets_are_the_ones_the_user_chose():
         "Realistic": (32, 2.0, 0.5, 0.7),
     }
     assert difficulty.DEFAULT_PRESET == "Medium"
-    # Every level keeps colors 4 ΔE00 apart, settles edges three times as far, held to the picture's within 1 ΔE00,
+    # Every level keeps colors 4 ΔE00 apart, settles edges three times as far with the edge hold at 1 ΔE00,
     # allows regions a quarter the size in faces and the subject, and rounds corners to the brush.
     for p in difficulty.PRESETS.values():
         assert (

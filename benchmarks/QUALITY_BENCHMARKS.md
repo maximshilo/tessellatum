@@ -29,21 +29,22 @@ first measured baseline is in [`REPORT.md`](REPORT.md).
   | smallest number | 3 pt | 3 pt |
   | line | 0.2 mm | 0.2 mm |
 
-  Until 0.1.51 every page had the 3 mm brush, 10 ΔE00, 6 pt numbers and 0.3 mm lines.
+  Until 0.1.51 every preset had the 3 mm brush and 10 ΔE00, and the default style 6 pt numbers and 0.3 mm lines.
 
 - **The painting** is the page with every region filled in its legend color. What the page prints (ink, detail
   marks, lettering) is kept as printed. Fidelity compares it with the image at the page's size.
-- **Targets** are what every page must reach, at every difficulty and at both sizes. A metric without a target is
-  still judged against a reference result set. They hold at Max, the setting every version is compared at. The app's
-  five levels (from 0.1.52, chosen by the user from their own pages) ask for more detail than they allow -- a brush of
-  1 mm down to 0.5 mm, colors 4 ΔE00 apart, numbers down to 3 pt -- and miss some by design (see "At the levels"
-  below); so may any setting the user moves past them. A category's mean (or the mean over all cases) that gets worse by
-  more than 3 standard errors of the case-to-case noise is a **regression**. A few metrics only inform.
+- **Targets** are what a page should reach, at both sizes. A metric without a target is still judged against a
+  reference result set. The targets hold at Max, the setting every version is compared at. The app's five levels
+  (from 0.1.52, chosen by the user from their own pages) ask for more detail than they allow -- a brush of 1 mm down to
+  0.5 mm, colors 4 ΔE00 apart, numbers down to 3 pt -- and miss some by design (see "At the levels" below); so may any
+  setting the user moves past them. A category's mean (or the mean over all cases) that gets worse by more than
+  3 standard errors of the case-to-case noise is a **regression**. A few metrics only inform.
 - **The benchmark set** is 12 images: six photographs, a painting, two digital bold-line cartoons, two scanned
   drawings and a flat drawing. Each is scored at the app's five levels, Beginner, Easy, Medium, Hard and Realistic,
   and at Max (40 colors, 30 mm² regions, no smoothing, the 3 mm brush and 10 ΔE00: the setting every version is
-  compared at, whatever its levels), at preview size (1100 px) and at export size (the image's own size). Each image's manifest entry marks what the metrics need: its faces and their features,
-  its text, its flat and ink colors, its gradients and its subject (`tests/sample_images/manifest.json`).
+  compared at, whatever its levels), at preview size (1100 px) and at export size (the image's own size). Each
+  image's manifest entry marks what the metrics need: its faces and their features, its text, its flat and ink
+  colors, its gradients and its subject (`tests/sample_images/manifest.json`).
 
 ## 1. Resembles
 
@@ -225,15 +226,15 @@ the source's.
 
 ## At the levels
 
-The five levels (0.1.52) give pages 4 to 20 times as many regions as the presets before them (median preview: 308 at
-Beginner, 614 at Medium, 1,413 at Realistic, against 21 to 73), painted much closer to the picture (median ΔE00 5.4
-at Beginner to 4.1 at Realistic, against 7.3 to 8.9). They miss these targets, measured over the 12 images at preview
+The five levels (0.1.52) give pages many times as many regions as the presets before them (median preview: 308 at
+Beginner, 614 at Medium and 1,413 at Realistic, against 21, 36 and 73 at the old Easy, Medium and Hard), painted much
+closer to the picture (median ΔE00 5.4 at Beginner to 4.1 at Realistic, against 7.3 to 8.9). They miss these targets, measured over the 12 images at preview
 and export size (`T5-candidate`, median / worst page):
 
 | target | where it is missed |
 |---|---|
-| jaggedness ≤ 1.02 | the nine photographs, paintings and detailed drawings at every level: 1.03 / 1.06 at Beginner to 1.06 / 1.14 at Realistic. Holding edges to the picture within 10 ΔE00 rather than 1 lowers it a little (the lion at Medium 1.083 to 1.053); the rest is the fineness, outlines bending at less than the 0.5 mm the metric smooths |
-| labels on lines 0 | numbers that find no room off the lines: on previews, which draw no number under 10 px, on those nine images at every level (2 / 134 at Beginner, 476 / 6,564 at Realistic); on exports, line art from Beginner and every photograph from Hard (85 / 2,155 at Realistic) |
+| jaggedness ≤ 1.02 | the nine photographs, paintings and detailed drawings at every level: 1.03 / 1.06 at Beginner to 1.06 / 1.14 at Realistic. An edge hold of 10 ΔE00 rather than 1, which settles the edges more, lowers it a little (the lion at Medium 1.083 to 1.053); the rest is the fineness, outlines bending at less than the 0.5 mm the metric smooths |
+| labels on lines 0 | numbers that find no room off the lines: on previews, which draw no number under 10 px, on those nine images at every level (2 / 134 at Beginner, 476 / 6,564 at Realistic); on exports, the complex cartoon and the comic from Beginner, the Palermo castle from Easy and every photograph and the painting from Hard (85 / 2,155 at Realistic) |
 | overlapping labels 0 | from Medium on, the same numbers (preview worst 75 at Medium, 5,060 at Realistic) |
 | slivers ≤ 1% | the lion from Easy on, by its own brush: up to 1.6% |
 | tubes 0 | the three cartoons and the comic: up to 9 regions on a page, 37 on one preview at Realistic |

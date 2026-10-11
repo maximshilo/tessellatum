@@ -81,10 +81,8 @@ class DifficultyParams:
     corner_contrast_de00: float = CORNER_CONTRAST_DE00
 
 
-
-
 def _level(num_colors: int, min_region_area_mm2: float, min_width_mm: float, blur_sigma: float) -> DifficultyParams:
-    """A preset: the user's levels share every setting but these four (chosen by the user from their own pages)."""
+    """A preset. The levels, which the user chose from their own pages, differ only in these four settings."""
     return DifficultyParams(
         num_colors=num_colors,
         min_region_area_mm2=min_region_area_mm2,

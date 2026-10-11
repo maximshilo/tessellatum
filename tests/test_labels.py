@@ -52,7 +52,7 @@ def _preferred(region) -> int:
 
 
 @pytest.mark.parametrize("size", [(825, 1100), (1100, 825), (1100, 1100), (1800, 2400), (2048, 1366), (600, 450), (64, 48), (4000, 3000)])
-def test_the_smallest_number_prints_at_least_six_points_and_is_never_under_ten_pixels(size):
+def test_the_smallest_number_prints_at_least_its_points_and_is_never_under_ten_pixels(size):
     scale = print_scale(size)
 
     smallest = min_font_size(size)
@@ -63,9 +63,9 @@ def test_the_smallest_number_prints_at_least_six_points_and_is_never_under_ten_p
 
 
 def test_the_preview_keeps_its_ten_pixel_floor_and_an_export_gets_three_points():
-    assert min_font_size((825, 1100)) == 10  # 3 pt is 4.2 px here
-    assert min_font_size((1800, 2400)) == 11  # 3 pt is 10.02 px here: the whole pixel above it
-    assert min_font_size((825, 1100), 6.0) == 10  # 6 pt is 8.4 px here
+    assert min_font_size((825, 1100)) == 10  # 3 pt is 4.6 px here
+    assert min_font_size((1800, 2400)) == 11  # 3 pt is 10.03 px here: the whole pixel above it
+    assert min_font_size((825, 1100), 6.0) == 10  # 6 pt is 9.2 px here
     assert min_font_size((1800, 2400), 6.0) == 21  # 6 pt is 20.05 px here
 
 
