@@ -80,6 +80,7 @@ class MainWindow(QMainWindow):
         self._pending_export_path: Path | None = None
         self._pending_export_format: str | None = None
         self._pending_export_version: Version | None = None
+        self._pending_export_drawn = False  # whether the export waits for the preview's page drawn at print size
         self._ready_message = ""  # the status of the preview shown
         # Whether _worker is making a page whose end the window hasn't handled yet. (Its last signal can come while Qt
         # still reports it running.)
@@ -142,8 +143,7 @@ class MainWindow(QMainWindow):
 
     def abort_generation(self) -> None:
         # An export of the preview's page waits for it to be drawn at print size.
-        exporting_drawn = self._pending_export_path is not None and self._print_worker is not None
-        worker = self._print_worker if exporting_drawn else self._worker
+        worker = self._print_worker if self._pending_export_drawn else self._worker
         if worker is not None and worker.isRunning():
             worker.requestInterruption()
             self.statusBar().showMessage("Cancelling…")
@@ -213,6 +213,7 @@ class MainWindow(QMainWindow):
             if self._print_page is not None:
                 self._on_export_ready(self._print_page)
             else:
+                self._pending_export_drawn = True
                 self._draw_print_page()  # saved once drawn (see _on_print_page_ready)
             return
         self._making = True
@@ -251,6 +252,7 @@ class MainWindow(QMainWindow):
         self._pending_export_path = None
         self._pending_export_format = None
         self._pending_export_version = None
+        self._pending_export_drawn = False
 
     def _preview_to_draw(self, long_edge: int) -> GeneratedPage | None:
         """The page previewed, if an export at ``long_edge`` is drawn from it: it is smaller, and made with the panel's
@@ -310,7 +312,7 @@ class MainWindow(QMainWindow):
         worker.succeeded.connect(self._on_print_page_ready)
         worker.failed.connect(self._on_print_page_failed)
         worker.cancelled.connect(self._on_print_page_cancelled)
-        worker.progress.connect(self.controls.set_progress)  # shown while an export waits for it
+        worker.progress.connect(self._on_print_page_progress)
         self._print_worker = worker
         if self._pending_export_path is None:
             self.statusBar().showMessage("Drawing the page as it prints, for the zoom…")
@@ -326,31 +328,37 @@ class MainWindow(QMainWindow):
             worker.requestInterruption()
             self._retired.append(worker)
 
+    # Each of these is the export's, if it waits for the page; else the zoom's alone, telling nothing over an export
+    # with other settings that may be under way.
+    def _on_print_page_progress(self, percent: int) -> None:
+        if self.sender() is self._print_worker and self._pending_export_drawn:
+            self.controls.set_progress(percent)
+
     def _on_print_page_ready(self, drawn: GeneratedPage) -> None:
         page = self.current_page
         if self.sender() is not self._print_worker or page is None or drawn.model is not page.model:
             return  # drawn from a preview since replaced
         self._print_page = drawn
         self.preview.show_detail({version: drawn.image(version) for version in Version})
-        if self._pending_export_path is not None:
+        if self._pending_export_drawn:
             self._on_export_ready(drawn)
-        else:
+        elif self._pending_export_path is None:
             self.statusBar().showMessage(self._ready_message)
 
     def _on_print_page_failed(self, message: str) -> None:
         if self.sender() is not self._print_worker:
             return
-        if self._pending_export_path is not None:
+        if self._pending_export_drawn:
             self._on_worker_failed(message)
-        else:
+        elif self._pending_export_path is None:
             self.statusBar().showMessage(f"The page could not be drawn as it prints: {message}")
 
     def _on_print_page_cancelled(self) -> None:
         if self.sender() is not self._print_worker:
             return
-        if self._pending_export_path is not None:
+        if self._pending_export_drawn:
             self._on_worker_cancelled()
-        else:
+        elif self._pending_export_path is None:
             self.statusBar().showMessage(self._ready_message)
 
     def closeEvent(self, event) -> None:

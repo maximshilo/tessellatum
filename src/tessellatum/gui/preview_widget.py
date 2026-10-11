@@ -69,9 +69,9 @@ class PreviewWidget(QGraphicsView):
         self._version = Version.PAGE
         self._print_scale = 1.0
         self._fitted = True
-        # The last zoom's anchor, the point of the scene held there, and where it left the scroll bars: the next zoom
-        # about the same anchor holds the same point, so that steps of a zoom don't add up their rounding.
-        self._held: tuple[QPointF, QPointF, tuple[int, int]] | None = None
+        # The last zoom's anchor, the point of the scene held there, and the view it left: the next zoom about the same
+        # anchor of the same view holds the same point, so that steps of a zoom don't add up their rounding.
+        self._held: tuple[QPointF, QPointF, QTransform] | None = None
         self._shown: dict[str, tuple] = {}  # what each item shows: its image and the size it is drawn at
         self._sharpen_timer = QTimer(self)
         self._sharpen_timer.setSingleShot(True)
@@ -171,7 +171,7 @@ class PreviewWidget(QGraphicsView):
         zoom = min(max(zoom, low), high)
         if anchor is None:
             anchor = QRectF(self.viewport().rect()).center()
-        if self._held is not None and self._held[0] == anchor and self._held[2] == self._scrolled():
+        if self._held is not None and self._held[0] == anchor and self._held[2] == self.viewportTransform():
             point = self._held[1]
         else:
             inverse, _invertible = self.viewportTransform().inverted()
@@ -181,7 +181,15 @@ class PreviewWidget(QGraphicsView):
         moved = self.viewportTransform().map(point) - anchor
         for bar, by in ((self.horizontalScrollBar(), moved.x()), (self.verticalScrollBar(), moved.y())):
             bar.setValue(bar.value() + round(by))
-        self._held = (QPointF(anchor), point, self._scrolled())
+        # Where the page doesn't reach past the anchor (fitted, say), it is placed in the middle rather than scrolled:
+        # what is held there is the point it puts there.
+        missed = self.viewportTransform().map(point) - anchor
+        inverse, _invertible = self.viewportTransform().inverted()
+        there = inverse.map(anchor)
+        point = QPointF(
+            point.x() if abs(missed.x()) <= 0.5 else there.x(), point.y() if abs(missed.y()) <= 0.5 else there.y()
+        )
+        self._held = (QPointF(anchor), point, self.viewportTransform())
         self._fitted = False
         self._zoomed()
 
@@ -240,9 +248,6 @@ class PreviewWidget(QGraphicsView):
         super().resizeEvent(event)
         if self._fitted:
             self.fit_to_window()
-
-    def _scrolled(self) -> tuple[int, int]:
-        return self.horizontalScrollBar().value(), self.verticalScrollBar().value()
 
     def _fit_zoom(self) -> float:
         rect = self.sceneRect()

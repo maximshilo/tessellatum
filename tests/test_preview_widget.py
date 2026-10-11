@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PIL import Image  # noqa: E402
-from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt  # noqa: E402
 from PySide6.QtGui import QImage, QNativeGestureEvent, QPointingDevice, QWheelEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -116,6 +116,25 @@ def test_the_wheel_and_a_pinch_zoom_about_the_cursor(preview):
     QApplication.sendEvent(preview.viewport(), pinch)
     assert preview.zoom() == pytest.approx(1.5 * ZOOM_STEP**2 * 0.8)
     moved = _view_at(preview, under) - anchor
+    assert abs(moved.x()) <= 0.5 and abs(moved.y()) <= 0.5
+
+
+def test_after_fit_a_zoom_about_the_middle_holds_the_point_shown_there(preview):
+    # Scroll bars that stay put leave the viewport's middle where it was, across the fit.
+    preview.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+    preview.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+    _app.processEvents()
+    preview.zoom_to(2.0)
+    preview.horizontalScrollBar().setValue(0)
+    preview.verticalScrollBar().setValue(0)
+    preview.zoom_in()  # about the middle, a corner of the page there
+    preview.fit_to_window()  # the page in the middle, not that corner
+    middle = QRectF(preview.viewport().rect()).center()
+    under = _scene_at(preview, middle)
+
+    preview.zoom_in()
+
+    moved = _view_at(preview, under) - middle
     assert abs(moved.x()) <= 0.5 and abs(moved.y()) <= 0.5
 
 

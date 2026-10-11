@@ -3,6 +3,7 @@
 import dataclasses
 import os
 import re
+import threading
 import time
 
 import numpy as np
@@ -530,6 +531,89 @@ def test_a_zoom_while_a_preview_is_made_draws_the_new_page_not_the_last(drive, d
 
     second = window.current_page
     assert second is not first and drawn == [second] and window._print_page.model is second.model
+
+
+def _until(condition) -> None:
+    deadline = time.monotonic() + TIMEOUT_S
+    while not condition():
+        assert time.monotonic() < deadline
+        _app.processEvents()
+        time.sleep(0.005)
+
+
+def _held_back(real, release: threading.Event, started=None, done=None, progress=None):
+    """``real``, once ``release`` is set, or cancelled before: as it waits it reports ``progress`` and sets
+    ``started``; what it gives is put in ``done``."""
+
+    def held_back(*args, should_cancel, progress_callback=None, **kwargs):
+        if progress is not None:
+            progress_callback(progress)
+        if started is not None:
+            started.set()
+        while not release.wait(0.005):
+            if should_cancel():
+                raise PipelineCancelled()
+        page = real(*args, should_cancel=should_cancel, progress_callback=progress_callback, **kwargs)
+        if done is not None:
+            done.append(page)
+        return page
+
+    return held_back
+
+
+def test_a_page_drawn_for_the_zoom_while_an_export_with_other_settings_is_made_is_not_what_it_saves(
+    drive, monkeypatch, tmp_path
+):
+    window = drive.window
+    window.current_image_bgr = _blocks((4000, 2000))
+    window.generate_preview()
+    drive.wait()
+    window.preview.zoom_to(1.5)  # the page as it prints, drawn for the zoom
+    release, made = threading.Event(), []
+    monkeypatch.setattr(pipeline, "generate", _held_back(pipeline.generate, release, done=made))
+    window.controls.tone_combo.setCurrentText("Dark")  # lines of another tone
+    drive.save_path = str(tmp_path / "page")
+    window.export_page()  # another page, made while the zoom's is drawn
+    _until(lambda: window._print_page is not None)
+
+    assert drive.dialogs == [] and window._pending_export_path is not None  # the export waits for its own page
+    assert drive.status() == "Rendering the PNG at print resolution…"
+    release.set()
+    drive.wait()
+
+    assert drive.dialogs[-1][1] == "Export complete"
+    with Image.open(tmp_path / "page.png") as png:
+        exported = np.asarray(png.convert("RGB"))
+    assert (exported[: 1636] == _array(made[0].image(Version.PAGE))).all()
+    assert not (exported[: 1636] == _array(window._print_page.image(Version.PAGE))).all()
+
+
+def test_abort_cancels_an_export_with_other_settings_not_the_zoom_s_drawing(drive, monkeypatch, tmp_path):
+    window = drive.window
+    window.current_image_bgr = _blocks((4000, 2000))
+    window.generate_preview()
+    drive.wait()
+    drawing, drawn_release = threading.Event(), threading.Event()
+    held_back = _held_back(pipeline.draw_page, drawn_release, started=drawing, progress=77)
+    monkeypatch.setattr(pipeline, "draw_page", held_back)
+    window.preview.zoom_to(1.5)
+    monkeypatch.setattr(pipeline, "generate", _held_back(pipeline.generate, threading.Event()))
+    window.controls.preset_combo.setCurrentText("Hard")
+    drive.save_path = str(tmp_path / "page")
+    window.export_page()
+    assert drawing.wait(TIMEOUT_S)
+    _app.processEvents()
+    assert window.controls.progress_bar.value() != 77  # the zoom's drawing isn't the export's progress
+
+    window.abort_generation()
+    _until(lambda: drive.status() == "Cancelled.")
+    assert window._print_worker.isRunning()  # the zoom still wants its page
+    assert window._worker.wait(TIMEOUT_S * 1000)
+    drawn_release.set()
+    drive.wait()
+
+    assert drive.dialogs == [] and not (tmp_path / "page.png").exists()
+    assert window._print_page is not None and window.controls.generate_button.isEnabled()
 
 
 def test_a_zoom_while_an_export_is_made_with_other_settings_draws_the_preview_s_page_after_it(drive, drawn, tmp_path):
