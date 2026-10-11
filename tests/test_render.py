@@ -92,19 +92,23 @@ def test_a_line_is_centred_on_the_crack_it_is_drawn_on():
 def test_a_preview_and_an_export_of_one_image_print_the_same_line():
     # The width is a size on paper, so it follows the page's shape, not its
     # pixel count (see print_size).
-    style = PageStyle()
+    style = PageStyle(line_width_mm=0.3)
     preview, export = (825, 1100), (1800, 2400)
 
     widths_mm = [print_scale(size).px_to_mm(_ink_across(size, style).sum()) for size in (preview, export)]
 
-    assert widths_mm[0] == pytest.approx(OUTLINE_WIDTH_MM, abs=0.005)
-    assert widths_mm[1] == pytest.approx(OUTLINE_WIDTH_MM, abs=0.005)
+    assert widths_mm[0] == pytest.approx(0.3, abs=0.005)
+    assert widths_mm[1] == pytest.approx(0.3, abs=0.005)
     assert style.line_width_px(export) > 2 * style.line_width_px(preview) * 0.9  # wider in pixels, as the page is
+    # The default 0.2 mm is under the floor on a preview (0.79 px), so a preview's lines print a little wider.
+    default = PageStyle()
+    assert default.line_width_px(preview) == default.min_line_width_px
+    assert print_scale(export).px_to_mm(_ink_across(export, default).sum()) == pytest.approx(OUTLINE_WIDTH_MM, abs=0.005)
 
 
 def test_a_line_is_never_drawn_thinner_than_the_floor():
     # The pipeline never upscales, so a small source prints at a low
-    # resolution -- 60 dpi here -- where 0.3 mm is less than a pixel.
+    # resolution -- 60 dpi here -- where the default line is less than a pixel.
     size = (600, 450)
     style = PageStyle()
     assert print_scale(size).mm_to_px(style.line_width_mm) < style.min_line_width_px
@@ -265,7 +269,7 @@ def test_the_app_s_settings_give_the_default_style_at_their_defaults():
     assert low < OUTLINE_WIDTH_MM < high
     steps = (high - low) / render_module.LINE_WIDTH_MM_STEP
     assert steps == pytest.approx(round(steps))  # the range is a whole number of steps
-    assert ((OUTLINE_WIDTH_MM - low) / render_module.LINE_WIDTH_MM_STEP) == pytest.approx(4)  # the default is one
+    assert ((OUTLINE_WIDTH_MM - low) / render_module.LINE_WIDTH_MM_STEP) == pytest.approx(2)  # the default is one
 
 
 def test_line_art_s_ink_prints_solid_in_its_own_tone_and_carries_no_line_and_no_number():

@@ -24,6 +24,7 @@ from tessellatum.gui.main_window import MainWindow  # noqa: E402
 from tessellatum.gui.worker import PipelineWorker  # noqa: E402
 
 import pdf_reading  # noqa: E402
+from difficulty_levels import COARSE  # noqa: E402
 
 # One application for the whole module, as in test_controls_panel.
 _app = QApplication.instance() or QApplication([])
@@ -297,7 +298,7 @@ def test_cancelling_while_the_versions_are_drawn_cancels_the_preview(monkeypatch
         return Page()
 
     monkeypatch.setattr(pipeline, "generate", finishing_as_cancelled)
-    worker = PipelineWorker(_blocks((60, 40)), difficulty.params_for_preset("Easy"), 60, versions=tuple(Version))
+    worker = PipelineWorker(_blocks((60, 40)), COARSE, 60, versions=tuple(Version))
     outcomes = []
     worker.succeeded.connect(lambda page: outcomes.append("succeeded"))
     worker.cancelled.connect(lambda: outcomes.append("cancelled"))

@@ -201,7 +201,7 @@ def test_scorecard_scores_each_job_per_category_and_over_all_cases(tmp_path):
     assert "| all | 3 | **4.00 → 5.00** | 10.0 | 0.800 | 7.50 | 0.600 | 0.7 → 1.0 | – | – | 0.98 | 1/3 → 0/3 |" in resembles
     paintable = _section(scorecard, "#### paintable", "#### clean drawing")
     assert (
-        "| category | cases | labeled area ↑ | unlabeled ↓ (0) | slivers ↓ (≤ 1%) | gradient slivers ↓ (≤ 1%) | labels < 6 pt ↓ (0) "
+        "| category | cases | labeled area ↑ | unlabeled ↓ (0) | slivers ↓ (≤ 1%) | gradient slivers ↓ (≤ 1%) | labels too small ↓ (0) "
         "| labels on lines ↓ (0) | overlapping labels ↓ (0) | compactness p10 ↑ | compactness median ↑ | undersized ↓ "
         "| targets met |"
     ) in paintable
@@ -216,7 +216,7 @@ def test_scorecard_scores_each_job_per_category_and_over_all_cases(tmp_path):
     ) in drawing
     palette = _section(scorecard, "#### palette")
     assert (
-        "| category | cases | palette min ΔE00 ↑ (≥ 10) | color pairs < 10 ΔE00 ↓ "
+        "| category | cases | palette min ΔE00 ↑ (≥ color margin) | close color pairs ↓ "
         "| flat colors ΔE00 ↓ (≤ flat colors ΔE00 best + 2.5 on exact colors) | targets met |"
     ) in palette
 
@@ -244,7 +244,7 @@ def test_verdict_lists_regressions_target_misses_and_cases_to_look_at_separately
     # Losing the lion's feature is a new target miss, but not a regression: 1 feature is within 3 × 0.35.
     assert "slivers (≤ 1%) 3/3 → 2/3" in verdict
     assert "features lost (0) 2/3 → 3/3" in verdict
-    assert "labels < 6 pt (0) 0/3;" in verdict
+    assert "labels too small (0) 0/3;" in verdict
     assert "text CER page (≤ text CER source + 0.1) 3/3" in verdict
     assert "  - **New target misses in 1 case(s):** lion / Easy / 1100 (features lost)." in verdict
     assert "  - Targets newly met: 1 (case, target) pair(s)." in verdict
@@ -367,7 +367,11 @@ def test_a_case_misses_a_target_on_its_worse_side_where_it_has_a_value():
     assert miss("gradient_sliver_fraction", gradient_sliver_fraction=None) is None
     assert miss("band_regions", band_regions=12) is None  # bands only inform
     assert miss("palette_min_de00", palette_min_de00=10.0) is False
-    assert miss("palette_min_de00", palette_min_de00=9.99) is True
+    assert miss("palette_min_de00", palette_min_de00=9.99) is True  # 10 ΔE00 in a case that doesn't say (until 0.1.51)
+    # From 0.1.52 a case is held to its own color margin.
+    assert miss("palette_min_de00", palette_min_de00=4.0, palette_margin_de00=4.0) is False
+    assert miss("palette_min_de00", palette_min_de00=3.99, palette_margin_de00=4.0) is True
+    assert miss("palette_min_de00", palette_min_de00=9.99, palette_margin_de00=0.0) is False
     assert miss("jaggedness", jaggedness=1.02) is False
     assert miss("jaggedness", jaggedness=1.021) is True
     assert miss("unlabeled_regions", unlabeled_regions=0) is False
@@ -493,10 +497,10 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
 
     header = (
         "| case | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | regions | background regions | labeled area ↑ | unlabeled ↓ | slivers ↓ "
-        "| gradient slivers ↓ | bands | labels < 6 pt ↓ "
+        "| gradient slivers ↓ | bands | labels too small ↓ "
         "| labels on lines ↓ | overlapping labels ↓ | leaders | compactness p10 ↑ | compactness median ↑ | lines per boundary | lines per boundary (clear) "
         "| unenclosed ↓ | same-color boundary ↓ | jaggedness ↓ "
-        "| edge F1 ↑ | colors | palette min ΔE00 ↑ | color pairs < 10 ΔE00 ↓ | ink line F1 ↑ "
+        "| edge F1 ↑ | colors | color margin | palette min ΔE00 ↑ | close color pairs ↓ | ink line F1 ↑ "
         "| ink printed recall ↑ | ink printed precision ↑ | tubes ↓ | ink in shapes < 5 mm ↓ "
         "| flat colors ΔE00 ↓ | flat colors ΔE00 best | ink found | ink found recall ↑ | ink found precision ↑ "
         "| stray ink ↓ | faces found | face found recall ↑ | stray faces ↓ "
@@ -509,12 +513,12 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
     assert (
         "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | – | 50.0% | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
         "| – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
-        "| – | – | – | 0 | 10.0% | – |"
+        "| – | – | – | – | 0 | 10.0% | – |"
     ) in old_alone
     assert "| all | 1 | 1 | no targets | no targets | no targets | no targets |" in old_alone
     assert (
         "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 90 | 50.0% | 3 | 10.0% | – | 4 | 0.0% | 0 | 0 | 0 | 0.10 | 0.40 | 2.00 | 1.90 "
-        "| 0.0% | 1.0% | 1.100 | 0.50 | 8 | 4.5 | 2 | 0.25 | – | – | 2 | 60.0% | 3.50 | – | 0.0% | – | – | 0.0% | 1 | 1.00 "
+        "| 0.0% | 1.0% | 1.100 | 0.50 | 8 | – | 4.5 | 2 | 0.25 | – | – | 2 | 60.0% | 3.50 | – | 0.0% | – | – | 0.0% | 1 | 1.00 "
         "| 0 | 7.50 | 0.600 | 1 | 2 | 12 | – | – | – | 5 | 0.920 | 0 | 0.10 | 0.95 | 0.98 | 1 | 0 | 10.0% | – → 10/19 | ok |"
     ) in old_vs_new
     assert "| all | 1 | 1 | 0/1 met | 0/1 met | 0/1 met | 0/1 met |" in old_vs_new

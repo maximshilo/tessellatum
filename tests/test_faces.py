@@ -9,8 +9,9 @@ import pytest
 from PIL import Image
 
 from tessellatum.core import faces, pipeline, subject
-from tessellatum.core.difficulty import params_for_preset
 from tessellatum.core.print_size import print_scale
+
+from difficulty_levels import COARSE, MIDDLE
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
 
@@ -474,7 +475,7 @@ def test_the_pipeline_reports_the_faces_on_the_page_and_finds_them_once_per_pict
     find = faces.find_faces
     monkeypatch.setattr(faces, "find_faces", lambda picture: calls.append(picture.shape) or find(picture))
     image = pipeline.load_image_bgr(SAMPLES / "m-cartoon-bold-lines-girl.png")
-    params = params_for_preset("Easy")
+    params = COARSE
     preview = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     export = pipeline.generate(image, params, pipeline.export_long_edge(image), collect_analysis=True)
     assert calls == [(1100, 685, 3)]  # once, on the picture at preview size
@@ -489,7 +490,7 @@ def test_the_pipeline_reports_the_faces_on_the_page_and_finds_them_once_per_pict
 def test_line_art_looks_for_faces_only_when_analysis_is_collected_and_its_page_never_uses_them(monkeypatch):
     pipeline.clear_cache()
     image = pipeline.load_image_bgr(SAMPLES / "m-cartoon-bold-lines-girl.png")
-    params = params_for_preset("Easy")
+    params = COARSE
     with_faces = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     assert len(with_faces.analysis.faces) == 1
     assert not with_faces.analysis.detail.any()
@@ -517,7 +518,7 @@ def test_a_picture_drawn_from_its_colors_looks_for_faces_on_the_page_s_path_and_
     find = faces.find_faces
     monkeypatch.setattr(faces, "find_faces", lambda picture: calls.append(picture.shape) or find(picture))
     image = pipeline.load_image_bgr(SAMPLES / "l-photo-cats-face.jpg")
-    params = params_for_preset("Medium")
+    params = MIDDLE
     page = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE)
     assert len(calls) == 1  # without analysis, on the page's path
     analysis = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True).analysis
@@ -544,7 +545,7 @@ def test_a_picture_drawn_from_its_colors_looks_for_faces_on_the_page_s_path_and_
 def test_a_picture_without_faces_is_drawn_as_before(monkeypatch):
     pipeline.clear_cache()
     image = pipeline.load_image_bgr(SAMPLES / "scene.png")
-    params = params_for_preset("Medium")
+    params = MIDDLE
     # The regions' edges are settled since v0.1.37 (see ``texture``), and its subject has more detail since v0.1.39
     # (see ``subject``), neither of them about faces: they are left out here.
     monkeypatch.setattr(pipeline, "smooth_regions", lambda picture, ids, colors, *rest: (ids, colors))

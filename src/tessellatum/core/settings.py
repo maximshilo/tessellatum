@@ -179,7 +179,7 @@ SETTINGS: tuple[Setting, ...] = (
         "steps themselves always go.",
     ),
     Setting(
-        "min_label_pt", STYLE, LINES, "Smallest number", "pt", 4.0, 12.0, 0.5,
+        "min_label_pt", STYLE, LINES, "Smallest number", "pt", 3.0, 12.0, 0.5,
         "The smallest a region's number prints. Smaller fits more numbers inside small regions; below 6 pt they "
         "get hard to read. A preview draws no number under 10 pixels, 6.5-7 pt, so smaller sizes show on an export.",
     ),

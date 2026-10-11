@@ -8,7 +8,8 @@ import pytest
 
 from tessellatum.core import faces, kernels, marks, pipeline, tones
 from tessellatum.core.color import bgr_to_lab, ciede2000
-from tessellatum.core.difficulty import params_for_preset
+
+from difficulty_levels import FINE, MIDDLE
 
 SAMPLES = Path(__file__).resolve().parent / "sample_images"
 
@@ -398,7 +399,7 @@ def test_a_photographed_face_is_painted_in_fewer_tones_no_further_from_it(monkey
     # Q28: inside the faces found, fewer regions, and the painting no further from the picture there.
     pipeline.clear_cache()
     image = pipeline.load_image_bgr(SAMPLES / "l-photo-lion.jpg")
-    params = params_for_preset("Hard")
+    params = FINE
     seen, settled, marked = [], [], []
     real, real_marks = tones.settle_tones, marks.detail_marks
 
@@ -462,7 +463,7 @@ def test_tones_are_settled_only_in_the_faces_of_a_picture_drawn_from_its_colors(
     for name in ("scene.png", "m-cartoon-bold-lines-girl.png"):  # no faces found; line art, whose face is its own ink
         pipeline.clear_cache()
         image = pipeline.load_image_bgr(SAMPLES / name)
-        pipeline.generate(image, params_for_preset("Medium"), pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
+        pipeline.generate(image, MIDDLE, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     pipeline.clear_cache()
 
 

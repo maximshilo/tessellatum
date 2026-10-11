@@ -11,8 +11,9 @@ import pytest
 
 from tessellatum.core import difficulty, faces, pipeline, text
 from tessellatum.core import ink as ink_module
-from tessellatum.core.difficulty import params_for_preset
 from tessellatum.core.print_size import print_scale
+
+from difficulty_levels import BY_OLD_NAME, COARSE, FINE, MIDDLE
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
 
@@ -592,7 +593,7 @@ def test_text_is_found_once_per_picture_and_the_analysis_changes_nothing(monkeyp
 
     monkeypatch.setattr(text, "find_text", counting)
     picture, _ = _lettering(size=(1400, 933))
-    params = params_for_preset("Easy")
+    params = COARSE
     plain = pipeline.generate(picture, params, pipeline.PREVIEW_LONG_EDGE)
     preview = pipeline.generate(picture, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     export = pipeline.generate(picture, params, pipeline.export_long_edge(picture), collect_analysis=True)
@@ -607,7 +608,7 @@ def test_text_is_found_once_per_picture_and_the_analysis_changes_nothing(monkeyp
 def test_line_art_has_its_text_found_too():
     pipeline.clear_cache()
     comic = pipeline.load_image_bgr(SAMPLES / "m-comics-upside-downs-writing-pig.jpg")
-    page = pipeline.generate(comic, params_for_preset("Easy"), pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
+    page = pipeline.generate(comic, COARSE, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     assert page.analysis.line_art.is_line_art
     assert len(page.analysis.text) > 20
 
@@ -624,7 +625,7 @@ def _without_text(monkeypatch, picture: np.ndarray, params, long_edge: int):
 
 def test_the_page_prints_the_letters_found_and_leaves_the_regions_as_they_are(monkeypatch):
     picture, _ = _lettering(size=(1400, 933))
-    params = params_for_preset("Medium")
+    params = MIDDLE
     pipeline.clear_cache()
     page = pipeline.generate(picture, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     analysis = page.analysis
@@ -669,7 +670,7 @@ def test_light_letters_print_as_ink_and_their_dark_ground_as_bare_paper():
     picture, _ = _lettering(size=(1400, 933))
     picture = 255 - picture  # pale words on a dark page
     pipeline.clear_cache()
-    page = pipeline.generate(picture, params_for_preset("Easy"), pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
+    page = pipeline.generate(picture, COARSE, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     analysis = page.analysis
     assert len(analysis.text) == len(WORDS)
     resized = pipeline.resize_to_long_edge(picture, pipeline.PREVIEW_LONG_EDGE)
@@ -686,7 +687,7 @@ def test_light_letters_print_as_ink_and_their_dark_ground_as_bare_paper():
 
 def test_on_line_art_no_number_clears_lettering_and_the_ink_keeps_the_artwork_s_gray(monkeypatch):
     comic = pipeline.load_image_bgr(SAMPLES / "m-comics-upside-downs-writing-pig.jpg")
-    params = params_for_preset("Hard")
+    params = FINE
     calls = []
     real = pipeline.render_page
 
@@ -734,7 +735,7 @@ def test_after_a_merge_no_number_clears_lettering_either(monkeypatch):
     monkeypatch.setattr(pipeline, "render_page", cramping)
     monkeypatch.setattr(pipeline, "merge_cramped", lambda region_id_map, *args: region_id_map.copy())
     pipeline.clear_cache()
-    pipeline.generate(comic, params_for_preset("Hard"), pipeline.PREVIEW_LONG_EDGE)
+    pipeline.generate(comic, FINE, pipeline.PREVIEW_LONG_EDGE)
     assert len(calls) == 2  # drawn again after the merge
     assert calls[1]["clearable"].any() and calls[1]["lettering"].area.any()
     assert not (calls[1]["clearable"] & calls[1]["lettering"].area).any()
@@ -744,7 +745,7 @@ def test_after_a_merge_no_number_clears_lettering_either(monkeypatch):
 def test_a_picture_without_text_prints_no_lettering():
     pipeline.clear_cache()
     ramp = np.tile(np.linspace(40, 220, 600).astype(np.uint8)[None, :, None], (400, 1, 3))
-    page = pipeline.generate(ramp, params_for_preset("Easy"), pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
+    page = pipeline.generate(ramp, COARSE, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     assert page.analysis.text == []
     assert not page.analysis.lettering_area.any() and (page.analysis.lettering == 255).all()
 
@@ -825,7 +826,7 @@ def test_every_number_keeps_half_a_millimeter_from_the_lines_of_text_found(name,
     # On v0.1.41 a number on the comic sat 0.22 mm from a caption, and two on Times Square inside lines found (D-051).
     pipeline.clear_cache()
     picture = pipeline.load_image_bgr(SAMPLES / name)
-    params = bench_case.preset_params(difficulty, preset)
+    params = difficulty.finest_params() if preset == "Max" else BY_OLD_NAME[preset]
     page = pipeline.generate(picture, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True)
     analysis = page.analysis
     assert analysis.lettering_area.any()

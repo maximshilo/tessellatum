@@ -10,7 +10,8 @@ import numpy as np
 import pytest
 
 from tessellatum.core import faces, pipeline, subject
-from tessellatum.core.difficulty import params_for_preset
+
+from difficulty_levels import COARSE, FINE, MIDDLE
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
 
@@ -142,7 +143,7 @@ def test_a_picture_drawn_from_its_colors_details_its_subject(monkeypatch):
     find = subject.find_subject
     monkeypatch.setattr(subject, "find_subject", lambda picture: calls.append(picture.shape) or find(picture))
     image = pipeline.load_image_bgr(SAMPLES / "l-photo-palermo-castle.jpg")
-    params = params_for_preset("Hard")
+    params = FINE
     page = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE)
     assert calls == [(736, 1100, 3)]  # on the page's path, on the picture at preview size
     analysis = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True).analysis
@@ -181,7 +182,7 @@ def test_a_face_and_the_subject_are_both_detail():
     # Only the face's tones are settled and only its marks printed (see test_tones and test_marks).
     pipeline.clear_cache()
     image = pipeline.load_image_bgr(SAMPLES / "l-photo-cats-face.jpg")
-    params = params_for_preset("Medium")
+    params = MIDDLE
     analysis = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True).analysis
     in_faces = faces.mask(analysis.faces, analysis.region_id_map.shape[::-1])
     assert in_faces.any() and analysis.subject.any()
@@ -192,7 +193,7 @@ def test_a_face_and_the_subject_are_both_detail():
 def test_line_art_never_looks_for_its_subject(monkeypatch):
     pipeline.clear_cache()
     image = pipeline.load_image_bgr(SAMPLES / "m-cartoon-bold-lines-girl.png")
-    params = params_for_preset("Easy")
+    params = COARSE
 
     def refuse(picture):
         raise AssertionError("looked for the subject")

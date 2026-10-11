@@ -68,12 +68,17 @@ _TIP_RIM_PX = 2
 # A tip with another tip's middle within this many brush radii of its own is a ragged edge's, as the pipeline's
 # ``regions._TIP_APART_RADII``.
 _TIP_APART_RADII = 2.0
-# Bands, as a gradient breaks into. A region is one where no brush BAND_MAX_WIDTH_MM wide, twice the paintable width,
-# fits anywhere in it, and it is at least BAND_MIN_ELONGATION times as long as it is wide.
-BAND_MAX_WIDTH_MM = 6.0
-BAND_MIN_ELONGATION = 4.0
-# Palette. Colors should differ from each other by a clear margin: at least PALETTE_MIN_DE00 (CIEDE2000).
+# What a page is held to where the version measured doesn't set it: the brush, the smallest number and the palette's
+# margin every page had until 0.1.48 (0.1.49-0.1.51 by default, and the benchmark's Max still has the brush and the
+# margin). A page from 0.1.49 on is held to its own: its difficulty's brush and color margin, its style's smallest
+# number (see ``bench_case.page_limits``).
+PAINTABLE_WIDTH_MM = 3.0
+LABEL_MIN_PT = 6.0
 PALETTE_MIN_DE00 = 10.0
+# Bands, as a gradient breaks into. A region is one where no brush BAND_WIDTH_BRUSHES times the page's own fits
+# anywhere in it (6 mm at the 3 mm brush), and it is at least BAND_MIN_ELONGATION times as long as it is wide.
+BAND_WIDTH_BRUSHES = 2.0
+BAND_MIN_ELONGATION = 4.0
 # How many legends of one size ``best_flat_color_match`` tries before falling back to a greedy search, and how many
 # it scores at a time. 15 flat colors make at most 6,435 of one size; the fallback is for an artwork twice that rich.
 _MAX_SUBSETS = 300_000
@@ -387,8 +392,8 @@ def unlabeled_regions(region_id_map: np.ndarray, labeled_region_ids) -> dict[str
     }
 
 
-def label_sizes(font_sizes_px, scale) -> dict[str, float | None]:
-    """How large the numbers print: the smallest, in points, and the share below the minimum legible size.
+def label_sizes(font_sizes_px, scale, min_pt: float = LABEL_MIN_PT) -> dict[str, float | None]:
+    """How large the numbers print: the smallest, in points, and the share below ``min_pt``, the page's smallest.
 
     ``font_sizes_px`` are the numbers' em sizes on the page; ``scale`` is its
     ``print_size.PrintScale``. Both results are None on a page without numbers.
@@ -397,7 +402,7 @@ def label_sizes(font_sizes_px, scale) -> dict[str, float | None]:
         return {"small_label_fraction": None, "min_label_pt": None}
     sizes_pt = np.asarray(font_sizes_px, dtype=np.float64) / scale.px_per_pt
     return {
-        "small_label_fraction": float((sizes_pt < print_size.MIN_LABEL_SIZE_PT).mean()),
+        "small_label_fraction": float((sizes_pt < min_pt).mean()),
         "min_label_pt": float(sizes_pt.min()),
     }
 
@@ -1086,7 +1091,7 @@ def tube_regions(
 
 
 def flat_color_match(
-    flat_colors_bgr: np.ndarray, legend_bgr: np.ndarray, num_colors: int | None = None
+    flat_colors_bgr: np.ndarray, legend_bgr: np.ndarray, num_colors: int | None = None, min_de00: float = PALETTE_MIN_DE00
 ) -> dict[str, float | None]:
     """How closely the legend offers the artwork's flat colors, and how closely it could.
 
@@ -1104,7 +1109,7 @@ def flat_color_match(
     """
     flats = np.asarray(flat_colors_bgr, dtype=np.uint8).reshape(-1, 3)
     legend = np.asarray(legend_bgr, dtype=np.uint8).reshape(-1, 3)
-    best = best_flat_color_match(flats, num_colors) if num_colors else None
+    best = best_flat_color_match(flats, num_colors, min_de00) if num_colors else None
     if len(flats) == 0 or len(legend) == 0:
         return {"flat_color_de00_mean": None, "flat_color_de00_max": None, "flat_color_de00_best": best}
     differences = ciede2000(bgr_to_lab_exact(flats)[:, None, :], bgr_to_lab_exact(legend)[None, :, :]).min(axis=1)

@@ -52,8 +52,8 @@ PRINT_DPI = 300
 
 # Paintability thresholds at print size; benchmarks/README.md ("Print scale") explains them.
 MIN_PAINTABLE_WIDTH_MM = 3.0  # narrowest a region, or any part of one, can be and still take a brush
-MIN_LABEL_SIZE_PT = 6.0  # smallest region number, as the font's em size
-OUTLINE_WIDTH_MM = 0.3
+MIN_LABEL_SIZE_PT = 3.0  # smallest region number, as the font's em size (6 pt before 0.1.52)
+OUTLINE_WIDTH_MM = 0.2  # 0.3 mm before 0.1.52
 
 # The smallest region worth keeping: the brush's own footprint, a disk as wide
 # as MIN_PAINTABLE_WIDTH_MM. Anything smaller cannot hold the brush whatever

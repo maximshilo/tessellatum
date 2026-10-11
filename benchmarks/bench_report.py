@@ -50,13 +50,15 @@ class Target:
     ``limit`` is the worst value that still meets the target: the most for a
     metric where lower is better, the least where higher is, and the farthest
     from the ideal for a metric that has one. With ``relative_to``, the limit is
-    counted from that quality field of the same case. With ``where``, the target
-    applies only to cases whose quality field of that name is true, described
-    in the report as ``where_text``.
+    counted from that quality field of the same case, or from ``fallback`` in
+    a case without it. With ``where``, the target applies only to cases whose
+    quality field of that name is true, described in the report as
+    ``where_text``.
     """
 
     limit: float
     relative_to: str | None = None
+    fallback: float | None = None
     where: str | None = None
     where_text: str = ""
 
@@ -122,7 +124,7 @@ METRICS = (
     Metric("band_regions", "bands", "{:d}"),
     Metric(
         "small_label_fraction",
-        f"labels < {bm.print_size.MIN_LABEL_SIZE_PT:g} pt ↓",
+        "labels too small ↓",
         "{:.1%}",
         "paintable",
         "lower",
@@ -187,6 +189,8 @@ METRICS = (
     Metric("jaggedness", "jaggedness ↓", "{:.3f}", "clean drawing", "lower", sigma=0.0085, sigma_export=0.011, target=Target(1.02)),
     Metric("edge_f1", "edge F1 ↑", "{:.2f}", "clean drawing", "higher", sigma=0.023, sigma_export=0.020),
     Metric("colors_used", "colors", "{:d}"),
+    # The page's own color margin, the palette min's target (from 0.1.49; 10 ΔE00 in a case without it).
+    Metric("palette_margin_de00", "color margin", "{:.1f}"),
     Metric(
         "palette_min_de00",
         "palette min ΔE00 ↑",
@@ -195,11 +199,11 @@ METRICS = (
         "higher",
         sigma=1.3,
         sigma_export=0.93,
-        target=Target(bm.PALETTE_MIN_DE00),
+        target=Target(0.0, relative_to="palette_margin_de00", fallback=bm.PALETTE_MIN_DE00),
     ),
     Metric(
         "palette_close_pairs",
-        f"color pairs < {bm.PALETTE_MIN_DE00:g} ΔE00 ↓",
+        "close color pairs ↓",
         "{:d}",
         "palette",
         "lower",
@@ -436,7 +440,7 @@ def misses_target(metric: Metric, quality: dict) -> bool | None:
         return None
     limit = target.limit
     if target.relative_to is not None:
-        base = quality.get(target.relative_to)
+        base = quality.get(target.relative_to, target.fallback)
         if base is None:
             return None
         limit += base
@@ -728,11 +732,13 @@ def _quality_section(
         "artwork's ink lines and flat colors, on faces whether their features survive, and on text whether OCR still "
         "reads it, as the image manifest gives them. "
         "**labeled area**: share of the area to paint inside regions that carry a number. **unlabeled**: regions without a "
-        f"number. **slivers**: share of the page a round brush {bm.print_size.MIN_PAINTABLE_WIDTH_MM:g} mm wide can't "
-        "paint without crossing into another region. **gradient slivers**: the same share of the image's gradient areas. "
-        f"**bands**: regions no brush {bm.BAND_MAX_WIDTH_MM:g} mm wide fits in, and at least "
+        "number. **slivers**: share of the page a round brush as wide as the page's own can't paint without crossing "
+        f"into another region ({bm.PAINTABLE_WIDTH_MM:g} mm where a version sets none, and at Max). "
+        "**gradient slivers**: the same share of the image's gradient areas. "
+        f"**bands**: regions no brush {bm.BAND_WIDTH_BRUSHES:g} times the page's own fits in, and at least "
         f"{bm.BAND_MIN_ELONGATION:g} times as long as wide, as a gradient's bands. "
-        f"**labels < {bm.print_size.MIN_LABEL_SIZE_PT:g} pt**: share of numbers printing smaller than that. "
+        "**labels too small**: share of numbers printing smaller than the page's smallest number "
+        f"({bm.LABEL_MIN_PT:g} pt where a version sets none). "
         "**compactness**: 4πA/P² of the regions (1 = disk), 10th percentile and median. "
         "**lines per boundary**: lines drawn along each boundary between regions (1 = one line per boundary), and "
         f"**(clear)** the same over the boundary more than {bm.JUNCTION_CLEARANCE_PX:g} px from a junction, where "
@@ -745,8 +751,9 @@ def _quality_section(
         f"**edge F1**: how well region boundaries and the source's edges line up, within {bm.EDGE_TOLERANCE_MM:g} mm "
         "(1 = every boundary on an edge and every edge on a boundary). "
         "**colors**: how many colors the legend lists, which can be fewer than the difficulty asked for. "
-        "**palette min ΔE00**: smallest CIEDE2000 difference between two legend colors. "
-        f"**color pairs < {bm.PALETTE_MIN_DE00:g} ΔE00**: pairs of legend colors closer than that. "
+        "**palette min ΔE00**: smallest CIEDE2000 difference between two legend colors, held to the page's color "
+        f"margin ({bm.PALETTE_MIN_DE00:g} ΔE00 where a version sets none, and at Max). "
+        "**close color pairs**: pairs of legend colors closer than that margin. "
         f"**ink line F1**: how well drawn lines, and the centerlines of the ink the page prints, run down the middle of "
         f"the artwork's ink lines, within {bm.INK_LINE_TOLERANCE_MM:g} mm (lines away from the ink don't count). "
         f"**ink printed recall** and **precision**: how much of the artwork's ink lines the page prints, and how much of "
@@ -889,7 +896,8 @@ def _target_text(metric: Metric) -> str:
     sign = "≥" if metric.better == "higher" else "≤"
     where = f" on {target.where_text}" if target.where is not None else ""
     if target.relative_to is not None:
-        return f"{sign} {METRICS_BY_KEY[target.relative_to].name} + {limit}{where}"
+        base = METRICS_BY_KEY[target.relative_to].name
+        return f"{sign} {base}{where}" if target.limit == 0 else f"{sign} {base} + {limit}{where}"
     return ("0" if target.limit == 0 and metric.better == "lower" else f"{sign} {limit}") + where
 
 
