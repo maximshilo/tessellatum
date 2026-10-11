@@ -55,6 +55,18 @@ between them, keeping the zoom and the scroll:
   from white, with the lines, numbers and ink showing through as through a
   translucent paint (the page multiplied by the wash): a guide to paint from.
 
+The preview zooms in and out about the point under the cursor -- with the
+mouse wheel, Ctrl+wheel, a touchpad's pinch, Ctrl+plus and Ctrl+minus, or the
+buttons above it -- and the page is dragged to move it. **Fit** (Ctrl+0)
+shows the whole page, **100%** a pixel of the page as it prints on a pixel of
+the screen, and **Print size** the page as large as on paper, by the size the
+screen reports. Further in than the preview's own pixels, the zoom shows the
+page as it prints: the export's own drawing, with its numbers where and as
+small as they print. It is drawn in the background the first time (the
+preview is shown scaled up until then) and kept, so the export saves it
+without drawing it again. A new preview of the same picture keeps the zoom
+and the place, to compare settings there.
+
 The settings (every one has a tooltip saying what it does; sizes are on the
 printed A4 page; the panel keeps them between runs, and **Reset** puts them
 all back):
@@ -232,7 +244,8 @@ Over the 12 benchmark images, a preview has a median of 308 regions at
 Beginner, 614 at Medium and 1,413 at Realistic (up to 7,090 on the lion), and
 takes a median of 0.7 s, 1.0 s and 1.7 s (up to 7 s on the complex
 cartoon); exporting it, drawing that page at print size, takes 0.5, 0.8 and
-2.0 s more (up to 7 s, the lion at Realistic). That detail has a price the
+2.0 s more (up to 7 s, the lion at Realistic), once for the zoom and the export
+alike. That detail has a price the
 quality benchmarks show (see `benchmarks/QUALITY_BENCHMARKS.md`): lines that
 follow bends finer than half a millimeter; on a preview, which draws no
 number under 10 px, many numbers that find no room off the lines; and at

@@ -11,6 +11,7 @@ from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
+    QHBoxLayout,
     QMainWindow,
     QMessageBox,
     QScrollArea,
@@ -24,7 +25,7 @@ from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import GeneratedPage, PREVIEW_LONG_EDGE
 from tessellatum.core.print_size import print_scale
 from tessellatum.gui.controls_panel import ControlsPanel
-from tessellatum.gui.preview_widget import PreviewWidget, VersionBar
+from tessellatum.gui.preview_widget import PreviewWidget, VersionBar, ZoomBar
 from tessellatum.gui.worker import PipelineWorker
 
 OPEN_IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.gif)"
@@ -41,10 +42,14 @@ class MainWindow(QMainWindow):
         # Every version of a page is drawn with it, so the bar switches between them at once.
         self.version_bar = VersionBar()
         self.version_bar.setEnabled(False)
+        self.zoom_bar = ZoomBar(self.preview)
+        bars = QHBoxLayout()
+        bars.addWidget(self.version_bar, 1)
+        bars.addWidget(self.zoom_bar)
         preview_pane = QWidget()
         preview_layout = QVBoxLayout(preview_pane)
         preview_layout.setContentsMargins(0, 0, 0, 0)
-        preview_layout.addWidget(self.version_bar)
+        preview_layout.addLayout(bars)
         preview_layout.addWidget(self.preview)
 
         # The panel scrolls rather than holding the window taller than a small screen.
@@ -70,16 +75,27 @@ class MainWindow(QMainWindow):
 
         self.current_image_bgr: np.ndarray | None = None
         self.current_page: GeneratedPage | None = None
+        self._previewed_image: np.ndarray | None = None  # the picture current_page is of
         self._worker: PipelineWorker | None = None
         self._pending_export_path: Path | None = None
         self._pending_export_format: str | None = None
         self._pending_export_version: Version | None = None
+        self._ready_message = ""  # the status of the preview shown
+        # Whether _worker is making a page whose end the window hasn't handled yet. (Its last signal can come while Qt
+        # still reports it running.)
+        self._making = False
+        # The preview's page drawn at print size: what the zoom shows past the preview's own pixels, and what the
+        # export saves. Drawn in the background when either first asks for it, and dropped with the preview.
+        self._print_page: GeneratedPage | None = None
+        self._print_worker: PipelineWorker | None = None
+        self._retired: list[PipelineWorker] = []  # workers stopped but maybe not finished yet: kept until they are
 
         self.controls.open_image_requested.connect(self.open_image)
         self.controls.generate_requested.connect(self.generate_preview)
         self.controls.export_requested.connect(self.export_page)
         self.controls.abort_requested.connect(self.abort_generation)
         self.version_bar.version_changed.connect(self.preview.show_version)
+        self.preview.detail_wanted.connect(self._draw_print_page)
 
         self.resize(1280, 840)
 
@@ -102,6 +118,7 @@ class MainWindow(QMainWindow):
 
         self.controls.set_thumbnail(_bgr_to_pixmap(self.current_image_bgr))
         self.current_page = None
+        self._drop_print_page()
         self.controls.set_export_enabled(False)
         self.version_bar.setEnabled(False)  # the preview left showing is the last picture's, until the next one
         self.statusBar().showMessage(f"Loaded {path.name}. Click \"Generate Preview\".")
@@ -111,9 +128,11 @@ class MainWindow(QMainWindow):
         if self.current_image_bgr is None:
             QMessageBox.warning(self, "No image", "Open an image first.")
             return
-        if self._worker is not None and self._worker.isRunning():
+        if (self._worker is not None and self._worker.isRunning()) or self._pending_export_path is not None:
             return
 
+        self._drop_print_page()  # the zoom asks for the new page's
+        self._making = True
         self.controls.set_busy(True)
         self.statusBar().showMessage("Generating preview…")
 
@@ -122,27 +141,38 @@ class MainWindow(QMainWindow):
         self._worker.start()
 
     def abort_generation(self) -> None:
-        if self._worker is not None and self._worker.isRunning():
-            self._worker.requestInterruption()
+        # An export of the preview's page waits for it to be drawn at print size.
+        exporting_drawn = self._pending_export_path is not None and self._print_worker is not None
+        worker = self._print_worker if exporting_drawn else self._worker
+        if worker is not None and worker.isRunning():
+            worker.requestInterruption()
             self.statusBar().showMessage("Cancelling…")
 
     def _on_worker_cancelled(self) -> None:
+        self._making = False
         self.controls.set_busy(False)
         self._clear_pending_export()
         self.statusBar().showMessage("Cancelled.")
 
     def _on_preview_ready(self, page: GeneratedPage) -> None:
+        self._making = False
+        # A new page of the picture shown is shown as far in and in the same place, to compare the two.
+        same_picture = self.current_page is not None and self._previewed_image is self.current_image_bgr
+        self._drop_print_page()  # any drawn of the last page, for a zoom while this one was made
         self.current_page = page
+        self._previewed_image = self.current_image_bgr
         self.controls.set_busy(False)
         self.controls.set_export_enabled(True)
+        self._ready_message = f"Preview ready: {page.num_colors_used} colors, {page.num_regions} regions."
+        self.statusBar().showMessage(self._ready_message)
         versions = {version: page.image(version) for version in Version}
-        self.preview.show_page(versions, page.legend, self.version_bar.version())
+        long_edge = self._print_long_edge()
+        print_scale = 1.0 if long_edge is None else long_edge / max(page.page.size)
+        self.preview.show_page(versions, page.legend, self.version_bar.version(), print_scale, keep_view=same_picture)
         self.version_bar.setEnabled(True)
-        self.statusBar().showMessage(
-            f"Preview ready: {page.num_colors_used} colors, {page.num_regions} regions."
-        )
 
     def _on_worker_failed(self, message: str) -> None:
+        self._making = False
         self.controls.set_busy(False)
         self._clear_pending_export()
         QMessageBox.critical(self, "Generation failed", message)
@@ -175,17 +205,23 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Rendering the {fmt} at print resolution…")
 
         # 300 dpi on A4, or the picture's own size where that is less: the pipeline never upscales. The export is the
-        # preview's page drawn at that size, so that it has the regions and numbering the preview shows; made first if
-        # the settings changed since. A PNG's image is drawn with the page; a PDF draws the version again from what the
-        # page is made of.
+        # preview's page drawn at that size, so that it has the regions and numbering the preview shows (drawn once for
+        # the zoom and the export alike); made first if the settings changed since. A PNG's image is drawn with the
+        # page; a PDF draws the version again from what the page is made of.
         long_edge = pipeline.export_long_edge(self.current_image_bgr)
-        self._worker = self._make_worker(
-            long_edge, versions=(version,) if fmt == "PNG" else (), drawn_from=self._preview_to_draw(long_edge)
-        )
+        if self._preview_to_draw(long_edge) is not None:
+            if self._print_page is not None:
+                self._on_export_ready(self._print_page)
+            else:
+                self._draw_print_page()  # saved once drawn (see _on_print_page_ready)
+            return
+        self._making = True
+        self._worker = self._make_worker(long_edge, versions=(version,) if fmt == "PNG" else ())
         self._worker.succeeded.connect(self._on_export_ready)
         self._worker.start()
 
     def _on_export_ready(self, page: GeneratedPage) -> None:
+        self._making = False
         self.controls.set_busy(False)
         path = self._pending_export_path
         fmt = self._pending_export_format
@@ -204,6 +240,8 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Export failed.")
             return
 
+        if self.preview.wants_detail():
+            self._draw_print_page()  # asked for by a zoom while the export was made
         width, height = page.page.size
         dpi = print_scale(page.page.size).dpi
         self.statusBar().showMessage(f"Exported to {path} ({width} × {height} px, {dpi:.0f} dpi on A4)")
@@ -224,11 +262,9 @@ class MainWindow(QMainWindow):
         current = (self.controls.get_difficulty_params(), self.controls.get_page_style(), self.controls.get_handling())
         return page if (model.params, model.style, model.handling) == current else None
 
-    def _make_worker(
-        self, long_edge: int, versions: tuple[Version, ...] = (), drawn_from: GeneratedPage | None = None
-    ) -> PipelineWorker:
-        """A worker generating the current image at ``long_edge`` with the panel's settings -- or drawing ``drawn_from``
-        there -- wired to its progress, and drawing ``versions`` of the page too."""
+    def _make_worker(self, long_edge: int, versions: tuple[Version, ...] = ()) -> PipelineWorker:
+        """A worker generating the current image at ``long_edge`` with the panel's settings, wired to its progress, and
+        drawing ``versions`` of the page too."""
         worker = PipelineWorker(
             self.current_image_bgr,
             self.controls.get_difficulty_params(),
@@ -236,12 +272,94 @@ class MainWindow(QMainWindow):
             style=self.controls.get_page_style(),
             handling=self.controls.get_handling(),
             versions=versions,
-            drawn_from=drawn_from,
         )
         worker.failed.connect(self._on_worker_failed)
         worker.cancelled.connect(self._on_worker_cancelled)
         worker.progress.connect(self.controls.set_progress)
         return worker
+
+    # -- The preview's page at print size -------------------------------------
+    def _print_long_edge(self) -> int | None:
+        """The long edge the preview's page prints at, if it is drawn larger to print; None if the preview is the page
+        as it prints, or there is none."""
+        page = self.current_page
+        if page is None or page.model is None or self._previewed_image is None:
+            return None
+        long_edge = pipeline.export_long_edge(self._previewed_image)
+        return long_edge if long_edge > max(page.page.size) else None
+
+    def _draw_print_page(self) -> None:
+        """Draw the preview's page at print size, in the background, unless it is drawn or being drawn: for the zoom,
+        which shows it past the preview's own pixels, and for the export, which saves it. Not while a page is being
+        made: a preview, which will replace this one, or an export with other settings."""
+        long_edge = self._print_long_edge()
+        running = self._print_worker is not None and self._print_worker.isRunning()
+        if long_edge is None or self._print_page is not None or running or self._making:
+            return
+        page = self.current_page
+        model = page.model
+        worker = PipelineWorker(
+            self._previewed_image,
+            model.params,
+            long_edge,
+            style=model.style,
+            handling=model.handling,
+            versions=tuple(Version),
+            drawn_from=page,
+        )
+        worker.succeeded.connect(self._on_print_page_ready)
+        worker.failed.connect(self._on_print_page_failed)
+        worker.cancelled.connect(self._on_print_page_cancelled)
+        worker.progress.connect(self.controls.set_progress)  # shown while an export waits for it
+        self._print_worker = worker
+        if self._pending_export_path is None:
+            self.statusBar().showMessage("Drawing the page as it prints, for the zoom…")
+        worker.start()
+
+    def _drop_print_page(self) -> None:
+        """Forget the preview's page at print size, and stop drawing it: the preview is about to change."""
+        self._print_page = None
+        worker = self._print_worker
+        self._print_worker = None
+        self._retired = [retired for retired in self._retired if not retired.isFinished()]
+        if worker is not None and not worker.isFinished():
+            worker.requestInterruption()
+            self._retired.append(worker)
+
+    def _on_print_page_ready(self, drawn: GeneratedPage) -> None:
+        page = self.current_page
+        if self.sender() is not self._print_worker or page is None or drawn.model is not page.model:
+            return  # drawn from a preview since replaced
+        self._print_page = drawn
+        self.preview.show_detail({version: drawn.image(version) for version in Version})
+        if self._pending_export_path is not None:
+            self._on_export_ready(drawn)
+        else:
+            self.statusBar().showMessage(self._ready_message)
+
+    def _on_print_page_failed(self, message: str) -> None:
+        if self.sender() is not self._print_worker:
+            return
+        if self._pending_export_path is not None:
+            self._on_worker_failed(message)
+        else:
+            self.statusBar().showMessage(f"The page could not be drawn as it prints: {message}")
+
+    def _on_print_page_cancelled(self) -> None:
+        if self.sender() is not self._print_worker:
+            return
+        if self._pending_export_path is not None:
+            self._on_worker_cancelled()
+        else:
+            self.statusBar().showMessage(self._ready_message)
+
+    def closeEvent(self, event) -> None:
+        # Stop what is still running, rather than leave a thread to be destroyed with the window.
+        for worker in (self._worker, self._print_worker, *self._retired):
+            if worker is not None and worker.isRunning():
+                worker.requestInterruption()
+                worker.wait()
+        super().closeEvent(event)
 
 
 def _warm_up_pipeline() -> None:

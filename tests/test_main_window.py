@@ -12,6 +12,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PIL import Image  # noqa: E402
+from PySide6.QtCore import QPointF  # noqa: E402
+from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tessellatum.core import difficulty, pipeline  # noqa: E402
@@ -85,13 +87,25 @@ class _Drive:
         self.window = MainWindow()
 
     def wait(self) -> None:
-        """Until the window's worker is done, and its last signals have reached the window."""
+        """Until the window's workers are done -- making or exporting a page, drawing it at print size, and any stopped
+        -- and their last signals have reached the window."""
         deadline = time.monotonic() + TIMEOUT_S
-        while self.window._worker is not None and self.window._worker.isRunning():
-            assert time.monotonic() < deadline, "the pipeline didn't finish"
+        window = self.window
+
+        def running() -> bool:
+            return any(
+                worker is not None and worker.isRunning()
+                for worker in (window._worker, window._print_worker, *window._retired)
+            )
+
+        while True:
+            # A finished worker's signals are queued by the time it stops running, and may start another.
+            idle = not running()
             _app.processEvents()
+            if idle and not running():
+                return
+            assert time.monotonic() < deadline, "the pipeline didn't finish"
             time.sleep(0.005)
-        _app.processEvents()
 
     def status(self) -> str:
         return self.window.statusBar().currentMessage()
@@ -136,7 +150,7 @@ def test_an_opened_picture_is_previewed_with_the_panel_s_settings(drive, tmp_pat
     page = drive.window.current_page
     assert page is not None and page.page.size == (600, 400)  # never upscaled
     assert controls.generate_button.isEnabled() and controls.export_button.isEnabled()
-    assert drive.window.preview._pixmap_item is not None
+    assert drive.window.preview.shown_image() is not None
     assert drive.status() == f"Preview ready: {page.num_colors_used} colors, {page.num_regions} regions."
     assert drive.dialogs == []
 
@@ -256,7 +270,7 @@ def test_on_a_short_window_the_panel_scrolls_and_its_scroll_bar_covers_none_of_i
 
 
 def _pixmap_pixel(drive, x: int, y: int) -> tuple[int, int, int]:
-    color = drive.window.preview._pixmap_item.pixmap().toImage().pixelColor(x, y)
+    color = drive.window.preview.shown_image().pixelColor(x, y)
     return color.red(), color.green(), color.blue()
 
 
@@ -282,14 +296,14 @@ def test_every_version_of_a_preview_is_drawn_with_it_and_the_bar_switches_betwee
     assert shown[Version.COMPLETED] in page.palette_rgb  # painted
     assert len(set(shown.values())) == len(Version)  # each version its own
 
-    # Switching keeps the view where it is; a new preview keeps the version shown.
-    window.preview.scale(2, 2)
+    # Switching keeps the view where it is; a new preview of the picture keeps the version shown, and the view.
+    window.preview.zoom_by(2)
     transform = window.preview.transform()
     bar.buttons[Version.TINTED].click()
     assert window.preview.transform() == transform
     window.generate_preview()
     drive.wait()
-    assert bar.version() is Version.TINTED
+    assert bar.version() is Version.TINTED and window.preview.transform() == transform
     assert _pixmap_pixel(drive, *middle) == window.current_page.image(Version.TINTED).getpixel(middle)
 
 
@@ -361,3 +375,175 @@ def test_the_version_asked_for_is_exported(drive, tmp_path):
     page_sheet = pdf_reading.sheets((tmp_path / "tinted.pdf").read_bytes())[0]
     assert page_sheet["content"].endswith("q /Mu gs /Pg Do Q\nQ")  # the page laid over its wash
     assert drive.dialogs[-1][1] == "Export complete" and len(drive.dialogs) == 2
+
+
+def _array(image) -> np.ndarray:
+    """A QImage's or a PIL image's RGB pixels."""
+    if isinstance(image, Image.Image):
+        return np.asarray(image.convert("RGB"))
+    image = image.convertToFormat(QImage.Format_RGB888)
+    rows = np.frombuffer(image.constBits(), np.uint8).reshape(image.height(), image.bytesPerLine())
+    return rows[:, : image.width() * 3].reshape(image.height(), image.width(), 3).copy()
+
+
+@pytest.fixture
+def drawn(monkeypatch):
+    """The pages ``pipeline.draw_page`` is asked to draw at print size."""
+    pages = []
+    real = pipeline.draw_page
+    monkeypatch.setattr(
+        pipeline, "draw_page", lambda page, *args, **kwargs: pages.append(page) or real(page, *args, **kwargs)
+    )
+    return pages
+
+
+def test_zoomed_in_the_preview_shows_its_page_as_it_prints_and_the_export_saves_that_page(drive, drawn, tmp_path):
+    # T5: past the preview's own pixels the zoom shows the page drawn at print size, once, and a tile of it at 100% is
+    # the export's pixels there.
+    window = drive.window
+    window.current_image_bgr = _blocks((4000, 2000))
+    window.generate_preview()
+    drive.wait()
+    preview = window.preview
+    assert window.current_page.page.size == (1100, 550) and window._print_worker is None  # nothing drawn yet
+
+    preview.zoom_to(1.5)
+    assert window._print_worker.isRunning() and drive.status() == "Drawing the page as it prints, for the zoom…"
+    drive.wait()
+    printed = window._print_page
+    assert drawn == [window.current_page] and printed.page.size == (3272, 1636)
+    assert set(printed._images) == set(Version)  # every version drawn with it
+    assert drive.status() == window._ready_message
+    assert (_array(preview.shown_image()) == _array(printed.image(Version.PAGE))).all()
+
+    preview.zoom_to_printed_pixels()
+    window.version_bar.buttons[Version.COMPLETED].click()
+    preview._sharpen()  # as the view does a moment after the zoom settles
+    tile = _array(preview.viewport().grab().toImage())
+    inverse, _ = preview.viewportTransform().inverted()
+    corner = inverse.map(QPointF(0, 0)) * (3272 / 1100)
+    left, top = round(corner.x()), round(corner.y())
+
+    window.controls.version_combo.setCurrentIndex(window.controls.version_combo.findData(Version.COMPLETED))
+    drive.save_path = str(tmp_path / "page")
+    window.export_page()
+    drive.wait()
+    assert drawn == [window.current_page]  # the export is the page drawn for the zoom, not drawn again
+    assert drive.dialogs[-1][1] == "Export complete" and not window.controls.progress_row.isVisible()
+    with Image.open(tmp_path / "page.png") as png:
+        exported = np.asarray(png.convert("RGB"))
+    assert (exported[: 1636] == _array(printed.image(Version.COMPLETED))).all()
+    assert (tile == exported[top : top + tile.shape[0], left : left + tile.shape[1]]).all()
+
+
+def test_an_export_asked_for_while_the_zoom_draws_the_page_waits_for_it(drive, drawn, tmp_path):
+    window = drive.window
+    window.current_image_bgr = _blocks((4000, 2000))
+    window.generate_preview()
+    drive.wait()
+    window.preview.zoom_to(1.5)
+    assert window._print_worker.isRunning()
+
+    drive.save_path = str(tmp_path / "page.pdf")
+    window.controls.pdf_radio.setChecked(True)
+    window.export_page()
+    assert drive.status() == "Rendering the PDF at print resolution…"
+    assert not window.controls.generate_button.isEnabled()
+    window.generate_preview()  # not while an export waits
+    drive.wait()
+
+    assert drawn == [window.current_page] and len(drive.calls) == 1
+    saved = f"Saved to:\n{tmp_path / 'page.pdf'}\n\n3272 × 1636 px, 300 dpi on A4"
+    assert drive.dialogs == [("information", "Export complete", saved)]
+    assert window.controls.generate_button.isEnabled()
+
+
+def test_an_export_waiting_for_the_page_drawn_at_print_size_can_be_cancelled(drive, monkeypatch, tmp_path):
+    def until_cancelled(page, *args, should_cancel, **kwargs):
+        deadline = time.monotonic() + TIMEOUT_S
+        while not should_cancel():
+            assert time.monotonic() < deadline
+            time.sleep(0.005)
+        raise PipelineCancelled()
+
+    window = drive.window
+    window.current_image_bgr = _blocks((4000, 2000))
+    window.generate_preview()
+    drive.wait()
+    monkeypatch.setattr(pipeline, "draw_page", until_cancelled)
+    drive.save_path = str(tmp_path / "page")
+    window.export_page()
+    assert window._print_worker.isRunning()
+    window.abort_generation()
+    drive.wait()
+
+    assert drive.status() == "Cancelled." and window.controls.generate_button.isEnabled()
+    assert window._pending_export_path is None and not (tmp_path / "page.png").exists() and drive.dialogs == []
+
+
+def test_a_new_preview_drops_the_page_drawn_for_the_last_one(drive, drawn):
+    window = drive.window
+    window.current_image_bgr = _blocks((4000, 2000))
+    window.generate_preview()
+    drive.wait()
+    first = window.current_page
+    window.preview.zoom_to(1.5)
+    stopped = window._print_worker
+    assert stopped.isRunning()
+
+    window.controls.preset_combo.setCurrentText("Hard")
+    window.generate_preview()  # while the zoom's page is still being drawn
+    assert stopped.isInterruptionRequested() and window._print_worker is None
+    drive.wait()
+
+    # The same picture: the new page is shown as far in, so the zoom asks for its page as it prints, and gets it.
+    second = window.current_page
+    assert second is not first and window.preview.zoom() == pytest.approx(1.5)
+    assert drawn[-1] is second and window._print_page.model is second.model
+    assert (_array(window.preview.shown_image()) == _array(window._print_page.image(Version.PAGE))).all()
+
+
+def test_a_page_no_larger_than_its_preview_is_shown_as_it_is_however_far_in(drive, drawn):
+    window = drive.window
+    window.current_image_bgr = _blocks((600, 400))
+    window.generate_preview()
+    drive.wait()
+    window.preview.zoom_to(3.0)
+    drive.wait()
+
+    assert drawn == [] and window._print_worker is None
+    assert window.preview.printed_zoom() == pytest.approx(3.0)
+    assert (_array(window.preview.shown_image()) == _array(window.current_page.image(Version.PAGE))).all()
+
+
+def test_a_zoom_while_a_preview_is_made_draws_the_new_page_not_the_last(drive, drawn):
+    window = drive.window
+    window.current_image_bgr = _blocks((4000, 2000))
+    window.generate_preview()
+    drive.wait()
+    first = window.current_page
+    window.controls.preset_combo.setCurrentText("Hard")
+    window.generate_preview()
+    window.preview.zoom_to(1.5)  # while the new page is made
+    assert window._print_worker is None
+    drive.wait()
+
+    second = window.current_page
+    assert second is not first and drawn == [second] and window._print_page.model is second.model
+
+
+def test_a_zoom_while_an_export_is_made_with_other_settings_draws_the_preview_s_page_after_it(drive, drawn, tmp_path):
+    window = drive.window
+    window.current_image_bgr = _blocks((4000, 2000))
+    window.generate_preview()
+    drive.wait()
+    shown = window.current_page
+    window.controls.preset_combo.setCurrentText("Hard")
+    drive.save_path = str(tmp_path / "page")
+    window.export_page()  # another page: made at the preview's size and drawn at print size
+    window.preview.zoom_to(1.5)
+    assert window._print_worker is None
+    drive.wait()
+
+    assert drive.dialogs[-1][1] == "Export complete" and len(drawn) == 2
+    assert drawn[-1] is shown and window._print_page.model is shown.model  # the page the preview shows
