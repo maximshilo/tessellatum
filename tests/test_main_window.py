@@ -481,11 +481,13 @@ def test_zoomed_in_the_preview_shows_its_page_as_it_prints_and_the_export_saves_
     assert (tile == exported[top : top + tile.shape[0], left : left + tile.shape[1]]).all()
 
 
-def test_an_export_asked_for_while_the_zoom_draws_the_page_waits_for_it(drive, drawn, tmp_path):
+def test_an_export_asked_for_while_the_zoom_draws_the_page_waits_for_it(drive, drawn, monkeypatch, tmp_path):
     window = drive.window
     window.current_image_bgr = _blocks((4000, 2000))
     window.generate_preview()
     drive.wait()
+    release = threading.Event()  # the zoom's page is held until the export is asked for, so that it is still drawn then
+    monkeypatch.setattr(pipeline, "draw_page", _held_until(pipeline.draw_page, release))
     window.preview.zoom_to(1.5)
     assert window._print_worker.isRunning()
 
@@ -495,6 +497,7 @@ def test_an_export_asked_for_while_the_zoom_draws_the_page_waits_for_it(drive, d
     assert drive.status() == "Rendering the PDF at print resolution…"
     assert not window.controls.generate_button.isEnabled()
     window.generate_preview()  # not while an export waits
+    release.set()
     drive.wait()
 
     assert drawn == [window.current_page] and len(drive.calls) == 1
@@ -526,12 +529,16 @@ def test_an_export_waiting_for_the_page_drawn_at_print_size_can_be_cancelled(dri
     assert window._pending_export_path is None and not (tmp_path / "page.png").exists() and drive.dialogs == []
 
 
-def test_a_new_preview_drops_the_page_drawn_for_the_last_one(drive, drawn):
+def test_a_new_preview_drops_the_page_drawn_for_the_last_one(drive, drawn, monkeypatch):
     window = drive.window
     window.current_image_bgr = _blocks((4000, 2000))
     window.generate_preview()
     drive.wait()
     first = window.current_page
+    # The zoom's page is held where its drawing starts until the new preview has asked it to stop: a worker that has
+    # stopped reads isInterruptionRequested() as False, and one free to stop could do so before it is checked.
+    release = threading.Event()
+    monkeypatch.setattr(pipeline, "draw_page", _held_until(pipeline.draw_page, release))
     window.preview.zoom_to(1.5)
     on_paper = window.preview.printed_zoom()
     stopped = window._print_worker
@@ -540,6 +547,7 @@ def test_a_new_preview_drops_the_page_drawn_for_the_last_one(drive, drawn):
     window.controls.preset_combo.setCurrentText("Hard")
     window.generate_preview()  # while the zoom's page is still being drawn
     assert stopped.isInterruptionRequested() and window._print_worker is None
+    release.set()
     drive.wait()
 
     # The same picture: the new page is shown as far in on paper, though Hard's is made at more pixels than Medium's,
@@ -587,6 +595,17 @@ def _until(condition) -> None:
         assert time.monotonic() < deadline
         _app.processEvents()
         time.sleep(0.005)
+
+
+def _held_until(real, release: threading.Event):
+    """``real``, once ``release`` is set. Unlike ``_held_back`` it doesn't stop for a cancel while it waits, so its
+    worker is surely still running until then: ``isInterruptionRequested()`` reads True only while a worker runs."""
+
+    def held(*args, **kwargs):
+        assert release.wait(TIMEOUT_S)
+        return real(*args, **kwargs)
+
+    return held
 
 
 def _held_back(real, release: threading.Event, started=None, done=None, progress=None):
