@@ -114,8 +114,9 @@ all back):
   that is smaller, since nothing is upscaled. The page is the preview's, made
   at its working size and drawn larger (see "Print size" below), or the
   preview itself where it was made at print size: the letters of signs and
-  captions are taken again from the picture at print size. *Version* picks which of the
-  three versions to export, in either format; the legend comes with each.
+  captions are taken again from the picture at print size. *Version* picks
+  which of the three versions to export, in either format; the legend comes
+  with each.
   - **PDF**: two A4 sheets of vector art. The page fills the printable area
     inside 10 mm margins, centered, on a landscape sheet when the picture is
     wider than tall. Its lines are paths of the width asked for and its numbers
@@ -212,20 +213,21 @@ step 5: their letters are printed, and step 7 keeps the numbers off them
    a sign or a caption; a region lying in one gets its number outside, with a
    leader that crosses the lettering. See `src/tessellatum/core/labels.py`.
 8. **Print size**: a page is made once, at its working size, which the
-   preview shows: where its level's brush is 4 px across on paper (the panel's
-   *pixels across the brush*), so that a finer brush gets more pixels. On a
-   3:2 picture that is about 1100 px along the long edge at Beginner, 1400 at
-   Easy, 1600 at Medium, 1850 at Hard and 2200 at Realistic, less on a squarer
-   picture, which prints smaller; never fewer than 1100 px, at which the
-   faces, the subject, the text and whether a picture is line art are found,
-   nor more than the picture has or than 300 dpi. An export is that page
-   drawn at 300 dpi: each region filled inside its
-   outline, smoothed as its lines are, scaled, and touching only the regions
-   it touched; the lines the preview's, scaled; the printed ink inside its
-   own smoothed outline; the letters of signs and captions taken again from
-   the picture at that size; and the numbers placed again, down to the 3 pt
-   the style asks for. So an export has its preview's regions, colors and
-   legend. See `src/tessellatum/core/redraw.py` and `pipeline.draw_page`.
+   preview shows: where its level's brush is 4 px across on paper (the
+   panel's *pixels across the brush*), so that a finer brush gets more
+   pixels. On a 3:2 picture that is about 1100 px along the long edge at
+   Beginner, 1400 at Easy, 1600 at Medium, 1850 at Hard and 2200 at
+   Realistic, less on a squarer picture, which prints smaller; never fewer
+   than 1100 px, at which the faces, the subject, the text and whether a
+   picture is line art are found, nor more than the picture has or than
+   300 dpi. An export is that page drawn at 300 dpi: each region filled
+   inside its outline, smoothed as its lines are, scaled, and touching only
+   the regions it touched; the lines the preview's, scaled; the printed ink
+   inside its own smoothed outline; the letters of signs and captions taken
+   again from the picture at that size; and the numbers placed again, down to
+   the 3 pt the style asks for. So an export has its preview's regions,
+   colors and legend. See `src/tessellatum/core/redraw.py` and
+   `pipeline.draw_page`.
 
 ### Difficulty
 

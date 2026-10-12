@@ -236,6 +236,23 @@ def test_a_preview_made_at_print_size_is_the_export(drive, drawn, tmp_path):
         assert np.asarray(png.convert("RGB"))[:1000].tobytes() == preview.image(Version.PAGE).tobytes()
     assert drive.dialogs[-1][1] == "Export complete" and not window.controls.progress_row.isVisible()
 
+    # A PDF too: the preview's vector page, at the picture's own size.
+    window.controls.pdf_radio.setChecked(True)
+    drive.save_path = str(tmp_path / "page.pdf")
+    window.export_page()
+    drive.wait()
+    assert len(drive.calls) == calls and drawn == []
+    assert "0 0 2000 1000 re W n" in pdf_reading.sheets((tmp_path / "page.pdf").read_bytes())[0]["content"]
+
+    # Fewer pixels across the brush: the preview is another setting's, so the export is made again.
+    control = window.controls.controls["brush_px"]
+    control.slider.setValue(controls_panel.slider_position(control.setting, 2.0))
+    window.export_page()
+    drive.wait()
+    (_image, _params, long_edge), kwargs = drive.calls[-1]
+    assert len(drive.calls) == calls + 1 and long_edge == 2000 and kwargs["handling"].brush_px == 2.0
+    assert drive.dialogs[-1][1] == "Export complete"
+
 
 def test_a_running_generation_can_be_cancelled(drive, monkeypatch):
     def until_cancelled(*args, should_cancel, **kwargs):
