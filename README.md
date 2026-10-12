@@ -243,8 +243,8 @@ prints smaller, gets fewer regions rather than smaller ones.
 Over the 12 benchmark images, a preview has a median of 308 regions at
 Beginner, 614 at Medium and 1,413 at Realistic (up to 7,090 on the lion), and
 takes a median of 0.7 s, 1.0 s and 1.7 s (up to 7 s on the complex
-cartoon); exporting it, drawing that page at print size, takes 0.5, 0.8 and
-2.0 s more (up to 7 s, the lion at Realistic), once for the zoom and the export
+cartoon); exporting it, drawing that page at print size, takes 0.5, 0.7 and
+1.8 s more (up to 6 s, the lion at Realistic), once for the zoom and the export
 alike. That detail has a price the
 quality benchmarks show (see `benchmarks/QUALITY_BENCHMARKS.md`): lines that
 follow bends finer than half a millimeter; on a preview, which draws no
