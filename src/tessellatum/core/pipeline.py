@@ -531,7 +531,7 @@ def draw_page(
     if labels is not None:
         rendered = render_page(
             (w, h), regions, region_id_map, style, check_cancelled=check_cancelled, strokes=strokes, labels=labels,
-            **printing,
+            reuse=rendered, **printing,
         )
     if rendered.printed_ink is not None:
         printed_ink = rendered.printed_ink  # less the hatching cleared behind numbers
