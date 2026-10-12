@@ -74,5 +74,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python packaging/release_notes.py $env:VERSION | Out-File -Encoding utf8 notes.md
+          python packaging/release_notes.py $env:VERSION notes.md
           gh release create "$env:GITHUB_REF_NAME" "$env:ZIP" --title "Tessellatum $env:VERSION" --notes-file notes.md --verify-tag
