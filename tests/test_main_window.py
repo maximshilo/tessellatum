@@ -145,14 +145,17 @@ def test_an_opened_picture_is_previewed_with_the_panel_s_settings(drive, tmp_pat
     # Hard with a 2 mm brush: a Custom difficulty.
     assert controls.preset_combo.currentText() == "Custom"
     assert params == dataclasses.replace(difficulty.params_for_preset("Hard"), min_width_mm=2.0)
-    assert long_edge == pipeline.PREVIEW_LONG_EDGE
+    # At its working size (D-012): here the picture's own, smaller than a preview.
+    assert long_edge == pipeline.working_long_edge(image, params, kwargs["handling"]) == 600
     assert kwargs["style"] == PageStyle.from_settings(0.5, "Dark")
     assert kwargs["handling"] == Handling(text=False, ink_gap_mm=1.0)
     page = drive.window.current_page
     assert page is not None and page.page.size == (600, 400)  # never upscaled
     assert controls.generate_button.isEnabled() and controls.export_button.isEnabled()
     assert drive.window.preview.shown_image() is not None
-    assert drive.status() == f"Preview ready: {page.num_colors_used} colors, {page.num_regions} regions."
+    assert drive.status() == (
+        f"Preview ready: {page.num_colors_used} colors, {page.num_regions} regions, made at 600 × 400 px."
+    )
     assert drive.dialogs == []
 
 
@@ -211,6 +214,44 @@ def test_an_export_is_its_preview_s_page_drawn_at_print_size(drive, tmp_path, mo
     drive.wait()
     (_image, params, long_edge), _kwargs = drive.calls[-1]
     assert len(drive.calls) == calls + 1 and long_edge == 3272 and params == difficulty.params_for_preset("Hard")
+
+
+def test_a_preview_made_at_print_size_is_the_export(drive, drawn, tmp_path):
+    # D-012 (T8): Realistic's brush asks for 2216 px, more than this picture's 2000, so its preview is made at the
+    # picture's own size, which is the export's: the export saves it, neither made again nor drawn.
+    window = drive.window
+    window.current_image_bgr = _blocks((2000, 1000))
+    window.controls.preset_combo.setCurrentText("Realistic")
+    window.generate_preview()
+    drive.wait()
+    preview = window.current_page
+    assert preview.page.size == (2000, 1000) and drive.calls[-1][0][2] == 2000
+    calls = len(drive.calls)
+
+    drive.save_path = str(tmp_path / "page")
+    window.export_page()
+    drive.wait()
+    assert len(drive.calls) == calls and drawn == []
+    with Image.open(tmp_path / "page.png") as png:
+        assert np.asarray(png.convert("RGB"))[:1000].tobytes() == preview.image(Version.PAGE).tobytes()
+    assert drive.dialogs[-1][1] == "Export complete" and not window.controls.progress_row.isVisible()
+
+    # A PDF too: the preview's vector page, at the picture's own size.
+    window.controls.pdf_radio.setChecked(True)
+    drive.save_path = str(tmp_path / "page.pdf")
+    window.export_page()
+    drive.wait()
+    assert len(drive.calls) == calls and drawn == []
+    assert "0 0 2000 1000 re W n" in pdf_reading.sheets((tmp_path / "page.pdf").read_bytes())[0]["content"]
+
+    # Fewer pixels across the brush: the preview is another setting's, so the export is made again.
+    control = window.controls.controls["brush_px"]
+    control.slider.setValue(controls_panel.slider_position(control.setting, 2.0))
+    window.export_page()
+    drive.wait()
+    (_image, _params, long_edge), kwargs = drive.calls[-1]
+    assert len(drive.calls) == calls + 1 and long_edge == 2000 and kwargs["handling"].brush_px == 2.0
+    assert drive.dialogs[-1][1] == "Export complete"
 
 
 def test_a_running_generation_can_be_cancelled(drive, monkeypatch):
@@ -403,10 +444,13 @@ def test_zoomed_in_the_preview_shows_its_page_as_it_prints_and_the_export_saves_
     # the export's pixels there.
     window = drive.window
     window.current_image_bgr = _blocks((4000, 2000))
+    # Made at Realistic's working size, where its 0.5 mm brush is 4 px across (D-012): a page whose sides both scale to
+    # the print's by the same factor, so that at 100% a pixel of the screen is one of the print on both axes.
+    window.controls.preset_combo.setCurrentText("Realistic")
     window.generate_preview()
     drive.wait()
     preview = window.preview
-    assert window.current_page.page.size == (1100, 550) and window._print_worker is None  # nothing drawn yet
+    assert window.current_page.page.size == (2216, 1108) and window._print_worker is None  # nothing drawn yet
 
     preview.zoom_to(1.5)
     assert window._print_worker.isRunning() and drive.status() == "Drawing the page as it prints, for the zoom…"
@@ -422,7 +466,7 @@ def test_zoomed_in_the_preview_shows_its_page_as_it_prints_and_the_export_saves_
     preview._sharpen()  # as the view does a moment after the zoom settles
     tile = _array(preview.viewport().grab().toImage())
     inverse, _ = preview.viewportTransform().inverted()
-    corner = inverse.map(QPointF(0, 0)) * (3272 / 1100)
+    corner = inverse.map(QPointF(0, 0)) * (3272 / 2216)
     left, top = round(corner.x()), round(corner.y())
 
     window.controls.version_combo.setCurrentIndex(window.controls.version_combo.findData(Version.COMPLETED))
@@ -489,6 +533,7 @@ def test_a_new_preview_drops_the_page_drawn_for_the_last_one(drive, drawn):
     drive.wait()
     first = window.current_page
     window.preview.zoom_to(1.5)
+    on_paper = window.preview.printed_zoom()
     stopped = window._print_worker
     assert stopped.isRunning()
 
@@ -497,9 +542,12 @@ def test_a_new_preview_drops_the_page_drawn_for_the_last_one(drive, drawn):
     assert stopped.isInterruptionRequested() and window._print_worker is None
     drive.wait()
 
-    # The same picture: the new page is shown as far in, so the zoom asks for its page as it prints, and gets it.
+    # The same picture: the new page is shown as far in on paper, though Hard's is made at more pixels than Medium's,
+    # so the zoom asks for its page as it prints, and gets it.
     second = window.current_page
-    assert second is not first and window.preview.zoom() == pytest.approx(1.5)
+    assert second.page.size == (1847, 924) and first.page.size == (1583, 792)
+    assert second is not first and window.preview.printed_zoom() == pytest.approx(on_paper)
+    assert window.preview.zoom() == pytest.approx(1.5 * 1583 / 1847)
     assert drawn[-1] is second and window._print_page.model is second.model
     assert (_array(window.preview.shown_image()) == _array(window._print_page.image(Version.PAGE))).all()
 

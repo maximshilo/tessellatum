@@ -19,7 +19,7 @@ from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.labels import text_box_size
 from tessellatum.core.legend import render_legend
 from tessellatum.core.painting import Painting, Version, render_version
-from tessellatum.core.print_size import long_edge_at_dpi, print_scale
+from tessellatum.core.print_size import MM_PER_INCH, long_edge_at_dpi, print_scale
 from tessellatum.core.quantize import quantize
 from tessellatum.core.regions import (
     CornerRule,
@@ -40,6 +40,12 @@ from tessellatum.core.text import MAX_BOX_HEIGHT_MM as MAX_TEXT_HEIGHT_MM
 from tessellatum.core.texture import smooth_regions
 
 PREVIEW_LONG_EDGE = 1100
+
+# A page is made with this many pixels across its brush, by default (see ``working_long_edge``): enough for the brush to
+# tell a region as wide as itself from a sliver, and for the regions' edges to follow the picture's finer than the
+# brush. At 2, a page is made at about the preview's 1100 px at every level (at most 1108 px), as every page was until
+# 0.1.55.
+BRUSH_PX = 4.0
 
 # A pixel the letters ink at least this much (of 255: halfway, where their outline runs) is printed ink: it ends the
 # lines crossing it, and no label point falls on it.
@@ -167,6 +173,8 @@ class Handling:
     ``mark_length_mm`` long (see ``marks``), and a region joins a neighbor while that leaves its pixels less than
     ``face_tone_step_de00`` further from the picture (see ``tones``). A line of text taller than
     ``text_max_height_mm`` is lettering big enough to paint, and is not printed (see ``text.find_text``).
+
+    And how finely: a page is made with ``brush_px`` pixels across its brush on paper (see ``working_long_edge``).
     """
 
     line_art: bool = True
@@ -178,6 +186,7 @@ class Handling:
     mark_length_mm: float = marks.MIN_LENGTH_MM
     face_tone_step_de00: float = tones.MIN_STEP_DE00
     text_max_height_mm: float = MAX_TEXT_HEIGHT_MM
+    brush_px: float = BRUSH_PX
 
 
 @dataclass
@@ -297,6 +306,24 @@ def export_long_edge(image_bgr: np.ndarray) -> int:
     ``print_size``), or the picture's own long edge where that is smaller, since the pipeline never upscales."""
     h, w = image_bgr.shape[:2]
     return min(max(h, w), long_edge_at_dpi((w, h)))
+
+
+def working_long_edge(image_bgr: np.ndarray, params: DifficultyParams, handling: Handling = Handling()) -> int:
+    """The long edge a page of ``image_bgr`` is made at: where its brush, ``params.min_width_mm`` on paper, is
+    ``handling.brush_px`` pixels across, so that a finer brush gets more pixels. Never less than the preview's 1100 px
+    (``PREVIEW_LONG_EDGE``), at which the faces, the subject, the text and whether the picture is line art are found,
+    nor more than an export's (see ``export_long_edge``): the picture's own size, or 300 dpi. A page without a brush
+    is made at the preview's size.
+
+    A page asked for at a larger size is this page drawn there (see ``generate``). The printed page's size follows the
+    picture's shape, so a squarer picture, which prints smaller, is made at fewer pixels.
+    """
+    h, w = image_bgr.shape[:2]
+    long_edge = PREVIEW_LONG_EDGE
+    if params.min_width_mm > 0 and handling.brush_px > 0:
+        px_per_mm = handling.brush_px / params.min_width_mm
+        long_edge = max(long_edge, long_edge_at_dpi((w, h), px_per_mm * MM_PER_INCH))
+    return min(export_long_edge(image_bgr), long_edge)
 
 
 def load_image_bgr(path: Path) -> np.ndarray:
@@ -643,13 +670,15 @@ def generate(
     size, or going back to earlier settings, skips straight to the region
     stages.
 
-    A page is made at the preview's size at most (``PREVIEW_LONG_EDGE``). One asked for larger -- an export -- is
-    that page drawn at ``long_edge`` (see ``draw_page``), so that an export always has the regions, colors and
-    numbering its preview shows. A picture no larger than that is made at its own size.
+    A page is made at its working size at most, where its brush is ``handling.brush_px`` pixels across (see
+    ``working_long_edge``): the size the app previews it at. One asked for larger -- an export -- is that page drawn
+    at ``long_edge`` (see ``draw_page``), so that an export always has the regions, colors and numbering its preview
+    shows. A picture no larger than that is made at its own size.
     """
-    if long_edge > PREVIEW_LONG_EDGE and max(image_bgr.shape[:2]) > PREVIEW_LONG_EDGE:
+    working_edge = working_long_edge(image_bgr, params, handling)
+    if long_edge > working_edge and max(image_bgr.shape[:2]) > working_edge:
         working = _make_page(
-            image_bgr, params, PREVIEW_LONG_EDGE,
+            image_bgr, params, working_edge,
             None if progress_callback is None else lambda percent: progress_callback(percent * 3 // 4),
             should_cancel, False, style, handling,
         )

@@ -42,9 +42,10 @@ first measured baseline is in [`REPORT.md`](REPORT.md).
 - **The benchmark set** is 12 images: six photographs, a painting, two digital bold-line cartoons, two scanned
   drawings and a flat drawing. Each is scored at the app's five levels, Beginner, Easy, Medium, Hard and Realistic,
   and at Max (40 colors, 30 mm² regions, no smoothing, the 3 mm brush and 10 ΔE00: the setting every version is
-  compared at, whatever its levels), at preview size (1100 px) and at export size (the image's own size). Each
-  image's manifest entry marks what the metrics need: its faces and their features, its text, its flat and ink
-  colors, its gradients and its subject (`tests/sample_images/manifest.json`).
+  compared at, whatever its levels), at preview size (the app's: from 0.1.56 the level's working size, where its
+  brush is 4 px across, 1100 px or more; 1100 px before) and at export size (the image's own size). Each image's
+  manifest entry marks what the metrics need: its faces and their features, its text, its flat and ink colors, its
+  gradients and its subject (`tests/sample_images/manifest.json`).
 
 ## 1. Resembles
 
@@ -226,23 +227,27 @@ the source's.
 
 ## At the levels
 
-The five levels (0.1.52) give pages many times as many regions as the presets before them (median preview: 308 at
-Beginner, 614 at Medium and 1,413 at Realistic, against 21, 36 and 73 at the old Easy, Medium and Hard), painted much
-closer to the picture (median ΔE00 5.4 at Beginner to 4.1 at Realistic, against 7.3 to 8.9). They miss these targets, measured over the 12 images at preview
-and export size (previews `T5-candidate`; exports `T3b2-candidate`, from 0.1.53 the preview's page drawn at print size;
-median / worst page):
+The five levels (0.1.52) give pages many times as many regions as the presets before them (median preview at 1100 px:
+308 at Beginner, 614 at Medium and 1,413 at Realistic, against 21, 36 and 73 at the old Easy, Medium and Hard), painted
+much closer to the picture (median ΔE00 5.4 at Beginner to 4.1 at Realistic, against 7.3 to 8.9). From 0.1.56 a
+level's page is made at its working size, where its brush is 4 px across: the photographs and the painting get 3-11%
+fewer regions at the same level (median by level; over the 12 images 290 at Beginner, 552 at Medium and 1,384 at
+Realistic), and the two scanned drawings, made at their own size from Easy on, up to 1.9 times as many (the complex
+cartoon at Easy, 866 to 1,625). Lines per boundary (clear) is met on every page (worst 1.04; at 1100 px five
+photographs' pages at Realistic missed it, up to 1.34). They miss these targets, measured over the 12 images at
+preview and export size (`T8-candidate`: previews at each level's working size; exports at the image's own size, the
+preview's page drawn at print size, or the preview itself where it is made at that size already; median / worst page):
 
 | target | where it is missed |
 |---|---|
-| jaggedness ≤ 1.02 | the nine photographs, paintings and detailed drawings at every level: 1.03 / 1.06 at Beginner to 1.06 / 1.14 at Realistic on previews. An edge hold of 10 ΔE00 rather than 1, which settles the edges more, lowers it a little (the lion at Medium 1.083 to 1.053); the rest is the fineness, outlines bending at less than the 0.5 mm the metric smooths. Exports read up to 1.21 (the lion at Realistic): their lines are the preview's, but the metric finds fewer junctions on a map of smoothed regions, and with the preview's junctions the lion's export reads its preview's 1.14 |
-| labels on lines 0 | numbers that find no room off the lines: on previews, which draw no number under 10 px, on those nine images at every level (2 / 134 at Beginner, 476 / 6,564 at Realistic); on exports, the complex cartoon, the comic and the Palermo castle from Beginner, the lion from Medium, the cats, the sunset and the Swiss castle from Hard, Times Square at Beginner (one number) and Realistic, and the painting at Realistic (184 / 4,164 at Realistic, the lion's 7,090 regions) |
-| overlapping labels 0 | from Medium on, the same numbers (preview worst 75 at Medium, 5,060 at Realistic); on exports, the Palermo castle from Hard and three more pages at Realistic, at most 1,620 (the Palermo castle) |
-| slivers ≤ 1% | the lion's preview from Easy on, by its own brush: up to 1.6%. Exports, drawn from the preview's regions: at Realistic, whose 0.5 mm brush is 2 px wide on a preview, too fine for it to tell, four photographs and the complex cartoon, up to 5.2% (the lion); at Beginner the complex cartoon and the lion (1.5%, 1.0%), whose regions as wide as the brush pass on the preview's pixels and straddle it on the export's |
-| tubes 0 | the three cartoons and the comic: up to 8 regions on a page below Realistic; at Realistic 37 on the complex cartoon's preview and 60 on its export, which prints the ink its preview found at 1100 px, thinner than the artwork's lines at print size |
-| lines per boundary (clear) 1 ± 0.05 | the bold-line girl's previews from Medium on (1.06 to 1.14), and five photographs' at Realistic (previews up to 1.21, exports up to 1.34). An export's lines are its preview's; with the preview's junctions, and its clearance scaled, the lion's export reads 1.005 |
-| same-color boundary 0 | the complex cartoon and the comic, at most 0.26% of the boundary; an export has it where its preview does |
-| labels on text 0 | the comic at every level, Times Square at Medium (its preview) and Realistic: up to 32 numbers |
-| text CER page | Times Square's preview, as at Max, and its export from Medium on; the comic's from Medium on (its export from Hard), and the complex cartoon's preview at Hard |
+| jaggedness ≤ 1.02 | the nine photographs, paintings and detailed drawings at every level: 1.036 / 1.047 at Beginner to 1.069 / 1.133 at Realistic, previews and exports alike. An edge hold of 10 ΔE00 rather than 1, which settles the edges more, lowers it a little (the lion at Medium, at 1100 px, 1.083 to 1.053); the rest is the fineness, outlines bending at less than the 0.5 mm the metric smooths. Exports drawn from 1100 px pages read up to 1.21 (the lion at Realistic), the metric finding fewer junctions on a map of smoothed regions |
+| labels on lines 0 | numbers that find no room off the lines: on previews, which draw no number under 10 px, on six to nine of those images at each level (2 / 95 at Beginner, 145 / 2,155 at Realistic, the Palermo castle; at 1100 px 677 / 6,564); on exports, the complex cartoon and the comic at every level (up to 1,063 numbers, the complex cartoon from Hard), the Palermo castle from Easy, the lion and the cats from Medium, the sunset, the Swiss castle and Times Square at Hard (Times Square at Easy too, one number), and all nine at Realistic (145 / 2,155) |
+| overlapping labels 0 | the same numbers, on previews and exports alike: the complex cartoon from Medium (5 to 77), the Palermo castle from Hard (43; 1,041 at Realistic), the lion and the sunset at Realistic (17, 6). Previews at 1100 px had up to 5,060 at Realistic |
+| slivers ≤ 1% | the lion's preview at every level, by its own brush (1.1-1.6%), and the Palermo castle's at Beginner (1.01%); of the exports only the lion's at Realistic, its preview (1.1%). Exports drawn from 1100 px pages missed it at Realistic, whose 0.5 mm brush is 2 px wide there, too few to tell a region thinner than it: four photographs and the complex cartoon, up to 5.2% (the lion) |
+| tubes 0 | the three cartoons and the comic: up to 8 regions on a page below Realistic, 9 at Realistic (the reaper); the complex cartoon's at Realistic 5, against 37 on its 1100 px preview and 60 on the export drawn from it |
+| same-color boundary 0 | the complex cartoon and the comic from Medium, at most 0.13% of the boundary; an export has it where its preview does |
+| labels on text 0 | the comic at every level (5 to 57 numbers), Times Square at Easy (1) and Realistic (3) |
+| text CER page | Times Square's preview at Max (made at 1100 px, as before) and its preview and export at Medium; the comic's from Easy on (at 1100 px from Medium on, its export from Hard) |
 
 ## Not measured
 

@@ -139,6 +139,28 @@ def test_the_style_and_the_handling_settings_leave_the_preset_alone(panel):
     assert panel.get_handling() == Handling(ink_gap_mm=1.0, text_max_height_mm=25.0)
 
 
+def test_the_pixels_across_the_brush_sit_by_the_brush_and_leave_the_preset_alone(tmp_path):
+    # D-012 (T8): how finely a page is made is a setting of its own, kept between runs, whatever the preset.
+    first = ControlsPanel(store=_store(tmp_path))
+    rows = [s.name for s in settings.in_group(settings.REGIONS)]
+    assert rows.index("brush_px") == rows.index("min_width_mm") + 1
+    first.preset_combo.setCurrentText("Realistic")
+    _move(first, "brush_px", 6.0)
+    assert first.preset_combo.currentText() == "Realistic"
+    assert first.get_difficulty_params() == difficulty.params_for_preset("Realistic")
+    assert first.get_handling() == Handling(brush_px=6.0)
+    assert first.controls["brush_px"].value_label.text() == "6.0 px"
+    first.deleteLater()
+    _app.processEvents()
+
+    again = ControlsPanel(store=_store(tmp_path))
+    assert again.preset_combo.currentText() == "Realistic" and again.get_handling() == Handling(brush_px=6.0)
+    again.reset_button.click()
+    assert again.get_handling().brush_px == 4.0
+    again.deleteLater()
+    _app.processEvents()
+
+
 def test_line_widths_from_0_1_to_1_mm(panel):
     slider = panel.controls["line_width_mm"].slider
     widths = [controls_panel.slider_value(settings.setting("line_width_mm"), p) for p in range(slider.maximum() + 1)]

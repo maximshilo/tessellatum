@@ -119,6 +119,15 @@ SETTINGS: tuple[Setting, ...] = (
         "parts are given to the region beside them, which also rounds sharp corners unless Sharpest corner keeps "
         "them. A finer brush keeps thinner shapes.",
     ),
+    # The page's resolution, from the brush. Not the difficulty's: moving it keeps the preset.
+    Setting(
+        "brush_px", HANDLING, REGIONS, "Pixels across brush", "px", 2.0, 8.0, 0.5,
+        "How finely a page is made: with this many pixels across the brush, so that a finer brush gets more of them. "
+        "At 4, a 3:2 picture's page is made at about 1,100 px along its long edge at Beginner and 2,200 at Realistic; "
+        "never at fewer than 1,100, nor at more than the picture has or than 300 dpi. More pixels let the regions' "
+        "edges follow the picture's more closely and the brush find parts of a region too thin to paint, and take "
+        "longer. At 2, every page is made at about 1,100 px.",
+    ),
     _difficulty(
         "sharpest_corner_deg", "Sharpest corner", "°", 1,
         "The sharpest corner whose point is kept, rather than rounded off where the brush can't reach: a painter "
@@ -181,7 +190,8 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(
         "min_label_pt", STYLE, LINES, "Smallest number", "pt", 3.0, 12.0, 0.5,
         "The smallest a region's number prints. Smaller fits more numbers inside small regions; below 6 pt they "
-        "get hard to read. A preview draws no number under 10 pixels, 6.5-7 pt, so smaller sizes show on an export.",
+        "get hard to read. A preview draws no number under 10 pixels, 6.5-7 pt on a page made at 1,100 px, so "
+        "smaller sizes may show only on an export, or zoomed in.",
     ),
     Setting(
         "leader_reach_mm", STYLE, LINES, "Leader reach", "mm", 1.0, 20.0, 0.5,

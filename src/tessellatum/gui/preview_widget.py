@@ -100,10 +100,20 @@ class PreviewWidget(QGraphicsView):
 
         ``print_scale`` is how many times larger the page prints than it is here: 1 if the page is as it prints, else
         zoomed in past its pixels the widget asks for it as it prints (see ``show_detail``). With ``keep_view``, a page
-        of the size shown is shown as far in and in the same place, unless the view is fitted to the window.
+        of the picture shown is shown as far in and in the same place, unless the view is fitted to the window; made at
+        another size (another level's, see ``pipeline.working_long_edge``), as far in on paper, the same point of the
+        picture in the middle.
         """
         size = next(iter(versions.values())).size
-        keep = keep_view and not self._fitted and size == self._page_size
+        keep = keep_view and not self._fitted and self._page_size is not None
+        held = None
+        if keep and size != self._page_size:
+            ratio = size[0] / self._page_size[0]
+            keep = abs(size[1] - self._page_size[1] * ratio) <= 1  # the same shape, to the pixel it was rounded to
+            if keep:
+                middle = QRectF(self.viewport().rect()).center()
+                inverse, _invertible = self.viewportTransform().inverted()
+                held = (middle, inverse.map(middle) * ratio, self.zoom() / ratio)
         self._previews = {version: pil_to_qimage(image) for version, image in versions.items()}
         self._details = {}
         self._legend = pil_to_qimage(legend)
@@ -121,7 +131,11 @@ class PreviewWidget(QGraphicsView):
         self._legend_item.setPos((width - legend.width) / 2, height + LEGEND_GAP)
         legend_rect = QRectF(self._legend_item.pos().x(), self._legend_item.pos().y(), legend.width, legend.height)
         self._scene.setSceneRect(QRectF(0, 0, width, height).united(legend_rect))
-        if keep:
+        if held is not None:
+            middle, point, zoom = held
+            self._held = (middle, point, self.viewportTransform())  # the zoom holds that point there
+            self.zoom_to(zoom, middle)
+        elif keep:
             self._zoomed()
         else:
             self.fit_to_window()

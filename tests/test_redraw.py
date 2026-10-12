@@ -99,6 +99,24 @@ def test_drawing_a_preview_is_the_export_generate_makes(pages):
         pipeline.draw_page(preview, picture, 800)
 
 
+def test_a_page_is_made_at_its_working_size_and_an_export_drawn_from_it():
+    # D-012 (T8): Easy's 0.8 mm brush is 4 px across at 1385 px on a 3:2 picture's page.
+    pipeline.clear_cache()
+    picture = _shapes((1800, 1200))
+    params = PRESETS["Easy"]
+    assert pipeline.working_long_edge(picture, params) == 1385
+    preview = pipeline.generate(picture, params, 1385)
+    assert preview.page.size == (1385, 923) and preview.model.region_id_map.shape == (923, 1385)
+    export = pipeline.generate(picture, params, pipeline.export_long_edge(picture))
+    assert export.page.size == (1800, 1200)
+    np.testing.assert_array_equal(export.model.region_id_map, preview.model.region_id_map)  # made there, not again
+    assert export.page.tobytes() == pipeline.draw_page(preview, picture, 1800).page.tobytes()
+    # With fewer pixels across the brush, the page is made at the preview's 1100 px and drawn from there.
+    coarse = pipeline.generate(picture, params, 1800, handling=pipeline.Handling(brush_px=2.0))
+    assert coarse.page.size == (1800, 1200) and coarse.model.region_id_map.shape == (733, 1100)
+    pipeline.clear_cache()
+
+
 def test_a_picture_no_larger_than_a_preview_is_made_at_its_own_size():
     pipeline.clear_cache()
     picture = _shapes((1000, 700))
@@ -138,7 +156,7 @@ def test_a_benchmark_image_s_export_is_its_preview_drawn_larger(name, preset):
     pipeline.clear_cache()
     picture = pipeline.load_image_bgr(SAMPLES / name)
     params = finest_params() if preset == "Max" else PRESETS[preset]
-    preview = pipeline.generate(picture, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True).analysis
+    preview = pipeline.generate(picture, params, pipeline.working_long_edge(picture, params), collect_analysis=True).analysis
     export = pipeline.generate(picture, params, pipeline.export_long_edge(picture), collect_analysis=True).analysis
     assert set(np.unique(export.region_id_map).tolist()) == set(np.unique(preview.region_id_map).tolist())
     np.testing.assert_array_equal(export.palette_bgr[: export.legend_size], preview.palette_bgr[: preview.legend_size])
