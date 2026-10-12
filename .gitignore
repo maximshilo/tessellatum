@@ -10,3 +10,6 @@ plans/
 
 # Local-only benchmark image annotations (see benchmarks/README.md)
 manifest.local.json
+
+# A personal copy of the system report, not published
+docs/Tessellatum_System_Report.pdf
