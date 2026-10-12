@@ -373,7 +373,7 @@ def _split_paths(points: np.ndarray, paths: list[np.ndarray]) -> list[np.ndarray
 
 def _is_closed(path: np.ndarray) -> bool:
     """Does ``path`` come back to its first point, having met no junction at all?"""
-    return bool(len(path) > 2 and np.array_equal(path[0], path[-1]))
+    return bool(len(path) > 2 and path[0, 0] == path[-1, 0] and path[0, 1] == path[-1, 1])
 
 
 def _enclosed_area(loop: np.ndarray) -> float:

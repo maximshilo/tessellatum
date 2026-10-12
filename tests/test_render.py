@@ -497,3 +497,116 @@ def test_the_line_smoothing_and_the_numbers_follow_the_style(monkeypatch):
     assert chosen.leader_reach_px == scale.mm_to_px(3.0) and chosen.text_gap_px == scale.mm_to_px(1.0)
     assert chosen.min_font_size == labels_module.min_font_size(size, 9.0) >= default.min_font_size
     assert scale.px_to_pt(labels_module.min_font_size((2000, 1500), 9.0)) >= 9.0
+
+
+def _leader_coverage_until_0_1_54(size, labels, width_px, dot_px):
+    """``render._leader_coverage`` as it was until 0.1.54: each leader's line and dot drawn on the leader's window."""
+    import math
+
+    width, height = size
+    coverage = np.zeros((height, width), dtype=np.uint8)
+    reach = int(math.ceil(max(width_px, dot_px) / 2)) + 2
+    for label in labels:
+        if label.leader is None:
+            continue
+        points = np.array(label.leader, dtype=np.float64)
+        x0 = max(0, int(math.floor(points[:, 0].min())) - reach)
+        y0 = max(0, int(math.floor(points[:, 1].min())) - reach)
+        x1 = min(width, int(math.ceil(points[:, 0].max())) + reach + 1)
+        y1 = min(height, int(math.ceil(points[:, 1].max())) + reach + 1)
+        local = points - (x0, y0)
+        window = (x1 - x0, y1 - y0)
+        line = ink_coverage(window, [local], width_px)
+        dot = ink_coverage(window, [local[1:].repeat(2, axis=0)], dot_px)
+        np.maximum(coverage[y0:y1, x0:x1], np.maximum(line, dot), out=coverage[y0:y1, x0:x1])
+    return coverage
+
+
+def _leaders(rng, size: tuple[int, int], count: int) -> list:
+    """Numbers with leaders all over a ``size`` page, to its edges: each from an end anywhere within 40 px to a point
+    in its region, a whole pixel as the page's own numbers have it, or anywhere in one as a page drawn larger does."""
+    width, height = size
+    labels = []
+    for index in range(count):
+        anchor = np.array([rng.integers(0, width), rng.integers(0, height)], dtype=np.float64)
+        if index % 2:
+            anchor += rng.random(2) - 0.5
+        end = np.clip(anchor + rng.uniform(-40, 40, 2), 0, (width - 1, height - 1))
+        leader = (tuple(float(v) for v in end), tuple(float(v) for v in anchor))
+        labels.append(labels_module.Label(index, "1", 10, (0, 0, 1, 1), leader=leader))
+    return labels
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_leaders_drawn_each_in_its_own_window_ink_the_page_as_they_did_on_the_leader_s(seed):
+    rng = np.random.default_rng(seed)
+    size = (int(rng.integers(30, 300)), int(rng.integers(30, 300)))
+    width_px = float(rng.choice([0.87, 1.4, 2.36, 4.7]))
+    dot_px = width_px * render_module.LEADER_DOT_RATIO
+    labels = _leaders(rng, size, 80)
+    labels.append(labels_module.Label(80, "2", 10, (0, 0, 1, 1)))  # a number in its region, without one
+
+    coverage, drawn = render_module._leader_coverage(size, labels, width_px, dot_px)
+
+    np.testing.assert_array_equal(coverage, _leader_coverage_until_0_1_54(size, labels, width_px, dot_px))
+    assert len(drawn) == 80
+    # Drawn again with half of them other numbers' leaders, what it drew before standing in for those it shares.
+    again = labels[:40] + _leaders(rng, size, 40)
+    coverage, _ = render_module._leader_coverage(size, again, width_px, dot_px, known=drawn)
+    np.testing.assert_array_equal(coverage, _leader_coverage_until_0_1_54(size, again, width_px, dot_px))
+
+
+def _squares_too_small_for_their_numbers(size: tuple[int, int], count: int) -> tuple[np.ndarray, np.ndarray]:
+    """A page of background with ``count`` squares across its middle, each too small to hold its number."""
+    width, height = size
+    ids = np.zeros((height, width), dtype=np.int32)
+    for index in range(count):
+        left = (index + 1) * width // (count + 1)
+        ids[height // 2 : height // 2 + 6, left : left + 6] = index + 1
+    return ids, np.arange(count + 1, dtype=np.int32) % 3
+
+
+def test_a_page_drawn_again_with_other_numbers_takes_its_lines_and_shared_leaders_and_comes_out_the_same():
+    size = (400, 300)
+    ids, colors = _squares_too_small_for_their_numbers(size, 5)
+    regions = extract_regions(ids, colors)
+    style = PageStyle()
+    strokes = render_page(size, regions, ids, style).strokes
+    first = render_page(size, regions, ids, style, strokes=strokes)
+    with_leaders = [index for index, label in enumerate(first.labels) if label.leader is not None]
+    assert len(with_leaders) >= 3
+    # One number moved into its region without its leader, another moved and its leader with it; the rest as they were.
+    labels = list(first.labels)
+    moved, redrawn = with_leaders[0], with_leaders[1]
+    x0, y0, x1, y1 = labels[moved].box
+    labels[moved] = dataclasses.replace(labels[moved], box=(x0, y0 + 20, x1, y1 + 20), leader=None)
+    end, anchor = labels[redrawn].leader
+    labels[redrawn] = dataclasses.replace(labels[redrawn], leader=((end[0] + 3, end[1] + 2), anchor))
+
+    fresh = render_page(size, regions, ids, style, strokes=strokes, labels=labels)
+    reused = render_page(size, regions, ids, style, strokes=strokes, labels=labels, reuse=first)
+
+    assert reused.line_ink is first.line_ink  # not drawn again
+    for layer in ("image", "outlines", "leaders"):
+        np.testing.assert_array_equal(np.asarray(getattr(reused, layer)), np.asarray(getattr(fresh, layer)))
+    np.testing.assert_array_equal(reused.picture_ink, fresh.picture_ink)
+    assert reused.labels == fresh.labels == labels and reused.drawing.labels == labels
+    assert all(reused.leader_ink[label.leader] is first.leader_ink[label.leader] for label in first.labels
+               if label.leader is not None and label.leader in reused.leader_ink)
+
+
+def test_a_page_drawn_before_is_taken_only_for_the_same_lines_size_and_style():
+    size = (400, 300)
+    ids, colors = _squares_too_small_for_their_numbers(size, 3)
+    regions = extract_regions(ids, colors)
+    style = PageStyle()
+    strokes = render_page(size, regions, ids, style).strokes
+    first = render_page(size, regions, ids, style, strokes=strokes)
+
+    for other in (
+        dict(strokes=list(strokes)),  # lines like them, but not those
+        dict(strokes=strokes, style=PageStyle(line_width_mm=0.5)),
+    ):
+        arguments = dict(style=style, labels=first.labels, reuse=first) | other
+        with pytest.raises(ValueError, match="same strokes, size and style"):
+            render_page(size, regions, ids, **arguments)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Callable
 
@@ -158,6 +158,11 @@ class RenderedPage:
     # ``ink_gray``: the printed ink solid, and the letters in the lines of text in their own tones; none of the lines,
     # the numbers or their leaders: what still shows on the page painted in (see ``painting``).
     picture_ink: np.ndarray | None = None
+    # What drawing the page again with other numbers takes from this one rather than drawing it again (see
+    # ``render_page``'s ``reuse``): the ink of the lines alone, as ``ink_coverage`` gives it, and each leader's, by its
+    # two points: the page's pixel its window starts at, and the ink in it.
+    line_ink: np.ndarray | None = field(default=None, repr=False)
+    leader_ink: dict[tuple, tuple[int, int, np.ndarray]] | None = field(default=None, repr=False)
 
 
 def render_page(
@@ -172,6 +177,7 @@ def render_page(
     check_cancelled: Callable[[], None] | None = None,
     strokes: list[np.ndarray] | None = None,
     labels: list[Label] | None = None,
+    reuse: RenderedPage | None = None,
 ) -> RenderedPage:
     """Draw the boundaries of ``region_id_map`` + numbers for ``regions`` onto a white ``size`` canvas.
 
@@ -210,7 +216,9 @@ def render_page(
 
     ``strokes`` and ``labels``, if given, are the lines and the numbers to draw, in this page's pixels, instead of
     tracing the lines from ``region_id_map`` and placing the numbers: a page drawn again at another size than it was
-    made at draws its own (see ``pipeline.draw_page``).
+    made at draws its own (see ``pipeline.draw_page``). ``reuse`` is this page rendered before from those very
+    ``strokes`` -- the same list -- at this size and in this ``style``, with other numbers: the ink of its lines, and of
+    every leader the two pages share, is taken from it rather than drawn again.
 
     Returns the page, plus what it was built from: the ink the lines and the
     printed ink put on it, the geometry each line was drawn from, where each
@@ -218,11 +226,15 @@ def render_page(
     outside its region into it, the ink printed, and the ink the page prints of
     the picture itself, without the lines and numbers.
     """
+    if reuse is not None and (
+        reuse.strokes is not strokes or reuse.drawing.size != size or reuse.drawing.style != style
+    ):
+        raise ValueError("a page rendered before is reused only for the same strokes, size and style")
     inked = ink is not None and bool(ink.any())
     if strokes is None:
         strokes = trace_boundaries(region_id_map, smoothing_px=style.smoothing_px(size), ink=ink if inked else None)
     line_width = style.line_width_px(size)
-    lines_only = ink_coverage(size, strokes, line_width)
+    lines_only = reuse.line_ink if reuse is not None else ink_coverage(size, strokes, line_width)
     lettered = lettering is not None and bool(lettering.area.any())
     lettering_area = lettering.area if lettered else None
 
@@ -263,7 +275,9 @@ def render_page(
         ink = ink & ~cleared(labels, detail, spacing.label_gap_px)
         coverage = all_ink(ink)
     outlines = Image.fromarray(PAPER - coverage, "L")
-    leader_coverage = _leader_coverage(size, labels, line_width, spacing.leader_dot_px)
+    leader_coverage, leader_ink = _leader_coverage(
+        size, labels, line_width, spacing.leader_dot_px, reuse.leader_ink if reuse is not None else None
+    )
 
     paper = paper_under(lines_only, style.line_gray)
     if lettered:
@@ -303,6 +317,8 @@ def render_page(
         printed_ink=ink if inked else None,
         drawing=drawing,
         picture_ink=picture_ink,
+        line_ink=lines_only,
+        leader_ink=leader_ink,
     )
 
 
@@ -317,31 +333,80 @@ def number_origin(label: Label) -> tuple[float, float]:
     return label.box[0] - bbox[0], label.box[1] - bbox[1]
 
 
-def _leader_coverage(size: tuple[int, int], labels: list[Label], width_px: float, dot_px: float) -> np.ndarray:
-    """The ink the leader lines put on a ``size`` page: 0 = bare paper, 255 = solid.
+def _leader_coverage(
+    size: tuple[int, int],
+    labels: list[Label],
+    width_px: float,
+    dot_px: float,
+    known: dict[tuple, tuple[int, int, np.ndarray]] | None = None,
+) -> tuple[np.ndarray, dict[tuple, tuple[int, int, np.ndarray]]]:
+    """The ink the leader lines put on a ``size`` page: 0 = bare paper, 255 = solid; and each leader's own, by its two
+    points, for drawing the page again (see ``RenderedPage.leader_ink``).
 
     Each leader is a line from its number to the point in the region it
     numbers, drawn with the same round pen as the page's lines, with a dot
-    ``dot_px`` across at that point. Each is drawn in a window around it, since
-    a page has few of them if any.
+    ``dot_px`` across at that point (see ``_leader_ink``). A leader in
+    ``known`` -- this page's leaders drawn before, at this size and with these
+    pens -- is taken from there.
     """
     width, height = size
     coverage = np.zeros((height, width), dtype=np.uint8)
-    reach = int(math.ceil(max(width_px, dot_px) / 2)) + 2
+    drawn: dict[tuple, tuple[int, int, np.ndarray]] = {}
+    dots: dict[tuple, np.ndarray] = {}
     for label in labels:
         if label.leader is None:
             continue
-        points = np.array(label.leader, dtype=np.float64)
-        x0 = max(0, int(math.floor(points[:, 0].min())) - reach)
-        y0 = max(0, int(math.floor(points[:, 1].min())) - reach)
-        x1 = min(width, int(math.ceil(points[:, 0].max())) + reach + 1)
-        y1 = min(height, int(math.ceil(points[:, 1].max())) + reach + 1)
-        local = points - (x0, y0)
-        window = (x1 - x0, y1 - y0)
-        line = ink_coverage(window, [local], width_px)
-        dot = ink_coverage(window, [local[1:].repeat(2, axis=0)], dot_px)
-        np.maximum(coverage[y0:y1, x0:x1], np.maximum(line, dot), out=coverage[y0:y1, x0:x1])
-    return coverage
+        ink = drawn.get(label.leader)
+        if ink is None and known is not None:
+            ink = known.get(label.leader)
+        if ink is None:
+            ink = _leader_ink(size, label.leader, width_px, dot_px, dots)
+        drawn[label.leader] = ink
+        x0, y0, patch = ink
+        window = coverage[y0 : y0 + patch.shape[0], x0 : x0 + patch.shape[1]]
+        np.maximum(window, patch, out=window)
+    return coverage, drawn
+
+
+def _leader_ink(
+    size: tuple[int, int], leader, width_px: float, dot_px: float, dots: dict[tuple, np.ndarray]
+) -> tuple[int, int, np.ndarray]:
+    """One leader's ink on a ``size`` page: the page's pixel its window starts at, and the ink in the window.
+
+    The line and the dot are each drawn in a window of their own, as small as
+    their pen lets it be (see ``_window``), which leaves every pixel's ink as
+    it would be drawn on the whole page: a page may have thousands of leaders.
+    A dot lying where one was drawn before -- at the same place in its pixel,
+    with as much page round it -- is that one's ink (``dots``), as every
+    number's dot is one size.
+    """
+    points = np.array(leader, dtype=np.float64)
+    x0, y0, x1, y1 = _window(points, max(width_px, dot_px), size)
+    patch = np.zeros((y1 - y0, x1 - x0), dtype=np.uint8)
+    for stroke, pen_px, drawn in ((points, width_px, None), (points[1:].repeat(2, axis=0), dot_px, dots)):
+        left, top, right, bottom = _window(stroke, pen_px, size)
+        local = stroke - (left, top)
+        key = (right - left, bottom - top, local.tobytes())
+        ink = None if drawn is None else drawn.get(key)
+        if ink is None:
+            ink = ink_coverage((right - left, bottom - top), [local], pen_px)
+            if drawn is not None:
+                drawn[key] = ink
+        part = patch[top - y0 : bottom - y0, left - x0 : right - x0]
+        np.maximum(part, ink, out=part)
+    return x0, y0, patch
+
+
+def _window(points: np.ndarray, pen_px: float, size: tuple[int, int]) -> tuple[int, int, int, int]:
+    """The part of a ``size`` page a stroke through ``points`` inks with a pen ``pen_px`` across, as (x0, y0, x1, y1):
+    every pixel within half the pen of the stroke, and two more."""
+    width, height = size
+    reach = int(math.ceil(pen_px / 2)) + 2
+    x0 = max(0, int(math.floor(points[:, 0].min())) - reach)
+    y0 = max(0, int(math.floor(points[:, 1].min())) - reach)
+    x1 = min(width, int(math.ceil(points[:, 0].max())) + reach + 1)
+    y1 = min(height, int(math.ceil(points[:, 1].max())) + reach + 1)
+    return x0, y0, x1, y1
 
 
 def ink_coverage(size: tuple[int, int], strokes: list[np.ndarray], width_px: float) -> np.ndarray:

@@ -108,6 +108,28 @@ def test_a_picture_no_larger_than_a_preview_is_made_at_its_own_size():
     pipeline.clear_cache()
 
 
+def test_an_export_whose_numbers_move_comes_out_as_if_its_second_render_drew_everything_again(monkeypatch):
+    pipeline.clear_cache()
+    picture = pipeline.load_image_bgr(SAMPLES / "l-photo-palermo-castle.jpg")
+    preview = pipeline.generate(picture, PRESETS["Hard"], pipeline.PREVIEW_LONG_EDGE)
+    long_edge = pipeline.export_long_edge(picture)
+    real = pipeline.render_page
+    reused = []
+
+    def render(*args, reuse=None, **kwargs):
+        reused.append(reuse is not None)
+        return real(*args, reuse=reuse, **kwargs)
+
+    monkeypatch.setattr(pipeline, "render_page", render)
+    drawn = pipeline.draw_page(preview, picture, long_edge)
+    assert reused == [False, True]  # a number found no room drawn larger: the page was rendered again, reusing the first
+    monkeypatch.setattr(pipeline, "render_page", lambda *args, reuse=None, **kwargs: real(*args, **kwargs))
+    fresh = pipeline.draw_page(preview, picture, long_edge)
+    assert drawn.page.tobytes() == fresh.page.tobytes()
+    assert drawn.drawing.labels == fresh.drawing.labels
+    pipeline.clear_cache()
+
+
 @pytest.mark.parametrize(
     "name, preset",
     [("m-cartoon-bold-lines-girl.png", "Medium"), ("l-photo-palermo-castle.jpg", "Hard"), ("scene.png", "Max")],
