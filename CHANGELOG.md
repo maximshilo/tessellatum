@@ -4,6 +4,13 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.2] - 2026-10-12
+
+### Fixed
+
+- Two window tests no longer depend on timing: they hold the page being drawn at print size until they have checked
+  it, rather than racing it. One of them failed on CI when the drawing stopped before the test looked.
+
 ## [1.0.1] - 2026-10-12
 
 ### Fixed
@@ -43,5 +50,6 @@ The first stable release: a desktop app that turns any picture into a printable 
 Development before 1.0 (versions 0.1.0 to 0.1.56) is recorded in the
 [pull requests](https://github.com/maximshilo/tessellatum/pulls?q=is%3Apr+is%3Amerged) and the git history.
 
+[1.0.2]: https://github.com/maximshilo/tessellatum/releases/tag/v1.0.2
 [1.0.1]: https://github.com/maximshilo/tessellatum/releases/tag/v1.0.1
 [1.0.0]: https://github.com/maximshilo/tessellatum/releases/tag/v1.0.0
