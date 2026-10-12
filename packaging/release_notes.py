@@ -1,9 +1,10 @@
-"""Print the release notes for one version: its section of CHANGELOG.md, without the heading.
+"""Write the release notes for one version: its section of CHANGELOG.md, without the heading.
 
-    python packaging/release_notes.py 1.0.0 > notes.md
+    python packaging/release_notes.py 1.0.0 notes.md
 
-Used by the release workflow. Exits with an error if the changelog has no section for the version, so a release is
-never published without notes.
+Used by the release workflow. The notes are written to the file as UTF-8 (or printed, without a file): piped through
+a Windows shell, a console code page would garble characters such as "²" and "–". Exits with an error if the changelog
+has no section for the version, so a release is never published without notes.
 """
 
 from __future__ import annotations
@@ -40,6 +41,10 @@ def unwrapped(markdown: str) -> str:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: release_notes.py VERSION")
-    sys.stdout.write(notes(sys.argv[1], CHANGELOG.read_text(encoding="utf-8")))
+    if len(sys.argv) not in (2, 3):
+        raise SystemExit("usage: release_notes.py VERSION [OUTPUT_FILE]")
+    text = notes(sys.argv[1], CHANGELOG.read_text(encoding="utf-8"))
+    if len(sys.argv) == 3:
+        Path(sys.argv[2]).write_text(text, encoding="utf-8")
+    else:
+        sys.stdout.write(text)
