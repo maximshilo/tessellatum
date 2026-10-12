@@ -89,8 +89,9 @@ all back):
 - **Lines and numbers**: how wide the lines print, 0.1 to 1 mm (0.2 mm by
   default), and their tone, Light, Medium or Dark; how far along a line its
   pixel staircase is smoothed; the smallest number (3 pt by default; a
-  preview draws none under 10 px, 6.5-7 pt on a page made at 1100 px); how far outside a small region its
-  number may go, on a leader; and how far numbers keep from text. The numbers are always a step lighter than the
+  preview draws none under 10 px, 6.5-7 pt on a page made at 1100 px); how
+  far outside a small region its number may go, on a leader; and how far
+  numbers keep from text. The numbers are always a step lighter than the
   lines, so they read as the page's own apparatus rather than as writing in
   the picture. Light is for pale paints, under which darker lines would show.
 - **Faces and subject**, **Line art**, **Text**: how much smaller regions may
@@ -250,17 +251,21 @@ never below the brush's own footprint. So a page's regions are the same
 size on paper whatever its pixel count, and a long, narrow picture, which
 prints smaller, gets fewer regions rather than smaller ones.
 
-Over the 12 benchmark images, a preview has a median of 308 regions at
-Beginner, 614 at Medium and 1,413 at Realistic (up to 7,090 on the lion), and
-takes a median of 0.7 s, 1.0 s and 1.7 s (up to 7 s on the complex
-cartoon); exporting it, drawing that page at print size, takes 0.5, 0.7 and
-1.8 s more (up to 6 s, the lion at Realistic), once for the zoom and the export
-alike. That detail has a price the
-quality benchmarks show (see `benchmarks/QUALITY_BENCHMARKS.md`): lines that
-follow bends finer than half a millimeter; on a preview, which draws no
-number under 10 px, many numbers that find no room off the lines; and at
-Realistic, whose 0.5 mm brush is 2 px wide on a preview, regions narrower
-than the brush on up to 5% of a photograph's export.
+Over the 12 benchmark images (none larger than 2048 px), a preview has a
+median of 290 regions at Beginner, 552 at Medium and 1,384 at Realistic (up
+to 4,017 on the lion), and takes a median of 0.8 s, 1.5 s and 2.9 s (up to
+7 s on the complex cartoon); exporting it, drawing that page at print size,
+takes 0.5 s more at Beginner and Medium (up to 2 s), once for the zoom and
+the export alike, and at Realistic usually nothing, the preview being made
+at the picture's own size already. On a 12-megapixel photograph a preview
+made again with other settings takes about 0.8 s at Beginner, 1.9 s at
+Medium and 6.7 s at Realistic, and its export 1.7, 2.0 and 6.2 s more. That
+detail has a price the quality benchmarks show (see
+`benchmarks/QUALITY_BENCHMARKS.md`): lines that follow bends finer than half
+a millimeter; numbers that find no room off the lines, on a preview, which
+draws none under 10 px, and on the two scanned drawings, whose fine ink
+makes many small regions; and regions narrower than the brush on up to 1.6%
+of the lion's page.
 The benchmark's Max -- 40 colors, 30 mm², no smoothing, a 3 mm brush and
 10 ΔE00 -- is the setting the targets are held at: there every page meets
 them but Times Square's preview, whose lettering reads less well than the

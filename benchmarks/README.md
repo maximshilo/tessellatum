@@ -103,9 +103,9 @@ across, at least 1100 px, at most the picture's own size or 300 dpi), before tha
 default was 1100 px. `--long-edge 1100` still asks for an 1100 px page, which
 from 0.1.56 is the app's preview only where the level's brush needs no more
 pixels: at Max, at Beginner but on pictures longer than about 3:2 (up to
-1108 px), and on pictures no larger than 1100 px. `--presets
-Max` adds the setting every version is compared at; `--long-edge preview 2400` adds export size;
-`--threads N` caps worker threads to test scaling; `--category face text` runs
+1108 px), and on pictures no larger than 1100 px. `--presets Max` adds the
+setting every version is compared at; `--long-edge preview 2400` adds export
+size; `--threads N` caps worker threads to test scaling; `--category face text` runs
 only the images in those categories (see the image manifest below).
 
 `Max` is the setting the version's own `difficulty.finest_params()` gives:
@@ -872,8 +872,9 @@ reference, it averages both sets over the cases both completed, and marks the
 means that regressed in bold.
 
 A metric has two tolerances, one for each size it is measured at: **preview**, a
-page of 1100 px, and **export**, a page at the image's own size (see
-"Regressions" below).
+page smaller than the image (1100 px; from 0.1.56 a level's working size, 1100 px
+or more), and **export**, a page at the image's own size (see "Regressions"
+below). The preview tolerances were measured on 1100 px pages.
 
 | metric | job | σ preview | σ export | target |
 |---|---|---|---|---|
