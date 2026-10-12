@@ -78,7 +78,9 @@ all back):
   every two must be (the *color margin*, 4 ΔE00 at every level; lower keeps
   more, subtler colors), the smallest region (2 to 500 mm²), the *brush
   width* -- the narrowest any part of a region may be, 0.5 to 6 mm: 1 mm at
-  Beginner down to 0.5 mm at Realistic -- which corners keep their points
+  Beginner down to 0.5 mm at Realistic -- how many *pixels across the brush*
+  a page is made with (4 by default, 2 to 8; see "Print size" below; not the
+  difficulty's, so moving it keeps the preset), which corners keep their points
   (the *sharpest corner*: 180°, as at every level, rounds every corner to
   the brush; 20° keeps a triangle's points) and how plainly the picture must
   show one (the *corner contrast*), the smoothing before the colors are
@@ -87,7 +89,7 @@ all back):
 - **Lines and numbers**: how wide the lines print, 0.1 to 1 mm (0.2 mm by
   default), and their tone, Light, Medium or Dark; how far along a line its
   pixel staircase is smoothed; the smallest number (3 pt by default; a
-  preview draws none under 10 px); how far outside a small region its
+  preview draws none under 10 px, 6.5-7 pt on a page made at 1100 px); how far outside a small region its
   number may go, on a leader; and how far numbers keep from text. The numbers are always a step lighter than the
   lines, so they read as the page's own apparatus rather than as writing in
   the picture. Light is for pale paints, under which darker lines would show.
@@ -109,8 +111,9 @@ all back):
 - **Export** renders the page at 300 dpi on A4: a long edge of 2244 to
   3272 px, depending on the picture's shape, or the picture's own size where
   that is smaller, since nothing is upscaled. The page is the preview's, made
-  at its 1100 px and drawn larger: the letters of signs and captions are taken
-  again from the picture at print size. *Version* picks which of the
+  at its working size and drawn larger (see "Print size" below), or the
+  preview itself where it was made at print size: the letters of signs and
+  captions are taken again from the picture at print size. *Version* picks which of the
   three versions to export, in either format; the legend comes with each.
   - **PDF**: two A4 sheets of vector art. The page fills the printable area
     inside 10 mm margins, centered, on a landscape sheet when the picture is
@@ -207,8 +210,15 @@ step 5: their letters are printed, and step 7 keeps the numbers off them
    text found, nor within about 0.5 mm of one, where it would read as part of
    a sign or a caption; a region lying in one gets its number outside, with a
    leader that crosses the lettering. See `src/tessellatum/core/labels.py`.
-8. **Print size**: a page is made once, at the preview's 1100 px, and an
-   export is that page drawn at 300 dpi: each region filled inside its
+8. **Print size**: a page is made once, at its working size, which the
+   preview shows: where its level's brush is 4 px across on paper (the panel's
+   *pixels across the brush*), so that a finer brush gets more pixels. On a
+   3:2 picture that is about 1100 px along the long edge at Beginner, 1400 at
+   Easy, 1600 at Medium, 1850 at Hard and 2200 at Realistic, less on a squarer
+   picture, which prints smaller; never fewer than 1100 px, at which the
+   faces, the subject, the text and whether a picture is line art are found,
+   nor more than the picture has or than 300 dpi. An export is that page
+   drawn at 300 dpi: each region filled inside its
    outline, smoothed as its lines are, scaled, and touching only the regions
    it touched; the lines the preview's, scaled; the printed ink inside its
    own smoothed outline; the letters of signs and captions taken again from

@@ -37,6 +37,7 @@ DEFAULT_IMAGES_DIR = REPO_ROOT / "tests" / "sample_images"
 DEFAULT_RESULTS_DIR = BENCH_DIR / "results"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff"}
 WORKTREE = "WORKTREE"
+PREVIEW = "preview"  # a --long-edge: the size each version previews a page at (see bench_case.asked_long_edge)
 TRACKED_PACKAGES = ("numpy", "opencv-python", "pillow", "numba")
 
 
@@ -68,7 +69,15 @@ def main(argv: list[str] | None = None) -> int:
         default=["Beginner", "Easy", "Medium", "Hard", "Realistic"],
         help="difficulty presets (also: Max, the setting every version is compared at)",
     )
-    run_p.add_argument("--long-edge", nargs="+", type=int, default=[1100], dest="long_edges", help="output long edge(s) in px (preview is 1100, export 2400)")
+    run_p.add_argument(
+        "--long-edge",
+        nargs="+",
+        type=_long_edge,
+        default=[PREVIEW],
+        dest="long_edges",
+        help=f"output long edge(s) in px, or {PREVIEW!r}: the size each version previews a page at (its working size "
+        "from 0.1.56, 1100 px before); 2400 is an export of every benchmark image",
+    )
     run_p.add_argument("--repeats", type=int, default=3, help="measured runs per case (the median is reported)")
     run_p.add_argument("--warmup", type=int, default=1, help="unmeasured warm-up runs per case")
     run_p.add_argument("--threads", type=int, help="cap worker threads (OpenCV, numba, tessellatum's own pools)")
@@ -104,6 +113,19 @@ def main(argv: list[str] | None = None) -> int:
 
 
 # -- run --------------------------------------------------------------------
+def _long_edge(text: str) -> int | str:
+    """A ``--long-edge``: a size in px, or ``PREVIEW``."""
+    if text == PREVIEW:
+        return text
+    try:
+        value = int(text)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        raise argparse.ArgumentTypeError(f"a size in px or {PREVIEW!r}, not {text!r}")
+    return value
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     try:
         images, manifest = select_images(_collect_images(args.images), args.category)
@@ -170,7 +192,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _run_case(
-    args, src_dir: Path, env: dict, image: Path, preset: str, long_edge: int, case_dir: Path, categories: list[str]
+    args, src_dir: Path, env: dict, image: Path, preset: str, long_edge: int | str, case_dir: Path, categories: list[str]
 ) -> dict:
     settings = {"repeats": args.repeats, "warmup": args.warmup, "timeout_s": args.timeout}
     base = {

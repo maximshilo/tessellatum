@@ -210,7 +210,24 @@ def test_a_new_page_of_the_same_size_can_keep_the_view(preview):
     assert _same(preview.shown_image(), pil_to_qimage(_picture(PAGE, 20)))
 
     preview.show_page(_versions((900, 734), 30), _picture((900, 60), 39), print_scale=PRINTS_AT, keep_view=True)
-    assert preview.zoom() < 1  # another size: fitted
+    assert preview.zoom() < 1  # another shape: fitted
+
+
+def test_a_new_page_of_the_picture_made_at_another_size_keeps_the_view_on_paper(preview):
+    # D-012 (T8): another level makes its page at another size; it is shown as far in on paper, the same point of the
+    # picture in the middle.
+    preview.zoom_by(3.0, QPointF(300, 100))
+    middle = QRectF(preview.viewport().rect()).center()
+    point = _scene_at(preview, middle)
+    zoom, on_paper = preview.zoom(), preview.printed_zoom()
+
+    larger = (1650, 1101)  # 1.5 times as large: the page prints at 4/3 of its size, as at 2 times the preview's
+    preview.show_page(_versions(larger, 40), _picture((larger[0], 90), 49), print_scale=4 / 3, keep_view=True)
+    assert preview.printed_zoom() == pytest.approx(on_paper)
+    assert preview.zoom() == pytest.approx(zoom / 1.5)
+    there = _scene_at(preview, middle)
+    assert abs(there.x() - point.x() * 1.5) <= 0.5 and abs(there.y() - point.y() * 1.5) <= 0.5
+    assert _same(preview.shown_image(), pil_to_qimage(_picture(larger, 40)))
 
 
 def test_past_the_preview_s_pixels_the_page_as_it_prints_is_shown_at_the_screen_s_resolution(preview):

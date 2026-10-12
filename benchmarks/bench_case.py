@@ -266,6 +266,18 @@ def preset_params(difficulty, name: str):
     return difficulty.params_for_preset(name)
 
 
+def asked_long_edge(asked: str, pipeline, image_bgr, params) -> int:
+    """The long edge a case asks the version measured for: a size in px, or for ``preview`` the size its app previews
+    the page at -- from 0.1.56 its working size (``pipeline.working_long_edge``: where the level's brush is a few
+    pixels across), before that 1100 px. ``pipeline`` is the version's ``tessellatum.core.pipeline``."""
+    if asked != "preview":
+        return int(asked)
+    working_long_edge = getattr(pipeline, "working_long_edge", None)
+    if working_long_edge is not None:
+        return int(working_long_edge(image_bgr, params))
+    return int(getattr(pipeline, "PREVIEW_LONG_EDGE", 1100))
+
+
 def page_limits(params, render_module) -> dict[str, float]:
     """What a page is held to: the brush, the smallest number and the colors' margin, as the version measured sets them.
 
@@ -293,7 +305,7 @@ def main() -> int:
     parser.add_argument("--src", type=Path, required=True)
     parser.add_argument("--image", type=Path, required=True)
     parser.add_argument("--preset", required=True)
-    parser.add_argument("--long-edge", type=int, required=True)
+    parser.add_argument("--long-edge", required=True, help="a size in px, or 'preview' (see asked_long_edge)")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--threads", type=int)
@@ -326,6 +338,7 @@ def main() -> int:
     params = preset_params(difficulty, args.preset)
 
     image_bgr = pipeline.load_image_bgr(args.image)
+    long_edge = asked_long_edge(args.long_edge, pipeline, image_bgr, params)
     image_info = bench_manifest.find_image(args.image)
     probe = Probe(pipeline)
     has_analysis = "collect_analysis" in inspect.signature(pipeline.generate).parameters
@@ -338,7 +351,7 @@ def main() -> int:
         options = {"collect_analysis": True} if collect_analysis else {}
         started = time.perf_counter()
         result = pipeline.generate(
-            fresh, params, args.long_edge, progress_callback=lambda _pct: None, should_cancel=lambda: False, **options
+            fresh, params, long_edge, progress_callback=lambda _pct: None, should_cancel=lambda: False, **options
         )
         total = time.perf_counter() - started
         return result, {"total_s": total, "stages_s": dict(probe.timings)}
@@ -359,7 +372,7 @@ def main() -> int:
         r["total_s"] - sum(r["stages_s"].get(name, 0.0) for name in stage_names) for r in runs
     )
 
-    reference = bm.reference_resize(image_bgr, args.long_edge)
+    reference = bm.reference_resize(image_bgr, long_edge)
     h, w = reference.shape[:2]
     if has_analysis:
         # The timed runs leave analysis off, as the app does; one more run collects it.
@@ -518,7 +531,9 @@ def main() -> int:
         "image": args.image.name,
         "preset": args.preset,
         "params": dataclasses.asdict(params),
-        "long_edge": args.long_edge,
+        "long_edge": long_edge,
+        # How it was asked for: a size, or "preview" (see asked_long_edge).
+        "asked_long_edge": args.long_edge if args.long_edge == "preview" else int(args.long_edge),
         "status": "ok",
         "version": getattr(tessellatum, "__version__", "unknown"),
         "output_size": [result.page.width, result.page.height],

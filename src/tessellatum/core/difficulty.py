@@ -7,8 +7,10 @@ Sizes are set on the printed page, in square millimeters and millimeters (see
 ``print_size``): a page prints at the same physical size whatever its pixel
 count, so a page is held to the same limits at whatever size it is made,
 and a long, narrow picture, which prints smaller, gets fewer regions rather
-than smaller ones. (From 0.1.53 a page is made once, at the preview's size,
-and an export is that page drawn at print size: see ``pipeline.draw_page``.)
+than smaller ones. (From 0.1.53 a page is made once, and an export is that
+page drawn at print size: see ``pipeline.draw_page``. From 0.1.56 it is made
+where its brush is a few pixels across, so a finer level is made at more
+pixels: see ``pipeline.working_long_edge``.)
 """
 
 from __future__ import annotations

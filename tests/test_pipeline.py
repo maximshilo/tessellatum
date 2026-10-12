@@ -376,16 +376,19 @@ def test_line_art_is_decided_on_the_picture_at_preview_size(monkeypatch):
     monkeypatch.setattr(pipeline, "PREVIEW_LONG_EDGE", 300)
     drawing = _line_drawing(450, 330)
     params = FINE
+    working = pipeline.working_long_edge(drawing, params)
+    assert working == 345  # FINE's 3 mm brush is 4 px across at 345 px, more than the 300 px a preview is found at
 
-    preview = generate(drawing, params, long_edge=300, collect_analysis=True).analysis
+    preview = generate(drawing, params, long_edge=working, collect_analysis=True).analysis
     export = generate(drawing, params, long_edge=450, collect_analysis=True).analysis
     smaller = generate(drawing, params, long_edge=200, collect_analysis=True).analysis
 
     at_preview_size = ink.line_art(pipeline.resize_to_long_edge(drawing, 300))
     assert preview.line_art == export.line_art == smaller.line_art == at_preview_size
     assert export.ink_lines.shape == (330, 450) and smaller.ink_lines.shape == (147, 200)
-    # A page smaller than the preview finds its own ink; an export is its preview's page drawn larger (D-006).
+    # A page at its working size or smaller finds its own ink; an export is its preview's page drawn larger (D-006).
     assert (smaller.ink_lines == ink.ink_lines(pipeline.resize_to_long_edge(drawing, 200))).all()
+    assert (preview.ink_lines == ink.ink_lines(pipeline.resize_to_long_edge(drawing, working))).all()
     np.testing.assert_array_equal(export.ink_lines, redraw.scaled_up(preview.ink_lines, (450, 330)))
 
 
@@ -701,6 +704,40 @@ def test_an_export_renders_at_300_dpi_on_a4_and_never_upscales():
     assert print_size.print_scale(page.shape[1::-1]).dpi == pytest.approx(300, abs=0.2)
     assert pipeline.export_long_edge(np.zeros((2400, 2400, 3), dtype=np.uint8)) == 2244  # 300 dpi is enough
     assert pipeline.export_long_edge(np.zeros((1000, 1500, 3), dtype=np.uint8)) == 1500  # never upscaled
+
+
+def test_a_page_is_made_where_its_level_s_brush_is_four_pixels_across():
+    # D-012 (T8): a working size per level, from its brush, at least the preview's 1100 px and at most an export's.
+    photo = np.zeros((4000, 6000, 3), dtype=np.uint8)  # 3:2, 277 mm long on A4: 3272 px at 300 dpi
+    sizes = {name: pipeline.working_long_edge(photo, params) for name, params in difficulty.PRESETS.items()}
+    assert sizes == {"Beginner": 1108, "Easy": 1385, "Medium": 1583, "Hard": 1847, "Realistic": 2216}
+    for name, long_edge in sizes.items():
+        size = pipeline.resize_to_long_edge(photo, long_edge).shape[1::-1]
+        brush_px = print_size.print_scale(size).mm_to_px(difficulty.PRESETS[name].min_width_mm)
+        assert brush_px == pytest.approx(pipeline.BRUSH_PX, abs=0.01), name
+    # A brush of 3 mm, the benchmark's Max, is 4 px across on fewer pixels than a preview has; no brush, no finer page.
+    assert pipeline.working_long_edge(photo, difficulty.finest_params()) == pipeline.PREVIEW_LONG_EDGE
+    brushless = dataclasses.replace(difficulty.PRESETS["Realistic"], min_width_mm=0.0)
+    assert pipeline.working_long_edge(photo, brushless) == pipeline.PREVIEW_LONG_EDGE
+    # A squarer picture prints smaller, 190 mm on a side, so it is made at fewer pixels.
+    square = np.zeros((3000, 3000, 3), dtype=np.uint8)
+    assert pipeline.working_long_edge(square, difficulty.PRESETS["Realistic"]) == 1520
+    assert pipeline.working_long_edge(square, difficulty.PRESETS["Beginner"]) == 1100
+    # Never more than the picture has.
+    realistic = difficulty.PRESETS["Realistic"]
+    assert pipeline.working_long_edge(np.zeros((1200, 1800, 3), dtype=np.uint8), realistic) == 1800
+    assert pipeline.working_long_edge(np.zeros((600, 800, 3), dtype=np.uint8), realistic) == 800
+
+
+def test_the_working_size_follows_the_pixels_across_the_brush_asked_for():
+    photo = np.zeros((4000, 6000, 3), dtype=np.uint8)
+    medium, realistic = difficulty.PRESETS["Medium"], difficulty.PRESETS["Realistic"]
+    assert Handling().brush_px == pipeline.BRUSH_PX == 4
+    assert pipeline.working_long_edge(photo, medium, Handling(brush_px=6.0)) == 2374
+    assert pipeline.working_long_edge(photo, realistic, Handling(brush_px=8.0)) == 3272  # never more than 300 dpi
+    # At 2, every level is made at about the preview's size, as every page was until 0.1.55.
+    at_two = {pipeline.working_long_edge(photo, params, Handling(brush_px=2.0)) for params in difficulty.PRESETS.values()}
+    assert at_two == {1100, 1108}
 
 
 def test_the_legend_is_drawn_at_the_page_s_print_scale(sample_image_bgr):
