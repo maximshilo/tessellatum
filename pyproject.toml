@@ -1,9 +1,24 @@
 [project]
 name = "tessellatum"
-version = "0.1.56"
-description = "Generate paint-by-numbers style coloring pages from any image."
+version = "1.0.0"
+description = "Turn any picture into a printable paint-by-numbers page, with computer vision and on-device neural networks."
 readme = "README.md"
 requires-python = ">=3.10"
+authors = [{ name = "Maxim Shilo" }]
+keywords = [
+    "paint-by-numbers", "computer-vision", "image-processing", "image-segmentation", "color-quantization",
+    "face-detection", "text-detection", "saliency", "opencv", "onnxruntime", "numba", "pyside6",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Win32 (MS Windows)",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
 dependencies = [
     "PySide6>=6.6",
     "opencv-python>=4.9",
@@ -25,6 +40,12 @@ dev = [
 
 [project.scripts]
 tessellatum = "tessellatum.main:main"
+
+[project.urls]
+Homepage = "https://github.com/maximshilo/tessellatum"
+Documentation = "https://github.com/maximshilo/tessellatum/wiki"
+Changelog = "https://github.com/maximshilo/tessellatum/blob/main/CHANGELOG.md"
+Issues = "https://github.com/maximshilo/tessellatum/issues"
 
 [build-system]
 requires = ["setuptools>=68"]

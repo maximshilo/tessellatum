@@ -40,6 +40,35 @@ generate scratch/debug files while working, keep them out of the repo
   Use a minor/major bump instead only when the change clearly warrants it.
 - Push the branch and open a PR with `gh pr create` rather than merging
   locally and pushing `main` directly.
+- Add the version's entry to `CHANGELOG.md` in the same PR.
+- Releasing is a separate step, done when the user asks to ship: after the
+  PR is merged, tag the merge commit `vX.Y.Z` (matching the version) and
+  push the tag. `.github/workflows/release.yml` then builds the Windows app
+  and publishes the GitHub release with that `CHANGELOG.md` section as its
+  notes.
+
+## Public presentation: README, wiki, gallery
+
+The GitHub page showcases the project, so it has to stay true as the code
+changes. Update it in the same PR as the change it describes:
+
+- `README.md` is the landing page: brief, leading with the machine-learning
+  and image-analysis techniques and tools the project uses; no
+  implementation detail (that goes in the wiki). Keep its numbers (tests,
+  settings, preview times) and its technique list current.
+- The wiki's source is `wiki/` in this repo. `.github/workflows/wiki.yml`
+  publishes it to the GitHub wiki on every push to `main` that touches it,
+  overwriting edits made in GitHub's editor, so edit `wiki/` only. A change
+  to behavior, settings, techniques, architecture or the workflow updates
+  the matching page (`User-Guide`, `How-It-Works`, `Techniques`,
+  `Architecture`, `Quality-and-Performance`, `Development`).
+- `docs/make_assets.py` regenerates the gallery, the README banner and the
+  social preview from the sample images with the current pipeline;
+  `docs/make_screenshot.py` the app screenshot. Rerun them when pages change
+  visibly, and before a release. The social preview is uploaded by hand
+  (Settings > Social preview): tell the user when it changed.
+- The repository's About (description, topics) and badges should match what
+  the project is; mention it to the user when a change makes them stale.
 
 ## Running
 
