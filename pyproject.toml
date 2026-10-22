@@ -1,6 +1,6 @@
 [project]
 name = "tessellatum"
-version = "1.0.3"
+version = "1.0.4"
 description = "Turn any picture into a printable paint-by-numbers page, with computer vision and on-device neural networks."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -11,10 +11,13 @@ keywords = [
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
+    "Environment :: MacOS X",
     "Environment :: Win32 (MS Windows)",
     "Environment :: X11 Applications :: Qt",
     "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Topic :: Multimedia :: Graphics",
     "Topic :: Scientific/Engineering :: Image Processing",
