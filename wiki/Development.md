@@ -4,8 +4,8 @@
 
 - Work on a feature branch off `main`; never commit to `main` directly.
 - Bump the version in both `pyproject.toml` and `src/tessellatum/__init__.py`, and add an entry to `CHANGELOG.md`.
-- Push the branch and open a pull request. The **tests** workflow runs the suite on Windows for every pull request and
-  every push to `main`.
+- Push the branch and open a pull request. The **tests** workflow runs the suite on Windows, Linux and macOS for every
+  pull request and every push to `main`.
 - Changes to the pipeline (`src/tessellatum/core/`) are benchmarked for speed and quality against `main` before review.
 
 ## Tests

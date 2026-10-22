@@ -35,9 +35,9 @@ Produces a folder you can copy anywhere and double-click to run.
 - Linux: `./packaging/build_linux.sh` → `dist/Tessellatum/Tessellatum`
 - macOS: `./packaging/build_macos.sh` → `dist/Tessellatum.app`
 
-The real output is `dist/Tessellatum/`; PyInstaller's `build/` folder is scratch space. The Linux and macOS scripts are
-written to be portable but have only been built and tested on Windows so far; if something is missing on your
-system, run the binary from a terminal to see the error.
+The real output is `dist/Tessellatum/`; PyInstaller's `build/` folder is scratch space. The test suite runs on Windows, Linux and
+macOS, but the Linux and macOS standalone builds have not been tried yet; if something is missing on your system, run
+the binary from a terminal to see the error.
 
 ## A first page
 

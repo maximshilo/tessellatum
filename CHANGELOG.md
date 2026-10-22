@@ -4,6 +4,17 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.4] - 2026-10-22
+
+### Changed
+
+- The test suite runs on Linux and macOS as well as Windows, for every pull request and every push to `main`.
+
+### Fixed
+
+- A face test asked for at least five fewer regions where a face's tones are settled, a margin that only held on
+  Windows; macOS (arm64) paints the lion slightly differently and settles three. It now asks for fewer.
+
 ## [1.0.3] - 2026-10-22
 
 ### Fixed
