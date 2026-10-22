@@ -16,7 +16,8 @@ Python 3.10 or newer.
 ```
 git clone https://github.com/maximshilo/tessellatum.git
 cd tessellatum
-py -3 -m venv .venv
+py -3 -m venv .venv                            # Windows
+# python3 -m venv .venv                        # Linux/macOS
 .venv\Scripts\pip install -e ".[dev]"          # Windows
 # ./.venv/bin/pip install -e ".[dev]"          # Linux/macOS
 

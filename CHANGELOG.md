@@ -4,6 +4,17 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.3] - 2026-10-22
+
+### Fixed
+
+- The README banner and the social preview no longer stretch the lion sideways: the picture is cropped at the shape of
+  the space it fills instead of being resized into it.
+
+### Changed
+
+- The README lists macOS and Linux as platforms, with how to run Tessellatum from source on them.
+
 ## [1.0.2] - 2026-10-12
 
 ### Fixed
