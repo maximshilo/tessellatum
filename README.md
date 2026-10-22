@@ -6,7 +6,7 @@
   <a href="https://github.com/maximshilo/tessellatum/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/maximshilo/tessellatum?style=flat-square&color=1f4e79"></a>
   <a href="https://github.com/maximshilo/tessellatum/actions/workflows/tests.yml"><img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/maximshilo/tessellatum/tests.yml?branch=main&style=flat-square&label=tests"></a>
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white">
-  <img alt="Platform: Windows" src="https://img.shields.io/badge/platform-Windows-0078D6?style=flat-square&logo=windows&logoColor=white">
+  <img alt="Platforms: Windows, macOS, Linux" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6?style=flat-square">
   <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/github/license/maximshilo/tessellatum?style=flat-square"></a>
   <br>
   <img alt="OpenCV" src="https://img.shields.io/badge/OpenCV-5C3EE8?style=flat-square&logo=opencv&logoColor=white">
@@ -71,7 +71,8 @@ tinted painting guide; export a 300 dpi PNG or an A4 PDF of vector art.
 - Print output: 300 dpi PNG and a purpose-built vector PDF writer.
 - Quality assurance: 1,200+ automated tests, including pixel-exact equivalence tests, and a benchmark harness that
   scores every version on speed and image quality (ΔE00, SSIM, OCR error rate, edge F1).
-- Desktop delivery: Qt 6 interface with background workers, standalone Windows build released by GitHub Actions.
+- Desktop delivery: cross-platform Qt 6 interface with background workers (Windows, macOS, Linux), standalone Windows
+  build released by GitHub Actions.
 
 ## How it works
 
@@ -94,7 +95,10 @@ The stages, their parameters and the reasoning behind them are in the wiki:
 [latest release](https://github.com/maximshilo/tessellatum/releases/latest), unzip it anywhere and run
 `Tessellatum.exe`. No installer, no Python needed.
 
-**From source** (Python 3.10+):
+**macOS and Linux:** run it from source, as below, or build a standalone app with `packaging/build_macos.sh` or
+`packaging/build_linux.sh` ([details](https://github.com/maximshilo/tessellatum/wiki/Getting-Started)).
+
+**From source** (Python 3.10+), on Windows:
 
 ```
 git clone https://github.com/maximshilo/tessellatum.git
@@ -102,6 +106,16 @@ cd tessellatum
 py -3 -m venv .venv
 .venv\Scripts\pip install -e ".[dev]"
 .venv\Scripts\python -m tessellatum.main
+```
+
+On macOS and Linux:
+
+```
+git clone https://github.com/maximshilo/tessellatum.git
+cd tessellatum
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/python -m tessellatum.main
 ```
 
 ## Documentation

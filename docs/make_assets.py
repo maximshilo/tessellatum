@@ -18,6 +18,7 @@ safe to publish. Pillow writes no metadata into them.
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -105,21 +106,31 @@ def blend_across(left: Image.Image, right: Image.Image, start: float, end: float
     return Image.composite(right, left, mask)
 
 
-def hero(source: Image.Image, page, size: tuple[int, int], crop: tuple[float, float, float, float]) -> Image.Image:
-    """The lion: the photograph, then its page, then the page painted in, across the picture."""
+def hero(source: Image.Image, page, size: tuple[int, int], center: tuple[float, float], width: float) -> Image.Image:
+    """The lion: the photograph, then its page, then the page painted in, across the picture.
+
+    The crop has ``size``'s aspect ratio, so the picture is scaled, never stretched: ``width`` of the picture's width
+    (less if the picture is too short for that), around ``center`` (fractions of the picture), kept inside it.
+    """
     painted = page.image(Version.COMPLETED).convert("RGB")
     lines = page.image(Version.PAGE).convert("RGB")
     w, h = lines.size
-    box = (round(crop[0] * w), round(crop[1] * h), round(crop[2] * w), round(crop[3] * h))
-    parts = [im.crop(box).resize(size, Image.LANCZOS) for im in (source, lines, painted)]
-    first = blend_across(parts[0], parts[1], 0.16, 0.30)
-    return blend_across(first, parts[2], 0.62, 0.76)
+    crop_w = min(width * w, h * size[0] / size[1])
+    crop_h = crop_w * size[1] / size[0]
+    left = min(max(center[0] * w - crop_w / 2, 0), w - crop_w)
+    top = min(max(center[1] * h - crop_h / 2, 0), h - crop_h)
+    box = (left, top, left + crop_w, top + crop_h)
+    parts = [im.resize(size, Image.LANCZOS, box=box) for im in (source, lines, painted)]
+    first = blend_across(parts[0], parts[1], 0.18, 0.28)
+    return blend_across(first, parts[2], 0.55, 0.63)
 
 
-def banner(width: int, height: int, art: Image.Image, title_size: int, subtitle_size: int, small_size: int) -> Image.Image:
+def banner(width: int, height: int, art: Callable[[tuple[int, int]], Image.Image], title_size: int, subtitle_size: int,
+           small_size: int) -> Image.Image:
+    """The title on the left, ``art`` (called with the size it fills) on the right."""
     out = Image.new("RGB", (width, height), BACKDROP)
     art_width = round(width * 0.58)
-    out.paste(art.resize((art_width, height), Image.LANCZOS), (width - art_width, 0))
+    out.paste(art((art_width, height)), (width - art_width, 0))
     # A soft edge where the backdrop meets the picture.
     fade = round(width * 0.06)
     x0 = width - art_width
@@ -158,7 +169,10 @@ def main() -> None:
         print(f"{name}: {page.num_colors_used} colors, {page.num_regions} regions")
 
     source, page = pages["photo-lion"]
-    art = hero(source, page, (1400, 1000), (0.17, 0.0, 0.83, 0.94))
+
+    def art(size: tuple[int, int]) -> Image.Image:
+        return hero(source, page, size, center=(0.535, 0.52), width=0.75)
+
     banner(1600, 560, art, 96, 40, 28).save(ASSETS / "banner.png", optimize=True)
     banner(1280, 640, art, 82, 36, 26).save(ASSETS / "social-preview.png", optimize=True)
     print("banner and social preview written")
