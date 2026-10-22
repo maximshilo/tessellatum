@@ -39,8 +39,13 @@ jobs:
 
       - name: Install Qt's system libraries
         # PySide6's wheels bring Qt but not the libraries it loads from the system, even offscreen.
+        # A stalled package mirror once hung apt-get for the whole job's hour: time it out and retry instead.
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+        timeout-minutes: 10
+        run: |
+          apt_opts="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          sudo apt-get $apt_opts update
+          sudo apt-get $apt_opts install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
 
       - name: Install
         run: python -m pip install -e ".[dev]"
