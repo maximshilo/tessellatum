@@ -128,6 +128,9 @@ class PageData:
     outlines: np.ndarray | None  # HxW: the line layer alone, 0 where there is a line; None before 0.1.10
     leaders: np.ndarray | None  # HxW: the ink of the numbers' leader lines, as outlines; None for versions that draw none
     leader_labels: int  # numbers written outside their region, with a leader pointing in
+    # (region id, x, y) of every number: its box's middle, or for a number with a leader the point it points at; None
+    # for versions whose numbers weren't read from their labels.
+    label_points: list[tuple[int, float, float]] | None = None
     ink_lines: np.ndarray | None = None  # HxW bool: the ink lines the pipeline found; None before 0.1.27
     line_art: object | None = None  # the pipeline's ``ink.LineArt`` decision; None before 0.1.27
     # HxW bool: the ink the page prints; None before 0.1.28. In no region before 0.1.30; from then on, thin ink is in the
@@ -172,6 +175,7 @@ def page_data_from_analysis(analysis) -> PageData:
         outlines=analysis.outlines,
         leaders=getattr(analysis, "leaders", None),  # before 0.1.25 no number had a leader
         leader_labels=sum(getattr(label, "leader", None) is not None for label in analysis.labels),
+        label_points=[label_point(label) for label in analysis.labels],
         ink_lines=getattr(analysis, "ink_lines", None),  # before 0.1.27 no version looked for ink lines
         line_art=getattr(analysis, "line_art", None),
         printed_ink=getattr(analysis, "printed_ink", None),  # before 0.1.28 no version printed ink
@@ -182,6 +186,15 @@ def page_data_from_analysis(analysis) -> PageData:
         lettering_area=getattr(analysis, "lettering_area", None),  # before 0.1.41 no version printed lettering
         lettering=getattr(analysis, "lettering", None),
     )
+
+
+def label_point(label) -> tuple[int, float, float]:
+    """(region id, x, y): where ``label`` numbers its region, its box's middle or the point its leader points at."""
+    leader = getattr(label, "leader", None)
+    if leader is not None:
+        return label.region_id, float(leader[1][0]), float(leader[1][1])
+    x0, y0, x1, y1 = label.box
+    return label.region_id, (x0 + x1) / 2, (y0 + y1) / 2
 
 
 def page_data_from_probe(captured: dict, size: tuple[int, int], render_module) -> PageData | None:
@@ -580,6 +593,14 @@ def label_scores(page_data: PageData, scale, min_pt: float) -> dict:
     quality = bm.label_sizes(page_data.label_font_sizes_px, scale, min_pt)
     quality.update(bm.label_clearance(page_data.label_boxes, page_data.outlines, page_data.leaders))
     quality["leader_labels"] = page_data.leader_labels
+    if page_data.outlines is not None and page_data.label_points is not None:
+        # The regions pinched into sides that read as separate regions, and their sides with no number (from 1.0.6).
+        quality.update(
+            bm.unnumbered_sides(
+                page_data.region_id_map, page_data.outlines, page_data.label_points,
+                scale.mm_to_px(bm.SIDE_NECK_MM), page_data.min_region_area_px,
+            )
+        )
     return quality
 
 

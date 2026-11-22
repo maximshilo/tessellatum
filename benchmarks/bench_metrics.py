@@ -78,6 +78,9 @@ PALETTE_MIN_DE00 = 10.0
 # Bands, as a gradient breaks into. A region is one where no brush BAND_WIDTH_BRUSHES times the page's own fits
 # anywhere in it (6 mm at the 3 mm brush), and it is at least BAND_MIN_ELONGATION times as long as it is wide.
 BAND_WIDTH_BRUSHES = 2.0
+# A region's paper narrower than this between its lines, on paper, makes its sides read as separate regions: the
+# app's default for "Split at necks under" (``labels.SPLIT_NECK_MM``, from 1.0.6), which unnumbered_sides checks.
+SIDE_NECK_MM = 0.35
 BAND_MIN_ELONGATION = 4.0
 # How many legends of one size ``best_flat_color_match`` tries before falling back to a greedy search, and how many
 # it scores at a time. 15 flat colors make at most 6,435 of one size; the fallback is for an artwork twice that rich.
@@ -390,6 +393,75 @@ def unlabeled_regions(region_id_map: np.ndarray, labeled_region_ids) -> dict[str
         "unlabeled_regions": int(unlabeled.size),
         "unlabeled_area_fraction": float(areas[unlabeled].sum() / region_id_map.size) if region_id_map.size else 0.0,
     }
+
+
+def unnumbered_sides(
+    region_id_map: np.ndarray, outlines: np.ndarray, label_points, neck_px: float, min_area_px: float
+) -> dict[str, int]:
+    """Sides of a region that read as separate regions on paper and carry no number of their region.
+
+    A region's paper is its pixels with no ink on them (``outlines`` 255,
+    every line and all the printed ink). Its sides are the parts of that paper
+    left by a morphological opening with a disk ``neck_px`` across, which cuts
+    every neck narrower than that and leaves alone what the lines already part;
+    a side counts if its paper alone is at least ``min_area_px``, the page's
+    smallest region. Each of the region's pixels, under the lines too, goes to
+    the nearest side, and a side is numbered if one of the region's numbers is
+    on it: ``label_points`` are (region id, x, y), each number's box middle, or
+    for a number with a leader the point the leader points at.
+
+    Measured independently of the pipeline's ``labels.find_sides``, which finds
+    sides by their core's clearance, not by opening: the two can differ by a
+    pixel at a neck, and on what counts as large enough.
+    ``regions_with_sides`` counts the regions with two sides or more.
+    """
+    ids = np.asarray(region_id_map)
+    paper = np.asarray(outlines) == BARE_PAPER
+    height, width = ids.shape
+    areas = np.bincount(ids[ids >= 0].ravel())
+    points: dict[int, list[tuple[int, int]]] = {}
+    for region_id, x, y in label_points:
+        points.setdefault(int(region_id), []).append((int(round(x)), int(round(y))))
+    diameter = max(1, int(round(neck_px)))
+    disk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (diameter, diameter))
+    pad = diameter + 1
+    unnumbered = with_sides = 0
+    candidates = np.flatnonzero(areas >= 2 * min_area_px)
+    if not len(candidates):
+        return {"unnumbered_sides": 0, "regions_with_sides": 0}
+    # Every candidate's bounding box, in one pass over the page.
+    rows, columns = np.nonzero(np.isin(ids, candidates))
+    found = ids[rows, columns]
+    order = np.argsort(found, kind="stable")
+    found, rows, columns = found[order], rows[order], columns[order]
+    starts = np.searchsorted(found, candidates)
+    ends = np.searchsorted(found, candidates, side="right")
+    for region_id, start, end in zip(candidates, starts, ends):
+        ys, xs = rows[start:end], columns[start:end]
+        y0, x0 = int(ys.min()) - pad, int(xs.min()) - pad
+        shape = (int(ys.max()) - y0 + 1 + pad, int(xs.max()) - x0 + 1 + pad)
+        region = np.zeros(shape, dtype=bool)
+        region[ys - y0, xs - x0] = True
+        on_paper = np.zeros(shape, dtype=np.uint8)
+        keep = paper[ys, xs]
+        on_paper[ys[keep] - y0, xs[keep] - x0] = 1
+        opened = cv2.morphologyEx(on_paper, cv2.MORPH_OPEN, disk) if diameter > 1 else on_paper
+        count, parts, stats, _ = cv2.connectedComponentsWithStats(opened, connectivity=4)
+        sides = [k for k in range(1, count) if stats[k, cv2.CC_STAT_AREA] >= min_area_px]
+        if len(sides) < 2:
+            continue
+        with_sides += 1
+        seeds = np.isin(parts, sides)
+        _, nearest = cv2.distanceTransformWithLabels(
+            (~seeds).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_5, labelType=cv2.DIST_LABEL_PIXEL
+        )
+        side_of = np.concatenate([[0], parts[seeds]])[nearest]  # the nearest side's number, everywhere
+        numbered = set()
+        for x, y in points.get(int(region_id), []):
+            if 0 <= y - y0 < shape[0] and 0 <= x - x0 < shape[1] and region[y - y0, x - x0]:
+                numbered.add(int(side_of[y - y0, x - x0]))
+        unnumbered += sum(side not in numbered for side in sides)
+    return {"unnumbered_sides": unnumbered, "regions_with_sides": with_sides}
 
 
 def label_sizes(font_sizes_px, scale, min_pt: float = LABEL_MIN_PT) -> dict[str, float | None]:

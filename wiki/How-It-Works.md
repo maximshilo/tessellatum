@@ -57,6 +57,11 @@ flowchart TD
    line's ink falls. It goes at the region's most interior point if it fits there; otherwise wherever in the region it
    keeps farthest from the lines, made smaller if it has to be. A region too small even for that has its number written
    just outside it, with a leader line running to a dot inside it. No number goes within about 0.5 mm of a line of text.
+   A region pinched so thin that it reads as two regions -- its lines close it off somewhere, or its paper narrows to
+   less than 0.35 mm between them -- gets its number on each side as well: the sides are found by eroding its paper
+   with a disk that wide and growing each part left back over it, each pixel joining the part it reaches first along a
+   path through the paper, never across a line. Those numbers are placed after every region's own, in the room left,
+   so no region's own number moves.
 8. **Print size.** A page is made once, at its working size, where its brush is 4 px across: about 1,100 px along a 3:2
    picture's long edge at Beginner up to 2,200 at Realistic. An export is that page drawn at 300 dpi from its own
    geometry: each region filled inside its smoothed outline, the lines scaled, the printed ink inside its own smoothed

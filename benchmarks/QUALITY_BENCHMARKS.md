@@ -72,7 +72,9 @@ the page paintable is recorded as an intended trade-off.
   with the brush's tip, so a page may keep a triangle's corners (an opt-in setting) rather than round them to the
   brush.
 - Every region carries a legible number, never on a line or on another number. A region too small to hold its number
-  gets it just outside, with a leader line, rather than going without one.
+  gets it just outside, with a leader line, rather than going without one. A region pinched so thin that it reads as
+  two regions on paper -- its lines close it off somewhere, or its paper narrows to less than 0.35 mm -- carries its
+  number on each side.
 - There are few slivers anywhere, and none where a gradient would break into thin bands.
 
 | metric | what it measures | target |
@@ -80,6 +82,7 @@ the page paintable is recorded as an intended trade-off.
 | slivers | share of the page a round brush as wide as the page's own can't paint without crossing into another region (the regions' morphological opening by it), but for the points of corners down to 20° that stand apart, which it paints with its tip | ≤ 1% |
 | gradient slivers | the same, inside the annotated gradients (sky, calm water) | ≤ 1% |
 | unlabeled | regions without a number | 0 |
+| unnumbered sides | sides of a region that read as separate regions (its paper parted by its lines, or opened by a disk 0.35 mm across) at least as large as the smallest region, with no number of their region on them | inform (a side with no room for a number keeps none) |
 | labels too small | share of numbers printing smaller than the page's smallest number | 0 |
 | labels on lines | numbers with any ink of a line, or of a leader, in their box | 0 |
 | overlapping labels | numbers whose boxes overlap | 0 |

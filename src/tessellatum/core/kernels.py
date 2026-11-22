@@ -19,7 +19,9 @@ regions' pixels by color, with what each region touches (see ``tones``), and
 the vote that settles the regions' edges (see ``texture``). So do the search
 for a number's leader (see ``labels``), which picks the box the Python loop
 it replaces picked (``tests/test_labels.py`` keeps that loop), and the
-even-odd fill of a page's outlines drawn larger (see ``redraw``).
+even-odd fill of a page's outlines drawn larger (see ``redraw``), and
+the parting of a pinched region's paper into its sides (see
+``labels.find_sides``).
 Arrays are passed flattened (row-major) with explicit ``height``/``width``,
 but for the cascade's integral images, a leader's window and a filled page.
 
@@ -686,6 +688,85 @@ def region_bounds(ids, height, width, num_regions):
             bounds[r, 3] = y
             areas[r] += 1
     return bounds, areas
+
+
+@njit(cache=True, nogil=True)
+def _count_side(side_area, side_box, k, x, y):
+    side_area[k] += 1
+    if x < side_box[k, 0]:
+        side_box[k, 0] = x
+    if x > side_box[k, 2]:
+        side_box[k, 2] = x
+    if y < side_box[k, 1]:
+        side_box[k, 1] = y
+    side_box[k, 3] = y
+
+
+@njit(cache=True, nogil=True)
+def paper_sides(pieces, cores, ids, height, width, num_pieces, num_cores):
+    """A pinched region's sides over the page (see ``labels.find_sides``): each pixel's side, each side's area and region.
+
+    ``pieces`` numbers the parts of the regions' paper from 1 (0 off it), and
+    ``cores`` the parts of the paper a neck's width fits in, each in one piece;
+    every piece lies in one region of ``ids``. A piece with fewer than two
+    cores is one side, numbered as the piece; one with more is split, each
+    pixel to the nearest of its cores along a path through it (as
+    ``nearest_seed_in_groups``), the side numbered ``num_pieces`` + the core.
+    Returns ``(side, side_area, side_region, side_box)``: side 0 (off the
+    paper) has area 0 and region -1, as has a side no pixel is on; a side's
+    box is its inclusive ``(x0, y0, x1, y1)``.
+    """
+    n = height * width
+    num_sides = num_pieces + num_cores
+    side_region = np.full(num_sides, -1, np.int64)
+    core_piece = np.zeros(num_cores, np.int64)
+    for p in range(n):
+        piece = pieces[p]
+        if piece > 0:
+            side_region[piece] = ids[p]
+            core = cores[p]
+            if core > 0:
+                core_piece[core] = piece
+    cores_in_piece = np.zeros(num_pieces, np.int64)
+    for core in range(1, num_cores):
+        cores_in_piece[core_piece[core]] += 1
+    for core in range(1, num_cores):
+        side_region[num_pieces + core] = side_region[core_piece[core]]
+
+    # A piece that is one side is counted here; a split one's pixels, once each is given its nearest core.
+    side = pieces.copy()
+    groups = np.full(n, -1, np.int32)
+    seeds = np.full(n, -1, np.int32)
+    side_area = np.zeros(num_sides, np.int64)
+    side_box = np.empty((num_sides, 4), np.int32)
+    side_box[:, 0] = width
+    side_box[:, 1] = height
+    side_box[:, 2] = -1
+    side_box[:, 3] = -1
+    any_split = False
+    for y in range(height):
+        for x in range(width):
+            p = y * width + x
+            piece = pieces[p]
+            if piece <= 0:
+                continue
+            if cores_in_piece[piece] >= 2:
+                any_split = True
+                groups[p] = piece
+                if cores[p] > 0:
+                    seeds[p] = cores[p]
+            else:
+                _count_side(side_area, side_box, piece, x, y)
+    if any_split:
+        nearest = _nearest_seed(seeds, groups, height, width, -1)
+        for y in range(height):
+            for x in range(width):
+                p = y * width + x
+                if groups[p] >= 0:
+                    k = num_pieces + nearest[p]
+                    side[p] = k
+                    _count_side(side_area, side_box, k, x, y)
+    return side, side_area, side_region, side_box
 
 
 @njit(cache=True, nogil=True)

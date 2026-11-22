@@ -103,6 +103,10 @@ METRICS = (
     Metric("background_regions", "background regions", "{:d}"),
     Metric("labeled_area_fraction", "labeled area ↑", "{:.1%}", "paintable", "higher", sigma=0.024, sigma_export=0.0064),
     Metric("unlabeled_regions", "unlabeled ↓", "{:d}", "paintable", "lower", sigma=69, sigma_export=18, target=Target(0)),
+    # Sides of a region pinched so thin they read as separate regions, with no number of their region (T1 of
+    # numbers-and-export, 1.0.6); `case.json` also has `regions_with_sides`. A side with no room for a number keeps
+    # none rather than one written over the lines, so it only informs until its tolerances are measured.
+    Metric("unnumbered_sides", "unnumbered sides ↓", "{:d}"),
     Metric(
         "sliver_area_fraction", "slivers ↓", "{:.1%}", "paintable", "lower", sigma=0.015, sigma_export=0.014, target=Target(0.01)
     ),

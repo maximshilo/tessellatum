@@ -17,12 +17,17 @@ would read as part of a sign or a caption: every number keeps about
 ``TEXT_GAP_MM`` from the lines of text found. A region lying in one has its
 number written outside it, with a leader that crosses the lettering to reach
 it.
+
+A region pinched so thin somewhere that it reads on paper as two regions
+gets its number on each side (see ``find_sides``): its own number where it
+always went, then, once every region has that, one more on each other side,
+in the room left.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from typing import Callable
 
@@ -54,6 +59,11 @@ LEADER_REACH_MM = 8.0
 # at the least on the benchmark's previews, where a pixel is 0.25 mm).
 TEXT_GAP_MM = 0.5
 
+# A region whose paper narrows to less than this between its lines, on paper, reads as two regions there, and each side
+# gets its number (see ``find_sides``). Three quarters of the narrowest neck the user judged to read as one region, on
+# the lion at 2047 px: its paper was 3 px across there, 0.41-0.54 mm.
+SPLIT_NECK_MM = 0.35
+
 
 @dataclass
 class Label:
@@ -71,6 +81,9 @@ class Label:
     clears: bool = False
     # A number that found no room anywhere, written where lines may run through it (the last resort of ``place_labels``).
     cramped: bool = False
+    # 0 for the region's own number; k for the number on the k-th of its other sides, where it is pinched into more
+    # than one (see ``find_sides``). Only the region's own number decides anything about its region.
+    side: int = 0
 
 
 @dataclass(frozen=True)
@@ -83,6 +96,10 @@ class LabelSpacing:
     leader_dot_px: float  # how wide the dot a leader ends in, at the point of its region it points at, is inked
     leader_reach_px: float  # how far from its region a number with a leader may go
     text_gap_px: float = 0.0  # how far a number keeps from a line of text
+    # A neck of a region's paper narrower than this splits it into sides, each numbered (see ``find_sides``); None
+    # numbers every region once.
+    split_neck_px: float | None = None
+    min_side_px: float = 0.0  # the smallest area, in pixels, a side has to have to count as one
 
 
 def min_font_size(size: tuple[int, int], min_pt: float = MIN_LABEL_SIZE_PT) -> int:
@@ -138,9 +155,22 @@ def place_labels(
     it, and stops the placement by raising: a page of thousands of regions
     takes seconds to number.
 
+    With ``spacing.split_neck_px``, a region whose paper is pinched into more
+    than one side (see ``find_sides``) gets a number on each side but the one
+    its own number went on, ``Label.side`` 1, 2, ...: placed after every
+    region's own number, which is therefore placed exactly as without them,
+    in its side as a region's would be -- at its middle, or where it keeps
+    farthest from the lines, else outside with a leader -- in the room the
+    numbers before it left.
+
     Returns the labels in drawing order: the numbers inside their regions, in
-    the order of ``regions``, then the others.
+    the order of ``regions``, then the others, then the numbers on other sides.
     """
+    # Where a region's sides are found: the page's paper, before the gap round the text is taken off it, and the detail
+    # ink a region's paint goes over, which is part of the region and parts nothing (hatching is not a boundary).
+    side_ids, paper = ids_for_sides(region_map=region_id_map, clearable=clearable), free
+    if clearable is not None:
+        paper = free | (np.asarray(clearable) >= 0)
     if text is not None and text.any():
         near_text = _grown(np.asarray(text, dtype=bool), spacing.text_gap_px)
         free = free & ~near_text
@@ -166,13 +196,164 @@ def place_labels(
         else:
             labels.append(label)
 
+    room = None
     if homeless:
         room = _LeaderRoom(ids, free, labels, [region.interior_point for region in homeless], spacing, clearable)
         for region in homeless:
             if check_cancelled is not None:
                 check_cancelled()
             labels.append(room.place(region))
+
+    if spacing.split_neck_px is not None:
+        sides = find_sides(side_ids, paper, spacing.split_neck_px, spacing.min_side_px)
+        if sides:
+            if room is None:
+                room = _LeaderRoom(ids, free, labels, [], spacing, clearable)
+            labels += _side_labels(regions, sides, labels, room, spacing.min_font_size, check_cancelled)
     return labels
+
+
+def ids_for_sides(region_map: np.ndarray, clearable: np.ndarray | None) -> np.ndarray:
+    """``region_map`` as ``place_labels`` takes it, all printed ink -1, with the detail ink back in its region."""
+    ids = np.ascontiguousarray(region_map, dtype=np.int32)
+    if clearable is None:
+        return ids
+    clearable = np.asarray(clearable)
+    return np.where(clearable >= 0, clearable, ids).astype(np.int32)
+
+
+@dataclass(frozen=True)
+class Sides:
+    """The sides a region is pinched into (see ``find_sides``), in a window of the page from (``x0``, ``y0``)."""
+
+    x0: int
+    y0: int
+    map: np.ndarray  # int32, the window's size: k + 1 on the paper of the region's k-th side, 0 elsewhere
+    points: list[tuple[int, int]]  # each side's point farthest from its lines, (x, y) on the page
+    radii: list[float]  # how far that point is from them, in pixels
+    boxes: list[tuple[int, int, int, int]]  # each side's inclusive (x0, y0, x1, y1) on the page
+
+    def side(self, k: int) -> tuple[np.ndarray, int, int]:
+        """Side ``k``'s pixels (bool) in its box, and the box's (x0, y0) on the page."""
+        x0, y0, x1, y1 = self.boxes[k]
+        window = (slice(y0 - self.y0, y1 + 1 - self.y0), slice(x0 - self.x0, x1 + 1 - self.x0))
+        return self.map[window] == k + 1, x0, y0
+
+    def side_at(self, point: tuple[float, float]) -> int:
+        """The side ``point``, (x, y) on the page, is on, or the nearest to it."""
+        x, y = int(round(point[0])) - self.x0, int(round(point[1])) - self.y0
+        rows, columns = self.map.shape
+        if 0 <= y < rows and 0 <= x < columns and self.map[y, x] > 0:
+            return int(self.map[y, x]) - 1
+        ys, xs = np.nonzero(self.map)
+        nearest = int(np.argmin((xs - x) ** 2 + (ys - y) ** 2))
+        return int(self.map[ys[nearest], xs[nearest]]) - 1
+
+
+def find_sides(
+    ids: np.ndarray, paper: np.ndarray, neck_px: float, min_area_px: float
+) -> dict[int, Sides]:
+    """The regions of ``ids`` that read as more than one region on paper, by region id, and their sides.
+
+    A region's paper is its pixels the lines leave bare (``paper``). Where the
+    lines close it off, or narrow it to less than ``neck_px`` across, it reads
+    as two regions. So its sides are the pieces of its paper the lines part,
+    each split again at every neck narrower than ``neck_px``: the parts of it
+    a disk that wide fits in (an opening's core, the paper eroded by the disk),
+    grown back over the piece, each pixel to the nearest. A piece with no such
+    part is a side whole. A side counts only if its paper is at least
+    ``min_area_px``, as large as a region has to be. Regions with fewer than
+    two sides are left out.
+
+    A neck is measured in whole pixels of paper across: one at least
+    ``neck_px`` across, rounded up, holds the region together. A region's
+    side map covers its sides' boxes: its paper there can run past the region
+    map's box, as ``ids`` gives detail ink back to its region.
+    """
+    ids = np.ascontiguousarray(ids, dtype=np.int32)
+    height, width = ids.shape
+    # The regions' paper, cut where two regions meet should no line run between them: of every two pixels side by side
+    # in different regions, the one to the right or below is left out, so that no piece of paper runs into two regions.
+    bare = paper & (ids >= 0)
+    bare[:, 1:] &= (ids[:, 1:] == ids[:, :-1]) | (ids[:, :-1] < 0)
+    bare[1:, :] &= (ids[1:, :] == ids[:-1, :]) | (ids[:-1, :] < 0)
+    bare8 = bare.astype(np.uint8)
+    if not bare8.any():
+        return {}
+    clearance = _clearance(bare)  # for each side's middle
+    # Eroded by a disk as many pixels across as the setting, rounded up: a neck of fewer pixels of paper is cut. (A
+    # distance from the paper's edge would tell a neck of 2n - 1 pixels from one of 2n no better than a pixel.)
+    across = int(math.ceil(neck_px - 1e-9))
+    core = bare8
+    if across > 1:
+        disk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (across, across))
+        core = cv2.erode(bare8, disk, borderType=cv2.BORDER_CONSTANT, borderValue=0)
+    num_pieces, pieces = cv2.connectedComponents(bare8, connectivity=4)
+    num_cores, cores = cv2.connectedComponents(core, connectivity=4)
+
+    # Every pixel of paper's side, numbered over the page: a piece with fewer than two cores is a side, numbered as
+    # the piece; one with more is parted between its cores, each pixel to the nearest along a path through the piece.
+    flat_ids = ids.ravel()
+    flat_side, side_area, side_region, side_box = kernels.paper_sides(
+        pieces.ravel(), cores.ravel(), flat_ids, height, width, num_pieces, num_cores
+    )
+    side = flat_side.reshape(height, width)
+    # The sides that count, by region: those of the regions with two or more.
+    counted = np.nonzero((side_area >= min_area_px) & (side_region >= 0))[0]
+    counted = counted[np.argsort(side_region[counted], kind="stable")]
+    starts = np.flatnonzero(np.r_[True, np.diff(side_region[counted]) != 0, True])
+    groups = [counted[a:b] for a, b in zip(starts[:-1], starts[1:]) if b - a >= 2]
+    if not groups:
+        return {}
+
+    found = {}
+    for its_sides in groups:
+        region_id = int(side_region[its_sides[0]])
+        x0, y0 = (int(v) for v in side_box[its_sides, :2].min(axis=0))
+        x1, y1 = (int(v) for v in side_box[its_sides, 2:].max(axis=0))
+        side_map = np.zeros((y1 + 1 - y0, x1 + 1 - x0), dtype=np.int32)
+        points, radii, boxes = [], [], []
+        for index, k in enumerate(its_sides, start=1):
+            sx0, sy0, sx1, sy1 = (int(v) for v in side_box[k])
+            box = (slice(sy0, sy1 + 1), slice(sx0, sx1 + 1))
+            on_side = side[box] == k
+            side_map[sy0 - y0 : sy1 + 1 - y0, sx0 - x0 : sx1 + 1 - x0][on_side] = index
+            y, x = _farthest(clearance[box], on_side)
+            points.append((x + sx0, y + sy0))
+            radii.append(float(clearance[box][y, x]))
+            boxes.append((sx0, sy0, sx1, sy1))
+        found[region_id] = Sides(x0, y0, side_map, points, radii, boxes)
+    return found
+
+
+def _side_labels(
+    regions, sides: dict[int, Sides], labels: list[Label], room: _LeaderRoom, min_size: int,
+    check_cancelled: Callable[[], None] | None,
+) -> list[Label]:
+    """A number on each side of a pinched region but the side its own number is on (see ``place_labels``)."""
+    at = {}  # where each region's own number is: the point its leader points at, or its box's middle
+    for label in labels:
+        if label.side == 0:
+            box = label.box
+            at[label.region_id] = label.leader[1] if label.leader is not None else ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+    placed = []
+    for region in regions:
+        found = sides.get(region.region_id)
+        if found is None or region.region_id not in at:
+            continue
+        own = found.side_at(at[region.region_id])
+        number = 0
+        for index, (point, radius) in enumerate(zip(found.points, found.radii)):
+            if index == own:
+                continue
+            if check_cancelled is not None:
+                check_cancelled()
+            number += 1  # counted whether or not it finds room, so a number names its side
+            side = replace(region, interior_point=point, interior_radius=radius)
+            label = room.place_on_side(side, *found.side(index), min_size)
+            if label is not None:
+                placed.append(replace(label, side=number))
+    return placed
 
 
 def cleared(labels: list[Label], clearable: np.ndarray, gap_px: float) -> np.ndarray:
@@ -298,8 +479,12 @@ class _LeaderRoom:
         self.near_dot_count = _disk_count(shape, self.anchors, self.dot_reach + self.line_clear)
         self.dots = self.dot_count > 0  # where every dot puts ink
 
-    def place(self, region) -> Label:
-        """``region``'s number, its leader pointing at its ``interior_point``, which is one of the room's anchors."""
+    def place(self, region, last_resort: bool = True) -> Label | None:
+        """``region``'s number, its leader pointing at its ``interior_point``, which is one of the room's anchors.
+
+        Without ``last_resort``, None where the number has no room at all, rather than written where lines run through
+        it.
+        """
         ids, spacing = self.ids, self.spacing
         text = str(region.color_index + 1)
         font_size = spacing.min_font_size
@@ -372,6 +557,8 @@ class _LeaderRoom:
 
         # No room anywhere near: at the region's middle, or as near it as the number can be without landing on
         # another number, a leader or a dot.
+        if not last_resort:
+            return None
         clear = ~busy & ~others_dots
         nearest = _nearest_box(clear, box_width, box_height, (x - wx0, y - wy0))
         if nearest is not None and nearest[2] <= spacing.leader_reach_px:
@@ -381,6 +568,84 @@ class _LeaderRoom:
         box = (left, top, left + box_width, top + box_height)
         self._take_box(box)
         return Label(region.region_id, text, font_size, box, cramped=True)
+
+    def place_on_side(self, side, room: np.ndarray, x0: int, y0: int, min_size: int) -> Label | None:
+        """The number of a region's other ``side``, placed after every region's own (see ``place_labels``).
+
+        ``side`` is the region with its ``interior_point`` and ``interior_radius`` those of the side, and ``room``
+        (bool) the side's pixels, in a window of the page from (``x0``, ``y0``). As a region's own number goes: at the
+        side's middle at its preferred size, else where in the side it keeps farthest from the lines, shrinking to
+        ``min_size``, else outside with a leader (see ``place``) -- clear of every number, leader and dot placed so far.
+        None if it has no room in any of those: a number written over the lines would make the page harder to read,
+        not easier. A leader points at the side's middle, or if its dot would touch a number, leader or dot placed
+        before, at the side's pixel farthest from its lines that keeps the dot clear of them.
+        """
+        on_side = room
+        rows, columns = room.shape
+        window = (slice(y0, y0 + rows), slice(x0, x0 + columns))
+        room = room & self.free[window] & ~self.spaced[window] & ~self.leaders[window] & ~self.dots[window]
+        text = str(side.color_index + 1)
+        font_size = _preferred_size(side, min_size)
+        box_width, box_height = text_box_size(text, font_size)
+        x, y = side.interior_point
+        left, top = x - x0 - box_width // 2, y - y0 - box_height // 2
+        spot = None
+        if 0 <= left and left + box_width <= columns and 0 <= top and top + box_height <= rows:
+            if room[top : top + box_height, left : left + box_width].all():
+                spot = (left, top)
+        if spot is None:
+            clearance = _clearance(room)
+            for font_size in range(font_size, min_size - 1, -1):
+                box_width, box_height = text_box_size(text, font_size)
+                spot = _roomiest_box(clearance, box_width, box_height)
+                if spot is not None:
+                    break
+        if spot is not None:
+            box = (spot[0] + x0, spot[1] + y0, spot[0] + x0 + box_width, spot[1] + y0 + box_height)
+            self._take_box(box)
+            return Label(side.region_id, text, font_size, box)
+        point = self._side_anchor(on_side, x0, y0)
+        if point is None:
+            return None
+        side = replace(side, interior_point=point)
+        self._anchor(point, 1)
+        label = self.place(side, last_resort=False)
+        if label is None:
+            self._anchor(point, -1)
+        return label
+
+    def _side_anchor(self, on_side: np.ndarray, x0: int, y0: int) -> tuple[int, int] | None:
+        """Where a leader to a side (``on_side``, bool, in a window of the page from (``x0``, ``y0``)) points: the
+        side's pixel farthest from its lines whose dot keeps clear of every number, leader and dot placed so far.
+        None if there is none."""
+        rows, columns = on_side.shape
+        height, width = self.ids.shape
+        reach = int(math.ceil(self.dot_reach)) + 1  # what lies just outside the window can be in a dot's way too
+        top, left = max(0, y0 - reach), max(0, x0 - reach)
+        around = (slice(top, min(height, y0 + rows + reach)), slice(left, min(width, x0 + columns + reach)))
+        taken = self.boxes[around] | self.leaders[around] | self.dots[around]
+        away = cv2.distanceTransform((~taken).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+        away = away[y0 - top : y0 - top + rows, x0 - left : x0 - left + columns]
+        paper = on_side & self.free[y0 : y0 + rows, x0 : x0 + columns]
+        fits = paper & (away > self.dot_reach)
+        if not fits.any():
+            return None
+        y, x = _farthest(_clearance(paper), fits)
+        return x + x0, y + y0
+
+    def _anchor(self, point: tuple[int, int], change: int) -> None:
+        """Make ``point`` one of the room's anchors (``change`` 1), a point a leader will point at, after the room was
+        made, or no longer one (-1)."""
+        if change > 0:
+            self.anchors.append(point)
+        else:
+            self.anchors.remove(point)
+        _add_disks(self.dot_count, [point], self.dot_reach, change)
+        _add_disks(self.near_dot_count, [point], self.dot_reach + self.line_clear, change)
+        reach = int(math.ceil(self.dot_reach))
+        x, y = point
+        around = (slice(max(0, y - reach), y + reach + 1), slice(max(0, x - reach), x + reach + 1))
+        self.dots[around] = self.dot_count[around] > 0
 
     def _take_box(self, box) -> None:
         self.boxes[_spaced_slices(box, 0)] = True
@@ -433,6 +698,19 @@ def _clearance(room: np.ndarray) -> np.ndarray:
     padded = np.zeros((room.shape[0] + 2, room.shape[1] + 2), dtype=np.uint8)  # the window's edge is outside the room
     padded[1:-1, 1:-1] = room
     return cv2.distanceTransform(padded, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)[1:-1, 1:-1]
+
+
+def _farthest(clearance: np.ndarray, where: np.ndarray) -> tuple[int, int]:
+    """The (row, column) of the pixel of ``where`` (bool, not all False) with the most ``clearance``, the first in
+    reading order of those with as much.
+
+    A precise distance transform's distances are square roots of whole numbers, but worked out to within a float's
+    last bit, which can differ from one call to the next on the very same input: squared and rounded, equal distances
+    tie, so the same page always gets the same point.
+    """
+    squared = np.where(where, np.rint(np.square(clearance, dtype=np.float64)), -1.0)
+    y, x = np.unravel_index(int(np.argmax(squared)), squared.shape)
+    return int(y), int(x)
 
 
 def _roomiest_box(clearance: np.ndarray, box_width: int, box_height: int) -> tuple[int, int] | None:
@@ -514,6 +792,14 @@ def _disk_count(shape: tuple[int, int], centers, radius_px: float) -> np.ndarray
     """How many of ``centers``, (x, y) pixels that may lie off a ``shape`` page, each of its pixels is within ``radius_px``
     of, as uint16: a pixel is within reach of at most as many as fit in a disk that wide, far fewer than its limit."""
     counts = np.zeros(shape, dtype=np.uint16)
+    _add_disks(counts, centers, radius_px)
+    return counts
+
+
+def _add_disks(counts: np.ndarray, centers, radius_px: float, change: int = 1) -> None:
+    """Add ``change`` (1 or -1, taking back a 1 added before) to ``counts`` (uint16) on every pixel within ``radius_px``
+    of each of ``centers`` (see ``_disk_count``)."""
+    shape = counts.shape
     reach = int(math.ceil(radius_px))
     offsets = np.arange(-reach, reach + 1)
     disk = offsets[:, None] ** 2 + offsets[None, :] ** 2 <= radius_px * radius_px
@@ -523,8 +809,11 @@ def _disk_count(shape: tuple[int, int], centers, radius_px: float) -> np.ndarray
         rows = slice(max(0, y0), max(0, min(height, y + reach + 1)))
         columns = slice(max(0, x0), max(0, min(width, x + reach + 1)))
         if rows.stop > rows.start and columns.stop > columns.start:
-            counts[rows, columns] += disk[rows.start - y0 : rows.stop - y0, columns.start - x0 : columns.stop - x0]
-    return counts
+            stamp = disk[rows.start - y0 : rows.stop - y0, columns.start - x0 : columns.stop - x0]
+            if change > 0:
+                counts[rows, columns] += stamp
+            else:
+                counts[rows, columns] -= stamp
 
 
 def _grown(mask: np.ndarray, reach_px: float) -> np.ndarray:

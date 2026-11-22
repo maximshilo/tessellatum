@@ -833,7 +833,8 @@ def test_every_number_keeps_half_a_millimeter_from_the_lines_of_text_found(name,
     assert analysis.lettering_area.any()
     gap = print_scale(page.page.size).mm_to_px(0.5)
     away = cv2.distanceTransform((~analysis.lettering_area).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
-    assert len(analysis.labels) == len(analysis.regions) and not any(label.cramped for label in analysis.labels)
+    own = [label for label in analysis.labels if label.side == 0]  # and the numbers on pinched regions' other sides
+    assert len(own) == len(analysis.regions) and not any(label.cramped for label in analysis.labels)
     for label in analysis.labels:
         x0, y0, x1, y1 = (int(v) for v in label.box)
         assert away[max(0, y0) : y1, max(0, x0) : x1].min() > gap, label

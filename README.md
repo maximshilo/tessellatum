@@ -44,7 +44,7 @@ domain ([sources](tests/sample_images/SOURCES.md)).
 
 ![Tessellatum's window: settings on the left, the coloring page and its legend on the right](docs/assets/screenshot.png)
 
-Pick a difficulty from Beginner to Realistic, or tune any of 22 settings; preview the page, its painted version and a
+Pick a difficulty from Beginner to Realistic, or tune any of 23 settings; preview the page, its painted version and a
 tinted painting guide; export a 300 dpi PNG or an A4 PDF of vector art.
 
 ## Highlights
