@@ -135,14 +135,14 @@ def test_an_export_whose_numbers_move_comes_out_as_if_its_second_render_drew_eve
     reused = []
     real_with_room = pipeline._with_room
 
-    def with_room(rendered, page_labels, sx, sy, size):
+    def with_room(rendered, page_labels, sx, sy, size, exact=False):
         """As ``_with_room``; where every number found room, as if the first had not, so the page is rendered again."""
-        labels = real_with_room(rendered, page_labels, sx, sy, size)
+        labels = real_with_room(rendered, page_labels, sx, sy, size, exact)
         if labels is None:
             on_page = {label.region_id: label for label in page_labels}
             labels = list(rendered.labels)
             index = next(i for i, label in enumerate(labels) if label.region_id in on_page)
-            labels[index] = pipeline._scaled_label(on_page[labels[index].region_id], sx, sy, size)
+            labels[index] = pipeline._scaled_label(on_page[labels[index].region_id], sx, sy, size, exact)
         return labels
 
     def render(*args, reuse=None, **kwargs):

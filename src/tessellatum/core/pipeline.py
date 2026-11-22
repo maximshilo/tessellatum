@@ -432,10 +432,13 @@ def warm_up() -> None:
     generate(tiny, DifficultyParams(num_colors=4, min_region_area_mm2=500.0, blur_sigma=1.0), long_edge=64)
 
 
-def _scaled_label(label: Label, sx: float, sy: float, size: tuple[int, int]) -> Label:
-    """``label`` on a page ``sx`` x ``sy`` times as large: as large on paper, centered where it was, on the page."""
-    font_size = max(1, round(label.font_size * (sx + sy) / 2))
-    box_width, box_height = text_box_size(label.text, font_size)
+def _scaled_label(label: Label, sx: float, sy: float, size: tuple[int, int], exact: bool = False) -> Label:
+    """``label`` on a page ``sx`` x ``sy`` times as large: as large on paper, centered where it was, on the page. With
+    ``exact``, in an exact size there (see ``labels.Label.exact``), else in whole pixels."""
+    font_size = label.font_size * (sx + sy) / 2
+    if not exact:
+        font_size = max(1, round(font_size))
+    box_width, box_height = text_box_size(label.text, font_size, exact)
     x0, y0, x1, y1 = label.box
     left = max(0, min(int(round((x0 + x1) / 2 * sx - box_width / 2)), size[0] - box_width))
     top = max(0, min(int(round((y0 + y1) / 2 * sy - box_height / 2)), size[1] - box_height))
@@ -443,18 +446,18 @@ def _scaled_label(label: Label, sx: float, sy: float, size: tuple[int, int]) -> 
     if label.leader is not None:
         leader = tuple(tuple(redraw.scaled_points(np.array([point]), sx, sy)[0]) for point in label.leader)
     box = (left, top, left + box_width, top + box_height)
-    return replace(label, font_size=font_size, box=box, leader=leader)
+    return replace(label, font_size=font_size, box=box, leader=leader, exact=exact)
 
 
 def _with_room(
-    rendered, page_labels: list[Label], sx: float, sy: float, size: tuple[int, int]
+    rendered, page_labels: list[Label], sx: float, sy: float, size: tuple[int, int], exact: bool = False
 ) -> list[Label] | None:
     """``rendered``'s numbers, each that found no room taking the place ``page_labels`` gave it, scaled, where its box
     meets no line, no other region's own number and no leader of one; None if none does.
 
     Only a region's own number is moved so, and it comes first: the numbers on a pinched region's other sides (see
     ``labels.find_sides``), found for each size on its own, give way to it -- one whose box or leader the moved number
-    meets is left out.
+    meets is left out. ``exact`` is whether ``rendered``'s numbers are in exact sizes (see ``labels.Label.exact``).
     """
     found = {label.region_id: label for label in page_labels if not label.cramped and not label.side}
     labels = list(rendered.labels)
@@ -479,7 +482,7 @@ def _with_room(
     changed = False
     dropped: set[int] = set()
     for index in cramped:
-        moved = _scaled_label(found[labels[index].region_id], sx, sy, size)
+        moved = _scaled_label(found[labels[index].region_id], sx, sy, size, exact)
         box = tuple(int(v) for v in moved.box)
         x0, y0, x1, y1 = box
         if not lines[y0:y1, x0:x1].all():
@@ -508,6 +511,7 @@ def draw_page(
     progress_callback: Callable[[int], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
     collect_analysis: bool = False,
+    vector: bool = False,
 ) -> GeneratedPage:
     """``page``, made of ``image_bgr`` at a smaller size, drawn at ``long_edge``: the page its preview shows, at print
     size.
@@ -517,8 +521,11 @@ def draw_page(
     inside its smoothed outline (see ``redraw.scaled_ink``); and where the regions and the lines still part by a pixel,
     a dot of line goes on it, so that every region stays closed. The letters in the lines of text are taken again from
     the picture's own pixels at this size, and the numbers placed again, as small as the page's style lets them print
-    here (see ``render.render_page``). ``progress_callback``, ``should_cancel`` and ``collect_analysis`` are as for
-    ``generate``, the analysis at this size.
+    here (see ``render.render_page``). ``progress_callback``, ``should_cancel``, ``collect_analysis`` and ``vector``
+    are as for ``generate``, the analysis at this size.
+
+    At the size ``page`` was made at, it is drawn from its own regions, lines and ink as they are, with its numbers
+    placed again: for vectors, or as they are.
 
     Raises ValueError if ``page`` has no ``model`` (see ``GeneratedPage``), or ``long_edge`` would draw it smaller.
     """
@@ -541,32 +548,39 @@ def draw_page(
         raise ValueError(f"a page of {w1} x {h1} px is drawn at {w} x {h}: no smaller")
     sx, sy = w / w1, h / h1
     min_area_px, min_width_px = _paintable_limits(model.params, (w, h))
+    same_size = (w, h) == (w1, h1)
 
-    region_id_map = redraw.scaled_regions(model.region_id_map, (w, h), style.smoothing_px((w1, h1)))
-    printed_ink = redraw.scaled_ink(model.printed_ink, region_id_map, min_width_px / 2)
-    clearable = None
-    if model.clearable is not None:
+    if same_size:
+        region_id_map, printed_ink, clearable = model.region_id_map, model.printed_ink, model.clearable
+    else:
+        region_id_map = redraw.scaled_regions(model.region_id_map, (w, h), style.smoothing_px((w1, h1)))
+        printed_ink = redraw.scaled_ink(model.printed_ink, region_id_map, min_width_px / 2)
+        clearable = None
+    if model.clearable is not None and not same_size:
         # As the page drawn from finds it, here: the hatching a number may clear, but no line.
         thin_px = print_scale((w, h)).mm_to_px(handling.thin_ink_mm)
         clearable = detail_ink(region_id_map, printed_ink, thin_px / 2, style.line_width_px((w, h)))
     check_cancelled()
     found_text = detect_text(image_bgr, resized, handling.text_max_height_mm) if handling.text else []
     letters = text.lettering(resized, found_text) if found_text else None
-    if letters is not None:
+    if letters is not None and not same_size:  # the page drawn from has them so already
         # As ``generate`` prints them: inside a line of text, the letters in place of the ink lying in a region.
         in_no_region = printed_ink & (region_id_map < 0)
         printed_ink = np.where(letters.area, in_no_region | (letters.ink >= _LETTERING_PRINTED), printed_ink)
         if clearable is not None:
             clearable = clearable & ~letters.area
-    strokes = [redraw.scaled_points(stroke, sx, sy) for stroke in model.strokes]
-    # Where the regions and the lines still part by a pixel, nothing printed between two regions, a dot of line goes on
-    # the pixel. (Inside a line of text, printed ink lying in a region doesn't print: the letters do.)
-    solid = printed_ink if letters is None else printed_ink & ((region_id_map < 0) | ~letters.area)
-    white = (ink_coverage((w, h), strokes, style.line_width_px((w, h))) == 0) & ~solid
-    if letters is not None:
-        white &= ~(letters.area & (letters.ink > 0))
-    gap_points = np.argwhere(redraw.gaps(region_id_map, white))[:, ::-1].astype(np.float64)
-    strokes += [np.repeat(point[None], 2, axis=0) for point in gap_points]
+    if same_size:
+        strokes = model.strokes
+    else:
+        strokes = [redraw.scaled_points(stroke, sx, sy) for stroke in model.strokes]
+        # Where the regions and the lines still part by a pixel, nothing printed between two regions, a dot of line
+        # goes on the pixel. (Inside a line of text, printed ink lying in a region doesn't print: the letters do.)
+        solid = printed_ink if letters is None else printed_ink & ((region_id_map < 0) | ~letters.area)
+        white = (ink_coverage((w, h), strokes, style.line_width_px((w, h))) == 0) & ~solid
+        if letters is not None:
+            white &= ~(letters.area & (letters.ink > 0))
+        gap_points = np.argwhere(redraw.gaps(region_id_map, white))[:, ::-1].astype(np.float64)
+        strokes += [np.repeat(point[None], 2, axis=0) for point in gap_points]
     if progress_callback is not None:
         progress_callback(_STAGE_PROGRESS["contours"])
 
@@ -576,14 +590,15 @@ def draw_page(
         printed=printed_ink if not model.drawn_from_colors or printed_ink.any() else None,
     )
     printing = dict(
-        ink=printed_ink, ink_gray=model.ink_gray, clearable=clearable, lettering=letters, min_side_area_px=min_area_px
+        ink=printed_ink, ink_gray=model.ink_gray, clearable=clearable, lettering=letters, min_side_area_px=min_area_px,
+        vector=vector,
     )
     rendered = render_page(
         (w, h), regions, region_id_map, style, check_cancelled=check_cancelled, strokes=strokes, **printing
     )
     # A number that finds no room here, where its page found some, goes where its page put it, scaled, if nothing is
     # printed there: line art's regions with no room for a number are merged on the page drawn from, never here.
-    labels = _with_room(rendered, model.labels, sx, sy, (w, h))
+    labels = _with_room(rendered, model.labels, sx, sy, (w, h), vector)
     if labels is not None:
         rendered = render_page(
             (w, h), regions, region_id_map, style, check_cancelled=check_cancelled, strokes=strokes, labels=labels,
@@ -654,6 +669,7 @@ def generate(
     collect_analysis: bool = False,
     style: PageStyle = PageStyle(),
     handling: Handling = Handling(),
+    vector: bool = False,
 ) -> GeneratedPage:
     """Run the full pipeline on ``image_bgr`` and produce a coloring page + legend.
 
@@ -703,15 +719,21 @@ def generate(
     ``working_long_edge``): the size the app previews it at. One asked for larger -- an export -- is that page drawn
     at ``long_edge`` (see ``draw_page``), so that an export always has the regions, colors and numbering its preview
     shows. A picture no larger than that is made at its own size.
+
+    With ``vector``, the page is laid out to be drawn as vectors, a PDF (see ``export.save_pdf``): its numbers as
+    small as ``style.min_label_pt`` asks, at any fraction of a pixel (see ``render.render_page``). Its regions are
+    the same: the page is made as without it, and its numbers placed again (see ``draw_page``).
     """
     working_edge = working_long_edge(image_bgr, params, handling)
-    if long_edge > working_edge and max(image_bgr.shape[:2]) > working_edge:
+    drawn = long_edge > working_edge and max(image_bgr.shape[:2]) > working_edge
+    if drawn or vector:
+        made_at = working_edge if drawn else long_edge
         working = _make_page(
-            image_bgr, params, working_edge,
+            image_bgr, params, made_at,
             None if progress_callback is None else lambda percent: progress_callback(percent * 3 // 4),
             should_cancel, False, style, handling,
         )
-        return draw_page(working, image_bgr, long_edge, progress_callback, should_cancel, collect_analysis)
+        return draw_page(working, image_bgr, long_edge, progress_callback, should_cancel, collect_analysis, vector)
     return _make_page(image_bgr, params, long_edge, progress_callback, should_cancel, collect_analysis, style, handling)
 
 

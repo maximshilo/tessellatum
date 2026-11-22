@@ -181,7 +181,7 @@ def _page_ops(drawing: PageDrawing, px_per_mm: float) -> list[str]:
                 fill = style.label_fill(label)
                 ops.append(f"{_gray(fill)} g")
             x, y = number_origin(label)
-            ops.append(f"/F1 {label.font_size} Tf 1 0 0 -1 {_num(x)} {_num(y)} Tm {_text(label.text)} Tj")
+            ops.append(f"/F1 {_num(label.font_size)} Tf 1 0 0 -1 {_num(x)} {_num(y)} Tm {_text(label.text)} Tj")
         ops.append("ET")
     return ops
 

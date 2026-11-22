@@ -55,8 +55,11 @@ flowchart TD
    gray rather than black, so they vanish under the paint meant to cover them, in three grays at least 15 L* apart: the
    lines darkest, the numbers inside their regions lighter, and the numbers written outside with their leaders
    lightest, so the two kinds of number are told apart at a glance. Leaders are half as wide as the lines by default.
-7. **Number.** Every region gets its number, never smaller than 3 pt on paper (nor than 10 px), and never where any of a
-   line's ink falls. It goes at the region's most interior point if it fits there; otherwise wherever in the region it
+7. **Number.** Every region gets its number, never smaller than 3 pt on paper by default (1 pt at the least), and never
+   where any of a line's ink falls. A page drawn in pixels -- the preview, its zoom, the PNG -- draws none under 10 px
+   either, in whole pixels; the PDF's page places its numbers again for vectors, at any fraction of a pixel, as small as
+   the setting asks, its text boxes measured on the font's outline rather than on Pillow's rasterized box, and only
+   its numbers change: its regions are the preview's. It goes at the region's most interior point if it fits there; otherwise wherever in the region it
    keeps farthest from the lines, made smaller if it has to be. A region too small even for that has its number written
    just outside it, with a leader line running to a dot inside it. No number goes within about 0.5 mm of a line of text.
    A region pinched so thin that it reads as two regions -- its lines close it off somewhere, or its paper narrows to

@@ -26,7 +26,7 @@ first measured baseline is in [`REPORT.md`](REPORT.md).
   |---|---|---|
   | paintable width (the brush) | 1 mm to 0.5 mm | 3 mm |
   | colors' margin | 4 ΔE00 | 10 ΔE00 |
-  | smallest number | 3 pt | 3 pt |
+  | smallest number | 3 pt (the setting goes down to 1 pt) | 3 pt |
   | line | 0.2 mm | 0.2 mm |
 
   Until 0.1.51 every preset had the 3 mm brush and 10 ΔE00, and the default style 6 pt numbers and 0.3 mm lines.

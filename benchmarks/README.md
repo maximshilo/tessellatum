@@ -261,7 +261,7 @@ until then (`bench_metrics.PAINTABLE_WIDTH_MM`, `LABEL_MIN_PT`,
 |---|---|---|---|---|
 | paintable width, Realistic | ≥ 0.5 mm | 2.2 px | 4.7 px | 5.9 px |
 | paintable width, Max | ≥ 3 mm | 13 px | 28 px | 35 px |
-| region number | ≥ 3 pt | 4.6 px (10 px drawn) | 10 px | 12.5 px |
+| region number | ≥ 3 pt | 4.6 px (10 px drawn) | 10 px (9.2 px laid out for the PDF, from 1.0.8) | 12.5 px |
 | outline | ≈ 0.2 mm | 0.87 px (drawn at the floor) | 1.9 px | 2.4 px |
 
 `print_scale((width, height))` gives an output image's scale: `px_per_mm`,
@@ -301,6 +301,14 @@ the export cases measure the preview's page at print size. Until 0.1.52 an
 export was made again from the picture at its own size, with regions, colors and
 numbers of its own: a photograph's had a median 0.90 of its preview's regions
 at the five levels (0.85 at Realistic).
+
+From 1.0.8 the export cases measure the page as its PDF lays it out
+(`generate(..., vector=True)`, which the harness passes to a version that takes
+it): its regions are the same, and its numbers are placed again for vectors, at
+any fraction of a pixel and as small as the style asks (`labels.min_font_size`
+with `exact`), with no 10 px floor. The PNG's page is laid out as before, so a
+version from 1.0.8 against an older one compares the PDF's numbers with the
+older export's; the preview cases are unaffected.
 
 Two metrics read such a page differently from one made at its own size.
 Jaggedness and lines per boundary (clear) look for the junctions where three

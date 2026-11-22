@@ -29,11 +29,13 @@ class PipelineWorker(QThread):
         handling: Handling = Handling(),
         versions: Sequence[Version] = (),
         drawn_from: GeneratedPage | None = None,
+        vector: bool = False,
     ):
         """``versions`` are the versions of the page (see ``painting``) to draw here too, off the UI thread, before the
         page is handed over: ``GeneratedPage.image`` keeps them. With ``drawn_from``, a page of the same picture made
-        with these settings at a smaller size, the page is that one drawn at ``long_edge`` (see
-        ``pipeline.draw_page``) rather than made again."""
+        with these settings at a smaller size or at ``long_edge``, the page is that one drawn at ``long_edge`` (see
+        ``pipeline.draw_page``) rather than made again. With ``vector``, it is laid out to be drawn as vectors, a PDF
+        (see ``pipeline.generate``)."""
         super().__init__()
         self._image_bgr = image_bgr
         self._params = params
@@ -42,6 +44,7 @@ class PipelineWorker(QThread):
         self._handling = handling
         self._versions = tuple(versions)
         self._drawn_from = drawn_from
+        self._vector = vector
 
     def run(self) -> None:
         try:
@@ -52,6 +55,7 @@ class PipelineWorker(QThread):
                     self._long_edge,
                     progress_callback=self.progress.emit,
                     should_cancel=self.isInterruptionRequested,
+                    vector=self._vector,
                 )
             else:
                 result = pipeline.generate(
@@ -62,6 +66,7 @@ class PipelineWorker(QThread):
                     should_cancel=self.isInterruptionRequested,
                     style=self._style,
                     handling=self._handling,
+                    vector=self._vector,
                 )
             for version in self._versions:
                 if self.isInterruptionRequested():
