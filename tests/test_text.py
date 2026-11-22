@@ -71,8 +71,9 @@ def test_lines_of_lettering_are_found_one_box_each_and_the_same_every_time():
     lines = text.find_text(picture)
     assert len(lines) == len(WORDS)
     found = text.mask(lines, picture.shape[1::-1])
-    for x, y, w, h in boxes:
-        assert found[y : y + h, x : x + w].mean() > 0.95
+    ink = picture[:, :, 0] < 200
+    for x, y, w, h in boxes:  # every pixel of a line's lettering is in a box found (the box drawn holds blank rows too)
+        assert found[y : y + h, x : x + w][ink[y : y + h, x : x + w]].mean() > 0.99
     # Each box holds one line, top to bottom: its middle lies in that line's box.
     for line, (x, y, w, h) in zip(lines, boxes):
         assert text.mask([line], picture.shape[1::-1])[y + h // 2, x + w // 2]
