@@ -381,8 +381,9 @@ def render_page(
     lines = PAPER - line_layer(size, region_id_map, style)
     labels = _place_labels(size, regions, region_id_map, lines == 0, style)
 
-    # Each leader and its dot, drawn over the whole page; where two overlap, the darker ink.
-    line_width = style.line_width_px(size)
+    # Each leader and its dot, drawn over the whole page at the leaders' own width (from 1.0.7); where two overlap, the
+    # darker ink.
+    line_width = style.leader_width_px(size)
     leaders = np.zeros((height, width), dtype=np.uint8)
     for _region_id, _text, _font_size, _box, leader in labels:
         if leader is not None:
@@ -394,12 +395,13 @@ def render_page(
     def paper(ink: np.ndarray, gray: int) -> np.ndarray:
         return np.rint(PAPER - ink.astype(np.float64) * ((PAPER - gray) / PAPER)).astype(np.uint8)
 
-    page = Image.fromarray(np.minimum(paper(lines, style.line_gray), paper(leaders, style.label_gray)), "L").convert("RGB")
+    page = Image.fromarray(np.minimum(paper(lines, style.line_gray), paper(leaders, style.leader_gray)), "L").convert("RGB")
     draw = ImageDraw.Draw(page)
-    for _region_id, text, font_size, (left, top, _right, _bottom), _leader in labels:
+    for _region_id, text, font_size, (left, top, _right, _bottom), leader in labels:
         font = ImageFont.load_default(size=font_size)
         bbox = draw.textbbox((0, 0), text, font=font)
-        draw.text((left - bbox[0], top - bbox[1]), text, fill=(style.label_gray,) * 3, font=font)
+        gray = style.label_gray if leader is None else style.leader_gray  # a number with a leader in the leaders' gray
+        draw.text((left - bbox[0], top - bbox[1]), text, fill=(gray,) * 3, font=font)
     return page
 
 

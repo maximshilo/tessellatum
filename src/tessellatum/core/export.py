@@ -167,14 +167,19 @@ def _page_ops(drawing: PageDrawing, px_per_mm: float) -> list[str]:
     ops += _picture_ink_ops(drawing, darken=True)
     leaders = [label.leader for label in drawing.labels if label.leader is not None]
     if leaders:
-        dot = line_width * style.leader_dot_ratio / 2
-        ops += [f"q /Dk gs {_gray(style.label_gray)} G {_gray(style.label_gray)} g"]
+        leader_width = style.leader_width_mm * px_per_mm
+        dot = leader_width * style.leader_dot_ratio / 2
+        ops += [f"q /Dk gs {_num(leader_width)} w {_gray(style.leader_gray)} G {_gray(style.leader_gray)} g"]
         ops += [_path([np.array(leader, dtype=np.float64)], offset=0.5) + " S" for leader in leaders]
         ops += [_disk(x + 0.5, y + 0.5, dot) for _, (x, y) in leaders]
         ops.append("Q")
     if drawing.labels:
-        ops.append(f"{_gray(style.label_gray)} g BT")
+        ops.append("BT")
+        fill = None
         for label in drawing.labels:
+            if style.label_fill(label) != fill:  # a number with a leader prints in the leaders' gray
+                fill = style.label_fill(label)
+                ops.append(f"{_gray(fill)} g")
             x, y = number_origin(label)
             ops.append(f"/F1 {label.font_size} Tf 1 0 0 -1 {_num(x)} {_num(y)} Tm {_text(label.text)} Tj")
         ops.append("ET")

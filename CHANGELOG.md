@@ -4,6 +4,23 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.7] - 2026-11-22
+
+### Changed
+
+- The page's ink is in three grays: the lines, the numbers inside their regions, and the numbers written outside their
+  regions with the leaders pointing them in and the leaders' dots, so a number with a leader is told at a glance from
+  one inside its region. Medium, the default, prints the lines as before (L* 38), the numbers inside their regions a
+  little darker than before (L* 54, was 58), and the leaders and their numbers lighter (L* 70). Light and Dark move all
+  three by 15 L*.
+- Leaders print thinner than the lines: 0.1 mm by default, against the lines' 0.2 mm, their dots three times as wide.
+  Numbers keep as clear of a leader as of a line however thin it is, so no number moves and no region changes.
+
+### Added
+
+- Settings **Line gray**, **Number gray** and **Leader gray** (shown as a lightness, L*), which the Tone sets all three
+  of; moving one picks a Custom tone. Setting **Leader width**.
+
 ## [1.0.6] - 2026-11-22
 
 ### Added

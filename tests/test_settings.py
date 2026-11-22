@@ -39,8 +39,8 @@ def test_the_defaults_are_the_pipeline_s_own():
 
 def test_every_field_the_pipeline_takes_a_number_for_is_offered_or_set_otherwise():
     offered = {s.name for s in settings.SETTINGS}
-    # The grays come with the tone, the thinnest line and the leader's dot are drawing details, the switches are boxes.
-    otherwise = {"line_gray", "label_gray", "min_line_width_px", "leader_dot_ratio", "line_art", "detail", "text"}
+    # The thinnest line and the leader's dot are drawing details, the switches are boxes.
+    otherwise = {"min_line_width_px", "leader_dot_ratio", "line_art", "detail", "text"}
     for owner in OWNERS.values():
         for field in dataclasses.fields(owner):
             assert field.name in offered | otherwise, field.name
@@ -68,3 +68,5 @@ def test_a_value_is_shown_with_its_unit_to_the_setting_s_step():
     assert settings.setting("palette_margin_de00").text(6) == "6.0 ΔE00"
     assert settings.setting("min_region_area_mm2").text(124.6) == "125 mm²"
     assert settings.setting("detail_weight").text(2) == "2 ×"
+    assert settings.setting("line_gray").text(0x59) == "38 L*"  # a gray, as its lightness
+    assert settings.setting("leader_gray").text(0) == "0 L*" and settings.setting("label_gray").text(254) == "100 L*"

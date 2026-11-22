@@ -168,15 +168,33 @@ def test_line_widths_from_0_1_to_1_mm(panel):
     assert panel.controls["line_width_mm"].value_label.text() == "0.20 mm"
 
 
-def test_a_tone_sets_both_grays(panel):
-    assert [panel.tone_combo.itemText(i) for i in range(panel.tone_combo.count())] == list(TONES)
+def test_a_tone_sets_all_three_grays(panel):
+    assert [panel.tone_combo.itemText(i) for i in range(panel.tone_combo.count())] == [*TONES, "Custom"]
     assert panel.tone_combo.currentText() == "Medium"
-    for index, (name, (line_gray, label_gray)) in enumerate(TONES.items()):
+    for index, (name, grays) in enumerate(TONES.items()):
         panel.tone_combo.setCurrentText(name)
         style = panel.get_page_style()
-        assert (style.line_gray, style.label_gray) == (line_gray, label_gray)
+        assert (style.line_gray, style.label_gray, style.leader_gray) == grays
+        assert [panel.controls[field].value() for field in ("line_gray", "label_gray", "leader_gray")] == list(grays)
         assert style.line_width_mm == PageStyle().line_width_mm
         assert panel.tone_combo.itemData(index, Qt.ToolTipRole)
+    assert panel.tone_combo.itemData(len(TONES), Qt.ToolTipRole)
+
+
+def test_moving_a_gray_picks_a_custom_tone_starting_from_the_tone(panel):
+    panel.tone_combo.setCurrentText("Dark")
+    _move(panel, "leader_gray", 0x70)
+    assert panel.tone_combo.currentText() == "Custom"
+    line_gray, label_gray, _ = TONES["Dark"]
+    assert panel.get_page_style() == PageStyle(line_gray=line_gray, label_gray=label_gray, leader_gray=0x70)
+    panel.tone_combo.setCurrentText("Light")  # a tone again sets all three
+    assert panel.get_page_style() == PageStyle.from_settings(tone="Light")
+
+
+def test_the_leader_width_is_a_setting_of_its_own(panel):
+    _move(panel, "leader_width_mm", 0.3)
+    assert panel.get_page_style() == PageStyle(leader_width_mm=0.3)
+    assert panel.tone_combo.currentText() == "Medium"
 
 
 def test_every_step_of_the_picture_handling_starts_on_and_each_box_turns_its_own_off(panel):
@@ -195,8 +213,10 @@ def test_reset_puts_every_setting_back(panel):
     _move(panel, "line_width_mm", 0.8)
     _move(panel, "mark_contrast", 30.0)
     panel.tone_combo.setCurrentText("Dark")
+    _move(panel, "label_gray", 0xA0)
     panel.text_check.setChecked(False)
     panel.reset_button.click()
+    assert panel.tone_combo.currentText() == "Medium"
     assert panel.preset_combo.currentText() == difficulty.DEFAULT_PRESET
     assert panel.get_difficulty_params() == difficulty.params_for_preset(difficulty.DEFAULT_PRESET)
     assert panel.get_page_style() == PageStyle() and panel.get_handling() == Handling()
@@ -220,6 +240,27 @@ def test_the_settings_are_kept_between_runs(tmp_path):
     assert again.preset_combo.currentText() == "Custom"
     assert (again.get_difficulty_params(), again.get_page_style(), again.get_handling()) == asked
     again.deleteLater()
+    _app.processEvents()
+
+
+def test_a_custom_tone_s_grays_are_kept_and_a_tone_s_are_the_tone_s(tmp_path):
+    first = ControlsPanel(store=_store(tmp_path))
+    first.tone_combo.setCurrentText("Light")
+    _move(first, "leader_gray", 0x40)
+    asked = first.get_page_style()
+    first.deleteLater()
+    _app.processEvents()
+    again = ControlsPanel(store=_store(tmp_path))
+    assert again.tone_combo.currentText() == "Custom" and again.get_page_style() == asked
+    again.deleteLater()
+    _app.processEvents()
+
+    store = _store(tmp_path)
+    store.setValue("style/tone", "Dark")
+    store.setValue("settings/leader_gray", 0x40)  # beside a tone, its grays are the tone's
+    panel = ControlsPanel(store=store)
+    assert panel.get_page_style() == PageStyle.from_settings(tone="Dark")
+    panel.deleteLater()
     _app.processEvents()
 
 

@@ -12,7 +12,7 @@ from tessellatum.core import render as render_module
 from tessellatum.core.print_size import OUTLINE_WIDTH_MM, print_scale
 from tessellatum.core.regions import extract_regions
 from tessellatum.core.color import bgr_to_lab
-from tessellatum.core.render import LABEL_GRAY, LINE_GRAY, PAPER, PageStyle, ink_coverage, render_page
+from tessellatum.core.render import LABEL_GRAY, LEADER_GRAY, LINE_GRAY, PAPER, PageStyle, ink_coverage, render_page
 from tessellatum.core.text import Lettering
 
 
@@ -204,7 +204,7 @@ def _square_too_small_for_its_number(size: tuple[int, int]) -> np.ndarray:
     return ids
 
 
-def test_a_leader_is_drawn_in_the_numbers_gray_and_ends_in_a_dot_inside_the_region():
+def test_a_leader_and_its_number_are_drawn_in_the_leaders_gray_and_end_in_a_dot_inside_the_region():
     size = (300, 400)
     ids = _square_too_small_for_its_number(size)
     regions = extract_regions(ids, np.array([0, 1], dtype=np.int32))
@@ -217,14 +217,38 @@ def test_a_leader_is_drawn_in_the_numbers_gray_and_ends_in_a_dot_inside_the_regi
     leaders = np.asarray(rendered.leaders)
     page = np.asarray(rendered.image)[:, :, 0]
     assert leaders[int(y), int(x)] == 0 and ids[int(y), int(x)] == 1  # the dot is solid, inside the square
-    assert page[int(y), int(x)] == style.label_gray  # and printed in the numbers' gray, not the lines'
-    # The dot is wider than the line: across it there is more solid ink than across the line anywhere else.
+    assert page[int(y), int(x)] == style.leader_gray  # and printed in the leaders' gray, not the lines'
+    x0, y0, x1, y1 = (int(v) for v in square.box)
+    darkest = int(page[y0:y1, x0:x1].min())
+    # So is the number it points from, anti-aliased: none of it darker than that gray.
+    assert style.leader_gray <= darkest and abs(darkest - style.leader_gray) < abs(darkest - style.label_gray)
+    background = next(label for label in rendered.labels if label.region_id == 0)
+    assert background.leader is None
+    x0, y0, x1, y1 = (int(v) for v in background.box)
+    assert page[y0:y1, x0:x1].min() == style.label_gray  # a number inside its region is in the numbers' gray
+    # The dot is wider than the leader: across it there is more solid ink than across the leader anywhere else.
     dot_width = (leaders[int(y)] == 0).sum()
-    assert dot_width >= 2 * style.line_width_px(size)
+    assert dot_width >= 2 * style.leader_width_px(size)
     # It is the leader's layer, not the lines': the lines are what they would be without it.
     bare = render_page(size, [], ids, style)
     np.testing.assert_array_equal(np.asarray(rendered.outlines), np.asarray(bare.outlines))
     assert (np.asarray(bare.leaders) == PAPER).all()
+
+
+@pytest.mark.parametrize("line_mm", [0.2, 0.5])
+def test_a_leader_is_drawn_as_wide_as_its_own_width_and_moves_no_number_while_no_wider_than_the_lines(line_mm):
+    # D-002: the leaders have a width of their own. Thinner than the lines, they free no room, so the numbers stay put
+    # (and line art's regions, which merge where a number finds none); wider, the numbers keep clear of them.
+    size = (1200, 1600)
+    ids = _square_too_small_for_its_number(size)
+    regions = extract_regions(ids, np.array([0, 1], dtype=np.int32))
+    widths = [0.05, 0.1, line_mm, 1.0]
+    pages = [render_page(size, regions, ids, PageStyle(line_width_mm=line_mm, leader_width_mm=w)) for w in widths]
+
+    ink = [(PAPER - np.asarray(page.leaders).astype(np.float64)).sum() for page in pages]
+    assert ink[0] <= ink[1] < ink[2] < ink[3]  # the narrowest two may both be the 1 px floor
+    assert pages[0].labels == pages[1].labels == pages[2].labels
+    assert PageStyle(leader_width_mm=0.01).leader_width_px(size) == PageStyle().min_line_width_px
 
 
 def test_the_leader_layer_is_bare_paper_when_every_number_fits_in_its_region():
@@ -243,28 +267,47 @@ def test_the_default_grays_are_gray_and_the_default_width_is_the_print_model_s()
 
     assert style.line_width_mm == OUTLINE_WIDTH_MM
     assert 0 < style.line_gray < PAPER and style.line_gray == LINE_GRAY
-    assert style.line_gray < style.label_gray < PAPER  # a number is lighter than a line, never darker
+    assert style.line_gray < style.label_gray < style.leader_gray < PAPER  # the user's pick (T2b): leaders lightest
+    assert (style.leader_gray, style.leader_width_mm) == (LEADER_GRAY, render_module.LEADER_WIDTH_MM)
+    assert style.leader_width_mm < style.line_width_mm  # D-002: leaders thinner than the lines
 
 
 def _lightness(gray: int) -> float:
     return float(bgr_to_lab(np.array([gray, gray, gray], dtype=np.uint8))[0])
 
 
-def test_the_tones_the_app_offers_step_both_grays_alike_and_keep_the_numbers_lighter():
-    # D-052 (Q36): Light / Medium / Dark, Medium being D-030's grays, the others 15 L* either side of it.
+@pytest.mark.parametrize("gray", [0, 0x18, 0x36, LINE_GRAY, LABEL_GRAY, 0xB4, PAPER])
+def test_lightness_is_cie_l_star(gray):
+    assert render_module.lightness(gray) == pytest.approx(_lightness(gray), abs=0.5)
+
+
+def test_the_tones_the_app_offers_step_all_three_grays_alike_and_keep_them_apart():
+    # D-052 (Q36): Light / Medium / Dark, Medium being the default grays, the others 15 L* either side of it. D-002:
+    # the lines, the numbers inside their regions and the leaders each a gray of their own, at least 15 L* apart.
     assert list(render_module.TONES) == ["Light", "Medium", "Dark"]
-    assert render_module.TONES["Medium"] == (LINE_GRAY, LABEL_GRAY) and render_module.DEFAULT_TONE == "Medium"
-    medium_gap = _lightness(LABEL_GRAY) - _lightness(LINE_GRAY)
-    lines = [_lightness(line) for line, _ in render_module.TONES.values()]
-    for line, label in render_module.TONES.values():
-        assert line < label < PAPER
-        assert _lightness(label) - _lightness(line) == pytest.approx(medium_gap, abs=1.0)
+    assert render_module.TONES["Medium"] == (LINE_GRAY, LABEL_GRAY, LEADER_GRAY)
+    assert render_module.DEFAULT_TONE == "Medium"
+    medium = [_lightness(gray) for gray in render_module.TONES["Medium"]]
+    for tone in render_module.TONES.values():
+        lightness = [_lightness(gray) for gray in tone]
+        assert all(0 <= gray < PAPER for gray in tone)
+        assert tone[0] < tone[1]  # a number inside its region is lighter than a line
+        for a in range(3):
+            for b in range(a + 1, 3):
+                assert abs(lightness[a] - lightness[b]) >= 15 - 0.5
+        offsets = [mine - theirs for mine, theirs in zip(lightness, medium)]
+        assert max(offsets) - min(offsets) == pytest.approx(0, abs=2.0)  # all three moved alike
+    lines = [_lightness(tone[0]) for tone in render_module.TONES.values()]
     assert lines[0] - lines[1] == pytest.approx(15, abs=1.0) and lines[1] - lines[2] == pytest.approx(15, abs=1.0)
 
 
 def test_the_app_s_settings_give_the_default_style_at_their_defaults():
     assert PageStyle.from_settings() == PageStyle()
-    assert PageStyle.from_settings(0.45, "Dark") == PageStyle(line_width_mm=0.45, line_gray=0x36, label_gray=0x66)
+    line_gray, label_gray, leader_gray = render_module.TONES["Dark"]
+    assert PageStyle.from_settings(0.45, "Dark") == PageStyle(
+        line_width_mm=0.45, line_gray=line_gray, label_gray=label_gray, leader_gray=leader_gray
+    )
+    assert PageStyle.from_settings(tone="Dark", leader_gray=0x20).leader_gray == 0x20  # a gray given wins over the tone
     low, high = render_module.LINE_WIDTH_MM_RANGE
     assert low < OUTLINE_WIDTH_MM < high
     steps = (high - low) / render_module.LINE_WIDTH_MM_STEP

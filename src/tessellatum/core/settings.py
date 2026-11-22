@@ -22,12 +22,12 @@ from __future__ import annotations
 import dataclasses
 import math
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Callable, Mapping
 
 from tessellatum.core import difficulty
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.pipeline import Handling
-from tessellatum.core.render import LINE_WIDTH_MM_RANGE, LINE_WIDTH_MM_STEP, PageStyle
+from tessellatum.core.render import LINE_WIDTH_MM_RANGE, LINE_WIDTH_MM_STEP, PAPER, PageStyle, lightness
 
 DIFFICULTY = "difficulty"
 STYLE = "style"
@@ -43,7 +43,8 @@ class Setting:
     ``minimum`` to ``maximum`` in steps of ``step``, shown with ``unit``;
     ``log`` moves a slider over it in equal ratios rather than equal steps,
     and ``whole`` takes whole numbers only. ``group`` is the part of the panel
-    it is shown in.
+    it is shown in. ``shown``, if given, is what a value is shown as, in
+    ``unit``, where the field holds it otherwise: a gray as its lightness.
     """
 
     name: str
@@ -57,6 +58,7 @@ class Setting:
     tooltip: str
     log: bool = False
     whole: bool = False
+    shown: Callable[[float], float] | None = None
 
     @property
     def default(self) -> float:
@@ -72,6 +74,8 @@ class Setting:
 
     def text(self, value: float) -> str:
         """``value`` as the panel shows it, with its unit."""
+        if self.shown is not None:
+            return f"{self.shown(value):.0f} {self.unit}".strip()
         if self.whole:
             number = f"{int(round(value))}"
         else:
@@ -86,6 +90,12 @@ LINES = "Lines and numbers"
 LINE_ART = "Line art"
 TEXT = "Text"
 GROUPS = (REGIONS, FACES, LINES, LINE_ART, TEXT)
+
+
+def _gray(name: str, label: str, tooltip: str) -> Setting:
+    """A gray of the page's ink, 0 black to 255 white, shown as its lightness: the tone sets all three (see
+    ``render.TONES``)."""
+    return Setting(name, STYLE, LINES, label, "L*", 0, PAPER - 1, 1, tooltip, whole=True, shown=lightness)
 
 
 def _difficulty(name: str, label: str, unit: str, step: float, tooltip: str, **kw) -> Setting:
@@ -181,6 +191,24 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(
         "line_width_mm", STYLE, LINES, "Line width", "mm", LINE_WIDTH_MM_RANGE[0], LINE_WIDTH_MM_RANGE[1],
         LINE_WIDTH_MM_STEP, "How wide the lines print on the A4 page.",
+    ),
+    _gray("line_gray", "Line gray", "How dark the lines print, as a lightness: 0 is black, 100 white."),
+    _gray(
+        "label_gray", "Number gray",
+        "How dark a number inside its region prints, as a lightness: 0 is black, 100 white. Lighter than the lines, "
+        "it reads as part of the page rather than as writing in the picture.",
+    ),
+    _gray(
+        "leader_gray", "Leader gray",
+        "How dark a number written outside its region prints, with the leader pointing it in and the leader's dot, as "
+        "a lightness: 0 is black, 100 white. A gray of their own tells them at a glance from the numbers inside "
+        "their regions.",
+    ),
+    Setting(
+        "leader_width_mm", STYLE, LINES, "Leader width", "mm", 0.05, LINE_WIDTH_MM_RANGE[1], 0.05,
+        "How wide the leaders print on the A4 page: the lines pointing a number written outside its region in, its "
+        "dot three times as wide. Thinner than the lines, they don't read as boundaries. However thin, the numbers "
+        "keep as clear of them as of a line.",
     ),
     Setting(
         "line_smoothing_mm", STYLE, LINES, "Line smoothing", "mm", 0.0, 2.0, 0.05,
