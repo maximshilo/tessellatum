@@ -133,14 +133,26 @@ def test_an_export_whose_numbers_move_comes_out_as_if_its_second_render_drew_eve
     long_edge = pipeline.export_long_edge(picture)
     real = pipeline.render_page
     reused = []
+    real_with_room = pipeline._with_room
+
+    def with_room(rendered, page_labels, sx, sy, size):
+        """As ``_with_room``; where every number found room, as if the first had not, so the page is rendered again."""
+        labels = real_with_room(rendered, page_labels, sx, sy, size)
+        if labels is None:
+            on_page = {label.region_id: label for label in page_labels}
+            labels = list(rendered.labels)
+            index = next(i for i, label in enumerate(labels) if label.region_id in on_page)
+            labels[index] = pipeline._scaled_label(on_page[labels[index].region_id], sx, sy, size)
+        return labels
 
     def render(*args, reuse=None, **kwargs):
         reused.append(reuse is not None)
         return real(*args, reuse=reuse, **kwargs)
 
+    monkeypatch.setattr(pipeline, "_with_room", with_room)
     monkeypatch.setattr(pipeline, "render_page", render)
     drawn = pipeline.draw_page(preview, picture, long_edge)
-    assert reused == [False, True]  # a number found no room drawn larger: the page was rendered again, reusing the first
+    assert reused == [False, True]  # a number moved: the page was rendered again, reusing the first
     monkeypatch.setattr(pipeline, "render_page", lambda *args, reuse=None, **kwargs: real(*args, **kwargs))
     fresh = pipeline.draw_page(preview, picture, long_edge)
     assert drawn.page.tobytes() == fresh.page.tobytes()
