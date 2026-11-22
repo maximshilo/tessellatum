@@ -105,7 +105,7 @@ class PageStyle:
     min_label_pt: float = MIN_LABEL_SIZE_PT
     leader_reach_mm: float = LEADER_REACH_MM
     text_gap_mm: float = TEXT_GAP_MM
-    split_neck_mm: float | None = SPLIT_NECK_MM  # None numbers every region once, as before 1.0.5
+    split_neck_mm: float | None = SPLIT_NECK_MM  # None numbers every region once, as before 1.0.6
 
     def line_width_px(self, size: tuple[int, int]) -> float:
         """How wide a line is on a page of ``size`` (width, height) pixels."""

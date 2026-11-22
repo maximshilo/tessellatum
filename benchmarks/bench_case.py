@@ -594,7 +594,7 @@ def label_scores(page_data: PageData, scale, min_pt: float) -> dict:
     quality.update(bm.label_clearance(page_data.label_boxes, page_data.outlines, page_data.leaders))
     quality["leader_labels"] = page_data.leader_labels
     if page_data.outlines is not None and page_data.label_points is not None:
-        # The regions pinched into sides that read as separate regions, and their sides with no number (from 1.0.5).
+        # The regions pinched into sides that read as separate regions, and their sides with no number (from 1.0.6).
         quality.update(
             bm.unnumbered_sides(
                 page_data.region_id_map, page_data.outlines, page_data.label_points,

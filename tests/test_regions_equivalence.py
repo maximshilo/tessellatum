@@ -10,7 +10,7 @@ from tessellatum.core.regions import build_regions, extract_regions
 from tessellatum.core.render import PageStyle, render_page
 
 # The reference numbers every region once: a region pinched into sides that read as two regions gets a number on each
-# from 1.0.5 (``labels.find_sides``). Without that the page is the reference's; with it, every region's own number is.
+# from 1.0.6 (``labels.find_sides``). Without that the page is the reference's; with it, every region's own number is.
 NO_SIDES = PageStyle(split_neck_mm=None)
 
 

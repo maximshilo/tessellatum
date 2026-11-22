@@ -4,7 +4,7 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
-## [1.0.5] - 2026-11-22
+## [1.0.6] - 2026-11-22
 
 ### Added
 
@@ -15,6 +15,16 @@ Each release's notes on GitHub are its section below.
   with no room for a number anywhere keeps none, rather than one written over the lines.
 - The benchmark reports **unnumbered sides**: sides of a region that read as separate regions and carry no number of
   their region, measured independently of the pipeline.
+
+## [1.0.5] - 2026-11-22
+
+### Fixed
+
+- Two tests failed with OpenCV 5.1, which the test runs now install; the pages it makes are as good. One asked the
+  boxes found round lines of lettering to cover the blank rows above the letters too, where 5.1's boxes start a
+  fraction of a pixel lower: it now asks them to hold every pixel of the letters. The other, of an export rendered
+  again where a number moves, relied on a number happening to move on one sample page, and none does with 5.1: it
+  now moves one itself.
 
 ## [1.0.4] - 2026-10-22
 

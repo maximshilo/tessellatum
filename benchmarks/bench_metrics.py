@@ -79,7 +79,7 @@ PALETTE_MIN_DE00 = 10.0
 # anywhere in it (6 mm at the 3 mm brush), and it is at least BAND_MIN_ELONGATION times as long as it is wide.
 BAND_WIDTH_BRUSHES = 2.0
 # A region's paper narrower than this between its lines, on paper, makes its sides read as separate regions: the
-# app's default for "Split at necks under" (``labels.SPLIT_NECK_MM``, from 1.0.5), which unnumbered_sides checks.
+# app's default for "Split at necks under" (``labels.SPLIT_NECK_MM``, from 1.0.6), which unnumbered_sides checks.
 SIDE_NECK_MM = 0.35
 BAND_MIN_ELONGATION = 4.0
 # How many legends of one size ``best_flat_color_match`` tries before falling back to a greedy search, and how many
