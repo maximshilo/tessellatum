@@ -18,6 +18,7 @@ from tessellatum.core.print_size import A4, print_scale
 from tessellatum.core.regions import extract_regions
 from tessellatum.core.render import (
     LABEL_GRAY,
+    LEADER_GRAY,
     LINE_GRAY,
     PageDrawing,
     PageStyle,
@@ -288,7 +289,17 @@ def test_the_numbers_are_text_in_the_page_s_font_embedded_where_the_page_writes_
     for (size, x, y, text), label in zip(shown, rendered.labels):
         assert (int(size), text) == (label.font_size, label.text)
         assert (float(x), float(y)) == pytest.approx(number_origin(label), abs=1e-4)
-    assert f"{LABEL_GRAY / 255:.4f}".rstrip("0") + " g BT" in content
+    # Each number in its gray: the numbers' inside their regions, the leaders' where it has one.
+    text = content[content.index("BT\n") : content.index("\nET")]
+    fill, labels = None, list(rendered.labels)
+    for line in text.splitlines()[1:]:
+        if line.endswith(" g"):
+            fill = float(line.split()[0])
+            continue
+        label = labels.pop(0)
+        want = LEADER_GRAY if label.leader is not None else LABEL_GRAY
+        assert fill == pytest.approx(want / 255, abs=1e-4)
+    assert not labels and any(label.leader is not None for label in rendered.labels)
 
     font = first["objects"][first["resources"]["Font"]["F1"]][0]
     assert "/Subtype /TrueType /BaseFont /Aileron-Regular /FirstChar 48 /LastChar 57" in font
@@ -308,7 +319,11 @@ def test_a_leader_runs_to_a_dot_inside_its_region(tmp_path):
     assert f"{start[0] + 0.5:.2f} {start[1] + 0.5:.2f} m\n{end[0] + 0.5:.2f} {end[1] + 0.5:.2f} l S" in first["content"]
     back = pdf_reading.render(path, 0, 4.0).mean(axis=2)[40:, 40:]
     x, y = (int(round(v)) for v in end)
-    assert back[y, x] == pytest.approx(LABEL_GRAY, abs=2)  # the dot, solid, at the point it numbers
+    assert back[y, x] == pytest.approx(LEADER_GRAY, abs=2)  # the dot, solid, at the point it numbers
+    # Drawn as wide as the leaders print, in their gray.
+    width = rendered.drawing.style.leader_width_mm * print_scale(rendered.drawing.size).px_per_mm
+    gray = f"{LEADER_GRAY / 255:.4f}".rstrip("0")
+    assert f"q /Dk gs {width:.4f}".rstrip("0").rstrip(".") + f" w {gray} G {gray} g" in first["content"]
 
 
 def test_the_legend_is_vector_swatches_in_their_exact_colors_numbered_on_its_own_sheet(tmp_path):

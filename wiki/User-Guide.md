@@ -73,9 +73,15 @@ smaller ones.
   fur paint in a few large tones.
 
 **Lines and numbers**
-- **Line width**: 0.1 to 1 mm (0.2 mm by default). **Tone**: Light, Medium or Dark; numbers are always a step lighter
-  than the lines, so they read as the page's apparatus rather than as writing in the picture. Light is for pale paints,
-  under which darker lines would show.
+- **Line width**: 0.1 to 1 mm (0.2 mm by default).
+- **Tone**: Light, Medium or Dark sets the page's three grays, shown as a lightness (L*, 0 black to 100 white) on
+  their own sliders: **Line gray**, **Number gray** for the numbers inside their regions, and **Leader gray** for the
+  numbers written outside their regions, their leaders and the leaders' dots. Medium prints them at 38, 54 and 70: the
+  numbers lighter than the lines, so they read as the page's apparatus rather than as writing in the picture, and a
+  number with a leader in a gray of its own. Light and Dark move all three by 15; Light is for pale paints, under which
+  darker lines would show. Moving any of the three picks Custom.
+- **Leader width**: 0.1 mm by default, half the default line, so a leader doesn't read as a boundary. Numbers keep as
+  clear of a leader as of a line however thin it is drawn.
 - **Line smoothing**: how far along a line its pixel staircase is smoothed.
 - **Smallest number**: 3 pt by default. A preview draws no number under 10 px, so smaller sizes may show only on an
   export, or zoomed in.

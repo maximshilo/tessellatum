@@ -33,18 +33,24 @@ from tessellatum.core.text import Lettering
 # Gray rather than black, so that a line disappears under the paint that is
 # meant to cover it, and so that a number reads as part of the page's
 # apparatus rather than as writing in the picture (QUALITY_BENCHMARKS.md).
+# The numbers written outside their regions, and the leaders pointing them in, are a third gray, so that a number with
+# a leader is told at a glance from one inside its region. The user's pick from four (T2b): the lines at L* 38, the
+# numbers inside their regions at 54, the leaders and their numbers at 70, each 16 L* from the next.
 LINE_GRAY = 0x59
-LABEL_GRAY = 0x8C
+LABEL_GRAY = 0x81
+LEADER_GRAY = 0xAB
 
-# The tones the app offers for the lines and the numbers, (line gray, number gray), lightest first. Medium is the pair
-# above; Light and Dark are 15 L* lighter and darker, both grays alike, so the numbers stay as much lighter than the
-# lines (20 L*) in every tone.
+# The tones the app offers for the page's ink, (line gray, number gray, leader gray), lightest first. Medium is the
+# grays above; Light and Dark are 15 L* lighter and darker, all three alike, so the grays stay as far apart in every
+# tone.
 TONES = {
-    "Light": (0x7E, 0xB4),
-    "Medium": (LINE_GRAY, LABEL_GRAY),
-    "Dark": (0x36, 0x66),
+    "Light": (0x7E, 0xA8, 0xD4),
+    "Medium": (LINE_GRAY, LABEL_GRAY, LEADER_GRAY),
+    "Dark": (0x36, 0x5C, 0x84),
 }
 DEFAULT_TONE = "Medium"
+# The ink's three grays, as ``PageStyle`` names them, in the order of a tone in ``TONES``.
+TONE_FIELDS = ("line_gray", "label_gray", "leader_gray")
 # The line widths the app offers, in mm on paper, and its step. 0.2 to 0.5 mm read well on the benchmark's pages; the
 # app reaches past both, for a hairline or a bold page.
 LINE_WIDTH_MM_RANGE = (0.1, 1.0)
@@ -69,10 +75,20 @@ _SUBPIXEL_BITS = 4
 
 PAPER = 255  # the line layer where no ink falls at all
 
-# A number written outside its region points into it with a leader: a line as
-# wide as the page's own, in the numbers' gray, ending in a dot this many line
-# widths across (see ``labels``).
+# A number written outside its region points into it with a leader: a line
+# this wide on paper, in the leaders' gray, ending in a dot this many leader
+# widths across (see ``labels``). Half the default line, so that a leader
+# doesn't read as a boundary (D-002).
+LEADER_WIDTH_MM = 0.1
 LEADER_DOT_RATIO = 3.0
+
+
+def lightness(gray: float) -> float:
+    """The CIE L* of an sRGB ``gray`` (0 black, 255 white): 0 to 100, in equal steps to the eye."""
+    value = gray / PAPER
+    linear = value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+    f = linear ** (1 / 3) if linear > 216 / 24389 else (24389 / 27 * linear + 16) / 116
+    return 116 * f - 16
 
 
 @dataclass(frozen=True)
@@ -80,8 +96,12 @@ class PageStyle:
     """The page's ink: how its lines and numbers print.
 
     ``line_width_mm`` is a physical width, converted for each page by the
-    print model, so a preview and an export of one image print the same line.
-    The grays are tones on white paper, 0 black and 255 invisible.
+    print model, so a preview and an export of one image print the same line;
+    ``leader_width_mm`` likewise for the leaders, which are never drawn
+    thinner than ``min_line_width_px`` either. The grays are tones on white
+    paper, 0 black and 255 invisible: ``line_gray`` the lines',
+    ``label_gray`` the numbers' inside their regions, and ``leader_gray`` the
+    leaders', their dots' and the numbers' they point from.
     ``line_smoothing_mm`` is how far along a line its pixel staircase is
     smoothed (see ``boundaries.smoothing_length_px``). ``min_label_pt`` is
     the smallest a number prints, ``leader_reach_mm`` how far from its region
@@ -100,6 +120,8 @@ class PageStyle:
     min_line_width_px: float = MIN_LINE_WIDTH_PX
     line_gray: int = LINE_GRAY
     label_gray: int = LABEL_GRAY
+    leader_gray: int = LEADER_GRAY
+    leader_width_mm: float = LEADER_WIDTH_MM
     leader_dot_ratio: float = LEADER_DOT_RATIO
     line_smoothing_mm: float = SMOOTHING_MM
     min_label_pt: float = MIN_LABEL_SIZE_PT
@@ -111,6 +133,14 @@ class PageStyle:
         """How wide a line is on a page of ``size`` (width, height) pixels."""
         return max(self.min_line_width_px, print_scale(size).mm_to_px(self.line_width_mm))
 
+    def leader_width_px(self, size: tuple[int, int]) -> float:
+        """How wide a leader is on a page of ``size`` (width, height) pixels."""
+        return max(self.min_line_width_px, print_scale(size).mm_to_px(self.leader_width_mm))
+
+    def label_fill(self, label: Label) -> int:
+        """The gray ``label`` prints in: the leaders' if it has one, else the numbers'."""
+        return self.leader_gray if label.leader is not None else self.label_gray
+
     def smoothing_px(self, size: tuple[int, int]) -> float:
         """How far a line is smoothed along its length on a page of ``size`` (``boundaries.smoothing_length_px``)."""
         return smoothing_length_px(size, self.line_smoothing_mm)
@@ -119,9 +149,11 @@ class PageStyle:
     def from_settings(
         cls, line_width_mm: float = OUTLINE_WIDTH_MM, tone: str = DEFAULT_TONE, **more: float
     ) -> PageStyle:
-        """The style for a line width in mm and one of ``TONES``, as the app offers them, and other fields by name."""
-        line_gray, label_gray = TONES[tone]
-        return cls(line_width_mm=line_width_mm, line_gray=line_gray, label_gray=label_gray, **more)
+        """The style for a line width in mm and one of ``TONES``, as the app offers them, and other fields by name: grays
+        given in ``more`` take the place of the tone's."""
+        fields = dict(zip(TONE_FIELDS, TONES[tone]))
+        fields.update(more)
+        return cls(line_width_mm=line_width_mm, **fields)
 
 
 @dataclass
@@ -133,9 +165,10 @@ class PageDrawing:
     lines, in ``style.line_gray``; the letters of the lines of text, the rings
     of ``lettering`` filled by the even-odd rule, solid in ``ink_gray``,
     darkening what is under them; the printed ink, solid in ``ink_gray`` over
-    what is under it; the leaders, in ``style.label_gray``, darkening what is
-    under them; and the numbers, in ``style.label_gray``, at the size and the
-    place ``number_origin`` gives. ``ink`` and ``lettering`` are None where the
+    what is under it; the leaders, ``style.leader_width_mm`` wide, in
+    ``style.leader_gray``, darkening what is under them; and the numbers, each
+    in the gray ``style.label_fill`` gives it, at the size and the place
+    ``number_origin`` gives. ``ink`` and ``lettering`` are None where the
     page has none.
     """
 
@@ -266,11 +299,16 @@ def render_page(
 
     coverage = all_ink(ink)
 
+    # The numbers are placed keeping as clear of a leader as of one drawn as wide as the lines, or wider if it is:
+    # a thinner leader frees no room, so the numbers -- and line art's regions, which merge where a number finds none
+    # (see ``pipeline.generate``) -- don't depend on how thin the leaders are drawn.
+    leader_width = style.leader_width_px(size)
+    leader_room = max(line_width, leader_width)
     spacing = LabelSpacing(
         min_font_size=min_font_size(size, style.min_label_pt),
         label_gap_px=line_width,
-        leader_width_px=line_width,
-        leader_dot_px=line_width * style.leader_dot_ratio,
+        leader_width_px=leader_room,
+        leader_dot_px=leader_room * style.leader_dot_ratio,
         leader_reach_px=print_scale(size).mm_to_px(style.leader_reach_mm),
         text_gap_px=print_scale(size).mm_to_px(style.text_gap_mm),
         split_neck_px=None if style.split_neck_mm is None else print_scale(size).mm_to_px(style.split_neck_mm),
@@ -291,7 +329,8 @@ def render_page(
         coverage = all_ink(ink)
     outlines = Image.fromarray(PAPER - coverage, "L")
     leader_coverage, leader_ink = _leader_coverage(
-        size, labels, line_width, spacing.leader_dot_px, reuse.leader_ink if reuse is not None else None
+        size, labels, leader_width, leader_width * style.leader_dot_ratio,
+        reuse.leader_ink if reuse is not None else None,
     )
 
     paper = paper_under(lines_only, style.line_gray)
@@ -301,14 +340,14 @@ def render_page(
     if inked:
         paper[solid(ink)] = min(int(ink_gray), PAPER)
     if any(label.leader is not None for label in labels):  # most pages have none, and white paper changes nothing
-        np.minimum(paper, paper_under(leader_coverage, style.label_gray), out=paper)
+        np.minimum(paper, paper_under(leader_coverage, style.leader_gray), out=paper)
     page = Image.fromarray(paper, "L").convert("RGB")
     draw = ImageDraw.Draw(page)
-    label_fill = (style.label_gray,) * 3
     for label in labels:
         bbox = text_bbox(label.text, label.font_size)
         left, top = label.box[0], label.box[1]
-        draw.text((left - bbox[0], top - bbox[1]), label.text, fill=label_fill, font=font(label.font_size))
+        fill = (style.label_fill(label),) * 3
+        draw.text((left - bbox[0], top - bbox[1]), label.text, fill=fill, font=font(label.font_size))
 
     picture_ink = np.where(lettering_area, lettering.ink, 0).astype(np.uint8) if lettered else np.zeros_like(lines_only)
     if inked:
@@ -359,7 +398,7 @@ def _leader_coverage(
     points, for drawing the page again (see ``RenderedPage.leader_ink``).
 
     Each leader is a line from its number to the point in the region it
-    numbers, drawn with the same round pen as the page's lines, with a dot
+    numbers, drawn with a round pen ``width_px`` across as the page's lines are, with a dot
     ``dot_px`` across at that point (see ``_leader_ink``). A leader in
     ``known`` -- this page's leaders drawn before, at this size and with these
     pens -- is taken from there.

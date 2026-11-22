@@ -85,11 +85,11 @@ def test_the_tinted_version_is_the_page_multiplied_by_a_wash_of_each_region_s_pa
 
 def test_a_wash_keeps_the_numbers_as_much_darker_than_what_is_round_them_as_on_paper():
     # A wash multiplies the page: a number's gray keeps its ratio to the paint round it, on the darkest paint too, where
-    # it is about as dark as the page's lines are on paper.
+    # it is about as dark as the page's lines are on paper (a little darker from 1.0.7's darker numbers).
     darkest = tint_rgb((0, 0, 0))[0]
     number = round(LABEL_GRAY * darkest / PAPER)
     assert number / darkest == pytest.approx(LABEL_GRAY / PAPER, abs=0.005)
-    assert abs(number - LINE_GRAY) <= 0x08
+    assert abs(number - LINE_GRAY) <= 0x10
 
 
 def test_the_page_version_is_the_page_itself_and_a_painted_one_needs_what_it_is_painted_with():

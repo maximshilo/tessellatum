@@ -100,7 +100,9 @@ the page paintable is recorded as an intended trade-off.
 - Smooth lines, not the pixel grid's staircase.
 - Lines on the image's real edges.
 - Thin lines, gray rather than black, so they disappear under the paint: 0.2 mm by default. Numbers are a step
-  lighter than the lines and small, so they read as part of the page and not as writing in the image.
+  lighter than the lines and small, so they read as part of the page and not as writing in the image. A number written
+  outside its region, its leader and the leader's dot are a third gray, lighter still by default, and the leader thinner
+  than the lines (0.1 mm), so the two kinds of number are told apart and a leader doesn't read as a boundary.
 
 | metric | what it measures | target |
 |---|---|---|
@@ -256,8 +258,8 @@ preview's page drawn at print size, or the preview itself where it is made at th
 
 - **Printable colors.** The palette is 8-bit sRGB, so it always displays. Which of its colors paper and ink can
   reproduce depends on the printer, and checking that needs the printer's color profile.
-- **Line width, line tone and the numbers' style.** The page draws them as set (0.2 mm and gray by default), and no
-  metric reads them.
+- **Line width, the grays and the numbers' style.** The page draws them as set (0.2 mm lines, 0.1 mm leaders, three
+  grays by default), and no metric reads them; the tests check each kind of ink prints in its own gray.
 - **The PDF.** The harness scores the raster page. The tests check the vector PDF against it
   (`tests/test_export.py`).
 - **Each flat fill as one region**, directly. Tubes, slivers and flat colors catch the ways it fails.

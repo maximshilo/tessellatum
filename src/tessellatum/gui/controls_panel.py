@@ -3,7 +3,8 @@
 Each setting the app offers (see ``core.settings``) gets a slider, built from
 its entry there: its range, its step, its unit and its tooltip. The difficulty
 presets fill in the difficulty's settings, and moving any of those picks
-Custom. Reset puts every setting back to its default.
+Custom; the tones fill in the ink's three grays alike. Reset puts every
+setting back to its default.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from PySide6.QtWidgets import (
 from tessellatum.core import difficulty, settings
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import Handling
-from tessellatum.core.render import DEFAULT_TONE, TONES, PageStyle
+from tessellatum.core.render import DEFAULT_TONE, TONE_FIELDS, TONES, PageStyle
 from tessellatum.core.settings import Setting
 
 THUMBNAIL_SIZE = 220
@@ -44,10 +45,13 @@ LOG_SLIDER_STEPS = 120
 MIN_SLIDER_WIDTH = 80
 
 TONE_TOOLTIPS = {
-    "Light": "Fainter lines and numbers, which vanish under the palest paints.",
-    "Medium": "Gray lines, and lighter gray numbers that don't read as writing in the picture.",
-    "Dark": "Darker lines and numbers, easier to follow on paper.",
+    "Light": "Fainter lines, numbers and leaders, which vanish under the palest paints.",
+    "Medium": "Gray lines, lighter gray numbers that don't read as writing in the picture, and the numbers written "
+    "outside their regions in a gray of their own, with their leaders.",
+    "Dark": "Darker lines, numbers and leaders, easier to follow on paper.",
 }
+CUSTOM_TONE = "Custom"
+CUSTOM_TONE_TOOLTIP = "Set the three grays yourself. Moving any of them picks Custom, starting from the tone."
 
 CUSTOM_TOOLTIP = "Set every difficulty setting yourself. Moving any of them picks Custom, starting from the preset."
 
@@ -201,9 +205,10 @@ class ControlsPanel(QWidget):
             self.sections[s.group].form.addRow(label, self.controls[s.name])
 
         self.tone_combo = QComboBox()
-        self.tone_combo.addItems(list(TONES))
+        self.tone_combo.addItems([*TONES, CUSTOM_TONE])
         for index, name in enumerate(TONES):
             self.tone_combo.setItemData(index, TONE_TOOLTIPS[name], Qt.ToolTipRole)
+        self.tone_combo.setItemData(len(TONES), CUSTOM_TONE_TOOLTIP, Qt.ToolTipRole)
         self.tone_combo.setCurrentText(DEFAULT_TONE)
         self.sections[settings.LINES].form.insertRow(1, "Tone", self.tone_combo)
         # Every section's labels as wide as the widest, so that the sliders line up from one section to the next.
@@ -304,7 +309,7 @@ class ControlsPanel(QWidget):
         self.preset_combo.currentTextChanged.connect(self._on_preset_changed)
         for name, control in self.controls.items():
             control.edited.connect(lambda name=name: self._on_setting_edited(name))
-        self.tone_combo.currentTextChanged.connect(lambda _text: self._save())
+        self.tone_combo.currentTextChanged.connect(self._on_tone_changed)
         for check in self._switches.values():
             check.toggled.connect(lambda _checked: self._save())
 
@@ -326,12 +331,27 @@ class ControlsPanel(QWidget):
             self._show_preset(name)
         self._save()
 
+    def _show_tone(self, name: str) -> None:
+        """Set the gray sliders to the tone ``name``'s grays."""
+        for field, gray in zip(TONE_FIELDS, TONES[name]):
+            self.controls[field].set_value(gray)
+
+    def _on_tone_changed(self, name: str) -> None:
+        if name in TONES:
+            self._show_tone(name)
+        self._save()
+
     def _on_setting_edited(self, name: str) -> None:
-        # A difficulty setting moved off its preset is a Custom difficulty, starting from the preset's other values.
+        # A difficulty setting moved off its preset is a Custom difficulty, starting from the preset's other values;
+        # a gray moved off its tone, a Custom tone, likewise.
         if self.controls[name].setting.owner == settings.DIFFICULTY and self.preset_combo.currentText() != "Custom":
             self.preset_combo.blockSignals(True)
             self.preset_combo.setCurrentText("Custom")
             self.preset_combo.blockSignals(False)
+        if name in TONE_FIELDS and self.tone_combo.currentText() != CUSTOM_TONE:
+            self.tone_combo.blockSignals(True)
+            self.tone_combo.setCurrentText(CUSTOM_TONE)
+            self.tone_combo.blockSignals(False)
         self._save()
 
     def reset(self) -> None:
@@ -344,6 +364,7 @@ class ControlsPanel(QWidget):
                 if control.setting.owner != settings.DIFFICULTY:
                     control.set_value(control.setting.default)
             self.tone_combo.setCurrentText(DEFAULT_TONE)
+            self._show_tone(DEFAULT_TONE)
             for check in self._switches.values():
                 check.setChecked(True)
         finally:
@@ -370,17 +391,21 @@ class ControlsPanel(QWidget):
             if preset in difficulty.preset_names():
                 self.preset_combo.setCurrentText(preset)
             tone = self._store.value(_TONE_KEY)
-            if tone in TONES:
+            if tone in TONES or tone == CUSTOM_TONE:
                 self.tone_combo.setCurrentText(tone)
+            tone = self.tone_combo.currentText()
             for name, control in self.controls.items():
                 kept = self._store.value(_SETTING_KEY.format(name))
                 try:
                     value = float(kept)
                 except (TypeError, ValueError):
                     continue
-                # A preset's difficulty is the preset's, whatever was kept beside it.
-                if control.setting.owner != settings.DIFFICULTY or preset == "Custom":
-                    control.set_value(value)
+                # A preset's difficulty is the preset's, and a tone's grays the tone's, whatever was kept beside them.
+                if control.setting.owner == settings.DIFFICULTY and preset != "Custom":
+                    continue
+                if name in TONE_FIELDS and tone != CUSTOM_TONE:
+                    continue
+                control.set_value(value)
             for name, check in self._switches.items():
                 kept = self._store.value(_SWITCH_KEY.format(name))
                 if kept is not None:
@@ -412,7 +437,7 @@ class ControlsPanel(QWidget):
         return difficulty.custom_params(**self._chosen(settings.DIFFICULTY))
 
     def get_page_style(self) -> PageStyle:
-        return PageStyle.from_settings(tone=self.tone_combo.currentText(), **self._chosen(settings.STYLE))
+        return PageStyle(**self._chosen(settings.STYLE))  # the grays on their sliders, the tone's unless Custom
 
     def get_handling(self) -> Handling:
         switches = {name: check.isChecked() for name, check in self._switches.items()}

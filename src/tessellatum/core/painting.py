@@ -29,7 +29,8 @@ from tessellatum.core.render import PAPER
 
 # How far the tinted version's wash goes from white to the paint. A wash multiplies the page, which keeps the ratio of
 # every gray on it to the paper round it, so the lines and numbers stand out from a wash as they do from paper, only
-# darker; at this, black washes to a 60% gray, its numbers about as dark as the page's lines on paper.
+# darker; at this, black washes to a 60% gray, its numbers about as dark as the page's lines on paper, or a little
+# darker.
 TINT_OPACITY = 0.4
 
 
