@@ -40,11 +40,21 @@ from tessellatum.core.print_size import MIN_LABEL_SIZE_PT, print_scale
 
 MAX_FONT_SIZE = 40  # px
 FONT_SIZE_RADIUS_RATIO = 0.85
-# A number is never drawn smaller than this, whatever the paper asks for. The
-# pipeline never upscales, so a small source prints at a low resolution, where
-# the smallest legible size on paper is too few pixels to draw a digit with:
-# at 10 px a digit is 8 px tall.
+# A number drawn in pixels is never smaller than this, whatever the paper asks
+# for. The pipeline never upscales, so a small source prints at a low
+# resolution, where the smallest legible size on paper is too few pixels to
+# draw a digit with: at 10 px a digit is 8 px tall. A page laid out to be drawn
+# as vectors (the PDF, see ``min_font_size``) has no such floor.
 MIN_FONT_SIZE = 10  # px
+
+# How finely a number laid out for vectors shrinks to fit, in pixels an em: its
+# sizes are fractions of a pixel, and of those only the largest with each text
+# box is tried (see ``_sizes``).
+EXACT_SIZE_STEP = 0.125  # px
+# The em Pillow measures a number's outline at, for a layout in exact sizes:
+# large enough that rounding its measurements to whole pixels is a thousandth
+# of the em.
+MEASURING_EM_PX = 1000
 
 # How far from the region a number with a leader may be written, on paper. Any
 # farther and the line pointing back stops reading as belonging to the region.
@@ -71,7 +81,7 @@ class Label:
 
     region_id: int
     text: str
-    font_size: int  # px: the font's em size
+    font_size: float  # px: the font's em size; whole pixels unless ``exact``
     box: tuple[float, float, float, float]  # (x0, y0, x1, y1): the text's bounding box on the page
     # A number written outside its region: the leader line from the number to the point in the region it
     # points at, as ((x, y), (x, y)) with pixel centers at integer coordinates, like the page's lines.
@@ -84,13 +94,17 @@ class Label:
     # 0 for the region's own number; k for the number on the k-th of its other sides, where it is pinched into more
     # than one (see ``find_sides``). Only the region's own number decides anything about its region.
     side: int = 0
+    # Laid out to be drawn as vectors (the PDF): ``box`` is the number's outline at ``font_size``, any fraction of a
+    # pixel, measured exactly and rounded out to whole pixels, the number in its middle (see ``text_box_size``).
+    # Otherwise it is the box Pillow draws the number in at a whole-pixel size.
+    exact: bool = False
 
 
 @dataclass(frozen=True)
 class LabelSpacing:
     """How much room the placement leaves, in pixels of the page it is placing numbers on."""
 
-    min_font_size: int  # the smallest em size a number is drawn at (see ``min_font_size``)
+    min_font_size: float  # the smallest em size a number is drawn at (see ``min_font_size``)
     label_gap_px: float  # the least space between a number written outside its region and any other number
     leader_width_px: float  # how wide a leader line is inked
     leader_dot_px: float  # how wide the dot a leader ends in, at the point of its region it points at, is inked
@@ -100,18 +114,28 @@ class LabelSpacing:
     # numbers every region once.
     split_neck_px: float | None = None
     min_side_px: float = 0.0  # the smallest area, in pixels, a side has to have to count as one
+    # Numbers laid out to be drawn as vectors, in sizes of any fraction of a pixel (see ``Label.exact``); otherwise
+    # in whole pixels.
+    exact: bool = False
 
 
-def min_font_size(size: tuple[int, int], min_pt: float = MIN_LABEL_SIZE_PT) -> int:
-    """The smallest em size, in whole pixels, a number on a page of ``size`` is drawn at.
+def min_font_size(size: tuple[int, int], min_pt: float = MIN_LABEL_SIZE_PT, exact: bool = False) -> float:
+    """The smallest em size, in pixels, a number on a page of ``size`` is drawn at.
 
     That is the smallest that prints at ``min_pt`` -- by default the smallest
-    that prints legibly (``MIN_LABEL_SIZE_PT``) -- and never less than
-    ``MIN_FONT_SIZE``. The size in points is checked with the same arithmetic
-    the benchmark measures it with, so a number of this size is never scored a
-    hair under it.
+    that prints legibly (``MIN_LABEL_SIZE_PT``). On a page drawn in pixels it
+    is a whole number of them, and never less than ``MIN_FONT_SIZE``; on one
+    laid out to be drawn as vectors (``exact``, see ``Label.exact``) it is any
+    fraction of a pixel, as small as ``min_pt`` asks. The size in points is
+    checked with the same arithmetic the benchmark measures it with, so a
+    number of this size is never scored a hair under it.
     """
     scale = print_scale(size)
+    if exact:
+        exact_size = scale.pt_to_px(min_pt)
+        while scale.px_to_pt(exact_size) < min_pt:
+            exact_size = math.nextafter(exact_size, math.inf)
+        return exact_size
     font_size = max(MIN_FONT_SIZE, math.floor(scale.pt_to_px(min_pt)))
     while scale.px_to_pt(font_size) < min_pt:
         font_size += 1
@@ -184,13 +208,13 @@ def place_labels(
     for region in regions:
         if check_cancelled is not None:
             check_cancelled()
-        label = _label_at_middle(region, ids, free, spacing.min_font_size)
+        label = _label_at_middle(region, ids, free, spacing.min_font_size, spacing.exact)
         if label is None:
             if bounds is None:
                 # Sized for every region asked about, in case one is not on the map: it then has no room of its own.
                 num_ids = max(int(ids.max()), max(r.region_id for r in regions)) + 1
                 bounds = kernels.region_bounds(ids.reshape(-1), height, width, num_ids)[0]
-            label = _label_inside(region, ids, free, bounds, spacing.min_font_size)
+            label = _label_inside(region, ids, free, bounds, spacing.min_font_size, spacing.exact)
         if label is None:
             homeless.append(region)
         else:
@@ -209,7 +233,7 @@ def place_labels(
         if sides:
             if room is None:
                 room = _LeaderRoom(ids, free, labels, [], spacing, clearable)
-            labels += _side_labels(regions, sides, labels, room, spacing.min_font_size, check_cancelled)
+            labels += _side_labels(regions, sides, labels, room, check_cancelled)
     return labels
 
 
@@ -327,8 +351,7 @@ def find_sides(
 
 
 def _side_labels(
-    regions, sides: dict[int, Sides], labels: list[Label], room: _LeaderRoom, min_size: int,
-    check_cancelled: Callable[[], None] | None,
+    regions, sides: dict[int, Sides], labels: list[Label], room: _LeaderRoom, check_cancelled: Callable[[], None] | None
 ) -> list[Label]:
     """A number on each side of a pinched region but the side its own number is on (see ``place_labels``)."""
     at = {}  # where each region's own number is: the point its leader points at, or its box's middle
@@ -350,7 +373,7 @@ def _side_labels(
                 check_cancelled()
             number += 1  # counted whether or not it finds room, so a number names its side
             side = replace(region, interior_point=point, interior_radius=radius)
-            label = room.place_on_side(side, *found.side(index), min_size)
+            label = room.place_on_side(side, *found.side(index))
             if label is not None:
                 placed.append(replace(label, side=number))
     return placed
@@ -378,15 +401,52 @@ def _spaced_slices(box, gap_px: float) -> tuple[slice, slice]:
     return slice(max(0, y0 - gap), y1 + gap), slice(max(0, x0 - gap), x1 + gap)
 
 
-def text_box_size(text: str, font_size: int) -> tuple[int, int]:
-    """(width, height) of ``text``'s bounding box at ``font_size``, in whole pixels."""
+def text_box_size(text: str, font_size: float, exact: bool = False) -> tuple[int, int]:
+    """(width, height) of ``text``'s bounding box at ``font_size``, in whole pixels.
+
+    That is the box Pillow draws it in at that size or, with ``exact`` (see
+    ``Label.exact``), its outline at that size, rounded out.
+    """
+    if exact:
+        left, top, right, bottom = outline_bbox(text, font_size)
+        return max(1, math.ceil(right - left - 1e-9)), max(1, math.ceil(bottom - top - 1e-9))
     left, top, right, bottom = text_bbox(text, font_size)
     return right - left, bottom - top
 
 
-def _preferred_size(region, min_size: int) -> int:
-    """The size a region's number is drawn at if it fits: larger the farther its middle is from its edge."""
+def outline_bbox(text: str, font_size: float) -> tuple[float, float, float, float]:
+    """The bounding box of ``text``'s outline at ``font_size``, any fraction of a pixel, from the start of its
+    baseline, y down."""
+    scale = font_size / MEASURING_EM_PX
+    left, top, right, bottom = baseline_bbox(text, MEASURING_EM_PX)
+    return left * scale, top * scale, right * scale, bottom * scale
+
+
+def _preferred_size(region, min_size: float) -> float:
+    """The size a region's number is drawn at if it fits: larger the farther its middle is from its edge, in whole
+    pixels above ``min_size``."""
     return max(min_size, int(min(MAX_FONT_SIZE, region.interior_radius * FONT_SIZE_RADIUS_RATIO)))
+
+
+def _sizes(text: str, largest: float, smallest: float, exact: bool):
+    """(font size, box width, box height) of each size a number shrinks through to fit, ``largest`` to ``smallest``.
+
+    In whole pixels; or with ``exact``, every ``EXACT_SIZE_STEP`` and
+    ``smallest`` last, each the largest size of its box -- a smaller size
+    with the same box fits nowhere the larger one doesn't.
+    """
+    if not exact:
+        for font_size in range(int(largest), int(smallest) - 1, -1):
+            yield (font_size, *text_box_size(text, font_size))
+        return
+    steps = max(0, math.ceil((largest - smallest) / EXACT_SIZE_STEP - 1e-9))
+    last = None
+    for k in range(steps + 1):
+        font_size = largest - k * EXACT_SIZE_STEP if k < steps else smallest
+        box = text_box_size(text, font_size, exact=True)
+        if box != last:
+            last = box
+            yield (font_size, *box)
 
 
 def _centered_box(point, box_width: int, box_height: int, page_size: tuple[int, int]) -> tuple[int, int]:
@@ -396,22 +456,26 @@ def _centered_box(point, box_width: int, box_height: int, page_size: tuple[int, 
     return max(0, min(x - box_width // 2, width - box_width)), max(0, min(y - box_height // 2, height - box_height))
 
 
-def _label_at_middle(region, ids: np.ndarray, free: np.ndarray, min_size: int) -> Label | None:
+def _label_at_middle(
+    region, ids: np.ndarray, free: np.ndarray, min_size: float, exact: bool = False
+) -> Label | None:
     """``region``'s number where it always went, if it fits there: at its preferred size, on the region's middle."""
     text = str(region.color_index + 1)
     font_size = _preferred_size(region, min_size)
-    box_width, box_height = text_box_size(text, font_size)
+    box_width, box_height = text_box_size(text, font_size, exact)
     height, width = ids.shape
     if box_width > width or box_height > height:
         return None
     left, top = _centered_box(region.interior_point, box_width, box_height, (width, height))
     window = (slice(top, top + box_height), slice(left, left + box_width))
     if free[window].all() and (ids[window] == region.region_id).all():
-        return Label(region.region_id, text, font_size, (left, top, left + box_width, top + box_height))
+        return Label(region.region_id, text, font_size, (left, top, left + box_width, top + box_height), exact=exact)
     return None
 
 
-def _label_inside(region, ids: np.ndarray, free: np.ndarray, bounds, min_size: int) -> Label | None:
+def _label_inside(
+    region, ids: np.ndarray, free: np.ndarray, bounds, min_size: float, exact: bool = False
+) -> Label | None:
     """``region``'s number wherever in the region it keeps farthest from the lines, shrinking it if it has to.
 
     None if it does not fit anywhere in the region even at ``min_size``.
@@ -420,12 +484,11 @@ def _label_inside(region, ids: np.ndarray, free: np.ndarray, bounds, min_size: i
     x0, y0, x1, y1 = (int(v) for v in bounds[region.region_id])
     room = free[y0 : y1 + 1, x0 : x1 + 1] & (ids[y0 : y1 + 1, x0 : x1 + 1] == region.region_id)
     clearance = _clearance(room)
-    for font_size in range(_preferred_size(region, min_size), min_size - 1, -1):
-        box_width, box_height = text_box_size(text, font_size)
+    for font_size, box_width, box_height in _sizes(text, _preferred_size(region, min_size), min_size, exact):
         spot = _roomiest_box(clearance, box_width, box_height)
         if spot is not None:
             left, top = x0 + spot[0], y0 + spot[1]
-            return Label(region.region_id, text, font_size, (left, top, left + box_width, top + box_height))
+            return Label(region.region_id, text, font_size, (left, top, left + box_width, top + box_height), exact=exact)
     return None
 
 
@@ -487,8 +550,8 @@ class _LeaderRoom:
         """
         ids, spacing = self.ids, self.spacing
         text = str(region.color_index + 1)
-        font_size = spacing.min_font_size
-        box_width, box_height = text_box_size(text, font_size)
+        font_size, exact = spacing.min_font_size, spacing.exact
+        box_width, box_height = text_box_size(text, font_size, exact)
         height, width = ids.shape
         x, y = region.interior_point
         anchor = (float(x), float(y))
@@ -540,7 +603,7 @@ class _LeaderRoom:
                 end = _leader_end(anchor, box, self.line_reach)
                 self._take_box(box)
                 self._take_leader(_pixels_along(anchor, end))
-                return Label(region.region_id, text, font_size, box, leader=(end, anchor))
+                return Label(region.region_id, text, font_size, box, leader=(end, anchor), exact=exact)
 
         others_dots = self.dot_count[window] > own_dot
         if self.clearable is not None:
@@ -553,7 +616,7 @@ class _LeaderRoom:
                 left, top = nearest[1] + gap + wx0, nearest[0] + gap + wy0
                 box = (left, top, left + box_width, top + box_height)
                 self._take_box(box)
-                return Label(region.region_id, text, font_size, box, clears=True)
+                return Label(region.region_id, text, font_size, box, clears=True, exact=exact)
 
         # No room anywhere near: at the region's middle, or as near it as the number can be without landing on
         # another number, a leader or a dot.
@@ -567,15 +630,15 @@ class _LeaderRoom:
             left, top = _centered_box((x, y), box_width, box_height, (width, height))
         box = (left, top, left + box_width, top + box_height)
         self._take_box(box)
-        return Label(region.region_id, text, font_size, box, cramped=True)
+        return Label(region.region_id, text, font_size, box, cramped=True, exact=exact)
 
-    def place_on_side(self, side, room: np.ndarray, x0: int, y0: int, min_size: int) -> Label | None:
+    def place_on_side(self, side, room: np.ndarray, x0: int, y0: int) -> Label | None:
         """The number of a region's other ``side``, placed after every region's own (see ``place_labels``).
 
         ``side`` is the region with its ``interior_point`` and ``interior_radius`` those of the side, and ``room``
         (bool) the side's pixels, in a window of the page from (``x0``, ``y0``). As a region's own number goes: at the
         side's middle at its preferred size, else where in the side it keeps farthest from the lines, shrinking to
-        ``min_size``, else outside with a leader (see ``place``) -- clear of every number, leader and dot placed so far.
+        the smallest size, else outside with a leader (see ``place``) -- clear of every number, leader and dot placed so far.
         None if it has no room in any of those: a number written over the lines would make the page harder to read,
         not easier. A leader points at the side's middle, or if its dot would touch a number, leader or dot placed
         before, at the side's pixel farthest from its lines that keeps the dot clear of them.
@@ -585,8 +648,9 @@ class _LeaderRoom:
         window = (slice(y0, y0 + rows), slice(x0, x0 + columns))
         room = room & self.free[window] & ~self.spaced[window] & ~self.leaders[window] & ~self.dots[window]
         text = str(side.color_index + 1)
+        min_size, exact = self.spacing.min_font_size, self.spacing.exact
         font_size = _preferred_size(side, min_size)
-        box_width, box_height = text_box_size(text, font_size)
+        box_width, box_height = text_box_size(text, font_size, exact)
         x, y = side.interior_point
         left, top = x - x0 - box_width // 2, y - y0 - box_height // 2
         spot = None
@@ -595,15 +659,14 @@ class _LeaderRoom:
                 spot = (left, top)
         if spot is None:
             clearance = _clearance(room)
-            for font_size in range(font_size, min_size - 1, -1):
-                box_width, box_height = text_box_size(text, font_size)
+            for font_size, box_width, box_height in _sizes(text, font_size, min_size, exact):
                 spot = _roomiest_box(clearance, box_width, box_height)
                 if spot is not None:
                     break
         if spot is not None:
             box = (spot[0] + x0, spot[1] + y0, spot[0] + x0 + box_width, spot[1] + y0 + box_height)
             self._take_box(box)
-            return Label(side.region_id, text, font_size, box)
+            return Label(side.region_id, text, font_size, box, exact=exact)
         point = self._side_anchor(on_side, x0, y0)
         if point is None:
             return None
@@ -826,8 +889,8 @@ def _grown(mask: np.ndarray, reach_px: float) -> np.ndarray:
     return cv2.dilate(mask.astype(np.uint8), disk).astype(bool)
 
 
-@lru_cache(maxsize=None)
-def font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+@lru_cache(maxsize=4096)
+def font(size: float) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return ImageFont.load_default(size=size)
 
 
@@ -835,12 +898,12 @@ _MEASURING_DRAW = ImageDraw.Draw(Image.new("RGB", (1, 1)))
 
 
 @lru_cache(maxsize=4096)
-def text_bbox(text: str, font_size: int) -> tuple[int, int, int, int]:
+def text_bbox(text: str, font_size: float) -> tuple[int, int, int, int]:
     """``textbbox`` of ``text`` at the origin, as measured on an RGB page."""
     return _MEASURING_DRAW.textbbox((0, 0), text, font=font(font_size))
 
 
 @lru_cache(maxsize=4096)
-def baseline_bbox(text: str, font_size: int) -> tuple[int, int, int, int]:
+def baseline_bbox(text: str, font_size: float) -> tuple[int, int, int, int]:
     """``text_bbox`` measured from the start of the text's baseline instead of from the top of its line."""
     return _MEASURING_DRAW.textbbox((0, 0), text, font=font(font_size), anchor="ls")

@@ -215,9 +215,16 @@ class MainWindow(QMainWindow):
         # preview's page drawn at that size, so that it has the regions and numbering the preview shows (drawn once for
         # the zoom and the export alike), or the preview itself where it was made at that size; made first if the
         # settings changed since. A PNG's image is drawn with the page; a PDF draws the version again from what the page
-        # is made of.
+        # is made of, with its numbers placed for it: as small as the style asks, however few pixels that is here (see
+        # ``pipeline.generate``).
         long_edge = pipeline.export_long_edge(self.current_image_bgr)
         preview = self._preview_to_draw(long_edge)
+        if fmt == "PDF":
+            self._making = True
+            self._worker = self._make_worker(long_edge, drawn_from=preview, vector=True)
+            self._worker.succeeded.connect(self._on_export_ready)
+            self._worker.start()
+            return
         if preview is not None:
             if long_edge == max(preview.page.size):
                 self._on_export_ready(preview)
@@ -275,9 +282,16 @@ class MainWindow(QMainWindow):
         current = (self.controls.get_difficulty_params(), self.controls.get_page_style(), self.controls.get_handling())
         return page if (model.params, model.style, model.handling) == current else None
 
-    def _make_worker(self, long_edge: int, versions: tuple[Version, ...] = ()) -> PipelineWorker:
+    def _make_worker(
+        self,
+        long_edge: int,
+        versions: tuple[Version, ...] = (),
+        drawn_from: GeneratedPage | None = None,
+        vector: bool = False,
+    ) -> PipelineWorker:
         """A worker generating the current image at ``long_edge`` with the panel's settings, wired to its progress, and
-        drawing ``versions`` of the page too."""
+        drawing ``versions`` of the page too: drawing ``drawn_from`` there, the preview made with those settings, if
+        given; with ``vector``, laid out for a PDF (see ``PipelineWorker``)."""
         worker = PipelineWorker(
             self.current_image_bgr,
             self.controls.get_difficulty_params(),
@@ -285,6 +299,8 @@ class MainWindow(QMainWindow):
             style=self.controls.get_page_style(),
             handling=self.controls.get_handling(),
             versions=versions,
+            drawn_from=drawn_from,
+            vector=vector,
         )
         worker.failed.connect(self._on_worker_failed)
         worker.cancelled.connect(self._on_worker_cancelled)

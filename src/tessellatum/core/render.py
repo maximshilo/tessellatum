@@ -22,6 +22,7 @@ from tessellatum.core.labels import (
     cleared,
     font,
     min_font_size,
+    outline_bbox,
     place_labels,
     text_bbox,
 )
@@ -216,6 +217,7 @@ def render_page(
     labels: list[Label] | None = None,
     reuse: RenderedPage | None = None,
     min_side_area_px: float | None = None,
+    vector: bool = False,
 ) -> RenderedPage:
     """Draw the boundaries of ``region_id_map`` + numbers for ``regions`` onto a white ``size`` canvas.
 
@@ -257,6 +259,13 @@ def render_page(
     ``style.split_neck_mm``, between sides of at least ``min_side_area_px``
     each, the smallest region the page keeps -- by default the brush's own
     footprint (``print_size.MIN_REGION_AREA_MM2``).
+
+    With ``vector``, the numbers are placed for the page's drawing (see
+    ``PageDrawing``), to be drawn again as vectors -- the PDF: at any fraction
+    of a pixel, and as small as ``style.min_label_pt`` asks however few
+    pixels that is here (see ``labels.min_font_size``). The page's own image
+    draws them at those sizes too. Otherwise they are placed for this page's
+    pixels, in whole pixels and never under ``labels.MIN_FONT_SIZE``.
 
     ``strokes`` and ``labels``, if given, are the lines and the numbers to draw, in this page's pixels, instead of
     tracing the lines from ``region_id_map`` and placing the numbers: a page drawn again at another size than it was
@@ -305,7 +314,7 @@ def render_page(
     leader_width = style.leader_width_px(size)
     leader_room = max(line_width, leader_width)
     spacing = LabelSpacing(
-        min_font_size=min_font_size(size, style.min_label_pt),
+        min_font_size=min_font_size(size, style.min_label_pt, exact=vector),
         label_gap_px=line_width,
         leader_width_px=leader_room,
         leader_dot_px=leader_room * style.leader_dot_ratio,
@@ -315,6 +324,7 @@ def render_page(
         min_side_px=(
             print_scale(size).mm2_to_px(MIN_REGION_AREA_MM2) if min_side_area_px is None else min_side_area_px
         ),
+        exact=vector,
     )
     # A number goes on no printed ink, and a leader runs through none, whichever region's paint goes over it.
     seen = np.where(ink, -1, region_id_map) if inked else region_id_map
@@ -344,10 +354,13 @@ def render_page(
     page = Image.fromarray(paper, "L").convert("RGB")
     draw = ImageDraw.Draw(page)
     for label in labels:
-        bbox = text_bbox(label.text, label.font_size)
-        left, top = label.box[0], label.box[1]
         fill = (style.label_fill(label),) * 3
-        draw.text((left - bbox[0], top - bbox[1]), label.text, fill=fill, font=font(label.font_size))
+        if label.exact:
+            draw.text(number_origin(label), label.text, fill=fill, font=font(label.font_size), anchor="ls")
+        else:
+            bbox = text_bbox(label.text, label.font_size)
+            left, top = label.box[0], label.box[1]
+            draw.text((left - bbox[0], top - bbox[1]), label.text, fill=fill, font=font(label.font_size))
 
     picture_ink = np.where(lettering_area, lettering.ink, 0).astype(np.uint8) if lettered else np.zeros_like(lines_only)
     if inked:
@@ -381,8 +394,13 @@ def number_origin(label: Label) -> tuple[float, float]:
 
     It writes the number so that its text box (``labels.text_bbox``) lands on
     ``label.box``, in ``labels.font`` at ``label.font_size``, an em of that
-    many pixels.
+    many pixels; or, a number placed in exact sizes (``Label.exact``), its
+    outline in the middle of ``label.box``.
     """
+    if label.exact:
+        x0, y0, x1, y1 = outline_bbox(label.text, label.font_size)
+        box = label.box
+        return (box[0] + box[2] - x0 - x1) / 2, (box[1] + box[3] - y0 - y1) / 2
     bbox = baseline_bbox(label.text, label.font_size)
     return label.box[0] - bbox[0], label.box[1] - bbox[1]
 

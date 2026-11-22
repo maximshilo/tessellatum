@@ -4,7 +4,17 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
-## [1.0.7] - 2026-11-22
+## [1.0.8] - 2026-11-22
+
+### Changed
+
+- **Smallest number** goes down to 1 pt (was 3 pt). Under about 3 pt a number is for coloring on screen, zoomed in,
+  rather than on paper.
+- A PDF's numbers are placed for the PDF: as small as **Smallest number** asks, in fractions of a pixel, however few
+  pixels the picture has, rather than no smaller than 10 px of the page. On a picture exported at its own size, a
+  3 pt number used to print at 4-6 pt; now it prints at 3 pt, so more small regions take their number inside them
+  rather than on a leader. The regions are the preview's, as before; the preview, its zoom and a PNG are unchanged.
+
 
 ### Changed
 

@@ -236,12 +236,13 @@ def test_a_preview_made_at_print_size_is_the_export(drive, drawn, tmp_path):
         assert np.asarray(png.convert("RGB"))[:1000].tobytes() == preview.image(Version.PAGE).tobytes()
     assert drive.dialogs[-1][1] == "Export complete" and not window.controls.progress_row.isVisible()
 
-    # A PDF too: the preview's vector page, at the picture's own size.
+    # A PDF too: the preview's vector page, at the picture's own size, drawn again only to place its numbers for the
+    # PDF (T2a): not made again.
     window.controls.pdf_radio.setChecked(True)
     drive.save_path = str(tmp_path / "page.pdf")
     window.export_page()
     drive.wait()
-    assert len(drive.calls) == calls and drawn == []
+    assert len(drive.calls) == calls and drawn == [preview]
     assert "0 0 2000 1000 re W n" in pdf_reading.sheets((tmp_path / "page.pdf").read_bytes())[0]["content"]
 
     # Fewer pixels across the brush: the preview is another setting's, so the export is made again.
@@ -491,17 +492,17 @@ def test_an_export_asked_for_while_the_zoom_draws_the_page_waits_for_it(drive, d
     window.preview.zoom_to(1.5)
     assert window._print_worker.isRunning()
 
-    drive.save_path = str(tmp_path / "page.pdf")
-    window.controls.pdf_radio.setChecked(True)
+    # A PNG: a PDF places its numbers for itself, on a page drawn for it (T2a).
+    drive.save_path = str(tmp_path / "page.png")
     window.export_page()
-    assert drive.status() == "Rendering the PDF at print resolution…"
+    assert drive.status() == "Rendering the PNG at print resolution…"
     assert not window.controls.generate_button.isEnabled()
     window.generate_preview()  # not while an export waits
     release.set()
     drive.wait()
 
     assert drawn == [window.current_page] and len(drive.calls) == 1
-    saved = f"Saved to:\n{tmp_path / 'page.pdf'}\n\n3272 × 1636 px, 300 dpi on A4"
+    saved = f"Saved to:\n{tmp_path / 'page.png'}\n\n3272 × 1636 px, 300 dpi on A4"
     assert drive.dialogs == [("information", "Export complete", saved)]
     assert window.controls.generate_button.isEnabled()
 

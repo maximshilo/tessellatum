@@ -83,8 +83,10 @@ smaller ones.
 - **Leader width**: 0.1 mm by default, half the default line, so a leader doesn't read as a boundary. Numbers keep as
   clear of a leader as of a line however thin it is drawn.
 - **Line smoothing**: how far along a line its pixel staircase is smoothed.
-- **Smallest number**: 3 pt by default. A preview draws no number under 10 px, so smaller sizes may show only on an
-  export, or zoomed in.
+- **Smallest number**: 3 pt by default, down to 1 pt. Smaller numbers fit inside more small regions, so fewer need a
+  leader; under about 3 pt they are for coloring on screen, zoomed in, rather than on paper. The PDF prints them as
+  small as this asks. A preview, its zoom and a PNG draw no number under 10 px, so there smaller sizes may show only
+  on a large picture.
 - **Leader reach**: how far outside a small region its number may go, on a leader line.
 - **Gap beside text**: how far numbers keep from lettering.
 - **Split at necks under**: 0.35 mm by default. A region whose paper narrows to less than this between its lines, or
@@ -115,7 +117,9 @@ export, in either format; the legend comes with each.
 
 - **PDF**: two A4 sheets of vector art. The page fills the printable area inside 10 mm margins, centered, on a
   landscape sheet when the picture is wider than tall. Its lines are paths of the width asked for and its numbers text,
-  so a printer draws them at its own resolution. Line art's ink, the marks in a face and the letters of signs are
+  so a printer draws them at its own resolution. Its numbers are placed for it, as small as **Smallest number** asks
+  however few pixels the picture has, so a PDF can number small regions inside them where the preview and the PNG
+  need a leader. Line art's ink, the marks in a face and the letters of signs are
   filled outlines, smoothed off the pixel staircase without joining or breaking anything. The painted versions fill
   each region along a path made of the page's own lines. Nothing on the sheet is an image. The legend gets a portrait
   sheet of its own, its swatches 12 mm squares in their exact colors.

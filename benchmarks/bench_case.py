@@ -355,6 +355,7 @@ def main() -> int:
     image_info = bench_manifest.find_image(args.image)
     probe = Probe(pipeline)
     has_analysis = "collect_analysis" in inspect.signature(pipeline.generate).parameters
+    has_vector = "vector" in inspect.signature(pipeline.generate).parameters
 
     def run_once(collect_analysis: bool = False):
         probe.reset()
@@ -362,6 +363,8 @@ def main() -> int:
         # can't turn repeats into cache hits.
         fresh = image_bgr.copy()
         options = {"collect_analysis": True} if collect_analysis else {}
+        if has_vector and args.long_edge != "preview":
+            options["vector"] = True  # an export is measured as its PDF lays it out (from 1.0.8)
         started = time.perf_counter()
         result = pipeline.generate(
             fresh, params, long_edge, progress_callback=lambda _pct: None, should_cancel=lambda: False, **options
