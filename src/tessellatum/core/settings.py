@@ -201,6 +201,12 @@ SETTINGS: tuple[Setting, ...] = (
         "text_gap_mm", STYLE, LINES, "Gap beside text", "mm", 0.0, 3.0, 0.1,
         "How far a number keeps from the lettering of a sign or caption, so it doesn't read as part of it.",
     ),
+    Setting(
+        "split_neck_mm", STYLE, LINES, "Split at necks under", "mm", 0.0, 2.0, 0.05,
+        "A region whose paper narrows to less than this between its lines reads as two regions there, so each side "
+        "gets its number. Sides smaller than the smallest region don't count. 0 numbers again only the sides the "
+        "lines close off completely.",
+    ),
     # -- Line art --
     Setting(
         "thin_ink_mm", HANDLING, LINE_ART, "Paint over ink up to", "mm", 0.0, 5.0, 0.1,

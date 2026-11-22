@@ -81,6 +81,9 @@ smaller ones.
   export, or zoomed in.
 - **Leader reach**: how far outside a small region its number may go, on a leader line.
 - **Gap beside text**: how far numbers keep from lettering.
+- **Split at necks under**: 0.35 mm by default. A region whose paper narrows to less than this between its lines, or
+  that its lines close off, reads as two regions there, so each side gets its number. Sides smaller than the smallest
+  region don't count; 0 numbers again only the sides the lines close off.
 
 **Line art and text**
 - **Paint over ink up to**: on a cartoon or comic, the paint goes over ink lines up to this wide (hatching, fine

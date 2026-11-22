@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw
 from tessellatum.core.boundaries import SMOOTHING_MM, smoothing_length_px, trace_boundaries
 from tessellatum.core.labels import (
     LEADER_REACH_MM,
+    SPLIT_NECK_MM,
     TEXT_GAP_MM,
     Label,
     LabelSpacing,
@@ -24,7 +25,7 @@ from tessellatum.core.labels import (
     place_labels,
     text_bbox,
 )
-from tessellatum.core.print_size import MIN_LABEL_SIZE_PT, OUTLINE_WIDTH_MM, print_scale
+from tessellatum.core.print_size import MIN_LABEL_SIZE_PT, MIN_REGION_AREA_MM2, OUTLINE_WIDTH_MM, print_scale
 from tessellatum.core.regions import Region
 from tessellatum.core.text import Lettering
 
@@ -84,8 +85,10 @@ class PageStyle:
     ``line_smoothing_mm`` is how far along a line its pixel staircase is
     smoothed (see ``boundaries.smoothing_length_px``). ``min_label_pt`` is
     the smallest a number prints, ``leader_reach_mm`` how far from its region
-    a number with a leader may go, and ``text_gap_mm`` how far a number keeps
-    from a line of text found (see ``labels``). All are on paper.
+    a number with a leader may go, ``text_gap_mm`` how far a number keeps
+    from a line of text found, and ``split_neck_mm`` how narrow a region's
+    paper may get between its lines before each side of it gets its number
+    (see ``labels``). All are on paper.
 
     The numbers' placement decides which of line art's regions have room for
     one, and a region with none joins the area beside it (see
@@ -102,6 +105,7 @@ class PageStyle:
     min_label_pt: float = MIN_LABEL_SIZE_PT
     leader_reach_mm: float = LEADER_REACH_MM
     text_gap_mm: float = TEXT_GAP_MM
+    split_neck_mm: float | None = SPLIT_NECK_MM  # None numbers every region once, as before 1.0.5
 
     def line_width_px(self, size: tuple[int, int]) -> float:
         """How wide a line is on a page of ``size`` (width, height) pixels."""
@@ -178,6 +182,7 @@ def render_page(
     strokes: list[np.ndarray] | None = None,
     labels: list[Label] | None = None,
     reuse: RenderedPage | None = None,
+    min_side_area_px: float | None = None,
 ) -> RenderedPage:
     """Draw the boundaries of ``region_id_map`` + numbers for ``regions`` onto a white ``size`` canvas.
 
@@ -213,6 +218,12 @@ def render_page(
 
     ``check_cancelled``, if given, is called as the numbers are placed, and
     stops the page by raising (see ``labels.place_labels``).
+
+    A region pinched so thin that it reads as two regions gets its number on
+    each side (see ``labels.find_sides``): where its paper narrows to less than
+    ``style.split_neck_mm``, between sides of at least ``min_side_area_px``
+    each, the smallest region the page keeps -- by default the brush's own
+    footprint (``print_size.MIN_REGION_AREA_MM2``).
 
     ``strokes`` and ``labels``, if given, are the lines and the numbers to draw, in this page's pixels, instead of
     tracing the lines from ``region_id_map`` and placing the numbers: a page drawn again at another size than it was
@@ -262,6 +273,10 @@ def render_page(
         leader_dot_px=line_width * style.leader_dot_ratio,
         leader_reach_px=print_scale(size).mm_to_px(style.leader_reach_mm),
         text_gap_px=print_scale(size).mm_to_px(style.text_gap_mm),
+        split_neck_px=None if style.split_neck_mm is None else print_scale(size).mm_to_px(style.split_neck_mm),
+        min_side_px=(
+            print_scale(size).mm2_to_px(MIN_REGION_AREA_MM2) if min_side_area_px is None else min_side_area_px
+        ),
     )
     # A number goes on no printed ink, and a leader runs through none, whichever region's paint goes over it.
     seen = np.where(ink, -1, region_id_map) if inked else region_id_map

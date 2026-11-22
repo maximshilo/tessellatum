@@ -450,24 +450,51 @@ def _with_room(
     rendered, page_labels: list[Label], sx: float, sy: float, size: tuple[int, int]
 ) -> list[Label] | None:
     """``rendered``'s numbers, each that found no room taking the place ``page_labels`` gave it, scaled, where its box
-    meets no ink and no other number's box; None if none does."""
-    found = {label.region_id: label for label in page_labels if not label.cramped}
+    meets no line, no other region's own number and no leader of one; None if none does.
+
+    Only a region's own number is moved so, and it comes first: the numbers on a pinched region's other sides (see
+    ``labels.find_sides``), found for each size on its own, give way to it -- one whose box or leader the moved number
+    meets is left out.
+    """
+    found = {label.region_id: label for label in page_labels if not label.cramped and not label.side}
     labels = list(rendered.labels)
-    cramped = [index for index, label in enumerate(labels) if label.cramped and label.region_id in found]
+    cramped = [
+        index for index, label in enumerate(labels) if label.cramped and not label.side and label.region_id in found
+    ]
     if not cramped:
         return None
-    bare = (np.asarray(rendered.outlines) == PAPER) & (np.asarray(rendered.leaders) == PAPER)
+    leader_ink = rendered.leader_ink or {}
+
+    def inks(label: Label, box: tuple[int, int, int, int]) -> bool:
+        """Whether ``label``'s leader puts any ink in ``box`` (x0, y0, x1, y1)."""
+        if label.leader is None or label.leader not in leader_ink:
+            return False
+        left, top, patch = leader_ink[label.leader]
+        x0, y0, x1, y1 = box
+        rows = slice(max(y0 - top, 0), max(y1 - top, 0))
+        columns = slice(max(x0 - left, 0), max(x1 - left, 0))
+        return bool(patch[rows, columns].any())
+
+    lines = np.asarray(rendered.outlines) == PAPER
     changed = False
+    dropped: set[int] = set()
     for index in cramped:
         moved = _scaled_label(found[labels[index].region_id], sx, sy, size)
-        x0, y0, x1, y1 = (int(v) for v in moved.box)
-        if not bare[y0:y1, x0:x1].all():
+        box = tuple(int(v) for v in moved.box)
+        x0, y0, x1, y1 = box
+        if not lines[y0:y1, x0:x1].all():
             continue
-        if any(i != index and _overlap(moved.box, other.box) for i, other in enumerate(labels)):
+        own = [(i, other) for i, other in enumerate(labels) if i != index and not other.side]
+        if any(_overlap(moved.box, other.box) or inks(other, box) for _, other in own):
             continue
         labels[index] = moved
         changed = True
-    return labels if changed else None
+        dropped |= {
+            i for i, other in enumerate(labels) if other.side and (_overlap(moved.box, other.box) or inks(other, box))
+        }
+    if not changed:
+        return None
+    return [label for i, label in enumerate(labels) if i not in dropped]
 
 
 def _overlap(a: tuple[float, ...], b: tuple[float, ...]) -> bool:
@@ -548,7 +575,9 @@ def draw_page(
         region_id_map, model.region_color,
         printed=printed_ink if not model.drawn_from_colors or printed_ink.any() else None,
     )
-    printing = dict(ink=printed_ink, ink_gray=model.ink_gray, clearable=clearable, lettering=letters)
+    printing = dict(
+        ink=printed_ink, ink_gray=model.ink_gray, clearable=clearable, lettering=letters, min_side_area_px=min_area_px
+    )
     rendered = render_page(
         (w, h), regions, region_id_map, style, check_cancelled=check_cancelled, strokes=strokes, **printing
     )
@@ -849,15 +878,15 @@ def _make_page(
     report("contours")
 
     check_cancelled()
-    printing = dict(ink=printed_ink, ink_gray=ink_gray, lettering=letters)
+    printing = dict(ink=printed_ink, ink_gray=ink_gray, lettering=letters, min_side_area_px=min_area_px)
     rendered = render_page(
         (w, h), regions, region_id_map, style, clearable=clearable, check_cancelled=check_cancelled, **printing
     )
     for _ in range(_MERGE_ROUNDS):
         # On line art, a region whose number found no room anywhere joins the area beside it, and the page is drawn
         # again -- until every number has room, no region moves, or _MERGE_ROUNDS are done. Every other picture is
-        # drawn once.
-        cramped = sorted({label.region_id for label in rendered.labels if label.cramped})
+        # drawn once. The numbers on a pinched region's other sides move nothing: they go where room is left.
+        cramped = sorted({label.region_id for label in rendered.labels if label.cramped and not label.side})
         if ink_mask is None:
             cramped = []
         merged = merge_cramped(region_id_map, region_color, printed_ink, cramped, min_width_px) if cramped else None

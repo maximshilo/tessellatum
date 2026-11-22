@@ -4,6 +4,18 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.5] - 2026-11-22
+
+### Added
+
+- A region pinched so thin somewhere that it reads as two regions on paper gets its number on each side. A neck the
+  lines close off, or one whose paper narrows to less than the new **Split at necks under** setting (0.35 mm by
+  default), splits it; each side at least as large as the smallest region gets the number, inside it if it fits, else
+  with a leader. Every region's own number stays exactly where it was, and the regions themselves don't change. A side
+  with no room for a number anywhere keeps none, rather than one written over the lines.
+- The benchmark reports **unnumbered sides**: sides of a region that read as separate regions and carry no number of
+  their region, measured independently of the pipeline.
+
 ## [1.0.4] - 2026-10-22
 
 ### Changed

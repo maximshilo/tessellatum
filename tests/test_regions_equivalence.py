@@ -9,6 +9,19 @@ from tessellatum.core.labels import FONT_SIZE_RADIUS_RATIO, MAX_FONT_SIZE, _pixe
 from tessellatum.core.regions import build_regions, extract_regions
 from tessellatum.core.render import PageStyle, render_page
 
+# The reference numbers every region once: a region pinched into sides that read as two regions gets a number on each
+# from 1.0.5 (``labels.find_sides``). Without that the page is the reference's; with it, every region's own number is.
+NO_SIDES = PageStyle(split_neck_mm=None)
+
+
+def _assert_own_numbers_are_the_reference_s(rendered, size, regions, region_id_map) -> None:
+    lines = ref.PAPER - ref.line_layer(size, region_id_map, PageStyle())
+    expected = ref._place_labels(size, regions, region_id_map, lines == 0, PageStyle())
+    own = [label for label in rendered.labels if label.side == 0]
+    assert [(l.region_id, l.text, l.font_size, tuple(l.box), l.leader) for l in own] == [
+        (region_id, text, font_size, tuple(box), leader) for region_id, text, font_size, box, leader in expected
+    ]
+
 
 def _blobby_labels(seed: int, shape: tuple[int, int], num_colors: int, blur_sigma: float) -> np.ndarray:
     """Random label map; more blur = bigger blobs, no blur = per-pixel noise."""
@@ -148,7 +161,7 @@ def test_extract_regions_and_render_page_match_reference(
         np.testing.assert_array_equal(got.contour, want.contour)
 
     size = (shape[1], shape[0])
-    rendered = render_page(size, actual, region_id_map)
+    rendered = render_page(size, actual, region_id_map, NO_SIDES)
     expected_lines = ref.trace_boundaries(region_id_map)
     assert len(rendered.strokes) == len(expected_lines)
     for got_line, want_line in zip(rendered.strokes, expected_lines):
@@ -159,6 +172,7 @@ def test_extract_regions_and_render_page_match_reference(
     np.testing.assert_array_equal(
         np.asarray(rendered.outlines), ref.line_layer(size, region_id_map, PageStyle())
     )
+    _assert_own_numbers_are_the_reference_s(render_page(size, actual, region_id_map), size, expected, region_id_map)
 
 
 @pytest.mark.parametrize("width_px", [1.0, 1.3, 2.0, 2.84, 3.0, 4.75])
@@ -192,10 +206,12 @@ def test_numbers_are_placed_as_the_reference_places_them(seed, shape, num_colors
     region_id_map, region_color = ref.build_regions(labels, num_colors, min_area_px, min_width_px)
     size = (shape[1], shape[0])
 
-    rendered = render_page(size, extract_regions(region_id_map, region_color), region_id_map)
+    regions = extract_regions(region_id_map, region_color)
+    rendered = render_page(size, regions, region_id_map, NO_SIDES)
 
     expected = ref.render_page(size, ref.extract_regions(region_id_map, region_color), region_id_map)
     np.testing.assert_array_equal(np.asarray(rendered.image), np.asarray(expected))
+    _assert_own_numbers_are_the_reference_s(render_page(size, regions, region_id_map), size, regions, region_id_map)
 
 
 def test_a_number_made_smaller_under_a_thick_line_is_placed_as_the_reference_places_it():
