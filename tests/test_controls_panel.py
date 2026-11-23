@@ -1,5 +1,6 @@
 """The controls offer every setting in the printed page's units and ask the pipeline for what they show."""
 
+import dataclasses
 import os
 
 import pytest
@@ -389,3 +390,28 @@ def test_the_png_s_resolution_is_kept_between_runs_and_reset_to_600_dpi(tmp_path
     store = _store(tmp_path)
     store.setValue("export/unit", "furlongs")  # not a unit the app offers: the default
     assert ControlsPanel(store=store).get_export_resolution() == (controls_panel.DPI, 600)
+
+
+def test_the_coloring_medium_drops_the_paper_black_and_caps_the_margin_on_a_screen_and_is_kept(tmp_path):
+    first = ControlsPanel(store=_store(tmp_path))
+    assert first.medium_combo.currentText() == "Paper and paint"
+    assert first.get_difficulty_params() == difficulty.params_for_preset("Medium")
+    first.medium_combo.setCurrentText("Screen")
+    screen = first.get_difficulty_params()
+    assert (screen.paper_black_lstar, screen.palette_margin_de00) == (0.0, 2.5)
+    assert screen.num_colors == difficulty.params_for_preset("Medium").num_colors
+    assert not first.controls["paper_black_lstar"].isEnabled()
+    again = ControlsPanel(store=_store(tmp_path))
+    assert again.medium_combo.currentText() == "Screen"
+    again.reset()
+    assert again.medium_combo.currentText() == "Paper and paint"
+    assert again.controls["paper_black_lstar"].isEnabled()
+    store = _store(tmp_path)
+    store.remove("difficulty/medium")  # kept by a version without the medium: paper and paint
+    assert ControlsPanel(store=store).medium_combo.currentText() == "Paper and paint"
+
+
+def test_a_screen_keeps_a_margin_already_under_its_own():
+    custom = difficulty.custom_params(24, 6.0, 0.9, palette_margin_de00=1.0, paper_black_lstar=30.0)
+    assert difficulty.for_medium(custom, "Screen") == dataclasses.replace(custom, paper_black_lstar=0.0)
+    assert difficulty.for_medium(custom, "Paper and paint") is custom

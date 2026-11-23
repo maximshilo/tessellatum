@@ -16,7 +16,7 @@ pixels: see ``pipeline.working_long_edge``.)
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from tessellatum.core.color import MIN_PALETTE_DE00
 from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM
@@ -156,6 +156,24 @@ CUSTOM_MIN_REGION_AREA_MM2_RANGE = CUSTOM_RANGES["min_region_area_mm2"]
 CUSTOM_BLUR_RANGE = CUSTOM_RANGES["blur_sigma"]
 
 DEFAULT_PRESET = "Medium"
+
+# What the page is colored with. Paper and paint have a darkest black and are told apart by eye, so a level keeps its
+# colors apart as printed (``paper_black_lstar``) and by its margin. On a screen, a color is picked by its value with
+# an eyedropper or a fill: there is no paper black, and the margin only needs to keep two neighboring regions apart,
+# a little over the smallest difference an eye sees side by side, at most SCREEN_MARGIN_DE00.
+PAPER_MEDIUM = "Paper and paint"
+SCREEN_MEDIUM = "Screen"
+MEDIA = (PAPER_MEDIUM, SCREEN_MEDIUM)
+DEFAULT_MEDIUM = PAPER_MEDIUM
+SCREEN_MARGIN_DE00 = 2.5
+
+
+def for_medium(params: DifficultyParams, medium: str) -> DifficultyParams:
+    """``params`` for a page colored on ``medium`` (one of ``MEDIA``): on a screen, no paper black, and the margin at
+    most ``SCREEN_MARGIN_DE00``; on paper, as they are."""
+    if medium != SCREEN_MEDIUM:
+        return params
+    return replace(params, paper_black_lstar=0.0, palette_margin_de00=min(params.palette_margin_de00, SCREEN_MARGIN_DE00))
 
 
 def preset_names() -> list[str]:
