@@ -60,6 +60,9 @@ _LAB_WEIGHT = np.array([(100 / 255) ** 2, 1.0, 1.0])
 # How much a difference in lightness counts in k-means against one in a* or b*, both in L*a*b* units. K-means runs in
 # OpenCV's 8-bit Lab, whose L is L* stretched by 255/100, so that is the weight it has unless this says otherwise.
 _KMEANS_LIGHTNESS_WEIGHT = 255 / 100
+# K-means asked again for the colors paper merges runs on every this many-th pixel, and every pixel then takes the
+# nearest of its colors: a full run each time would make a page a third slower.
+_REFILL_STRIDE = 4
 _OPENCV_LIGHTNESS_SCALE = 255 / 100
 # How many pixels are given their color at a time: the pixels-by-colors scores
 # of one block stay a few MB instead of the whole page's.
@@ -178,7 +181,9 @@ def _kmeans_colors(
         if colors >= on_screen or asked >= most:
             break
         asked = min(asked + on_screen - colors, most)
-        refit = _fit_colors(samples, asked, seed, min_de00, paper_black_lstar, kept, down_to=on_screen)
+        refit = _fit_colors(
+            samples, asked, seed, min_de00, paper_black_lstar, kept, down_to=on_screen, stride=_REFILL_STRIDE
+        )
         if len(np.unique(refit[2])) <= colors:  # asking for more freed nothing
             break
         labels, centers_lab, group, _ = refit
@@ -203,21 +208,26 @@ def _fit_colors(
     paper_black_lstar: float,
     kept: np.ndarray | None,
     down_to: int | None = None,
+    stride: int = 1,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """One k-means run and its merge: (each sample's cluster, the centers, each cluster's color, the screen's count).
 
     The last is how many colors the merge kept at the screen's margin, before
-    it went on as the colors print.
+    it went on as the colors print. With ``stride``, k-means runs on every
+    ``stride``-th sample, and every sample then takes the nearest center.
     """
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, _KMEANS_MAX_ITERATIONS, _KMEANS_EPSILON)
     stretch = _KMEANS_LIGHTNESS_WEIGHT / _OPENCV_LIGHTNESS_SCALE
     if stretch != 1.0:
         samples = samples.copy()
         samples[:, 0] *= stretch
+    fitted = samples if stride <= 1 else np.ascontiguousarray(samples[::stride])
     cv2.setRNGSeed(seed)
     _compactness, labels, centers_lab = cv2.kmeans(
-        samples, min(num_colors, len(samples)), None, criteria, attempts=_KMEANS_ATTEMPTS, flags=cv2.KMEANS_PP_CENTERS
+        fitted, min(num_colors, len(fitted)), None, criteria, attempts=_KMEANS_ATTEMPTS, flags=cv2.KMEANS_PP_CENTERS
     )
+    if fitted is not samples:
+        labels = _nearest_center(samples, centers_lab)
     if stretch != 1.0:
         centers_lab[:, 0] /= stretch
 
@@ -230,6 +240,17 @@ def _fit_colors(
         centers_lab, pixels_per_color, min_de00, paper_black_lstar, kept_pixels, down_to
     )
     return labels, centers_lab, group, on_screen
+
+
+def _nearest_center(samples: np.ndarray, centers: np.ndarray) -> np.ndarray:
+    """Each sample's nearest of ``centers``, in the space k-means ran in (plain Euclidean)."""
+    weighted = np.ascontiguousarray((2 * centers).T, dtype=np.float32)
+    offset = (centers * centers).sum(axis=1).astype(np.float32)
+    nearest = np.empty(len(samples), dtype=np.int32)
+    for start in range(0, len(samples), _NEAREST_BLOCK):
+        block = samples[start : start + _NEAREST_BLOCK]
+        nearest[start : start + _NEAREST_BLOCK] = np.argmin(offset - block @ weighted, axis=1)
+    return nearest
 
 
 def flat_color_palette(samples_lab: np.ndarray, num_colors: int, min_de00: float = MIN_PALETTE_DE00) -> np.ndarray:
