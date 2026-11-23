@@ -302,10 +302,11 @@ def _paintable_limits(params: DifficultyParams, size: tuple[int, int], paper: Pa
 
 
 def export_long_edge(image_bgr: np.ndarray, paper: PaperFormat = A4) -> int:
-    """The long edge an export of ``image_bgr`` renders at: what prints at 300 dpi on ``paper``, by the picture's shape
-    (see ``print_size``), or the picture's own long edge where that is smaller, since the pipeline never upscales."""
+    """The long edge a page of ``image_bgr`` is laid out at to print: 300 dpi on ``paper``, by the picture's shape (see
+    ``print_size``), however many pixels the picture has. Every output is drawn from that layout (see ``draw_page``):
+    the PDF, and a PNG at any resolution (see ``export.rasterize``)."""
     h, w = image_bgr.shape[:2]
-    return min(max(h, w), long_edge_at_dpi((w, h), paper=paper))
+    return long_edge_at_dpi((w, h), paper=paper)
 
 
 def working_long_edge(
@@ -314,9 +315,10 @@ def working_long_edge(
     """The long edge a page of ``image_bgr`` is made at: where its brush, ``params.min_width_mm`` on paper, is
     ``handling.brush_px`` pixels across, so that a finer brush gets more pixels. Never less than the preview's 1100 px
     (``PREVIEW_LONG_EDGE``), at which the faces, the subject, the text and whether the picture is line art are found,
-    nor more than an export's (see ``export_long_edge``): the picture's own size, or 300 dpi. All on ``paper``, the
-    sheet the page is made for, so a larger sheet gets more pixels. A page without a brush is made at the preview's
-    size.
+    nor more than the print layout's (see ``export_long_edge``), 300 dpi. All on ``paper``, the sheet the page is made
+    for, so a larger sheet gets more pixels. A picture with fewer pixels is scaled up to it (see
+    ``resize_to_long_edge``): a brush too few pixels across can't tell a region from a sliver, and leaves no room for
+    the numbers. A page without a brush is made at the preview's size.
 
     A page asked for at a larger size is this page drawn there (see ``generate``). The printed page's size follows the
     picture's shape, so a squarer picture, which prints smaller, is made at fewer pixels.
@@ -336,14 +338,17 @@ def load_image_bgr(path: Path) -> np.ndarray:
         return cv2.cvtColor(np.array(rgb), cv2.COLOR_RGB2BGR)
 
 
-def resize_to_long_edge(image_bgr: np.ndarray, long_edge: int) -> np.ndarray:
+def resize_to_long_edge(image_bgr: np.ndarray, long_edge: int, upscale: bool = False) -> np.ndarray:
+    """``image_bgr`` with its long edge ``long_edge``, area-averaged down; a smaller picture as it is, or, with
+    ``upscale``, scaled up (bicubic) -- as a page is made and drawn, at the pixels its paper asks for."""
     h, w = image_bgr.shape[:2]
     current_long_edge = max(h, w)
-    if current_long_edge <= long_edge:
+    if current_long_edge == long_edge or (current_long_edge < long_edge and not upscale):
         return image_bgr
     scale = long_edge / current_long_edge
     new_size = (max(1, int(round(w * scale))), max(1, int(round(h * scale))))
-    return cv2.resize(image_bgr, new_size, interpolation=cv2.INTER_AREA)
+    interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+    return cv2.resize(image_bgr, new_size, interpolation=interpolation)
 
 
 def detect_ink(
@@ -543,7 +548,7 @@ def draw_page(
     check_cancelled()
     style, handling = model.style, model.handling
     resized = _cache.get_or_compute(
-        image_bgr, ("resize", long_edge), lambda: resize_to_long_edge(image_bgr, long_edge)
+        image_bgr, ("page size", long_edge), lambda: resize_to_long_edge(image_bgr, long_edge, upscale=True)
     )
     h, w = resized.shape[:2]
     h1, w1 = model.region_id_map.shape
@@ -724,14 +729,14 @@ def generate(
     A page is made at its working size at most, where its brush is ``handling.brush_px`` pixels across (see
     ``working_long_edge``): the size the app previews it at. One asked for larger -- an export -- is that page drawn
     at ``long_edge`` (see ``draw_page``), so that an export always has the regions, colors and numbering its preview
-    shows. A picture no larger than that is made at its own size.
+    shows. A picture with fewer pixels is scaled up to it.
 
     With ``vector``, the page is laid out to be drawn as vectors, a PDF (see ``export.save_pdf``): its numbers as
     small as ``style.min_label_pt`` asks, at any fraction of a pixel (see ``render.render_page``). Its regions are
     the same: the page is made as without it, and its numbers placed again (see ``draw_page``).
     """
     working_edge = working_long_edge(image_bgr, params, handling, style.paper_format)
-    drawn = long_edge > working_edge and max(image_bgr.shape[:2]) > working_edge
+    drawn = long_edge > working_edge
     if drawn or vector:
         made_at = working_edge if drawn else long_edge
         working = _make_page(
@@ -765,7 +770,7 @@ def _make_page(
 
     check_cancelled()
     resized = _cache.get_or_compute(
-        image_bgr, ("resize", long_edge), lambda: resize_to_long_edge(image_bgr, long_edge)
+        image_bgr, ("page size", long_edge), lambda: resize_to_long_edge(image_bgr, long_edge, upscale=True)
     )
     h, w = resized.shape[:2]
     report("resize")

@@ -1,4 +1,5 @@
-"""Save a generated coloring page and its legend as a PNG or a PDF, sized for printing on A4 (see ``print_size``)."""
+"""Save a generated coloring page and its legend as a PNG or a PDF, sized for printing on its paper (see
+``print_size``)."""
 
 from __future__ import annotations
 
@@ -31,6 +32,12 @@ _PT_PER_MM = PT_PER_INCH / MM_PER_INCH
 # The size Pillow's measurements of a number's text box are taken at, in pixels an em: large enough that rounding them
 # to whole pixels is a thousandth of the em.
 _MEASURING_EM_PX = 1000
+# The longest edge, in pixels, a page is drawn at by ``rasterize``: A2 at 600 dpi is 13559 px, and a page this size
+# (188 Mpx at most) takes 1.9 GB more memory to draw, and 2 to about 11 s, by how much is on it, on the benchmark
+# machine (T3b; the lion at Realistic on A2 drew 123 Mpx in 7.6 s).
+MAX_RASTER_LONG_EDGE = 16384
+# The Qt application ``rasterize`` starts where none runs (a script, the benchmark), kept while the module is.
+_qt_application = None
 
 
 def save_png(page: Image.Image, legend: Image.Image, path: Path, paper: PaperFormat = A4) -> None:
@@ -104,19 +111,79 @@ def save_pdf(
     Path(path).write_bytes(document.to_bytes())
 
 
+def rasterize(
+    drawing: PageDrawing, dpi: float, version: Version = Version.PAGE, painting: Painting | None = None
+) -> Image.Image:
+    """The page as it prints, drawn at ``dpi`` on its paper: the vector art ``save_pdf`` prints for ``version``, the
+    printed area alone (no margins), rendered by QtPdf. Its numbers are the drawing's, where it put them on paper, at
+    any resolution (see ``pipeline.draw_page``). The image is the printed size at ``dpi``, to the pixel, at most
+    ``MAX_RASTER_LONG_EDGE`` across (see ``max_raster_dpi``)."""
+    size = raster_size(drawing, dpi)
+    if max(size) > MAX_RASTER_LONG_EDGE:
+        raise ValueError(
+            f"{dpi:g} dpi is {size[0]} x {size[1]} px, more than {MAX_RASTER_LONG_EDGE} px across: at most "
+            f"{max_raster_dpi(drawing):.0f} dpi"
+        )
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QBuffer, QByteArray, QCoreApplication, QIODevice, QSize
+    from PySide6.QtGui import QGuiApplication, QImage
+    from PySide6.QtPdf import QPdfDocument
+
+    global _qt_application
+    if QCoreApplication.instance() is None:
+        _qt_application = QGuiApplication([])  # QtPdf renders only in an application; kept for the next page
+    document = _Document()
+    _page_sheet(document, drawing, document.font(_number_font()), version, painting, bare=True)
+    data = QByteArray(document.to_bytes())
+    buffer = QBuffer(data)
+    buffer.open(QIODevice.ReadOnly)
+    pdf = QPdfDocument()
+    pdf.load(buffer)
+    if pdf.status() != QPdfDocument.Status.Ready:
+        raise RuntimeError(f"QtPdf could not read the page: {pdf.error()}")
+    image = pdf.render(0, QSize(*size)).convertToFormat(QImage.Format_RGBA8888_Premultiplied)
+    pdf.close()
+    width, height = image.width(), image.height()
+    rgba = np.frombuffer(image.constBits(), np.uint8).reshape(height, image.bytesPerLine())[:, : width * 4]
+    rgba = rgba.reshape(height, width, 4)
+    # Rendered on no background: composited over white paper, which with premultiplied colors adds the paper left.
+    rgb = rgba[..., :3] + (255 - rgba[..., 3:])
+    return Image.fromarray(np.ascontiguousarray(rgb), "RGB")
+
+
+def raster_size(drawing: PageDrawing, dpi: float) -> tuple[int, int]:
+    """The pixels (width, height) ``rasterize`` draws ``drawing`` at, at ``dpi``: its printed size on its paper."""
+    printed_w, printed_h = print_scale(drawing.size, drawing.style.paper_format).printed_size_mm
+    return max(1, round(printed_w * dpi / MM_PER_INCH)), max(1, round(printed_h * dpi / MM_PER_INCH))
+
+
+def max_raster_dpi(drawing: PageDrawing) -> float:
+    """The most dots per inch ``rasterize`` draws ``drawing`` at: ``MAX_RASTER_LONG_EDGE`` across its printed size."""
+    printed = print_scale(drawing.size, drawing.style.paper_format).printed_size_mm
+    return (MAX_RASTER_LONG_EDGE - 0.5) * MM_PER_INCH / max(printed)
+
+
 def _sheet_size_mm(landscape: bool, paper: PaperFormat = A4) -> tuple[float, float]:
     return (paper.height_mm, paper.width_mm) if landscape else (paper.width_mm, paper.height_mm)
 
 
 def _page_sheet(
-    document: _Document, drawing: PageDrawing, numbers: int, version: Version, painting: Painting | None
+    document: _Document,
+    drawing: PageDrawing,
+    numbers: int,
+    version: Version,
+    painting: Painting | None,
+    bare: bool = False,
 ) -> None:
-    """The page's sheet, drawn in the page's pixels, y down, mapped onto where the print model puts the page."""
+    """The page's sheet, drawn in the page's pixels, y down, mapped onto where the print model puts the page; with
+    ``bare``, a sheet the page's printed size, with no margins."""
     width, height = drawing.size
     paper = drawing.style.paper_format
     scale = print_scale(drawing.size, paper)
-    sheet = _sheet_size_mm(scale.landscape, paper)
     printed_w, printed_h = scale.printed_size_mm
+    sheet = (printed_w, printed_h) if bare else _sheet_size_mm(scale.landscape, paper)
     left, top = (sheet[0] - printed_w) / 2, (sheet[1] - printed_h) / 2
     pt_per_px = _PT_PER_MM / scale.px_per_mm
     if not isinstance(version, Version):

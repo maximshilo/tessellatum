@@ -41,10 +41,10 @@ from tessellatum.core.print_size import A4, MIN_LABEL_SIZE_PT, PaperFormat, prin
 MAX_FONT_SIZE = 40  # px
 FONT_SIZE_RADIUS_RATIO = 0.85
 # A number drawn in pixels is never smaller than this, whatever the paper asks
-# for. The pipeline never upscales, so a small source prints at a low
-# resolution, where the smallest legible size on paper is too few pixels to
-# draw a digit with: at 10 px a digit is 8 px tall. A page laid out to be drawn
-# as vectors (the PDF, see ``min_font_size``) has no such floor.
+# for. A preview is made at as few as 1100 px, about 100 dpi on A4 and 50 on
+# A2, where the smallest legible size on paper is too few pixels to draw a
+# digit with: at 10 px a digit is 8 px tall. A page laid out to print, to be
+# drawn as vectors (every export, see ``min_font_size``), has no such floor.
 MIN_FONT_SIZE = 10  # px
 
 # How finely a number laid out for vectors shrinks to fit, in pixels an em: its

@@ -696,14 +696,14 @@ def test_the_pixels_splitting_takes_for_ink_are_printed(monkeypatch):
     assert analysis.printed_ink[taken["at"]]
 
 
-def test_an_export_renders_at_300_dpi_on_a4_and_never_upscales():
-    # D-052 (Q36): the long edge that prints at 300 dpi on A4, by the picture's shape, or the picture's own.
+def test_an_export_is_laid_out_at_300_dpi_on_a4_however_small_the_picture():
+    # D-052 (Q36): the long edge that prints at 300 dpi on A4, by the picture's shape; T3b: whatever pixels it has.
     big = np.zeros((3000, 4500, 3), dtype=np.uint8)
     assert pipeline.export_long_edge(big) == 3272
     page = pipeline.resize_to_long_edge(big, pipeline.export_long_edge(big))
     assert print_size.print_scale(page.shape[1::-1]).dpi == pytest.approx(300, abs=0.2)
     assert pipeline.export_long_edge(np.zeros((2400, 2400, 3), dtype=np.uint8)) == 2244  # 300 dpi is enough
-    assert pipeline.export_long_edge(np.zeros((1000, 1500, 3), dtype=np.uint8)) == 1500  # never upscaled
+    assert pipeline.export_long_edge(np.zeros((1000, 1500, 3), dtype=np.uint8)) == 3272  # drawn larger to print
 
 
 def test_a_page_is_made_where_its_level_s_brush_is_four_pixels_across():
@@ -723,10 +723,11 @@ def test_a_page_is_made_where_its_level_s_brush_is_four_pixels_across():
     square = np.zeros((3000, 3000, 3), dtype=np.uint8)
     assert pipeline.working_long_edge(square, difficulty.PRESETS["Realistic"]) == 1520
     assert pipeline.working_long_edge(square, difficulty.PRESETS["Beginner"]) == 1100
-    # Never more than the picture has.
+    # However few pixels the picture has (D-009): a smaller one is scaled up to the size a larger one of its shape gets.
     realistic = difficulty.PRESETS["Realistic"]
-    assert pipeline.working_long_edge(np.zeros((1200, 1800, 3), dtype=np.uint8), realistic) == 1800
-    assert pipeline.working_long_edge(np.zeros((600, 800, 3), dtype=np.uint8), realistic) == 800
+    assert pipeline.working_long_edge(np.zeros((1200, 1800, 3), dtype=np.uint8), realistic) == 2216
+    small, large = np.zeros((600, 800, 3), dtype=np.uint8), np.zeros((3000, 4000, 3), dtype=np.uint8)
+    assert pipeline.working_long_edge(small, realistic) == pipeline.working_long_edge(large, realistic) > 800
 
 
 def test_the_working_size_follows_the_pixels_across_the_brush_asked_for():

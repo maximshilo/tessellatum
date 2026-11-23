@@ -97,9 +97,12 @@ version older than that has no Beginner or Realistic, and its Easy, Medium and
 Hard are other settings than 0.1.52's), at preview size: `--long-edge preview`,
 which asks each version for the page its app previews -- from 0.1.56 the page at
 its working size (`pipeline.working_long_edge`: where the level's brush is 4 px
-across, at least 1100 px, at most the picture's own size or 300 dpi), before that
-1100 px. A case's `long_edge` records the size asked of the pipeline, and
-`asked_long_edge` how it was asked (`preview`, or a size). Until 0.1.55 the
+across, at least 1100 px, at most 300 dpi, and until 1.0.9 at most the picture's
+own size), before that 1100 px. `--long-edge print` asks for the page its app
+exports: the size it lays the page out at to print (`pipeline.export_long_edge`;
+from 1.0.10 300 dpi on the paper whatever the picture's size, before that at most
+the picture's own). A case's `long_edge` records the size asked of the pipeline, and
+`asked_long_edge` how it was asked (`preview`, `print`, or a size). Until 0.1.55 the
 default was 1100 px. `--long-edge 1100` still asks for an 1100 px page, which
 from 0.1.56 is the app's preview only where the level's brush needs no more
 pixels: at Max, at Beginner but on pictures longer than about 3:2 (up to
@@ -271,9 +274,11 @@ until then (`bench_metrics.PAINTABLE_WIDTH_MM`, `LABEL_MIN_PT`,
 `mm_to_px`, `pt_to_px`, `mm2_to_px`, `px_to_mm` and `px_to_pt`. Each case's
 `case.json` records it under `print`.
 
-The pipeline never upscales, so a small source prints at a low resolution:
-`scene.png` (600 × 450 px) comes out at 60 dpi, where a 0.2 mm line is less
-than a pixel wide.
+Until 1.0.9 the pipeline never upscaled, so a small source printed at a low
+resolution: `scene.png` (600 × 450 px) came out at 60 dpi, where a 0.2 mm line is
+less than a pixel wide. From 1.0.10 a page is made at its working size from the
+picture scaled up (bicubic) where it has fewer pixels, and laid out to print at 300
+dpi on its paper; a size asked for is still the size the page comes out at.
 
 From 0.1.43 the app exports at 300 dpi on A4: at the long edge that fills the
 printable area at 300 dpi, 2244–3272 px by the image's shape
@@ -303,6 +308,12 @@ the export cases measure the preview's page at print size. Until 0.1.52 an
 export was made again from the picture at its own size, with regions, colors and
 numbers of its own: a photograph's had a median 0.90 of its preview's regions
 at the five levels (0.85 at Realistic).
+
+From 1.0.10 every export is laid out once at 300 dpi on its paper, whatever the
+picture's size (`--long-edge print`), and the PDF and the PNG are both drawn from
+that layout: the PNG is the PDF's page rendered in pixels (`export.rasterize`), so
+the export cases (laid out with `vector=True`) measure both. Against 1.0.9, a print
+case compares the page laid out at 300 dpi with one at the picture's own size.
 
 From 1.0.8 the export cases measure the page as its PDF lays it out
 (`generate(..., vector=True)`, which the harness passes to a version that takes
@@ -1108,8 +1119,8 @@ as exports, can be passed to it as well:
 
 `noise` pairs the pages' own sizes, not the sizes asked for, and counts a size
 once however many result sets hold it. Pages at an image's own size are left out:
-the pipeline never upscales, so every size asked for at or above that renders the
-one page, and resizing changes a page by more than chance does. Between an image's
+until 1.0.9 the pipeline never upscaled, so every size asked for at or above that
+rendered the one page, and resizing changes a page by more than chance does. Between an image's
 own size and 1 px less, SSIM moves by 0.05 and ΔE00 mean by 17%; between two sizes
 below it, by 0.008 and 4.9%.
 

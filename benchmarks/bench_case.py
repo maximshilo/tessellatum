@@ -283,7 +283,12 @@ def asked_long_edge(asked: str, pipeline, image_bgr, params, paper=None) -> int:
     """The long edge a case asks the version measured for: a size in px, or for ``preview`` the size its app previews
     the page at -- from 0.1.56 its working size (``pipeline.working_long_edge``: where the level's brush is a few
     pixels across), before that 1100 px. ``pipeline`` is the version's ``tessellatum.core.pipeline``; ``paper``, if
-    given, the sheet the page is made for (from 1.0.9)."""
+    given, the sheet the page is made for (from 1.0.9). ``print`` is the size it lays the page out at to print, as the
+    app exports it (``pipeline.export_long_edge``: 300 dpi on the paper from 1.0.10, at most the picture's own size
+    before)."""
+    if asked == "print":
+        papers = () if paper is None else (paper,)
+        return int(pipeline.export_long_edge(image_bgr, *papers))
     if asked != "preview":
         return int(asked)
     working_long_edge = getattr(pipeline, "working_long_edge", None)
@@ -564,7 +569,7 @@ def main() -> int:
         "params": dataclasses.asdict(params),
         "long_edge": long_edge,
         # How it was asked for: a size, or "preview" (see asked_long_edge).
-        "asked_long_edge": args.long_edge if args.long_edge == "preview" else int(args.long_edge),
+        "asked_long_edge": args.long_edge if args.long_edge in ("preview", "print") else int(args.long_edge),
         "status": "ok",
         "version": getattr(tessellatum, "__version__", "unknown"),
         "output_size": [result.page.width, result.page.height],
