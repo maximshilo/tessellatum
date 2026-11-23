@@ -14,8 +14,9 @@ Each release's notes on GitHub are its section below.
   at 724 dpi kept its lines over the top 42% only, and on A2 even 300 dpi lost some. The PDF is now written in paths
   that stay within a quarter of that at the largest PNG: the lines in groups by where they lie, a paint's area in
   groups of its shapes, and line art's ink and the lettering in bands overlapping by half a millimeter. A PDF drawn
-  whole by a PDFium viewer or printer at a high resolution prints every line too. PDFs are written a little faster. Where two groups meet, a few anti-aliased
-  pixels at the ends of lines print a shade darker: on an A4 page at 300 dpi, at most one pixel in 6,000.
+  whole by a PDFium viewer or printer at a high resolution prints every line too. PDFs are written a little faster.
+  Where two groups meet, a few anti-aliased pixels at the ends of lines print a shade darker: on an A4 page at
+  300 dpi, at most one pixel in 6,000.
 
 ## [1.0.12] - 2026-11-23
 
@@ -68,6 +69,7 @@ Each release's notes on GitHub are its section below.
   3 pt number used to print at 4-6 pt; now it prints at 3 pt, so more small regions take their number inside them
   rather than on a leader. The regions are the preview's, as before; the preview, its zoom and a PNG are unchanged.
 
+## [1.0.7] - 2026-11-22
 
 ### Changed
 
