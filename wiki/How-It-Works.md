@@ -81,7 +81,12 @@ flowchart TD
    scaled, the printed ink inside its own smoothed outline, the letters taken again from the picture at that size, and
    the numbers placed there in fractions of a pixel. Every export is drawn from that layout: the PDF as vector art, a
    PNG as the PDF's page rendered in pixels (by QtPdf). So an export always has its preview's regions, colors and
-   legend, and the PDF and the PNG number the page the same way.
+   legend, and the PDF and the PNG number the page the same way. The PDF is written in paths PDFium (the renderer in
+   QtPdf, Chrome and Edge) draws whole: it stops a path past about 4.2 million coverage cells, the pixels its outline
+   crosses, which the lines of a dense A2 page reach at 300 dpi. So the lines go in a few groups, by where they lie down
+   the page, a paint's area in groups of its shapes, each with the holes in it, and line art's ink, one shape with
+   thousands of holes, in bands that overlap by half a millimeter: each path kept to a quarter of the limit at the
+   largest PNG.
 
 ## Line art
 

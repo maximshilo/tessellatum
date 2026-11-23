@@ -4,6 +4,19 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.13] - 2026-11-23
+
+### Fixed
+
+- **A large PNG lost its lines.** A PNG is the PDF's page drawn by QtPdf, whose renderer (PDFium, also Chrome's and
+  Edge's) silently stops drawing a path past about 4.2 million pixel cells, and every line on the page was one path.
+  On a dense page, large enough, the lines stopped partway down with a thick dark line where they did: the lion on A2
+  at 724 dpi kept its lines over the top 42% only, and on A2 even 300 dpi lost some. The PDF is now written in paths
+  that stay within a quarter of that at the largest PNG: the lines in groups by where they lie, a paint's area in
+  groups of its shapes, and line art's ink and the lettering in bands overlapping by half a millimeter. A PDF drawn
+  whole by a PDFium viewer or printer at a high resolution prints every line too. PDFs are written a little faster. Where two groups meet, a few anti-aliased
+  pixels at the ends of lines print a shade darker: on an A4 page at 300 dpi, at most one pixel in 6,000.
+
 ## [1.0.12] - 2026-11-23
 
 ### Changed
