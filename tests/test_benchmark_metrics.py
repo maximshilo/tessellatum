@@ -647,6 +647,94 @@ def test_palette_separation_counts_every_close_pair_including_identical_colors_a
     assert bm.palette_separation(np.zeros((0, 3), dtype=np.uint8)) == {"palette_min_de00": None, "palette_close_pairs": 0}
 
 
+def test_printed_lab_keeps_white_maps_black_to_the_paper_black_and_is_the_identity_at_a_black_of_zero():
+    white, black, color = np.array([100.0, 0, 0]), np.array([0.0, 0, 0]), np.array([40.0, 20, -30])
+    assert bm.printed_lab(white, 25) == pytest.approx(white, abs=1e-9)
+    assert bm.printed_lab(black, 25) == pytest.approx([25, 0, 0], abs=1e-9)
+    assert bm.printed_lab(color, 0) == pytest.approx(color)
+    assert bm.lab_to_xyz(bm.xyz_to_lab(np.array([0.2, 0.3, 0.4]))) == pytest.approx([0.2, 0.3, 0.4])
+
+
+def test_printed_distance_shrinks_near_black_pairs_and_leaves_light_ones_as_they_are():
+    def share(low, high):
+        a, b = np.array([low, 0.0, 0]), np.array([high, 0.0, 0])
+        return float(bm.printed_de00(a, b, 25) / bm.ciede2000(a, b))
+
+    assert bm.printed_shrink(25) == pytest.approx(0.81, abs=0.01)
+    assert share(0, 10) == pytest.approx(0.47, abs=0.01)
+    assert share(20, 30) == pytest.approx(0.85, abs=0.01)
+    assert share(40, 45) == 1.0 and share(70, 74) == 1.0  # never farther than on screen
+    # Dark chroma is squeezed too: a dark brown against the dark gray of its lightness.
+    brown, gray = np.array([20.0, 8, 12]), np.array([20.0, 0, 0])
+    assert bm.printed_de00(brown, gray, 25) < 0.75 * bm.ciede2000(brown, gray)
+
+
+def test_printed_separation_counts_close_printed_pairs_and_the_dark_and_light_legend_colors():
+    # L* 2.2, 11.3 and 19.9: 5.5 and 5.7 ΔE00 apart on screen, 2.6 and 3.7 on paper; the outer two 11.2 and 6.3.
+    near_blacks = [[8] * 3, [30] * 3, [48] * 3]
+    palette = np.array(near_blacks + [[128] * 3, [250] * 3], dtype=np.uint8)
+    scores = bm.printed_separation(palette, min_de00=4.0)
+    assert bm.palette_separation(palette, 4.0)["palette_close_pairs"] == 0
+    assert scores["printed_close_pairs"] == 2
+    assert scores["printed_min_de00"] < 4.0
+    assert scores["dark_legend_colors"] == 3 and scores["light_legend_colors"] == 1
+    assert bm.printed_separation(palette, 4.0, paper_black_lstar=0)["printed_close_pairs"] == 0
+
+
+def test_vivid_fidelity_scores_the_most_colorful_tenth_of_the_pixels():
+    source = np.full((10, 10, 3), 128, dtype=np.uint8)
+    source[0] = (0, 0, 220)  # a red row: 10% of the pixels
+    painted = source.copy()
+    painted[1:] = 100  # the grays painted wrong, the red right
+    assert bm.vivid_fidelity(source, painted)["vivid_de00_mean"] == pytest.approx(0, abs=1e-6)
+    painted[0] = (0, 0, 150)
+    assert bm.vivid_fidelity(source, painted)["vivid_de00_mean"] > 5
+    assert bm.vivid_fidelity(np.zeros((4, 4, 3), np.uint8), painted[:4, :4])["vivid_de00_mean"] is None
+
+
+def _grating(first, second, size=120):
+    image = np.empty((size, size, 3), dtype=np.uint8)
+    image[:, ::2], image[:, 1::2] = first, second
+    return image
+
+
+def _mean_in_light(image):
+    linear = ((image / 255 + 0.055) / 1.055) ** 2.4
+    mean = linear.reshape(-1, 3).mean(axis=0)
+    return np.broadcast_to(np.rint((1.055 * mean ** (1 / 2.4) - 0.055) * 255), image.shape).astype(np.uint8)
+
+
+def test_scielab_leaves_uniform_areas_and_identical_images_alone():
+    image = np.full((50, 70, 3), (40, 120, 200), dtype=np.uint8)
+    assert bm.scielab_lab(image, 30.0)[25, 35] == pytest.approx(bm.bgr_to_lab_exact(image[0, 0]), abs=1e-3)
+    assert bm.scielab_map(image, image, 30.0).max() == 0
+
+
+def test_scielab_blurs_a_fine_red_green_grating_away_far_more_than_a_light_dark_one():
+    red_green = _grating((0, 60, 200), (0, 160, 90))
+    light_dark = _grating((60, 60, 60), (200, 200, 200))
+    for grating, most in ((red_green, 0.15), (light_dark, 0.5)):
+        plain = bm.ciede2000(bm.bgr_to_lab(grating), bm.bgr_to_lab(_mean_in_light(grating))).mean()
+        seen = bm.scielab_map(grating, _mean_in_light(grating), 30.0).mean()
+        assert seen < most * plain
+    assert bm.scielab_map(red_green, _mean_in_light(red_green), 30.0).mean() < 0.5 * bm.scielab_map(
+        light_dark, _mean_in_light(light_dark), 30.0
+    ).mean()
+
+
+def test_scielab_depends_on_the_viewing_angle_not_the_pixel_count():
+    rng = np.random.default_rng(0)
+    source = cv2.GaussianBlur((rng.random((200, 300, 3)) * 255).astype(np.uint8), (0, 0), 6)
+    painted = cv2.GaussianBlur(source, (0, 0), 2) // 8 * 8
+
+    def doubled(image):
+        return cv2.resize(image, (600, 400), interpolation=cv2.INTER_NEAREST)
+
+    once = bm.scielab_map(source, painted, 30.0).mean()
+    assert bm.scielab_map(doubled(source), doubled(painted), 60.0).mean() == pytest.approx(once, rel=0.03)
+    assert bm.px_per_degree(4.0) == pytest.approx(4.0 * 6.981, rel=1e-3)
+
+
 WHITE, FILL, BLACK = (255, 255, 255), (90, 150, 230), (0, 0, 0)  # BGR
 
 

@@ -194,11 +194,11 @@ def test_scorecard_scores_each_job_per_category_and_over_all_cases(tmp_path):
     # Each job's metrics, with their targets; a regressed mean in bold.
     resembles = _section(scorecard, "#### resembles", "#### paintable")
     assert (
-        "| category | cases | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | face ΔE00 ↓ | face SSIM ↑ | features lost ↓ (0) "
+        "| category | cases | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | vivid ΔE00 ↓ | face ΔE00 ↓ | face SSIM ↑ | features lost ↓ (0) "
         "| subject ΔE00 ↓ | subject SSIM ↑ | text CER painting ↓ | targets met |"
     ) in resembles
-    assert "| photo | 1 | **5.00 → 8.00** | 10.0 | 0.800 | 7.50 | 0.600 | 0.0 → 1.0 | – | – | 0.98 | 1/1 → 0/1 |" in resembles
-    assert "| all | 3 | **4.00 → 5.00** | 10.0 | 0.800 | 7.50 | 0.600 | 0.7 → 1.0 | – | – | 0.98 | 1/3 → 0/3 |" in resembles
+    assert "| photo | 1 | **5.00 → 8.00** | 10.0 | 0.800 | – | 7.50 | 0.600 | 0.0 → 1.0 | – | – | 0.98 | 1/1 → 0/1 |" in resembles
+    assert "| all | 3 | **4.00 → 5.00** | 10.0 | 0.800 | – | 7.50 | 0.600 | 0.7 → 1.0 | – | – | 0.98 | 1/3 → 0/3 |" in resembles
     paintable = _section(scorecard, "#### paintable", "#### clean drawing")
     assert (
         "| category | cases | labeled area ↑ | unlabeled ↓ (0) | slivers ↓ (≤ 1%) | gradient slivers ↓ (≤ 1%) | labels too small ↓ (0) "
@@ -217,6 +217,7 @@ def test_scorecard_scores_each_job_per_category_and_over_all_cases(tmp_path):
     palette = _section(scorecard, "#### palette")
     assert (
         "| category | cases | palette min ΔE00 ↑ (≥ color margin) | close color pairs ↓ "
+        "| printed min ΔE00 ↑ (≥ color margin) | printed close pairs ↓ "
         "| flat colors ΔE00 ↓ (≤ flat colors ΔE00 best + 2.5 on exact colors) | targets met |"
     ) in palette
 
@@ -496,29 +497,53 @@ def test_columns_added_since_a_result_set_was_recorded_are_blank_for_it(tmp_path
     old_vs_new = bench_report.build_report([old, new], bench_report.Tolerances())
 
     header = (
-        "| case | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | regions | background regions | labeled area ↑ | unlabeled ↓ | unnumbered sides ↓ | slivers ↓ "
+        "| case | ΔE00 mean ↓ | ΔE00 p95 ↓ | SSIM ↑ | vivid ΔE00 ↓ | S-CIELAB ΔE00 | regions | background regions | labeled area ↑ | unlabeled ↓ | unnumbered sides ↓ | slivers ↓ "
         "| gradient slivers ↓ | bands | labels too small ↓ "
         "| labels on lines ↓ | overlapping labels ↓ | leaders | compactness p10 ↑ | compactness median ↑ | lines per boundary | lines per boundary (clear) "
         "| unenclosed ↓ | same-color boundary ↓ | jaggedness ↓ "
-        "| edge F1 ↑ | colors | color margin | palette min ΔE00 ↑ | close color pairs ↓ | ink line F1 ↑ "
+        "| edge F1 ↑ | colors | color margin | palette min ΔE00 ↑ | close color pairs ↓ | printed min ΔE00 ↑ "
+        "| printed close pairs ↓ | colors < L* 25 | colors > L* 90 | ink line F1 ↑ "
         "| ink printed recall ↑ | ink printed precision ↑ | tubes ↓ | ink in shapes < 5 mm ↓ "
         "| flat colors ΔE00 ↓ | flat colors ΔE00 best | ink found | ink found recall ↑ | ink found precision ↑ "
         "| stray ink ↓ | faces found | face found recall ↑ | stray faces ↓ "
         "| face ΔE00 ↓ | face SSIM ↑ | features lost ↓ | labels on features ↓ | face regions "
-        "| subject ΔE00 ↓ | subject SSIM ↑ | subject detail | text lines found | text found recall ↑ "
+        "| subject ΔE00 ↓ | subject SSIM ↑ | subject S-CIELAB ΔE00 | subject detail | text lines found | text found recall ↑ "
         "| stray text lines ↓ | text CER source "
         "| text CER page ↓ | text CER painting ↓ | labels on text ↓ | undersized ↓ | ink | targets missed |"
     )
     assert header in old_alone
     assert (
-        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | – | 50.0% | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
-        "| – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
-        "| – | – | – | – | 0 | 10.0% | – |"
+        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | – | – | 100 | – | 50.0% "
+        "| – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
+        "| – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – | – "
+        "| 0 | 10.0% | – |"
     ) in old_alone
     assert "| all | 1 | 1 | no targets | no targets | no targets | no targets |" in old_alone
     assert (
-        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | 100 | 90 | 50.0% | 3 | – | 10.0% | – | 4 | 0.0% | 0 | 0 | 0 | 0.10 | 0.40 | 2.00 | 1.90 "
-        "| 0.0% | 1.0% | 1.100 | 0.50 | 8 | – | 4.5 | 2 | 0.25 | – | – | 2 | 60.0% | 3.50 | – | 0.0% | – | – | 0.0% | 1 | 1.00 "
-        "| 0 | 7.50 | 0.600 | 1 | 2 | 12 | – | – | – | 5 | 0.920 | 0 | 0.10 | 0.95 | 0.98 | 1 | 0 | 10.0% | – → 10/19 | ok |"
+        "| lion / Easy / 1100 | 5.00 | 10.0 | 0.800 | – | – | 100 | 90 | 50.0% | 3 | – | 10.0% | – | 4 | 0.0% | 0 | 0 | 0 | 0.10 | 0.40 | 2.00 | 1.90 "
+        "| 0.0% | 1.0% | 1.100 | 0.50 | 8 | – | 4.5 | 2 | – | – | – | – | 0.25 | – | – | 2 | 60.0% | 3.50 | – | 0.0% | – | – | 0.0% | 1 | 1.00 "
+        "| 0 | 7.50 | 0.600 | 1 | 2 | 12 | – | – | – | – | 5 | 0.920 | 0 | 0.10 | 0.95 | 0.98 | 1 | 0 | 10.0% | – → 10/19 | ok |"
     ) in old_vs_new
     assert "| all | 1 | 1 | 0/1 met | 0/1 met | 0/1 met | 0/1 met |" in old_vs_new
+
+
+def test_a_palette_may_trade_some_color_error_for_printed_colors_told_apart():
+    tol = bench_report.Tolerances()
+    before = {"printed_close_pairs": 6, "de00_mean": 5.0, "vivid_de00_mean": 8.0, "subject_de00_mean": None}
+    after = {"printed_close_pairs": 1, "de00_mean": 5.4, "vivid_de00_mean": 7.0, "subject_de00_mean": None}
+    assert bench_report.traded(before, after, "preview", tol)
+    # Not when the pairs didn't fall, the error rose too far, nothing colorful gained, or a face got worse.
+    assert not bench_report.traded(before, {**after, "printed_close_pairs": 6}, "preview", tol)
+    assert not bench_report.traded(before, {**after, "de00_mean": 5.6}, "preview", tol)  # over 10%
+    assert not bench_report.traded(before, {**after, "vivid_de00_mean": 8.0}, "preview", tol)
+    assert bench_report.traded(before, {**after, "vivid_de00_mean": 9.0, "subject_de00_mean": 3.0}, "preview", tol) is False
+    assert bench_report.traded(
+        {**before, "subject_de00_mean": 4.0}, {**after, "vivid_de00_mean": 9.0, "subject_de00_mean": 3.0}, "preview", tol
+    )
+    with_face = ({**before, "features_lost": 0}, {**after, "features_lost": 1})
+    assert not bench_report.traded(*with_face, "preview", tol)
+
+    # The traded case is left out of ΔE00 mean's regression, not out of the others'.
+    pairs = [(before, after, "preview")] * 16  # enough cases for an 8% rise to be a regression
+    assert "de00_mean" in [r.metric.key for r in bench_report.regressions(bench_report.JUDGED, pairs, "all", tol)]
+    assert "de00_mean" not in [r.metric.key for r in bench_report.judged_regressions(pairs, "all", tol)]

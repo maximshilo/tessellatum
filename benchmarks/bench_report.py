@@ -36,6 +36,12 @@ JOBS = ("resembles", "paintable", "clean drawing", "palette")
 ALL_CASES = "all"
 # A group of cases regresses on a metric when its mean change is worse than this many standard errors of the mean.
 STANDARD_ERRORS = 3.0
+# The trade a palette may make (see ``traded``): these metrics may get worse on a case whose legend paper tells apart
+# better, by at most this much ΔE00 mean and this share of it, while its colorful pixels or its subject get closer.
+TRADE_METRICS = ("de00_mean", "de00_p95", "ssim")
+TRADE_MAX_RISE = 1.0
+TRADE_MAX_RISE_SHARE = 0.10
+TRADE_FACE_METRICS = ("face_de00_mean", "face_ssim", "features_lost")
 # A case whose page is at least this share of its image's own long edge is judged with `sigma_export`.
 EXPORT_SIGMA_MIN_PAGE_SHARE = 0.99
 # Without `source_size`, a case counts as an export when the size asked for is at least this large: a quarter above the
@@ -87,6 +93,11 @@ class Metric:
         return self.sigma_export if size == "export" and self.sigma_export is not None else self.sigma
 
 
+# Tolerances of the color metrics added in 1.0.16, from `bench.py noise` over `T1-sizes` (see the comment below).
+VIVID_SIGMA = 0.069
+PRINTED_MIN_SIGMA = 1.3
+PRINTED_PAIRS_SIGMA = 3.2
+
 # Every quality column, in the report's order. A tolerance is the root mean square change of one case between two sizes
 # of the same image and preset (`bench.py noise`), measured on `main` at 36d75ed (T1.8):
 # - `sigma`, at 1099, 1100 and 1101 px: 132 pairs over the 12 benchmark images at Easy / Medium / Hard / Max, fewer for
@@ -98,6 +109,12 @@ METRICS = (
     Metric("de00_mean", "ΔE00 mean ↓", "{:.2f}", "resembles", "lower", sigma=0.069, sigma_export=0.073, relative=True),
     Metric("de00_p95", "ΔE00 p95 ↓", "{:.1f}", "resembles", "lower", sigma=0.073, sigma_export=0.12, relative=True),
     Metric("ssim", "SSIM ↑", "{:.3f}", "resembles", "higher", sigma=0.0066, sigma_export=0.0070),
+    # The color error on the image's most colorful tenth (from 1.0.16): what a palette spent on a large dull area leaves
+    # out. Its tolerance was measured on 1.0.16 at 1099-1101 px (`T1-sizes`); exports are judged with it too.
+    Metric("vivid_de00_mean", "vivid ΔE00 ↓", "{:.2f}", "resembles", "lower", sigma=VIVID_SIGMA, relative=True),
+    # Fidelity as the eye sees the page from 40 cm (S-CIELAB, from 1.0.16): it only informs, until it has been shown to
+    # follow what people see better than ΔE00 mean does.
+    Metric("scielab_de00_mean", "S-CIELAB ΔE00", "{:.2f}"),
     Metric("regions", "regions", "{:d}"),
     # The regions touching no face box, found or annotated: where the page spends no more detail for its faces (T4.2).
     Metric("background_regions", "background regions", "{:d}"),
@@ -214,6 +231,20 @@ METRICS = (
         sigma=3.2,
         sigma_export=3.1,
     ),
+    # The same, with the legend as paper shows it: its darks squeezed toward the paper's black (from 1.0.16; see
+    # `bench_metrics.printed_de00`). Tolerances measured on 1.0.16 (`T1-sizes`); exports are judged with them too.
+    Metric(
+        "printed_min_de00",
+        "printed min ΔE00 ↑",
+        "{:.1f}",
+        "palette",
+        "higher",
+        sigma=PRINTED_MIN_SIGMA,
+        target=Target(0.0, relative_to="palette_margin_de00", fallback=bm.PALETTE_MIN_DE00),
+    ),
+    Metric("printed_close_pairs", "printed close pairs ↓", "{:d}", "palette", "lower", sigma=PRINTED_PAIRS_SIGMA),
+    Metric("dark_legend_colors", f"colors < L* {bm.DARK_LEGEND_LSTAR:g}", "{:d}"),
+    Metric("light_legend_colors", f"colors > L* {bm.LIGHT_LEGEND_LSTAR:g}", "{:d}"),
     # Its target went to the printed ink's match (D-036): once a page prints the ink itself, two nearly equal wide masks
     # thin to different centerlines, and the reference's own specks and pinholes put loops in its centerlines.
     Metric("ink_line_f1", "ink line F1 ↑", "{:.2f}", "clean drawing", "higher", sigma=0.021, sigma_export=0.023),
@@ -328,6 +359,7 @@ METRICS = (
     # 0.1.39 (`T5.3-sizes`, `T5.3-export-sizes`), 60 pairs at each size: the five outlined images at every preset.
     Metric("subject_de00_mean", "subject ΔE00 ↓", "{:.2f}", "resembles", "lower", sigma=0.054, sigma_export=0.041, relative=True),
     Metric("subject_ssim", "subject SSIM ↑", "{:.3f}", "resembles", "higher", sigma=0.0047, sigma_export=0.010),
+    Metric("subject_scielab_de00_mean", "subject S-CIELAB ΔE00", "{:.2f}"),
     Metric("subject_density_ratio", "subject detail", "{:.1f}"),
     # The lines of text the pipeline finds (T6.1), scored as the finding itself, apart from the page's jobs, as the faces
     # found are. They are found once per picture and scaled to the page, so the recall moves with the page's size only as
@@ -432,6 +464,43 @@ def regressions(metrics, pairs, group: str, tol: Tolerances) -> list[Regression]
         if mean > allowed:
             found.append(Regression(metric, group, len(changes), mean, allowed))
     return found
+
+
+def traded(before: dict, after: dict, size: str, tol: Tolerances) -> bool:
+    """Whether a case traded some of its overall color error for legend colors paper can tell apart, within bounds.
+
+    Moving colors out of a large dark area, whose look-alike near-blacks paper can't show apart, into the picture's
+    colorful parts or its subject raises the error of that area: ``TRADE_METRICS`` get worse on exactly the pictures the
+    move is for. The trade is accepted on a case where all of these hold:
+    - ``printed close pairs`` fell;
+    - ``ΔE00 mean`` rose by at most ``TRADE_MAX_RISE`` and at most ``TRADE_MAX_RISE_SHARE`` of its value;
+    - ``vivid ΔE00`` or ``subject ΔE00`` improved;
+    - no face metric is worse alone by more than ``STANDARD_ERRORS`` tolerances, and no face feature is lost.
+    """
+    pairs_before, pairs_after = before.get("printed_close_pairs"), after.get("printed_close_pairs")
+    error_before, error_after = before.get("de00_mean"), after.get("de00_mean")
+    if None in (pairs_before, pairs_after, error_before, error_after) or pairs_after >= pairs_before:
+        return False
+    rise = error_after - error_before
+    if rise > TRADE_MAX_RISE or rise > TRADE_MAX_RISE_SHARE * error_before:
+        return False
+    gained = any(
+        before.get(key) is not None and after.get(key) is not None and after[key] < before[key]
+        for key in ("vivid_de00_mean", "subject_de00_mean")
+    )
+    lost_before, lost_after = before.get("features_lost"), after.get("features_lost")
+    if lost_before is not None and lost_after is not None and lost_after > lost_before:  # never a feature for colors
+        return False
+    faces = [METRICS_BY_KEY[key] for key in TRADE_FACE_METRICS]
+    return gained and not regressions(faces, [(before, after, size)], "", tol)
+
+
+def judged_regressions(pairs, group: str, tol: Tolerances) -> list[Regression]:
+    """``regressions`` of every judged metric over ``pairs``, but ``TRADE_METRICS`` leave out the cases that ``traded``."""
+    kept = [(before, after, size) for before, after, size in pairs if not traded(before, after, size, tol)]
+    return regressions([m for m in JUDGED if m.key not in TRADE_METRICS], pairs, group, tol) + regressions(
+        [m for m in JUDGED if m.key in TRADE_METRICS], kept, group, tol
+    )
 
 
 def misses_target(metric: Metric, quality: dict) -> bool | None:
@@ -989,7 +1058,7 @@ def _verdict_section(
         groups = _groups(s, ref, case_ids, categories)
         found: dict[str, list[Regression]] = {}
         for name, cids in groups:
-            for regression in regressions(JUDGED, _quality_pairs(ref, s, cids), name, tol):
+            for regression in judged_regressions(_quality_pairs(ref, s, cids), name, tol):
                 found.setdefault(regression.metric.key, []).append(regression)
         paired = dict(groups).get(ALL_CASES, [])
 
@@ -1015,11 +1084,17 @@ def _verdict_section(
             lines.append(f"  - Targets newly met: {newly_met} (case, target) pair(s).")
         look_at = []
         for cid in paired:
-            names = [r.metric.name for r in regressions(JUDGED, _quality_pairs(ref, s, [cid]), _case_title(cid), tol)]
+            names = [r.metric.name for r in judged_regressions(_quality_pairs(ref, s, [cid]), _case_title(cid), tol)]
             if names:
                 look_at.append(f"{_case_title(cid)} ({', '.join(names)})")
         if look_at:
             lines.append(f"  - Cases to look at, worse alone by more than {STANDARD_ERRORS:g} tolerances: " + "; ".join(look_at) + ".")
+        trades = [_case_title(before_after[0]) for before_after in _traded_cases(ref, s, paired, tol)]
+        if trades:
+            lines.append(
+                f"  - Color error traded for printed colors told apart, accepted ({len(trades)} case(s), not counted in "
+                f"{', '.join(METRICS_BY_KEY[key].name for key in TRADE_METRICS)}): " + "; ".join(trades) + "."
+            )
         if problems:
             lines.append("  - Problems: " + "; ".join(problems) + ".")
     lines += [
@@ -1034,6 +1109,16 @@ def _verdict_section(
     if tol.sigma:
         lines.append("Tolerances overridden: " + ", ".join(f"{METRICS_BY_KEY[k].name} σ = {v:g}" for k, v in tol.sigma.items()) + ".")
     return lines + [""]
+
+
+def _traded_cases(ref: ResultSet, cand: ResultSet, case_ids: list[str], tol: Tolerances) -> list[tuple[str, float]]:
+    """The cases that ``traded``, with their rise in ΔE00 mean."""
+    found = []
+    for cid in case_ids:
+        for before, after, size in _quality_pairs(ref, cand, [cid]):
+            if traded(before, after, size, tol):
+                found.append((cid, after["de00_mean"] - before["de00_mean"]))
+    return found
 
 
 def _target_changes(ref: ResultSet, cand: ResultSet, case_ids: list[str]) -> tuple[list[str], list[tuple[str, list[str]]], int]:

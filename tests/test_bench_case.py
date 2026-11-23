@@ -437,6 +437,8 @@ def test_case_runner_scores_the_subject_its_manifest_outlines(tmp_path):
     painted = np.asarray(Image.open(out / "painted.png").convert("RGB"))[:, :, ::-1]
     source = bm.reference_resize(cv2.imread(str(image)), 400)
     fidelity = bm.subject_fidelity(source, np.ascontiguousarray(painted), subject)
+    seen = bm.scielab_map(source, np.ascontiguousarray(painted), bm.px_per_degree(scale.px_per_mm))
+    fidelity["subject_scielab_de00_mean"] = float(seen[subject].mean())
     for key in bench_case.SUBJECT_KEYS:
         assert quality[key] == pytest.approx({**detail, **fidelity}[key], rel=1e-12), key
     assert quality["subject_density_ratio"] > 1  # the disk is busier than the ground, and it is the subject
