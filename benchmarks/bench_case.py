@@ -277,9 +277,9 @@ def label_box(text: str, font_size: int, point, page_size: tuple[int, int]) -> t
     return (x0, y0, x0 + tw, y0 + th)
 
 
-# A preset's page colored on a screen (from 1.0.16): "Medium/Screen" is Medium with no paper black and the color margin
+# A preset's page colored on a screen (from 1.0.16): "Medium-Screen" is Medium with no paper black and the color margin
 # at most SCREEN_MARGIN_DE00, as the app's "Coloring on: Screen" asks; a version without a paper black gets the margin.
-SCREEN_SUFFIX = "/Screen"
+SCREEN_SUFFIX = "-Screen"  # not a slash: the preset is part of the case directory's name
 SCREEN_MARGIN_DE00 = 2.5
 
 

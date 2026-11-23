@@ -21,7 +21,7 @@ Each release's notes on GitHub are its section below.
   black of L* 25), its colors near black and near white, the error on the picture's most colorful tenth, and
   S-CIELAB, the error as the eye sees the page from 40 cm (informational). The verdict allows the trade the printed
   palette makes, a little more error in a large dark area for better colors elsewhere, within set bounds. The
-  benchmark also takes a preset colored on a screen, such as `Medium/Screen`.
+  benchmark also takes a preset colored on a screen, such as `Medium-Screen`.
 
 ## [1.0.15] - 2026-11-23
 
