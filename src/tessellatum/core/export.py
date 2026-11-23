@@ -469,16 +469,15 @@ def _fill_bands(rings: list[np.ndarray], scale: float, overlap: float) -> list[l
     cumulative = np.cumsum(weights[order])
     cut = middles[order][np.searchsorted(cumulative, cumulative[-1] / 2)] if cumulative[-1] > 0 else (top + bottom) / 2
     cut = min(max(cut, top + 2 * overlap), bottom - 2 * overlap)
+    # Each band takes every ring reaching into it, clipped to it, so that inside it they fill what they did.
     above: list[np.ndarray] = []
     below: list[np.ndarray] = []
     for ring in rings:
-        if ring[:, 1].max() <= cut:
-            above.append(ring)
-        elif ring[:, 1].min() >= cut:
-            below.append(ring)
-        else:
-            above.append(_clip_ring(ring, cut + overlap, below=False))
-            below.append(_clip_ring(ring, cut - overlap, below=True))
+        lowest, highest = ring[:, 1].min(), ring[:, 1].max()
+        if lowest < cut + overlap:
+            above.append(ring if highest <= cut + overlap else _clip_ring(ring, cut + overlap, below=False))
+        if highest > cut - overlap:
+            below.append(ring if lowest >= cut - overlap else _clip_ring(ring, cut - overlap, below=True))
     above = [r for r in above if len(r) >= 3]
     below = [r for r in below if len(r) >= 3]
     return [band for part in (above, below) if part for band in _fill_bands(part, scale, overlap)]
