@@ -72,8 +72,8 @@ tinted painting guide; export a PNG at the resolution you choose (600 dpi by def
   (QtPdf).
 - Quality assurance: 1,300+ automated tests, including pixel-exact equivalence tests, and a benchmark harness that
   scores every version on speed and image quality (ΔE00, SSIM, OCR error rate, edge F1).
-- Desktop delivery: cross-platform Qt 6 interface with background workers (Windows, macOS, Linux), standalone Windows
-  build released by GitHub Actions.
+- Desktop delivery: cross-platform Qt 6 interface with background workers, standalone builds for Windows, macOS and
+  Linux, each made, self-tested and released by GitHub Actions.
 
 ## How it works
 
@@ -92,12 +92,14 @@ The stages, their parameters and the reasoning behind them are in the wiki:
 
 ## Getting started
 
-**Windows:** download `Tessellatum-<version>-windows-x64.zip` from the
-[latest release](https://github.com/maximshilo/tessellatum/releases/latest), unzip it anywhere and run
-`Tessellatum.exe`. No installer, no Python needed.
+Download the app for your system from the [latest release](https://github.com/maximshilo/tessellatum/releases/latest),
+unpack it anywhere and run it. No installer, no Python needed.
 
-**macOS and Linux:** run it from source, as below, or build a standalone app with `packaging/build_macos.sh` or
-`packaging/build_linux.sh` ([details](https://github.com/maximshilo/tessellatum/wiki/Getting-Started)).
+- **Windows:** `Tessellatum-<version>-windows-x64.zip`, then `Tessellatum\Tessellatum.exe`.
+- **macOS** (Apple silicon): `Tessellatum-<version>-macos-arm64.zip`, then `Tessellatum.app`. It isn't notarized, so
+  allow it once in System Settings > Privacy & Security
+  ([details](https://github.com/maximshilo/tessellatum/wiki/Getting-Started)).
+- **Linux** (x86-64): `Tessellatum-<version>-linux-x64.tar.gz`, then `Tessellatum/Tessellatum`.
 
 **From source** (Python 3.10+), on Windows:
 

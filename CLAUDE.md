@@ -43,9 +43,10 @@ generate scratch/debug files while working, keep them out of the repo
 - Add the version's entry to `CHANGELOG.md` in the same PR.
 - Releasing is a separate step, done when the user asks to ship: after the
   PR is merged, tag the merge commit `vX.Y.Z` (matching the version) and
-  push the tag. `.github/workflows/release.yml` then builds the Windows app
-  and publishes the GitHub release with that `CHANGELOG.md` section as its
-  notes.
+  push the tag. `.github/workflows/release.yml` then builds the app for
+  Windows, macOS and Linux, self-tests each build, and publishes them as one
+  GitHub release whose notes are every `CHANGELOG.md` section since the
+  previous release.
 
 ## Public presentation: README, wiki, gallery
 

@@ -4,6 +4,20 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.15] - 2026-11-23
+
+### Added
+
+- **macOS and Linux apps.** Each release now has the standalone app for macOS (Apple silicon) and Linux (x86-64) as
+  well as Windows: unpack it and run it, no Python needed. The macOS app isn't notarized by Apple, so it has to be
+  allowed once in System Settings > Privacy & Security.
+- Every build is checked before it is released: `Tessellatum --self-test DIR` makes a page of a picture it draws
+  itself and exports its PDF and a PNG of each version into `DIR`.
+
+### Changed
+
+- A release's notes hold every version since the previous release, rather than its own alone.
+
 ## [1.0.14] - 2026-11-23
 
 ### Changed
