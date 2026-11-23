@@ -44,10 +44,10 @@ from tessellatum.core.text import Lettering
 # Gray rather than black, so that a line disappears under the paint that is
 # meant to cover it, and so that a number reads as part of the page's
 # apparatus rather than as writing in the picture (QUALITY_BENCHMARKS.md).
-# The user's pick, after printing pages (2026-11-23): the lines and the numbers inside their regions at L* 34, one gray,
+# The user's pick (2026-11-23): the lines and the numbers inside their regions at L* 34, one gray,
 # a number told from a line by its shape; the numbers written outside their regions, the leaders pointing them in and
 # their dots at L* 70, a gray of their own, so that a number with a leader is told at a glance from one inside its
-# region. Until 1.0.13 the numbers inside their regions were a step lighter than the lines: 38, 54 and 70.
+# region. Through 1.0.13 the numbers inside their regions were a step lighter than the lines: 38, 54 and 70.
 LINE_GRAY = 0x50
 LABEL_GRAY = 0x50
 LEADER_GRAY = 0xAB
