@@ -23,7 +23,7 @@ including its four small detection networks.
 | | |
 |---|---|
 | Input | Any image Pillow reads: photographs, paintings, cartoons, comics, scans |
-| Output | Preview in three versions (page, painted, tinted guide); 300 dpi PNG; A4 PDF of vector art |
+| Output | Preview in three versions (page, painted, tinted guide); 300 dpi PNG; PDF of vector art on A4, A3 or A2 |
 | Perception | YuNet face detection, an LBP cascade for drawn faces, U²-Net salient objects, PP-OCR text detection |
 | Construction | Bilateral filtering, k-means in CIELAB, CIEDE2000 merging, morphology, distance transforms, crack-graph boundaries |
 | Speed | A preview in about 1–3 s (median over the benchmark images, by difficulty) |

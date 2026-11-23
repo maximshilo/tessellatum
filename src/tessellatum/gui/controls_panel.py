@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 from tessellatum.core import difficulty, settings
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import Handling
+from tessellatum.core.print_size import PAPERS
 from tessellatum.core.render import DEFAULT_TONE, TONE_FIELDS, TONES, PageStyle
 from tessellatum.core.settings import Setting
 
@@ -53,12 +54,20 @@ TONE_TOOLTIPS = {
 CUSTOM_TONE = "Custom"
 CUSTOM_TONE_TOOLTIP = "Set the three grays yourself. Moving any of them picks Custom, starting from the tone."
 
+PAPER_TOOLTIP = (
+    "The sheet the page is made for: every size on paper (the brush, the smallest region, the lines, the numbers) "
+    "applies on it. A larger sheet prints the picture larger, so it makes a finer page, with more and smaller regions, "
+    "and takes longer; the PDF's sheets are this size."
+)
+DEFAULT_PAPER = "A4"
+
 CUSTOM_TOOLTIP = "Set every difficulty setting yourself. Moving any of them picks Custom, starting from the preset."
 
 # Where the panel keeps its settings between runs (see ``ControlsPanel``): the preset, the tone, each setting by name,
 # and each switch.
 _PRESET_KEY = "difficulty/preset"
 _TONE_KEY = "style/tone"
+_PAPER_KEY = "style/paper"
 _SETTING_KEY = "settings/{}"
 _SWITCH_KEY = "handling/{}"
 
@@ -211,6 +220,12 @@ class ControlsPanel(QWidget):
         self.tone_combo.setItemData(len(TONES), CUSTOM_TONE_TOOLTIP, Qt.ToolTipRole)
         self.tone_combo.setCurrentText(DEFAULT_TONE)
         self.sections[settings.LINES].form.insertRow(1, "Tone", self.tone_combo)
+        self.paper_combo = QComboBox()
+        self.paper_combo.addItems(list(PAPERS))
+        self.paper_combo.setCurrentText(DEFAULT_PAPER)
+        self.paper_combo.setToolTip(PAPER_TOOLTIP)
+        self.sections[settings.REGIONS].form.insertRow(0, "Paper", self.paper_combo)
+        self.sections[settings.REGIONS].form.labelForField(self.paper_combo).setToolTip(PAPER_TOOLTIP)
         # Every section's labels as wide as the widest, so that the sliders line up from one section to the next.
         labels = [
             section.form.labelForField(section.form.itemAt(row, QFormLayout.FieldRole).widget())
@@ -252,7 +267,7 @@ class ControlsPanel(QWidget):
             self.version_combo.setItemData(index, version.description, Qt.ToolTipRole)
         self.version_combo.setToolTip("Which version of the page to export: the preview can show each of them.")
         self.png_radio = QRadioButton("PNG (image)")
-        self.pdf_radio = QRadioButton("PDF (A4)")
+        self.pdf_radio = QRadioButton("PDF")
         self.png_radio.setChecked(True)
         format_row = QWidget()
         format_layout = QHBoxLayout(format_row)
@@ -310,6 +325,7 @@ class ControlsPanel(QWidget):
         for name, control in self.controls.items():
             control.edited.connect(lambda name=name: self._on_setting_edited(name))
         self.tone_combo.currentTextChanged.connect(self._on_tone_changed)
+        self.paper_combo.currentTextChanged.connect(lambda _name: self._save())
         for check in self._switches.values():
             check.toggled.connect(lambda _checked: self._save())
 
@@ -365,6 +381,7 @@ class ControlsPanel(QWidget):
                     control.set_value(control.setting.default)
             self.tone_combo.setCurrentText(DEFAULT_TONE)
             self._show_tone(DEFAULT_TONE)
+            self.paper_combo.setCurrentText(DEFAULT_PAPER)
             for check in self._switches.values():
                 check.setChecked(True)
         finally:
@@ -376,6 +393,7 @@ class ControlsPanel(QWidget):
             return
         self._store.setValue(_PRESET_KEY, self.preset_combo.currentText())
         self._store.setValue(_TONE_KEY, self.tone_combo.currentText())
+        self._store.setValue(_PAPER_KEY, self.paper_combo.currentText())
         for name, control in self.controls.items():
             self._store.setValue(_SETTING_KEY.format(name), control.value())
         for name, check in self._switches.items():
@@ -394,6 +412,9 @@ class ControlsPanel(QWidget):
             if tone in TONES or tone == CUSTOM_TONE:
                 self.tone_combo.setCurrentText(tone)
             tone = self.tone_combo.currentText()
+            paper = self._store.value(_PAPER_KEY)
+            if paper in PAPERS:
+                self.paper_combo.setCurrentText(paper)
             for name, control in self.controls.items():
                 kept = self._store.value(_SETTING_KEY.format(name))
                 try:
@@ -437,7 +458,8 @@ class ControlsPanel(QWidget):
         return difficulty.custom_params(**self._chosen(settings.DIFFICULTY))
 
     def get_page_style(self) -> PageStyle:
-        return PageStyle(**self._chosen(settings.STYLE))  # the grays on their sliders, the tone's unless Custom
+        # The grays on their sliders, the tone's unless Custom.
+        return PageStyle(**self._chosen(settings.STYLE), paper=self.paper_combo.currentText())
 
     def get_handling(self) -> Handling:
         switches = {name: check.isChecked() for name, check in self._switches.items()}

@@ -3,8 +3,8 @@
 The panel on the left holds every setting; **Generate Preview** draws the page with them, and **Export…** draws that
 same page at print resolution: the regions, colors and legend the preview shows, its lines smoothed as they are
 there, and its numbers placed again, as small as the style lets them print. If a setting changed since the preview,
-the export makes the page with it first. Every setting has a tooltip; sizes are on the printed A4 page; the panel keeps
-them between runs, and **Reset** puts them all back.
+the export makes the page with it first. Every setting has a tooltip; sizes are on the printed page, on the sheet
+**Paper** names; the panel keeps them between runs, and **Reset** puts them all back.
 
 ## The three versions
 
@@ -26,6 +26,17 @@ by the size the screen reports. Further in than the preview's own pixels, the zo
 export's own drawing, with its numbers where and as small as they print. It is drawn in the background the first time
 and kept, so the export saves it without drawing it again. A new preview of the same picture keeps the zoom and the
 place, to compare settings there.
+
+## Paper
+
+**Paper** (A4 by default, A3 or A2, at the top of the region settings) is the sheet the page is made for. Every size
+on paper -- the brush, the smallest region, the lines, the numbers -- applies on that sheet, so a larger one prints the
+picture larger and makes a finer page of it: more and smaller regions, each still as wide as the brush. The page is
+made at more pixels on a larger sheet, never more than the picture's own, so a small picture gains little from A2,
+and a page takes longer to make: a Medium preview of a 2048 px photograph takes 1.5 to 2 times as long on A3 and 1.6
+to 3 times on A2 (a Realistic one of the benchmark's lion, 7 s on A4, 10 s on A3 and 23 s on A2). A picture with too
+few pixels for its sheet makes a crowded page there, its numbers on the lines: give A3 and A2 a large picture. The PDF's sheets are this paper, the page landscape when the picture is wider than tall and the legend on
+a portrait sheet of its own, and a PNG records the resolution that prints it on this paper.
 
 ## Difficulty
 
@@ -111,11 +122,11 @@ smaller ones.
 
 ## Export
 
-The export renders the page at 300 dpi on A4: a long edge of 2,244 to 3,272 px depending on the picture's shape, or the
+The export renders the page at 300 dpi on its paper -- on A4, a long edge of 2,244 to 3,272 px depending on the picture's shape, or the
 picture's own size where that is smaller, since nothing is upscaled. **Version** picks which of the three versions to
 export, in either format; the legend comes with each.
 
-- **PDF**: two A4 sheets of vector art. The page fills the printable area inside 10 mm margins, centered, on a
+- **PDF**: two sheets of vector art, of the page's paper. The page fills the printable area inside 10 mm margins, centered, on a
   landscape sheet when the picture is wider than tall. Its lines are paths of the width asked for and its numbers text,
   so a printer draws them at its own resolution. Its numbers are placed for it, as small as **Smallest number** asks
   however few pixels the picture has, so a PDF can number small regions inside them where the preview and the PNG

@@ -19,7 +19,7 @@ from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.labels import text_box_size
 from tessellatum.core.legend import render_legend
 from tessellatum.core.painting import Painting, Version, render_version
-from tessellatum.core.print_size import MM_PER_INCH, long_edge_at_dpi, print_scale
+from tessellatum.core.print_size import A4, MM_PER_INCH, PaperFormat, long_edge_at_dpi, print_scale
 from tessellatum.core.quantize import quantize
 from tessellatum.core.regions import (
     CornerRule,
@@ -285,8 +285,8 @@ def clear_cache() -> None:
     _cache.clear()
 
 
-def _paintable_limits(params: DifficultyParams, size: tuple[int, int]) -> tuple[int, float]:
-    """The region stage's limits for a page of ``size`` (width, height) in pixels.
+def _paintable_limits(params: DifficultyParams, size: tuple[int, int], paper: PaperFormat = A4) -> tuple[int, float]:
+    """The region stage's limits for a page of ``size`` (width, height) in pixels, made for ``paper``.
 
     The difficulty sets the smallest region and the narrowest part of one on
     the printed page -- the brush -- and no region is smaller than the brush's
@@ -295,25 +295,28 @@ def _paintable_limits(params: DifficultyParams, size: tuple[int, int]) -> tuple[
     count, so a preview and an export of one image are held to the same
     physical sizes.
     """
-    scale = print_scale(size)
+    scale = print_scale(size, paper)
     footprint_mm2 = math.pi * (max(params.min_width_mm, 0.0) / 2) ** 2
     min_area_px = max(4, int(round(scale.mm2_to_px(max(params.min_region_area_mm2, footprint_mm2)))))
     return min_area_px, scale.mm_to_px(max(params.min_width_mm, 0.0))
 
 
-def export_long_edge(image_bgr: np.ndarray) -> int:
-    """The long edge an export of ``image_bgr`` renders at: what prints at 300 dpi on A4, by the picture's shape (see
-    ``print_size``), or the picture's own long edge where that is smaller, since the pipeline never upscales."""
+def export_long_edge(image_bgr: np.ndarray, paper: PaperFormat = A4) -> int:
+    """The long edge an export of ``image_bgr`` renders at: what prints at 300 dpi on ``paper``, by the picture's shape
+    (see ``print_size``), or the picture's own long edge where that is smaller, since the pipeline never upscales."""
     h, w = image_bgr.shape[:2]
-    return min(max(h, w), long_edge_at_dpi((w, h)))
+    return min(max(h, w), long_edge_at_dpi((w, h), paper=paper))
 
 
-def working_long_edge(image_bgr: np.ndarray, params: DifficultyParams, handling: Handling = Handling()) -> int:
+def working_long_edge(
+    image_bgr: np.ndarray, params: DifficultyParams, handling: Handling = Handling(), paper: PaperFormat = A4
+) -> int:
     """The long edge a page of ``image_bgr`` is made at: where its brush, ``params.min_width_mm`` on paper, is
     ``handling.brush_px`` pixels across, so that a finer brush gets more pixels. Never less than the preview's 1100 px
     (``PREVIEW_LONG_EDGE``), at which the faces, the subject, the text and whether the picture is line art are found,
-    nor more than an export's (see ``export_long_edge``): the picture's own size, or 300 dpi. A page without a brush
-    is made at the preview's size.
+    nor more than an export's (see ``export_long_edge``): the picture's own size, or 300 dpi. All on ``paper``, the
+    sheet the page is made for, so a larger sheet gets more pixels. A page without a brush is made at the preview's
+    size.
 
     A page asked for at a larger size is this page drawn there (see ``generate``). The printed page's size follows the
     picture's shape, so a squarer picture, which prints smaller, is made at fewer pixels.
@@ -322,8 +325,8 @@ def working_long_edge(image_bgr: np.ndarray, params: DifficultyParams, handling:
     long_edge = PREVIEW_LONG_EDGE
     if params.min_width_mm > 0 and handling.brush_px > 0:
         px_per_mm = handling.brush_px / params.min_width_mm
-        long_edge = max(long_edge, long_edge_at_dpi((w, h), px_per_mm * MM_PER_INCH))
-    return min(export_long_edge(image_bgr), long_edge)
+        long_edge = max(long_edge, long_edge_at_dpi((w, h), px_per_mm * MM_PER_INCH, paper))
+    return min(export_long_edge(image_bgr, paper), long_edge)
 
 
 def load_image_bgr(path: Path) -> np.ndarray:
@@ -547,7 +550,8 @@ def draw_page(
     if w < w1 or h < h1:
         raise ValueError(f"a page of {w1} x {h1} px is drawn at {w} x {h}: no smaller")
     sx, sy = w / w1, h / h1
-    min_area_px, min_width_px = _paintable_limits(model.params, (w, h))
+    paper = style.paper_format
+    min_area_px, min_width_px = _paintable_limits(model.params, (w, h), paper)
     same_size = (w, h) == (w1, h1)
 
     if same_size:
@@ -558,7 +562,7 @@ def draw_page(
         clearable = None
     if model.clearable is not None and not same_size:
         # As the page drawn from finds it, here: the hatching a number may clear, but no line.
-        thin_px = print_scale((w, h)).mm_to_px(handling.thin_ink_mm)
+        thin_px = print_scale((w, h), paper).mm_to_px(handling.thin_ink_mm)
         clearable = detail_ink(region_id_map, printed_ink, thin_px / 2, style.line_width_px((w, h)))
     check_cancelled()
     found_text = detect_text(image_bgr, resized, handling.text_max_height_mm) if handling.text else []
@@ -606,7 +610,9 @@ def draw_page(
         )
     if rendered.printed_ink is not None:
         printed_ink = rendered.printed_ink  # less the hatching cleared behind numbers
-    legend = render_legend(model.palette_bgr[: model.legend_size], width=w, px_per_mm=print_scale((w, h)).px_per_mm)
+    legend = render_legend(
+        model.palette_bgr[: model.legend_size], width=w, px_per_mm=print_scale((w, h), paper).px_per_mm
+    )
     painting = Painting(
         region_id_map=region_id_map,
         region_color=model.region_color,
@@ -724,7 +730,7 @@ def generate(
     small as ``style.min_label_pt`` asks, at any fraction of a pixel (see ``render.render_page``). Its regions are
     the same: the page is made as without it, and its numbers placed again (see ``draw_page``).
     """
-    working_edge = working_long_edge(image_bgr, params, handling)
+    working_edge = working_long_edge(image_bgr, params, handling, style.paper_format)
     drawn = long_edge > working_edge and max(image_bgr.shape[:2]) > working_edge
     if drawn or vector:
         made_at = working_edge if drawn else long_edge
@@ -785,7 +791,8 @@ def _make_page(
     report("quantize")
 
     check_cancelled()
-    min_area_px, min_width_px = _paintable_limits(params, (w, h))
+    paper = style.paper_format
+    min_area_px, min_width_px = _paintable_limits(params, (w, h), paper)
     ink_gray = 0
     region_labels = labels
     printed_ink = labels >= len(palette_bgr)  # the ink quantize gave no color: all False unless the picture is line art
@@ -795,7 +802,7 @@ def _make_page(
         labels = join_ink(labels, len(palette_bgr), resized, (ink_gray,) * 3, min_area_px, off_edge)  # a new map
         # The regions are built through hatching, a hatched patch one run of its gaps' colors, but never through a
         # line between two areas a painter sees as two.
-        thin_px = print_scale((w, h)).mm_to_px(handling.thin_ink_mm)
+        thin_px = print_scale((w, h), paper).mm_to_px(handling.thin_ink_mm)
         region_labels, corners = look_through_hatching(labels, len(palette_bgr), thin_px, min_width_px)
         printed_ink = (labels >= len(palette_bgr)) | corners
     # The palette can be shorter than the difficulty asked for: colors too
@@ -839,7 +846,7 @@ def _make_page(
         # The thin dark marks in a face that no brush can paint -- pupils, eyelid and lip lines, whisker dots -- merge into
         # the regions around them. They are printed instead, in their own tone, and the regions' paint goes round them.
         printed_ink = marks.detail_marks(
-            resized, in_faces, region_id_map, region_color, palette_bgr, print_scale((w, h)),
+            resized, in_faces, region_id_map, region_color, palette_bgr, print_scale((w, h), paper),
             params.min_width_mm, handling.mark_contrast, handling.mark_length_mm,
         )
         ink_gray = ink.ink_gray(resized, printed_ink)
@@ -925,7 +932,7 @@ def _make_page(
     if rendered.printed_ink is not None:
         printed_ink = rendered.printed_ink  # less the hatching cleared behind numbers
     used_palette_bgr = palette_bgr[used_color_indices]
-    legend = render_legend(used_palette_bgr, width=w, px_per_mm=print_scale((w, h)).px_per_mm)
+    legend = render_legend(used_palette_bgr, width=w, px_per_mm=print_scale((w, h), paper).px_per_mm)
     report("render")
 
     # Legend colors first, so a color index means the same color in region_color as in the renumbered regions.

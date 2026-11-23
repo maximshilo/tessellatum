@@ -36,7 +36,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from tessellatum.core import kernels
-from tessellatum.core.print_size import MIN_LABEL_SIZE_PT, print_scale
+from tessellatum.core.print_size import A4, MIN_LABEL_SIZE_PT, PaperFormat, print_scale
 
 MAX_FONT_SIZE = 40  # px
 FONT_SIZE_RADIUS_RATIO = 0.85
@@ -119,8 +119,10 @@ class LabelSpacing:
     exact: bool = False
 
 
-def min_font_size(size: tuple[int, int], min_pt: float = MIN_LABEL_SIZE_PT, exact: bool = False) -> float:
-    """The smallest em size, in pixels, a number on a page of ``size`` is drawn at.
+def min_font_size(
+    size: tuple[int, int], min_pt: float = MIN_LABEL_SIZE_PT, exact: bool = False, paper: PaperFormat = A4
+) -> float:
+    """The smallest em size, in pixels, a number on a page of ``size`` made for ``paper`` is drawn at.
 
     That is the smallest that prints at ``min_pt`` -- by default the smallest
     that prints legibly (``MIN_LABEL_SIZE_PT``). On a page drawn in pixels it
@@ -130,7 +132,7 @@ def min_font_size(size: tuple[int, int], min_pt: float = MIN_LABEL_SIZE_PT, exac
     checked with the same arithmetic the benchmark measures it with, so a
     number of this size is never scored a hair under it.
     """
-    scale = print_scale(size)
+    scale = print_scale(size, paper)
     if exact:
         exact_size = scale.pt_to_px(min_pt)
         while scale.px_to_pt(exact_size) < min_pt:

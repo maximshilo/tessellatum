@@ -279,14 +279,17 @@ def preset_params(difficulty, name: str):
     return difficulty.params_for_preset(name)
 
 
-def asked_long_edge(asked: str, pipeline, image_bgr, params) -> int:
+def asked_long_edge(asked: str, pipeline, image_bgr, params, paper=None) -> int:
     """The long edge a case asks the version measured for: a size in px, or for ``preview`` the size its app previews
     the page at -- from 0.1.56 its working size (``pipeline.working_long_edge``: where the level's brush is a few
-    pixels across), before that 1100 px. ``pipeline`` is the version's ``tessellatum.core.pipeline``."""
+    pixels across), before that 1100 px. ``pipeline`` is the version's ``tessellatum.core.pipeline``; ``paper``, if
+    given, the sheet the page is made for (from 1.0.9)."""
     if asked != "preview":
         return int(asked)
     working_long_edge = getattr(pipeline, "working_long_edge", None)
     if working_long_edge is not None:
+        if paper is not None:
+            return int(working_long_edge(image_bgr, params, paper=paper))
         return int(working_long_edge(image_bgr, params))
     return int(getattr(pipeline, "PREVIEW_LONG_EDGE", 1100))
 
@@ -322,6 +325,7 @@ def main() -> int:
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--threads", type=int)
+    parser.add_argument("--paper", default="A4", help="the sheet the page is made for and measured on (from 1.0.9)")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
 
@@ -351,18 +355,29 @@ def main() -> int:
     params = preset_params(difficulty, args.preset)
 
     image_bgr = pipeline.load_image_bgr(args.image)
-    long_edge = asked_long_edge(args.long_edge, pipeline, image_bgr, params)
+    long_edge = asked_long_edge(
+        args.long_edge, pipeline, image_bgr, params, bm.print_size.PAPERS[args.paper] if args.paper != "A4" else None
+    )
     image_info = bench_manifest.find_image(args.image)
     probe = Probe(pipeline)
     has_analysis = "collect_analysis" in inspect.signature(pipeline.generate).parameters
     has_vector = "vector" in inspect.signature(pipeline.generate).parameters
+    page_options = {}
+    if args.paper != "A4":
+        from tessellatum.core.render import PageStyle
+
+        if "paper" not in {field.name for field in dataclasses.fields(PageStyle)}:
+            print(f"this version makes pages for A4 only, not {args.paper}", file=sys.stderr)
+            return 2
+        page_options["style"] = PageStyle(paper=args.paper)
+    paper = bm.print_size.PAPERS[args.paper]
 
     def run_once(collect_analysis: bool = False):
         probe.reset()
         # A fresh copy per run, so a pipeline that caches work per image object
         # can't turn repeats into cache hits.
         fresh = image_bgr.copy()
-        options = {"collect_analysis": True} if collect_analysis else {}
+        options = {"collect_analysis": True, **page_options} if collect_analysis else dict(page_options)
         if has_vector and args.long_edge != "preview":
             options["vector"] = True  # an export is measured as its PDF lays it out (from 1.0.8)
         started = time.perf_counter()
@@ -399,7 +414,7 @@ def main() -> int:
         render_module = sys.modules.get("tessellatum.core.render")
         page_data = page_data_from_probe(probe.captured, (w, h), render_module)
 
-    print_scale = bm.print_size.print_scale(result.page.size)
+    print_scale = bm.print_size.print_scale(result.page.size, paper)
     page_rgb = np.asarray(result.page.convert("RGB"))
     limits = page_limits(params, sys.modules.get("tessellatum.core.render"))
     quality: dict[str, float | int | None] = {

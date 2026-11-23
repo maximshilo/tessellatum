@@ -139,7 +139,8 @@ class MainWindow(QMainWindow):
 
         # The page at its working size, where its level's brush is a few pixels across: what an export draws larger.
         long_edge = pipeline.working_long_edge(
-            self.current_image_bgr, self.controls.get_difficulty_params(), self.controls.get_handling()
+            self.current_image_bgr, self.controls.get_difficulty_params(), self.controls.get_handling(),
+            self.controls.get_page_style().paper_format,
         )
         self._worker = self._make_worker(long_edge, versions=tuple(Version))
         self._worker.succeeded.connect(self._on_preview_ready)
@@ -175,7 +176,10 @@ class MainWindow(QMainWindow):
         versions = {version: page.image(version) for version in Version}
         long_edge = self._print_long_edge()
         print_scale = 1.0 if long_edge is None else long_edge / max(page.page.size)
-        self.preview.show_page(versions, page.legend, self.version_bar.version(), print_scale, keep_view=same_picture)
+        self.preview.show_page(
+            versions, page.legend, self.version_bar.version(), print_scale, keep_view=same_picture,
+            paper=page.drawing.style.paper_format,
+        )
         self.version_bar.setEnabled(True)
 
     def _on_worker_failed(self, message: str) -> None:
@@ -211,13 +215,13 @@ class MainWindow(QMainWindow):
         self.controls.set_busy(True)
         self.statusBar().showMessage(f"Rendering the {fmt} at print resolution…")
 
-        # 300 dpi on A4, or the picture's own size where that is less: the pipeline never upscales. The export is the
+        # 300 dpi on the paper, or the picture's own size where less: the pipeline never upscales. The export is the
         # preview's page drawn at that size, so that it has the regions and numbering the preview shows (drawn once for
         # the zoom and the export alike), or the preview itself where it was made at that size; made first if the
         # settings changed since. A PNG's image is drawn with the page; a PDF draws the version again from what the page
         # is made of, with its numbers placed for it: as small as the style asks, however few pixels that is here (see
         # ``pipeline.generate``).
-        long_edge = pipeline.export_long_edge(self.current_image_bgr)
+        long_edge = pipeline.export_long_edge(self.current_image_bgr, self.controls.get_page_style().paper_format)
         preview = self._preview_to_draw(long_edge)
         if fmt == "PDF":
             self._making = True
@@ -251,7 +255,7 @@ class MainWindow(QMainWindow):
 
         try:
             if fmt == "PNG":
-                export.save_png(page.image(version), page.legend, path)
+                export.save_png(page.image(version), page.legend, path, page.drawing.style.paper_format)
             else:
                 export.save_pdf(page.drawing, page.palette_rgb, path, version=version, painting=page.painting)
         except Exception as exc:  # noqa: BLE001
@@ -262,9 +266,11 @@ class MainWindow(QMainWindow):
         if self.preview.wants_detail():
             self._draw_print_page()  # asked for by a zoom while the export was made
         width, height = page.page.size
-        dpi = print_scale(page.page.size).dpi
-        self.statusBar().showMessage(f"Exported to {path} ({width} × {height} px, {dpi:.0f} dpi on A4)")
-        QMessageBox.information(self, "Export complete", f"Saved to:\n{path}\n\n{width} × {height} px, {dpi:.0f} dpi on A4")
+        paper = page.drawing.style.paper_format
+        dpi = print_scale(page.page.size, paper).dpi
+        printed = f"{width} × {height} px, {dpi:.0f} dpi on {paper.name}"
+        self.statusBar().showMessage(f"Exported to {path} ({printed})")
+        QMessageBox.information(self, "Export complete", f"Saved to:\n{path}\n\n{printed}")
 
     def _clear_pending_export(self) -> None:
         self._pending_export_path = None
@@ -314,7 +320,7 @@ class MainWindow(QMainWindow):
         page = self.current_page
         if page is None or page.model is None or self._previewed_image is None:
             return None
-        long_edge = pipeline.export_long_edge(self._previewed_image)
+        long_edge = pipeline.export_long_edge(self._previewed_image, page.drawing.style.paper_format)
         return long_edge if long_edge > max(page.page.size) else None
 
     def _draw_print_page(self) -> None:

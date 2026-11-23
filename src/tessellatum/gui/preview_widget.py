@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from tessellatum.core.painting import Version
-from tessellatum.core.print_size import MM_PER_INCH, print_scale
+from tessellatum.core.print_size import A4, MM_PER_INCH, PaperFormat, print_scale
 
 # One notch of a mouse wheel, or one press of + or -, zooms in or out this far.
 ZOOM_STEP = 1.25
@@ -68,6 +68,7 @@ class PreviewWidget(QGraphicsView):
         self._legend: QImage | None = None
         self._version = Version.PAGE
         self._print_scale = 1.0
+        self._paper = A4
         self._fitted = True
         # The last zoom's anchor, the point of the scene held there, and the view it left: the next zoom about the same
         # anchor of the same view holds the same point, so that steps of a zoom don't add up their rounding.
@@ -95,6 +96,7 @@ class PreviewWidget(QGraphicsView):
         shown: Version = Version.PAGE,
         print_scale: float = 1.0,
         keep_view: bool = False,
+        paper: PaperFormat = A4,
     ) -> None:
         """Show a new page: each of its ``versions`` above the legend, ``shown`` of them, fitted to the window.
 
@@ -102,7 +104,7 @@ class PreviewWidget(QGraphicsView):
         zoomed in past its pixels the widget asks for it as it prints (see ``show_detail``). With ``keep_view``, a page
         of the picture shown is shown as far in and in the same place, unless the view is fitted to the window; made at
         another size (another level's, see ``pipeline.working_long_edge``), as far in on paper, the same point of the
-        picture in the middle.
+        picture in the middle. ``paper`` is the sheet the page is made for.
         """
         size = next(iter(versions.values())).size
         keep = keep_view and not self._fitted and self._page_size is not None
@@ -120,6 +122,7 @@ class PreviewWidget(QGraphicsView):
         self._version = shown
         self._page_size = size
         self._print_scale = max(1.0, print_scale)
+        self._paper = paper
         self._shown = {}
         if self._page_item is None:
             self._scene.clear()
@@ -229,7 +232,7 @@ class PreviewWidget(QGraphicsView):
     def zoom_to_print_size(self) -> None:
         """The page as large as it prints on paper, by the size the screen says it is."""
         if self._page_size is not None:
-            width_mm = print_scale(self._page_size).printed_size_mm[0]
+            width_mm = print_scale(self._page_size, self._paper).printed_size_mm[0]
             per_inch = self.screen().physicalDotsPerInch()  # the screen's logical pixels to an inch
             self.zoom_to(width_mm / MM_PER_INCH * per_inch / self._page_size[0] * self.devicePixelRatioF())
 

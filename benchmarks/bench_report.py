@@ -727,6 +727,7 @@ def _scorecard_section(
 def _quality_section(
     sets: list[ResultSet], case_ids: list[str], categories: dict[str, tuple[str, ...]], tol: Tolerances
 ) -> list[str]:
+    papers = " and ".join(dict.fromkeys(s.data.get("settings", {}).get("paper") or "A4" for s in sets))
     lines = [
         "## Quality",
         "",
@@ -785,7 +786,8 @@ def _quality_section(
         "**undersized**: regions left below the merge threshold that had a neighbor to merge into. **ink**: share of "
         "the page in ink, lines, numbers and printed ink alike.",
         "",
-        "Millimeters and points are at print size on A4 (see `benchmarks/README.md`). **targets missed**: the scorecard's "
+        f"Millimeters and points are at print size on {papers} (see `benchmarks/README.md`). **targets missed**: the "
+        "scorecard's "
         "targets a case misses, out of those that apply to it. **flags**: metrics on which the case alone got worse "
         f"than on the reference by more than {STANDARD_ERRORS:g} times their tolerance, which are cases to look at, not "
         "regressions (see the verdict); and region-count changes worth a note.",

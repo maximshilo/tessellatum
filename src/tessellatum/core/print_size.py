@@ -46,8 +46,12 @@ class PaperFormat:
         return (height, width) if landscape else (width, height)
 
 
-# The print target: A4 at 300 dpi, with 10 mm margins.
+# The sheets a page can be made for, each with 10 mm margins; A4 by default. A page is made for its sheet: its limits
+# in millimeters and points apply there, so a larger sheet makes a finer page of the same picture.
 A4 = PaperFormat("A4", width_mm=210.0, height_mm=297.0, margin_mm=10.0)
+A3 = PaperFormat("A3", width_mm=297.0, height_mm=420.0, margin_mm=10.0)
+A2 = PaperFormat("A2", width_mm=420.0, height_mm=594.0, margin_mm=10.0)
+PAPERS = {paper.name: paper for paper in (A4, A3, A2)}
 PRINT_DPI = 300
 
 # Paintability thresholds at print size; benchmarks/README.md ("Print scale") explains them.

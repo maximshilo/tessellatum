@@ -13,7 +13,8 @@ A page does four jobs, each measured by the benchmark harness (`benchmarks/QUALI
    (1 ± 0.05), unenclosed area (0), jaggedness (at most 1.02) and edge F1 against the source's edges.
 4. **Palette:** every two colors at least the page's color margin apart; on line art, the artwork's own flat colors.
 
-Thresholds are physical: millimetres and points on an A4 sheet, converted to each page's pixels.
+Thresholds are physical: millimetres and points on the page's sheet (A4 by default, A3 or A2), converted to each
+page's pixels. The benchmark runs on A4; `--paper A3` or `A2` makes and measures every page for that sheet instead.
 
 ## The benchmark harness
 

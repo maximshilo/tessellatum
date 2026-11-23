@@ -106,7 +106,9 @@ pixels: at Max, at Beginner but on pictures longer than about 3:2 (up to
 1108 px), and on pictures no larger than 1100 px. `--presets Max` adds the
 setting every version is compared at; `--long-edge preview 2400` adds export
 size; `--threads N` caps worker threads to test scaling; `--category face text` runs
-only the images in those categories (see the image manifest below).
+only the images in those categories (see the image manifest below); `--paper A3` or
+`A2` makes every page for that sheet and measures its millimeters and points there
+(from 1.0.9; the preview size follows the sheet, `2400` stays 2400 px).
 
 `Max` is the setting the version's own `difficulty.finest_params()` gives:
 from 0.1.26, 40 colors, regions of at least 30 mm² on paper, no smoothing,
