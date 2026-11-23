@@ -10,7 +10,10 @@ farthest from its edge, at a size that grows with that distance. A number
 that does not fit there is moved to wherever in its region it keeps farthest
 from the lines, and made smaller, down to the smallest legible size, if it
 still does not fit. A region too small to hold even that has its number
-written just outside it, in a neighbor, with a leader line pointing in.
+written just outside it, in a neighbor, with a leader line pointing in. On a
+page laid out for vectors, a number with no room for that either goes smaller
+inside its region, down to half the smallest size (``CROWDED_SIZE_RATIO``),
+before it is written where lines run through it.
 
 No number goes on a line of text either, nor right beside one, where it
 would read as part of a sign or a caption: every number keeps about
@@ -51,6 +54,11 @@ MIN_FONT_SIZE = 10  # px
 # sizes are fractions of a pixel, and of those only the largest with each text
 # box is tried (see ``_sizes``).
 EXACT_SIZE_STEP = 0.125  # px
+# A number laid out for vectors that finds no room anywhere at the page's smallest size may go this much smaller inside
+# its own region, never under the smallest size a number can be asked for (the setting's 1 pt), rather than be written
+# where lines run through it: a smaller number reads, one crossed by lines doesn't (T2c, D-014).
+CROWDED_SIZE_RATIO = 0.5
+CROWDED_MIN_LABEL_PT = 1.0
 # The em Pillow measures a number's outline at, for a layout in exact sizes:
 # large enough that rounding its measurements to whole pixels is a thousandth
 # of the em.
@@ -117,6 +125,9 @@ class LabelSpacing:
     # Numbers laid out to be drawn as vectors, in sizes of any fraction of a pixel (see ``Label.exact``); otherwise
     # in whole pixels.
     exact: bool = False
+    # The smallest em size a number with no room anywhere at ``min_font_size`` shrinks to inside its region before it
+    # is written across lines (see ``CROWDED_SIZE_RATIO``); None, never smaller than ``min_font_size``.
+    crowded_font_size: float | None = None
 
 
 def min_font_size(
@@ -631,6 +642,18 @@ class _LeaderRoom:
         else:
             left, top = _centered_box((x, y), box_width, box_height, (width, height))
         box = (left, top, left + box_width, top + box_height)
+        if spacing.crowded_font_size is not None and not self.free[top : top + box_height, left : left + box_width].all():
+            # Lines would run through it: smaller, in the region's own room, if it fits there.
+            own = (local_ids == region.region_id) & self.free[window] & ~busy & ~others_dots
+            clearance = _clearance(own)
+            largest = font_size - EXACT_SIZE_STEP
+            for smaller, small_width, small_height in _sizes(text, largest, spacing.crowded_font_size, exact):
+                spot = _roomiest_box(clearance, small_width, small_height)
+                if spot is not None:
+                    left, top = spot[0] + wx0, spot[1] + wy0
+                    box = (left, top, left + small_width, top + small_height)
+                    self._take_box(box)
+                    return Label(region.region_id, text, smaller, box, exact=exact)
         self._take_box(box)
         return Label(region.region_id, text, font_size, box, cramped=True, exact=exact)
 

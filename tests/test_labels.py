@@ -754,3 +754,29 @@ def test_the_compiled_leader_search_takes_the_box_the_loop_took():
         assert found == expected
         taken += found >= 0
     assert 50 < taken < 400  # both outcomes tried
+
+
+def _walled_square(min_font_size: float, crowded_font_size: float | None):
+    """A 14 px square region walled in by a line, no room for a leader anywhere, and the number it gets."""
+    ids = np.zeros((80, 80), dtype=np.int32)
+    ids[30:44, 30:44] = 1
+    free = np.ones((80, 80), dtype=bool)
+    free[28:46, 28:46] = False
+    free[30:44, 30:44] = True  # the line round the square, 2 px wide
+    spacing = dataclasses.replace(
+        SPACING, min_font_size=min_font_size, leader_reach_px=1.0, exact=True, crowded_font_size=crowded_font_size
+    )
+    square = SimpleNamespace(region_id=1, color_index=0, interior_point=(37, 37), interior_radius=7.0)
+    return _LeaderRoom(ids, free, [], [square.interior_point], spacing).place(square), free
+
+
+def test_a_number_with_no_room_goes_smaller_in_its_region_rather_than_across_its_lines():
+    # T2c: too large for its region and with no room for a leader, a number laid out for vectors shrinks inside its
+    # region, down to the crowded size, before it is written across the lines.
+    label, free = _walled_square(24.0, 10.0)
+    assert not label.cramped and label.leader is None and 10.0 <= label.font_size < 24.0
+    assert free[_pixels(label.box)].all()
+    # Without a crowded size, or with none small enough to fit, it is written where the lines run through it.
+    for crowded in (None, 22.0):
+        label, free = _walled_square(24.0, crowded)
+        assert label.cramped and label.font_size == 24.0 and not free[_pixels(label.box)].all()
