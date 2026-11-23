@@ -4,6 +4,25 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.16] - 2026-11-23
+
+### Added
+
+- **Colors as they print.** Paper and paint can't go darker than their own black, so near-blacks a screen shows
+  apart look alike on paper, and a dark picture (a night sky, a painting's dark ground) used to spend many legend
+  colors on them. The palette now keeps its colors apart as printed too: black point compensation to the paper's
+  darkest black, a new setting, **Darkest black on paper** (L* 25 by default, 0 to 40), merges the near-blacks it
+  can't tell apart, and k-means is asked again for the colors that frees, so the legend keeps its count and spends it
+  on the picture's other colors. Colors mostly in the faces and the subject keep their dark shades. A picture without
+  such darks gets the same palette as before.
+- **Coloring on**: Paper and paint (the default) or Screen, for coloring in an app with an eyedropper: no darkest
+  black, and a color margin of at most 2.5 ΔE00, so more of the picture's own shades stay on the legend.
+- Benchmark metrics: the legend as printed (its smallest difference and its pairs closer than the margin, with a paper
+  black of L* 25), its colors near black and near white, the error on the picture's most colorful tenth, and
+  S-CIELAB, the error as the eye sees the page from 40 cm (informational). The verdict allows the trade the printed
+  palette makes, a little more error in a large dark area for better colors elsewhere, within set bounds. The
+  benchmark also takes a preset colored on a screen, such as `Medium/Screen`.
+
 ## [1.0.15] - 2026-11-23
 
 ### Added
