@@ -1,10 +1,18 @@
 # Getting started
 
-## Download (Windows)
+## Download
 
-1. Download `Tessellatum-<version>-windows-x64.zip` from the
-   [latest release](https://github.com/maximshilo/tessellatum/releases/latest).
-2. Unzip it anywhere and run `Tessellatum\Tessellatum.exe`. No installer and no Python are needed.
+Each [release](https://github.com/maximshilo/tessellatum/releases/latest) has the app for Windows, macOS and Linux. No
+installer and no Python are needed: unpack it anywhere and run it.
+
+- **Windows** (64-bit): `Tessellatum-<version>-windows-x64.zip`. Unzip it and run `Tessellatum\Tessellatum.exe`.
+- **macOS** (Apple silicon): `Tessellatum-<version>-macos-arm64.zip`. Unzip it and move `Tessellatum.app` into
+  Applications. The app isn't notarized by Apple, so macOS blocks it the first time: open it once, then click
+  **Open Anyway** in System Settings > Privacy & Security. Or, in a terminal, once:
+  `xattr -dr com.apple.quarantine /Applications/Tessellatum.app`.
+- **Linux** (x86-64, glibc 2.35 or later, such as Ubuntu 22.04 and later): `Tessellatum-<version>-linux-x64.tar.gz`.
+  Unpack it with `tar -xzf` and run `Tessellatum/Tessellatum`. It uses the system's OpenGL, xkbcommon and fontconfig
+  libraries, which desktops have; if it doesn't start, run it from a terminal to see which is missing.
 
 The first launch compiles the image kernels in the background (a few seconds, while you pick an image); later launches
 reuse them.
@@ -35,9 +43,10 @@ Produces a folder you can copy anywhere and double-click to run.
 - Linux: `./packaging/build_linux.sh` → `dist/Tessellatum/Tessellatum`
 - macOS: `./packaging/build_macos.sh` → `dist/Tessellatum.app`
 
-The real output is `dist/Tessellatum/`; PyInstaller's `build/` folder is scratch space. The test suite runs on
-Windows, Linux and macOS, but the Linux and macOS standalone builds have not been tried yet; if something is missing on
-your system, run the binary from a terminal to see the error.
+The real output is `dist/Tessellatum/` (`dist/Tessellatum.app` on macOS); PyInstaller's `build/` folder is scratch
+space. `Tessellatum --self-test DIR` checks a build: it makes a page of a picture it draws itself and exports it into
+`DIR`, as the release workflow does with every build it publishes. If something is missing on your system, run the
+binary from a terminal to see the error.
 
 ## A first page
 

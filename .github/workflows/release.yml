@@ -1,7 +1,8 @@
 name: release
 
-# A pushed tag vX.Y.Z builds the standalone Windows app and publishes it as a GitHub release, with that version's
-# CHANGELOG.md section as its notes. Pull requests that touch the packaging only build it, to check that it still does.
+# A pushed tag vX.Y.Z builds the standalone app for Windows, macOS and Linux, checks that each build makes and exports
+# a page (``Tessellatum --self-test``), and publishes them as one GitHub release, whose notes are every version's
+# CHANGELOG.md section since the previous release. Pull requests that touch the packaging only build and check them.
 
 on:
   push:
@@ -10,6 +11,8 @@ on:
     paths:
       - "packaging/**"
       - "pyproject.toml"
+      - "src/tessellatum/main.py"
+      - "src/tessellatum/selftest.py"
       - ".github/workflows/release.yml"
   workflow_dispatch:
 
@@ -17,13 +20,23 @@ permissions:
   contents: write
 
 jobs:
-  windows:
-    name: Windows build
-    runs-on: windows-latest
+  build:
+    name: ${{ matrix.name }} build
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    strategy:
+      fail-fast: false  # one platform's failure shouldn't hide the others' results
+      matrix:
+        include:
+          - { name: Windows, os: windows-latest, platform: windows-x64, archive: zip }
+          # The oldest supported Ubuntu, so the build runs on any Linux with its glibc (2.35) or later.
+          - { name: Linux, os: ubuntu-22.04, platform: linux-x64, archive: tar.gz }
+          - { name: macOS, os: macos-latest, platform: macos-arm64, archive: zip }
     defaults:
       run:
-        shell: pwsh
+        shell: bash
+    env:
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
 
@@ -35,44 +48,114 @@ jobs:
 
       - name: Read the version
         run: |
-          $version = python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"
-          "VERSION=$version" >> $env:GITHUB_ENV
-          "ZIP=Tessellatum-$version-windows-x64.zip" >> $env:GITHUB_ENV
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "ARCHIVE=Tessellatum-$version-${{ matrix.platform }}.${{ matrix.archive }}" >> "$GITHUB_ENV"
 
       - name: Check the tag matches the version
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          if ("v$env:VERSION" -ne "$env:GITHUB_REF_NAME") {
-            throw "Tag $env:GITHUB_REF_NAME doesn't match the version in pyproject.toml ($env:VERSION)"
-          }
+          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match the version in pyproject.toml ($VERSION)" >&2
+            exit 1
+          fi
+
+      - name: Install Qt's system libraries
+        # PySide6's wheels bring Qt but not the libraries it loads from the system, even offscreen (as in tests.yml).
+        if: runner.os == 'Linux'
+        timeout-minutes: 10
+        run: |
+          apt_opts="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          sudo apt-get $apt_opts update
+          sudo apt-get $apt_opts install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
 
       - name: Install
         run: python -m pip install -e . pyinstaller
 
       - name: Build the standalone app
-        # The same PyInstaller call as packaging/build_windows.ps1, in this job's Python.
-        run: pyinstaller --noconfirm --clean --workpath build\_pyinstaller_scratch --distpath dist packaging\tessellatum.spec
+        # The same PyInstaller call as the build scripts in packaging/, in this job's Python.
+        run: pyinstaller --noconfirm --clean --workpath build/_pyinstaller_scratch --distpath dist packaging/tessellatum.spec
 
       - name: Check the build
         run: |
-          if (-not (Test-Path dist\Tessellatum\Tessellatum.exe)) { throw "dist\Tessellatum\Tessellatum.exe is missing" }
-          $models = Get-ChildItem -Recurse dist\Tessellatum -Include *.onnx, lbpcascade_animeface.xml
-          if ($models.Count -lt 4) { throw "the bundled models are missing from the build" }
-          "{0:N0} MB in dist\Tessellatum" -f ((Get-ChildItem -Recurse dist\Tessellatum | Measure-Object Length -Sum).Sum / 1MB)
+          case "${{ runner.os }}" in
+            Windows) app=dist/Tessellatum; exe=dist/Tessellatum/Tessellatum.exe ;;
+            macOS) app=dist/Tessellatum.app; exe=dist/Tessellatum.app/Contents/MacOS/Tessellatum ;;
+            *) app=dist/Tessellatum; exe=dist/Tessellatum/Tessellatum ;;
+          esac
+          [ -f "$exe" ] || { echo "$exe is missing" >&2; exit 1; }
+          models=$(find "$app" \( -name '*.onnx' -o -name lbpcascade_animeface.xml \) | wc -l)
+          [ "$models" -ge 4 ] || { echo "the bundled models are missing from the build ($models found)" >&2; exit 1; }
+          if [ "${{ runner.os }}" = macOS ]; then codesign --verify --deep --strict "$app"; fi
+          du -sh "$app"
+          echo "APP=$app" >> "$GITHUB_ENV"
+          echo "EXE=$exe" >> "$GITHUB_ENV"
 
-      - name: Zip
-        run: 7z a -tzip -mx=7 "$env:ZIP" .\dist\Tessellatum
+      - name: Make and export a page with the build
+        env:
+          QT_QPA_PLATFORM: offscreen  # no display on the runner; the self-test opens no window
+        run: |
+          if ! "$EXE" --self-test self-test; then
+            cat self-test/self-test-error.txt >&2 || true
+            exit 1
+          fi
+          for f in self-test.pdf self-test-page.png self-test-completed.png self-test-tinted.png; do
+            [ -s "self-test/$f" ] || { echo "self-test/$f is missing" >&2; exit 1; }
+          done
+          ls -l self-test
+
+      - name: Pack
+        run: |
+          case "${{ runner.os }}" in
+            Windows) 7z a -tzip -mx=7 "$ARCHIVE" ./dist/Tessellatum ;;
+            # ditto keeps the bundle's symlinks and signature, which a plain zip would break.
+            macOS) ditto -c -k --sequesterRsrc --keepParent dist/Tessellatum.app "$ARCHIVE" ;;
+            *) tar -czf "$ARCHIVE" -C dist Tessellatum ;;
+          esac
+          ls -l "$ARCHIVE"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ZIP }}
-          path: ${{ env.ZIP }}
+          name: ${{ env.ARCHIVE }}
+          path: ${{ env.ARCHIVE }}
           retention-days: 7
 
-      - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: self-test-${{ matrix.platform }}
+          path: self-test
+          retention-days: 7
+          if-no-files-found: ignore
+
+  publish:
+    name: Publish the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # every tag, to find the previous release
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Tessellatum-*
+          path: release
+          merge-multiple: true
+
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python packaging/release_notes.py $env:VERSION notes.md
-          gh release create "$env:GITHUB_REF_NAME" "$env:ZIP" --title "Tessellatum $env:VERSION" --notes-file notes.md --verify-tag
+          version="${GITHUB_REF_NAME#v}"
+          previous=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          if [ -n "$previous" ]; then
+            python3 packaging/release_notes.py "$version" notes.md --since "${previous#v}"
+          else
+            python3 packaging/release_notes.py "$version" notes.md
+          fi
+          ls -l release
+          [ "$(ls release | wc -l)" -eq 3 ] || { echo "expected 3 builds" >&2; exit 1; }
+          gh release create "$GITHUB_REF_NAME" release/* --title "Tessellatum $version" --notes-file notes.md --verify-tag

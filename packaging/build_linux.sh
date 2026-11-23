@@ -2,10 +2,9 @@
 # Build a standalone Tessellatum binary for Linux (no installer required).
 # Usage: ./packaging/build_linux.sh
 #
-# NOTE: written for cross-platform completeness but not yet run/tested on an
-# actual Linux machine -- if PyInstaller's OpenCV/Qt hooks miss a shared
-# library on your distro, run the resulting dist/Tessellatum/Tessellatum
-# from a terminal to see the missing-library error and report it.
+# The release workflow (.github/workflows/release.yml) makes the same build on every
+# release and checks it with `--self-test`; run the result from a terminal to see
+# any error, e.g. a system library missing on your distro.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

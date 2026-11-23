@@ -38,9 +38,13 @@ metric and tolerance.
    git tag -a v1.2.3 -m "Tessellatum 1.2.3"
    git push origin v1.2.3
    ```
-3. The **release** workflow builds the standalone Windows app with PyInstaller, zips it as
-   `Tessellatum-1.2.3-windows-x64.zip` and publishes a GitHub release whose notes are that version's `CHANGELOG.md`
-   section.
+3. The **release** workflow builds the standalone app with PyInstaller on Windows, Linux (Ubuntu 22.04, for the
+   oldest glibc) and macOS (Apple silicon), checks that each build makes and exports a page
+   (`Tessellatum --self-test`, `src/tessellatum/selftest.py`), and publishes them as one GitHub release:
+   `Tessellatum-1.2.3-windows-x64.zip`, `-macos-arm64.zip` and `-linux-x64.tar.gz`. Its notes
+   (`packaging/release_notes.py`) are every version's `CHANGELOG.md` section since the previous release's tag, then how
+   to download and run the app. A pull request that touches the packaging builds and checks all three without
+   publishing.
 
 ## Keeping the docs current
 

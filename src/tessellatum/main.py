@@ -15,6 +15,11 @@ RESOURCES_DIR = Path(__file__).resolve().parent / "resources"
 
 
 def main() -> None:
+    if len(sys.argv) == 3 and sys.argv[1] == "--self-test":  # a check of a build (see ``selftest``), no window
+        from tessellatum import selftest
+
+        sys.exit(selftest.run(Path(sys.argv[2])))
+
     app = QApplication(sys.argv)
     app.setApplicationName("Tessellatum")
     app.setOrganizationName("Tessellatum")
