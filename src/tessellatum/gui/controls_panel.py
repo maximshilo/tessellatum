@@ -66,7 +66,7 @@ DEFAULT_PAPER = "A4"
 DPI, PIXELS = "dpi", "px"
 DPI_PRESETS = (150, 300, 600)
 # 600 dpi: an A4 export of the benchmark's heaviest page (the lion at Realistic) lays out in 6 s and draws at 600 dpi in
-# 1.6 s more, at 1.1 GB, within the 15 s and 2 GB a default may take (D-011).
+# 1.6 s more, at 1.1 GB, within the 15 s and 2 GB a default may take (D-012).
 DEFAULT_DPI = 600
 MIN_DPI = 72
 MIN_PIXELS = 500
