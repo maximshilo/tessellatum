@@ -26,7 +26,15 @@ from tessellatum.core.labels import (
     place_labels,
     text_bbox,
 )
-from tessellatum.core.print_size import MIN_LABEL_SIZE_PT, MIN_REGION_AREA_MM2, OUTLINE_WIDTH_MM, print_scale
+from tessellatum.core.print_size import (
+    MIN_LABEL_SIZE_PT,
+    MIN_REGION_AREA_MM2,
+    OUTLINE_WIDTH_MM,
+    PAPERS,
+    PaperFormat,
+    PrintScale,
+    print_scale,
+)
 from tessellatum.core.regions import Region
 from tessellatum.core.text import Lettering
 
@@ -109,7 +117,8 @@ class PageStyle:
     a number with a leader may go, ``text_gap_mm`` how far a number keeps
     from a line of text found, and ``split_neck_mm`` how narrow a region's
     paper may get between its lines before each side of it gets its number
-    (see ``labels``). All are on paper.
+    (see ``labels``). All are on paper: the sheet named ``paper``, one of
+    ``print_size.PAPERS``, which the page is made for (see ``scale``).
 
     The numbers' placement decides which of line art's regions have room for
     one, and a region with none joins the area beside it (see
@@ -129,14 +138,24 @@ class PageStyle:
     leader_reach_mm: float = LEADER_REACH_MM
     text_gap_mm: float = TEXT_GAP_MM
     split_neck_mm: float | None = SPLIT_NECK_MM  # None numbers every region once, as before 1.0.6
+    paper: str = "A4"
+
+    @property
+    def paper_format(self) -> PaperFormat:
+        """The sheet the page is made for (see ``print_size.PAPERS``)."""
+        return PAPERS[self.paper]
+
+    def scale(self, size: tuple[int, int]) -> PrintScale:
+        """How a page of ``size`` (width, height) pixels maps onto its sheet (see ``print_size.print_scale``)."""
+        return print_scale(size, self.paper_format)
 
     def line_width_px(self, size: tuple[int, int]) -> float:
         """How wide a line is on a page of ``size`` (width, height) pixels."""
-        return max(self.min_line_width_px, print_scale(size).mm_to_px(self.line_width_mm))
+        return max(self.min_line_width_px, self.scale(size).mm_to_px(self.line_width_mm))
 
     def leader_width_px(self, size: tuple[int, int]) -> float:
         """How wide a leader is on a page of ``size`` (width, height) pixels."""
-        return max(self.min_line_width_px, print_scale(size).mm_to_px(self.leader_width_mm))
+        return max(self.min_line_width_px, self.scale(size).mm_to_px(self.leader_width_mm))
 
     def label_fill(self, label: Label) -> int:
         """The gray ``label`` prints in: the leaders' if it has one, else the numbers'."""
@@ -144,7 +163,7 @@ class PageStyle:
 
     def smoothing_px(self, size: tuple[int, int]) -> float:
         """How far a line is smoothed along its length on a page of ``size`` (``boundaries.smoothing_length_px``)."""
-        return smoothing_length_px(size, self.line_smoothing_mm)
+        return smoothing_length_px(size, self.line_smoothing_mm, self.paper_format)
 
     @classmethod
     def from_settings(
@@ -314,15 +333,15 @@ def render_page(
     leader_width = style.leader_width_px(size)
     leader_room = max(line_width, leader_width)
     spacing = LabelSpacing(
-        min_font_size=min_font_size(size, style.min_label_pt, exact=vector),
+        min_font_size=min_font_size(size, style.min_label_pt, exact=vector, paper=style.paper_format),
         label_gap_px=line_width,
         leader_width_px=leader_room,
         leader_dot_px=leader_room * style.leader_dot_ratio,
-        leader_reach_px=print_scale(size).mm_to_px(style.leader_reach_mm),
-        text_gap_px=print_scale(size).mm_to_px(style.text_gap_mm),
-        split_neck_px=None if style.split_neck_mm is None else print_scale(size).mm_to_px(style.split_neck_mm),
+        leader_reach_px=style.scale(size).mm_to_px(style.leader_reach_mm),
+        text_gap_px=style.scale(size).mm_to_px(style.text_gap_mm),
+        split_neck_px=None if style.split_neck_mm is None else style.scale(size).mm_to_px(style.split_neck_mm),
         min_side_px=(
-            print_scale(size).mm2_to_px(MIN_REGION_AREA_MM2) if min_side_area_px is None else min_side_area_px
+            style.scale(size).mm2_to_px(MIN_REGION_AREA_MM2) if min_side_area_px is None else min_side_area_px
         ),
         exact=vector,
     )

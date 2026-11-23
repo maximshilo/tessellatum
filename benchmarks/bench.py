@@ -81,6 +81,12 @@ def main(argv: list[str] | None = None) -> int:
     run_p.add_argument("--repeats", type=int, default=3, help="measured runs per case (the median is reported)")
     run_p.add_argument("--warmup", type=int, default=1, help="unmeasured warm-up runs per case")
     run_p.add_argument("--threads", type=int, help="cap worker threads (OpenCV, numba, tessellatum's own pools)")
+    run_p.add_argument(
+        "--paper",
+        choices=["A4", "A3", "A2"],
+        default="A4",
+        help="the sheet every page is made for, and measured on (from 1.0.9; A4 before)",
+    )
     run_p.add_argument("--timeout", type=float, default=1800.0, help="seconds before a case is killed and recorded as a timeout")
     run_p.add_argument(
         "--append",
@@ -184,7 +190,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 "version": ", ".join(sorted(versions)) or "unknown",
                 "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "machine": _machine_info(),
-                "settings": {"threads": args.threads},
+                "settings": {"threads": args.threads, "paper": args.paper},
                 "cases": results,
             }
             (out_dir / "results.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -216,6 +222,8 @@ def _run_case(
     ]  # fmt: skip
     if args.threads:
         cmd += ["--threads", str(args.threads)]
+    if args.paper != "A4":
+        cmd += ["--paper", args.paper]
     try:
         proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=args.timeout)
     except subprocess.TimeoutExpired:

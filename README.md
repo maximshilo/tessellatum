@@ -20,7 +20,7 @@
 **Tessellatum** turns any picture (a photograph, a painting, a cartoon or a comic) into a printable
 paint-by-numbers page: flat, outlined regions, each with a number, and a matching color legend. It pairs classical
 image analysis with compact neural networks that run entirely on-device, and holds every page to physical rules of
-paintability on an A4 sheet: no region narrower than the brush, no number too small to read, no two colors too close
+paintability on the sheet it is made for (A4, A3 or A2): no region narrower than the brush, no number too small to read, no two colors too close
 to tell apart.
 
 ## Gallery
@@ -45,7 +45,7 @@ domain ([sources](tests/sample_images/SOURCES.md)).
 ![Tessellatum's window: settings on the left, the coloring page and its legend on the right](docs/assets/screenshot.png)
 
 Pick a difficulty from Beginner to Realistic, or tune any of 27 settings; preview the page, its painted version and a
-tinted painting guide; export a 300 dpi PNG or an A4 PDF of vector art.
+tinted painting guide; export a 300 dpi PNG or a PDF of vector art on A4, A3 or A2.
 
 ## Highlights
 

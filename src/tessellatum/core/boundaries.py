@@ -16,7 +16,7 @@ from __future__ import annotations
 import numpy as np
 
 from tessellatum.core import kernels
-from tessellatum.core.print_size import print_scale
+from tessellatum.core.print_size import A4, PaperFormat, print_scale
 
 # How far the smoothing may move a line from the crack it is drawn on, in pixels.
 # One pixel is the finest step the region map can take, so a wiggle that moving a
@@ -95,15 +95,15 @@ def crack_edges(region_id_map: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.n
     return right.reshape(-1), down.reshape(-1), degree.reshape(-1), int(right.sum() + down.sum())
 
 
-def smoothing_length_px(size: tuple[int, int], smoothing_mm: float = SMOOTHING_MM) -> float:
-    """How far to blur a line along its length, on a page of ``size`` (width, height) pixels.
+def smoothing_length_px(size: tuple[int, int], smoothing_mm: float = SMOOTHING_MM, paper: PaperFormat = A4) -> float:
+    """How far to blur a line along its length, on a page of ``size`` (width, height) pixels made for ``paper``.
 
     The longer of a pixel step and ``smoothing_mm`` on the printed page (see
     ``SMOOTHING_MIN_PX`` and ``SMOOTHING_MM``); the printed size of a page
     depends only on its shape, so both previews and exports of one image are
     smoothed to the same thing on paper.
     """
-    return max(SMOOTHING_MIN_PX, print_scale(size).mm_to_px(smoothing_mm))
+    return max(SMOOTHING_MIN_PX, print_scale(size, paper).mm_to_px(smoothing_mm))
 
 
 def trace_boundaries(

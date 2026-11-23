@@ -17,7 +17,7 @@ from tessellatum.core.ink_outline import ink_outline
 from tessellatum.core.labels import baseline_bbox, font
 from tessellatum.core.legend import LABEL_FONT_RATIO, SWATCH_BORDER_MM, SWATCH_GAP_MM, SWATCH_MM, number_fill
 from tessellatum.core.painting import Painting, Version, tint_rgb
-from tessellatum.core.print_size import A4, MM_PER_INCH, PT_PER_INCH, print_scale
+from tessellatum.core.print_size import A4, MM_PER_INCH, PT_PER_INCH, PaperFormat, print_scale
 from tessellatum.core.render import PageDrawing, number_origin
 
 # The space between the page and the legend in a PNG, on paper.
@@ -33,13 +33,13 @@ _PT_PER_MM = PT_PER_INCH / MM_PER_INCH
 _MEASURING_EM_PX = 1000
 
 
-def save_png(page: Image.Image, legend: Image.Image, path: Path) -> None:
+def save_png(page: Image.Image, legend: Image.Image, path: Path, paper: PaperFormat = A4) -> None:
     """Stack the page and its legend into one PNG (a PNG has no pages).
 
     The file records the page's print resolution, so that it prints the page as
-    large as the print model places it on A4.
+    large as the print model places it on ``paper``, the sheet it was made for.
     """
-    scale = print_scale(page.size)
+    scale = print_scale(page.size, paper)
     gap = round(scale.mm_to_px(LEGEND_GAP_MM))
     width = max(page.width, legend.width)
     height = page.height + gap + legend.height
@@ -56,7 +56,8 @@ def save_pdf(
     version: Version = Version.PAGE,
     painting: Painting | None = None,
 ) -> None:
-    """Save as two A4 sheets of vector art: the coloring page, then its legend.
+    """Save as two sheets of vector art, of the paper the page was made for (``drawing.style.paper``): the coloring
+    page, then its legend.
 
     The page prints as the print model places it: scaled to fill the printable
     area inside the margins, centered, on a landscape sheet when it is wider
@@ -99,12 +100,12 @@ def save_pdf(
     document = _Document()
     numbers = document.font(_number_font())
     _page_sheet(document, drawing, numbers, version, painting)
-    _legend_sheet(document, palette_rgb, numbers)
+    _legend_sheet(document, palette_rgb, numbers, drawing.style.paper_format)
     Path(path).write_bytes(document.to_bytes())
 
 
-def _sheet_size_mm(landscape: bool) -> tuple[float, float]:
-    return (A4.height_mm, A4.width_mm) if landscape else (A4.width_mm, A4.height_mm)
+def _sheet_size_mm(landscape: bool, paper: PaperFormat = A4) -> tuple[float, float]:
+    return (paper.height_mm, paper.width_mm) if landscape else (paper.width_mm, paper.height_mm)
 
 
 def _page_sheet(
@@ -112,8 +113,9 @@ def _page_sheet(
 ) -> None:
     """The page's sheet, drawn in the page's pixels, y down, mapped onto where the print model puts the page."""
     width, height = drawing.size
-    scale = print_scale(drawing.size)
-    sheet = _sheet_size_mm(scale.landscape)
+    paper = drawing.style.paper_format
+    scale = print_scale(drawing.size, paper)
+    sheet = _sheet_size_mm(scale.landscape, paper)
     printed_w, printed_h = scale.printed_size_mm
     left, top = (sheet[0] - printed_w) / 2, (sheet[1] - printed_h) / 2
     pt_per_px = _PT_PER_MM / scale.px_per_mm
@@ -133,7 +135,7 @@ def _page_sheet(
         ops += _page_ops(drawing, scale.px_per_mm)
     elif version is Version.COMPLETED:
         resources = {}
-        ops += _fill_ops(painting, painting.palette_rgb, scale.px_per_mm, drawing.style.line_smoothing_mm)
+        ops += _fill_ops(painting, painting.palette_rgb, scale.px_per_mm, drawing.style.line_smoothing_mm, paper)
         ops += _picture_ink_ops(drawing, darken=False)
     elif version is Version.TINTED:
         darken = document.add(b"<< /Type /ExtGState /BM /Darken >>")
@@ -147,7 +149,8 @@ def _page_sheet(
         )
         resources = {"ExtGState": {"Mu": multiply}, "XObject": {"Pg": page}}
         ops += _fill_ops(
-            painting, [tint_rgb(rgb) for rgb in painting.palette_rgb], scale.px_per_mm, drawing.style.line_smoothing_mm
+            painting, [tint_rgb(rgb) for rgb in painting.palette_rgb], scale.px_per_mm, drawing.style.line_smoothing_mm,
+            paper,
         )
         ops.append("q /Mu gs /Pg Do Q")
     else:
@@ -187,7 +190,11 @@ def _page_ops(drawing: PageDrawing, px_per_mm: float) -> list[str]:
 
 
 def _fill_ops(
-    painting: Painting, colors: Sequence[tuple[int, int, int]], px_per_mm: float, smoothing_mm: float
+    painting: Painting,
+    colors: Sequence[tuple[int, int, int]],
+    px_per_mm: float,
+    smoothing_mm: float,
+    paper: PaperFormat = A4,
 ) -> list[str]:
     """Every paint's area filled in its entry of ``colors``, its edge stroked ``FILL_EDGE_MM`` wide.
 
@@ -201,7 +208,7 @@ def _fill_ops(
     region_color = np.asarray(painting.region_color)
     paints = np.where(painting.region_id_map >= 0, region_color[np.clip(painting.region_id_map, 0, None)], -1)
     ops = [f"1 J 1 j {_num(FILL_EDGE_MM * px_per_mm)} w"]
-    smoothing_px = smoothing_length_px(painting.region_id_map.shape[1::-1], smoothing_mm)
+    smoothing_px = smoothing_length_px(painting.region_id_map.shape[1::-1], smoothing_mm, paper)
     for paint, rings in sorted(region_outlines(paints, smoothing_px).items()):
         rgb = " ".join(_gray(v) for v in colors[paint])
         ops += [f"{rgb} rg {rgb} RG", _path(rings, offset=0.5), "B*"]
@@ -223,16 +230,21 @@ def _picture_ink_ops(drawing: PageDrawing, darken: bool) -> list[str]:
     return ops
 
 
-def _legend_sheet(document: _Document, palette_rgb: Sequence[tuple[int, int, int]], numbers: int) -> None:
-    """The legend's portrait sheet, drawn in millimeters from the top-left margin, y down."""
-    area_w, area_h = A4.printable_mm()
+def _legend_sheet(
+    document: _Document, palette_rgb: Sequence[tuple[int, int, int]], numbers: int, paper: PaperFormat = A4
+) -> None:
+    """The legend's portrait sheet of ``paper``, drawn in millimeters from the top-left margin, y down."""
+    area_w, area_h = paper.printable_mm()
     cell = SWATCH_MM + SWATCH_GAP_MM
     columns = max(1, int(area_w // cell))
     rows = -(-len(palette_rgb) // columns)
     fit = min(1.0, area_h / (rows * cell + SWATCH_GAP_MM))  # a legend never runs past the sheet; 40 colors take a quarter of it
     scale = _PT_PER_MM * fit
     em = SWATCH_MM * LABEL_FONT_RATIO
-    ops = [f"q {_num(scale, 8)} 0 0 {_num(-scale, 8)} {_num(A4.margin_mm * _PT_PER_MM)} {_num((A4.height_mm - A4.margin_mm) * _PT_PER_MM)} cm"]
+    ops = [
+        f"q {_num(scale, 8)} 0 0 {_num(-scale, 8)} {_num(paper.margin_mm * _PT_PER_MM)} "
+        f"{_num((paper.height_mm - paper.margin_mm) * _PT_PER_MM)} cm"
+    ]
     for index, rgb in enumerate(palette_rgb):
         row, column = divmod(index, columns)
         x, y = SWATCH_GAP_MM + column * cell, SWATCH_GAP_MM + row * cell
@@ -253,7 +265,7 @@ def _legend_sheet(document: _Document, palette_rgb: Sequence[tuple[int, int, int
             f"{_text(text)} Tj ET"
         )
     ops.append("Q")
-    document.page(_sheet_size_mm(False), "\n".join(ops), {"Font": {"F1": numbers}})
+    document.page(_sheet_size_mm(False, paper), "\n".join(ops), {"Font": {"F1": numbers}})
 
 
 def _path(paths: list[np.ndarray], offset: float) -> str:

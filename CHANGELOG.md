@@ -4,6 +4,15 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.9] - 2026-11-23
+
+### Added
+
+- **Paper**: A4, A3 or A2. A page is made for its sheet: the brush, the smallest region, the lines and the numbers are
+  sizes on that sheet, so a larger one makes a finer page of the same picture, at more pixels where the picture has
+  them. The PDF's sheets are that paper, and a PNG records the resolution that prints it there. A4 pages are as
+  before.
+
 ## [1.0.8] - 2026-11-22
 
 ### Changed

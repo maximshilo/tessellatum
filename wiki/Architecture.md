@@ -41,7 +41,7 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 |---|---|
 | `core/pipeline.py` | Orchestration: working size, stage cache, the full generation, drawing a page at print size |
 | `core/settings.py`, `core/difficulty.py` | Every user setting with its range and default; the five presets |
-| `core/print_size.py` | The print model: A4 geometry, pixels per millimetre, unit conversions |
+| `core/print_size.py` | The print model: A4, A3 and A2 geometry, pixels per millimetre, unit conversions |
 | `core/quantize.py`, `core/color.py` | Bilateral filter, k-means palette, CIEDE2000 merge; exact color conversion |
 | `core/ink.py`, `faces.py`, `subject.py`, `text.py` | Line-art decision and ink; the three detectors; lettering |
 | `core/regions.py`, `texture.py`, `tones.py`, `marks.py` | Regions, brush rule, line-art regions; edge vote; face tones and marks |

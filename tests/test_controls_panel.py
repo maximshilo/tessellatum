@@ -312,3 +312,19 @@ def test_any_version_of_the_page_can_be_exported_and_the_page_itself_is_the_defa
         assert combo.itemData(index, Qt.ToolTipRole) == version.description
         combo.setCurrentIndex(index)
         assert panel.get_export_version() is version
+
+
+def test_the_paper_is_a_page_setting_kept_between_runs_and_reset_to_a4(tmp_path):
+    # T3a: A4, A3 or A2, in the region settings, since it changes the page.
+    first = ControlsPanel(store=_store(tmp_path))
+    assert [first.paper_combo.itemText(i) for i in range(first.paper_combo.count())] == ["A4", "A3", "A2"]
+    assert first.get_page_style().paper == "A4"
+    first.paper_combo.setCurrentText("A2")
+    assert first.get_page_style() == PageStyle(paper="A2")
+    again = ControlsPanel(store=_store(tmp_path))
+    assert again.get_page_style().paper == "A2"
+    again.reset()
+    assert again.get_page_style() == PageStyle()
+    store = _store(tmp_path)
+    store.setValue("style/paper", "Letter")  # not a sheet the app offers: the default
+    assert ControlsPanel(store=store).get_page_style().paper == "A4"
