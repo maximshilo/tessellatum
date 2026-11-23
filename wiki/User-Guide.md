@@ -135,5 +135,15 @@ are both drawn from that layout, so they number the page the same way, each numb
   filled outlines, smoothed off the pixel staircase without joining or breaking anything. The painted versions fill
   each region along a path made of the page's own lines. Nothing on the sheet is an image. The legend gets a portrait
   sheet of its own, its swatches 12 mm squares in their exact colors.
-- **PNG**: the page above its legend in one image: the PDF's page drawn in pixels, at 300 dpi, which the file
-  records, so it prints as large as the PDF's page. A PNG can be drawn at up to 16,384 px across.
+- **PNG**: the page above its legend in one image: the PDF's page drawn in pixels, at the **Resolution** asked
+  for, which the file records, so it prints as large as the PDF's page.
+
+**Resolution** is the PNG's: in **dpi** on its paper (the buttons set 150, 300 or 600; any other can be typed) or in
+**px** along the page's long edge, the other worked out from the paper and the picture's shape and shown below it
+with the file's pixel size. 600 dpi is the default: sharp in print and zoomed in on a screen, and an A4 page of the
+benchmark's heaviest picture exports at it in about 8 s. 300 dpi prints as sharp as a photo print, with a quarter of
+the pixels. A PNG is at most 16,384 px along a side, which is also the most a Procreate canvas takes (Procreate also
+limits a canvas to 33 to 134 megapixels by iPad, so the readout gives the megapixels); where the paper makes that less
+than the dpi asked for, the box stops there and says so, and goes back to the dpi asked for on a paper that takes it.
+The PNG is drawn in the background, a few seconds at most, and can't be stopped once it starts. A PDF has no
+resolution of its own: it is vector art, and an app that turns it into pixels picks its own.

@@ -63,7 +63,8 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 
 - **Threads.** The UI thread never runs the pipeline. A `PipelineWorker` (`QThread`) runs each preview or export and
   reports progress and results through Qt signals; a second worker draws the preview's page at print size in the
-  background for the zoom and the export; a warm-up thread compiles the kernels at start-up; a shared thread pool runs
+  background for the zoom and the export; a `TaskWorker` draws a PNG in pixels from it (QtPdf, not cancellable); a
+  warm-up thread compiles the kernels at start-up; a shared thread pool runs
   row stripes and per-region work in parallel, which is effective because OpenCV, NumPy and every Numba kernel release
   the GIL.
 - **Cancellation.** Cooperative: the pipeline polls a cancel flag between stages and between numbers.
