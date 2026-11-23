@@ -765,7 +765,7 @@ def _scorecard_section(
         groups = _groups(cand, base, case_ids, categories)
         if not groups:
             continue
-        worse = {name: regressions(JUDGED, _quality_pairs(base, cand, cids), name, tol) if base else [] for name, cids in groups}
+        worse = {name: judged_regressions(_quality_pairs(base, cand, cids), name, tol) if base else [] for name, cids in groups}
         lines += [f"### {cand.label}" + (f" vs {base.label}" if base else ""), ""]
         rows = []
         for name, cids in groups:
