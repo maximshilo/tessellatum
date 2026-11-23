@@ -13,6 +13,8 @@ from PIL import Image, ImageDraw
 
 from tessellatum.core.boundaries import SMOOTHING_MM, smoothing_length_px, trace_boundaries
 from tessellatum.core.labels import (
+    CROWDED_MIN_LABEL_PT,
+    CROWDED_SIZE_RATIO,
     LEADER_REACH_MM,
     SPLIT_NECK_MM,
     TEXT_GAP_MM,
@@ -343,6 +345,16 @@ def render_page(
             style.scale(size).mm2_to_px(MIN_REGION_AREA_MM2) if min_side_area_px is None else min_side_area_px
         ),
         exact=vector,
+        crowded_font_size=(
+            min_font_size(
+                size,
+                max(CROWDED_MIN_LABEL_PT, CROWDED_SIZE_RATIO * style.min_label_pt),
+                exact=True,
+                paper=style.paper_format,
+            )
+            if vector and style.min_label_pt > CROWDED_MIN_LABEL_PT
+            else None
+        ),
     )
     # A number goes on no printed ink, and a leader runs through none, whichever region's paint goes over it.
     seen = np.where(ink, -1, region_id_map) if inked else region_id_map

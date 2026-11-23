@@ -219,8 +219,9 @@ SETTINGS: tuple[Setting, ...] = (
         "min_label_pt", STYLE, LINES, "Smallest number", "pt", 1.0, 12.0, 0.5,
         "The smallest a region's number prints. Smaller fits more numbers inside small regions, and fewer need a "
         "leader; below 6 pt they get hard to read, and under about 3 pt a number is for coloring on screen, "
-        "zoomed in, rather than on paper. The PDF prints them this small; a preview and a PNG draw no number "
-        "under 10 pixels, 6.5-7 pt on a page made at 1,100 px.",
+        "zoomed in, rather than on paper. An export prints them this small; the preview draws no number under 10 "
+        "pixels, 6.5-7 pt on a page made at 1,100 px. Where a number has no room at all, the export prints it "
+        "smaller inside its region, down to half this size, rather than across its lines.",
     ),
     Setting(
         "leader_reach_mm", STYLE, LINES, "Leader reach", "mm", 1.0, 20.0, 0.5,

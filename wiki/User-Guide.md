@@ -96,9 +96,10 @@ smaller ones.
   clear of a leader as of a line however thin it is drawn.
 - **Line smoothing**: how far along a line its pixel staircase is smoothed.
 - **Smallest number**: 3 pt by default, down to 1 pt. Smaller numbers fit inside more small regions, so fewer need a
-  leader; under about 3 pt they are for coloring on screen, zoomed in, rather than on paper. The PDF prints them as
-  small as this asks. A preview, its zoom and a PNG draw no number under 10 px, so there smaller sizes may show only
-  on a large picture.
+  leader; under about 3 pt they are for coloring on screen, zoomed in, rather than on paper. Every export prints
+  them as small as this asks, and so does the zoom past the preview's own pixels; the preview itself draws no number
+  under 10 px. Where a cluster of tiny regions leaves a number no room at all, not even on a leader, an export prints
+  it smaller inside its region, down to half this size, rather than across its lines.
 - **Leader reach**: how far outside a small region its number may go, on a leader line.
 - **Gap beside text**: how far numbers keep from lettering.
 - **Split at necks under**: 0.35 mm by default. A region whose paper narrows to less than this between its lines, or
