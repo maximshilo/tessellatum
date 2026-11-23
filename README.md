@@ -67,7 +67,7 @@ tinted painting guide; export a 300 dpi PNG or a PDF of vector art on A4, A3 or 
 - Boundary extraction on the pixel-crack graph, constrained smoothing and supersampled anti-aliasing.
 
 **Engineering**
-- Interactive speed: Numba-compiled kernels and multithreading, a preview in about 1–3 seconds.
+- Interactive speed: Numba-compiled kernels and multithreading, a preview in about 1–4 seconds.
 - Print output: a purpose-built vector PDF writer, and 300 dpi PNGs rendered from the same vector page (QtPdf).
 - Quality assurance: 1,300+ automated tests, including pixel-exact equivalence tests, and a benchmark harness that
   scores every version on speed and image quality (ΔE00, SSIM, OCR error rate, edge F1).
