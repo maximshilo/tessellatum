@@ -39,6 +39,16 @@ to 2 times as long on A3 and 2.3 to 4 times on A2 (the benchmark's lion: 2 s on 
 Realistic, 7 s, 15 s and 34 s). The PDF's sheets are this paper, the page landscape when the picture is wider than
 tall and the legend on a portrait sheet of its own, and a PNG records the resolution that prints it on this paper.
 
+## Coloring on
+
+**Coloring on** (under Paper) says what the page will be colored with.
+- **Paper and paint**, the default: paper and paints or pencils can't go darker than their own black, so near-blacks a
+  screen shows apart look alike there. A page keeps its colors apart as printed too (see **Darkest black on paper**),
+  and gives the colors that frees to the rest of the picture.
+- **Screen**, for coloring in an app such as Procreate, where every color is picked exactly by eyedropper or fill:
+  there is no darkest black, and the color margin is at most 2.5 ΔE00, a little over what an eye tells apart side by
+  side, so more of the picture's own shades stay on the legend.
+
 ## Difficulty
 
 Beginner, Easy, Medium (the default), Hard and Realistic fill in the settings below them; moving any of them picks
@@ -52,7 +62,7 @@ Beginner, Easy, Medium (the default), Hard and Realistic fill in the settings be
 | Hard | 28 | 4 mm² | 0.6 mm | 0.8 |
 | Realistic | 32 | 2 mm² | 0.5 mm | 0.7 |
 
-Every level keeps colors 4 ΔE00 apart, settles ragged edges three times as far as the brush alone would (with the edge
+Every level keeps colors 4 ΔE00 apart, on screen and as printed on paper whose darkest black is L* 25, settles ragged edges three times as far as the brush alone would (with the edge
 hold at 1 ΔE00, which keeps them closest to the picture's), lets a region in a face or the subject be a quarter of the
 smallest, and rounds corners to the brush. Region sizes are areas on paper, so a page's regions are the same size on
 paper whatever its pixel count, and a long, narrow picture, which prints smaller, gets fewer regions rather than
@@ -64,6 +74,11 @@ smaller ones.
 - **Colors**: how many colors to look for. Colors closer than the color margin are merged, so a page can keep fewer.
 - **Color margin**: how different every two palette colors must be (CIEDE2000; about 1 is the smallest difference an
   eye sees side by side). Lower keeps more, subtler colors.
+- **Darkest black on paper**: how dark the printer and the paints or pencils can go, as a lightness (L* 25 by default,
+  0 to 40). Colors darker than about that look alike on paper, so two of them must also keep the color margin as
+  printed; the slots that frees go to the rest of the picture, where its colors are. The faces and the subject keep
+  their dark shades. About 20 for a good laser or pigment inkjet and soft pencils, 30 for a weak printer or cheap
+  paper; 0 judges the colors as the screen shows them, as Screen does.
 - **Smallest region**: the smallest area a region may have on paper (2 to 500 mm²); smaller ones merge into a neighbor.
 - **Brush width**: the narrowest any part of a region may be (0.5 to 6 mm); narrower parts are given to the region
   beside them.

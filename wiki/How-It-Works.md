@@ -37,6 +37,14 @@ flowchart TD
    (4 ΔE00 at every level), are then merged into the color their pixels average to, so a photograph of fur or stone
    comes back with a handful of clearly different browns instead of twenty near-identical ones. That is why the legend
    can be shorter than the difficulty asked for.
+
+   Colors must also stay apart on paper. Paper and paint have a darkest black (about L* 25), so the merge goes on with
+   the colors as printed: black point compensation squeezes the darks toward the paper's black and toward neutral, and
+   leaves mid-tones and white alone. A dark picture's ground, a night sky or a painting's dark background, otherwise
+   takes many near-blacks that print as one. Colors mostly in the faces and the subject keep the screen's margin, and
+   the slots the merge frees are asked of k-means again, up to twice, so the legend keeps its count and spends it on
+   the picture's other colors. A picture without such darks gets the same palette as before; coloring on a screen
+   turns this off.
 2. **Regionize.** Same-color pixels are grouped into connected regions; regions smaller than the difficulty's
    threshold merge into the neighbor they share the most boundary with, and neighbors left sharing a color by that
    merge become one region, so the page never draws a line between two areas the painter fills alike.

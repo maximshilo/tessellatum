@@ -277,8 +277,20 @@ def label_box(text: str, font_size: int, point, page_size: tuple[int, int]) -> t
     return (x0, y0, x0 + tw, y0 + th)
 
 
+# A preset's page colored on a screen (from 1.0.16): "Medium/Screen" is Medium with no paper black and the color margin
+# at most SCREEN_MARGIN_DE00, as the app's "Coloring on: Screen" asks; a version without a paper black gets the margin.
+SCREEN_SUFFIX = "/Screen"
+SCREEN_MARGIN_DE00 = 2.5
+
+
 def preset_params(difficulty, name: str):
     """The difficulty parameters of preset ``name`` in the version whose ``difficulty`` module is given."""
+    if name.endswith(SCREEN_SUFFIX):
+        params = preset_params(difficulty, name[: -len(SCREEN_SUFFIX)])
+        screen = {"palette_margin_de00": min(params.palette_margin_de00, SCREEN_MARGIN_DE00)}
+        if hasattr(params, "paper_black_lstar"):
+            screen["paper_black_lstar"] = 0.0
+        return dataclasses.replace(params, **screen)
     if name == "Max" and hasattr(difficulty, "finest_params"):
         return difficulty.finest_params()
     if name in EXTRA_PRESETS:

@@ -93,10 +93,12 @@ class Metric:
         return self.sigma_export if size == "export" and self.sigma_export is not None else self.sigma
 
 
-# Tolerances of the color metrics added in 1.0.16, from `bench.py noise` over `T1-sizes` (see the comment below).
-VIVID_SIGMA = 0.069
-PRINTED_MIN_SIGMA = 1.3
-PRINTED_PAIRS_SIGMA = 3.2
+# Tolerances of the color metrics added in 1.0.16: `bench.py noise` over `T1-sizes`, the 12 images at Easy, Medium,
+# Hard and Max at 1099, 1100 and 1101 px (132 pairs), measured on 1.0.16 before its palette changed. Not measured at
+# export size: exports are judged with them too.
+VIVID_SIGMA = 0.052
+PRINTED_MIN_SIGMA = 0.87
+PRINTED_PAIRS_SIGMA = 1.0
 
 # Every quality column, in the report's order. A tolerance is the root mean square change of one case between two sizes
 # of the same image and preset (`bench.py noise`), measured on `main` at 36d75ed (T1.8):

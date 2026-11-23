@@ -44,7 +44,7 @@ domain ([sources](tests/sample_images/SOURCES.md)).
 
 ![Tessellatum's window: settings on the left, the coloring page and its legend on the right](docs/assets/screenshot.png)
 
-Pick a difficulty from Beginner to Realistic, or tune any of 27 settings; preview the page, its painted version and a
+Pick a difficulty from Beginner to Realistic, or tune any of 28 settings; preview the page, its painted version and a
 tinted painting guide; export a PNG at the resolution you choose (600 dpi by default) or a PDF of vector art, on A4, A3 or A2.
 
 ## Highlights
@@ -59,7 +59,8 @@ tinted painting guide; export a PNG at the resolution you choose (600 dpi by def
   art.
 
 **Image analysis**
-- Edge-preserving bilateral filtering and perceptual color science (CIELAB, CIEDE2000).
+- Edge-preserving bilateral filtering and perceptual color science (CIELAB, CIEDE2000, black point compensation for
+  how the palette prints).
 - Mathematical morphology to detect ink lines, fine facial features and text backgrounds.
 - Euclidean distance transforms and Voronoi partitioning to remove every region a brush can't paint.
 - Connected-component labeling, contour tracing and polygon simplification.

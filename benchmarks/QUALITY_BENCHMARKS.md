@@ -54,8 +54,10 @@ than the faces or the subject, and it never loses an eye, a nose or a mouth.
 
 | metric | what it measures | target |
 |---|---|---|
-| ΔE00 mean, ΔE00 p95 | CIEDE2000 color error between the painting and the image | regression |
-| SSIM | structural similarity of their lightness | regression |
+| ΔE00 mean, ΔE00 p95 | CIEDE2000 color error between the painting and the image | regression, but see "The palette's trade" below |
+| SSIM | structural similarity of their lightness | regression, likewise |
+| vivid ΔE00 | the same error on the image's most colorful tenth of pixels (by CIELAB chroma, among those at least L* 15) | regression |
+| S-CIELAB ΔE00, subject S-CIELAB ΔE00 | the error as the eye sees the page from 40 cm: both blurred as the eye blurs them first, color far more than lightness (Zhang & Wandell's S-CIELAB), then CIEDE2000; over the page and inside the subject | inform |
 | face ΔE00, face SSIM | the same, inside the annotated faces | regression |
 | subject ΔE00, subject SSIM | the same, inside the annotated subject's outline | regression |
 | features lost | annotated eyes, noses and mouths the page no longer shows. A feature survives if at least 30% of its edges lie within 0.5 mm of a line or of printed ink, or if a region of its own covers a quarter of its box | 0 |
@@ -64,6 +66,20 @@ than the faces or the subject, and it never loses an eye, a nose or a mouth.
 Fidelity has no absolute target. A paintable page has to give up detail narrower than the brush, so how closely it
 can resemble the image depends on the image. Fidelity is judged against a reference instead. Fidelity spent to make
 the page paintable is recorded as an intended trade-off.
+
+Per-pixel ΔE00 counts texture no page can paint (fur, grass) as much as the shapes a painter sees. S-CIELAB looks at
+the page as a viewer does, so it should separate pages that differ in what can be seen. It informs, until it has been
+shown to follow what people see better than ΔE00 mean.
+
+**The palette's trade.** A large dark area, a night sky or a painting's dark ground, used to take many legend colors
+that paper prints alike (see Palette). Giving those colors to the picture's colorful parts and its subject raises the
+dark area's error, so ΔE00 mean, ΔE00 p95 and SSIM get worse on exactly the pictures the change is for. On a case where
+`printed close pairs` fell, they may get worse when all of these hold, and the case isn't counted in their regressions:
+- ΔE00 mean rose by at most 1.0 and at most 10% of its value;
+- `vivid ΔE00` or `subject ΔE00` improved;
+- no face metric is worse by more than 3 of its tolerances, and no face feature is lost.
+
+The verdict lists those cases.
 
 ## 2. Paintable
 
@@ -123,10 +139,22 @@ The painter can tell every two colors apart, with the margin the difficulty asks
 1 is the smallest difference an eye sees side by side), 10 at Max. On line art, the colors are the artwork's own flat
 colors.
 
+They must be told apart on paper, too. Paper and paint have a darkest black: plain paper prints no darker than about
+L* 25-30 (black density 1.2-1.4), and pencils and mixed paints don't go much darker on it. Near-blacks a screen shows
+apart print as one. Print workflows model that with black point compensation, which moves every color toward the
+paper's black in XYZ: it squeezes the darks together and toward neutral, and leaves the mid-tones and white alone. The
+printed metrics judge the legend that way, with a black of L* 25, every version and setting alike, and on the
+mid-tones' scale (divided by the share of their difference two grays at L* 50 and 54 keep). A pair is never farther
+apart printed than on screen. A near-white needs no such test: legends print on white paper, where differences near
+the paper's lightness look larger.
+
 | metric | what it measures | target |
 |---|---|---|
 | palette min ΔE00 | smallest CIEDE2000 difference between two legend colors | ≥ the page's color margin |
 | close color pairs | pairs of legend colors closer than the page's color margin | regression |
+| printed min ΔE00 | the same as printed, with black point compensation to a paper black of L* 25 | ≥ the page's color margin |
+| printed close pairs | pairs of legend colors closer than the page's color margin, as printed | regression |
+| colors < L* 25, colors > L* 90 | legend colors near black and near white | inform |
 | flat colors ΔE00 | on line art, mean distance from each of the artwork's flat colors to the nearest legend color | at most 2.5 above the best a legend of that many colors could reach, where the manifest's colors are the file's exact values |
 
 ## By kind of image
@@ -258,7 +286,8 @@ preview's page drawn at print size, or the preview itself where it is made at th
 ## Not measured
 
 - **Printable colors.** The palette is 8-bit sRGB, so it always displays. Which of its colors paper and ink can
-  reproduce depends on the printer, and checking that needs the printer's color profile.
+  reproduce depends on the printer, and checking that needs the printer's color profile. Only the darkest black is
+  modeled (see Palette), from published densities, not a measured printer.
 - **Line width, the grays and the numbers' style.** The page draws them as set (0.2 mm lines, 0.1 mm leaders, three
   grays by default), and no metric reads them; the tests check each kind of ink prints in its own gray.
 - **The PDF.** The harness scores the raster page. The tests check the vector PDF against it
