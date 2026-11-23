@@ -32,11 +32,12 @@ place, to compare settings there.
 **Paper** (A4 by default, A3 or A2, at the top of the region settings) is the sheet the page is made for. Every size
 on paper -- the brush, the smallest region, the lines, the numbers -- applies on that sheet, so a larger one prints the
 picture larger and makes a finer page of it: more and smaller regions, each still as wide as the brush. The page is
-made at more pixels on a larger sheet, never more than the picture's own, so a small picture gains little from A2,
-and a page takes longer to make: a Medium preview of a 2048 px photograph takes 1.5 to 2 times as long on A3 and 1.6
-to 3 times on A2 (a Realistic one of the benchmark's lion, 7 s on A4, 10 s on A3 and 23 s on A2). A picture with too
-few pixels for its sheet makes a crowded page there, its numbers on the lines: give A3 and A2 a large picture. The PDF's sheets are this paper, the page landscape when the picture is wider than tall and the legend on
-a portrait sheet of its own, and a PNG records the resolution that prints it on this paper.
+made at more pixels on a larger sheet, the picture scaled up where it has fewer, so that every region still has room
+for the brush and its number; scaling up adds no detail the picture doesn't have, so a larger picture still makes a
+better page on a larger sheet. A page takes longer to make there: a Medium preview of a 2048 px photograph takes 1.5
+to 2 times as long on A3 and 2.3 to 4 times on A2 (the benchmark's lion: 2 s on A4, 4 s on A3 and 9 s on A2; at
+Realistic, 7 s, 15 s and 34 s). The PDF's sheets are this paper, the page landscape when the picture is wider than
+tall and the legend on a portrait sheet of its own, and a PNG records the resolution that prints it on this paper.
 
 ## Difficulty
 
