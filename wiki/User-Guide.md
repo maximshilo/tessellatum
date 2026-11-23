@@ -141,7 +141,7 @@ are both drawn from that layout, so they number the page the same way, each numb
 **Resolution** is the PNG's: in **dpi** on its paper (the buttons set 150, 300 or 600; any other can be typed) or in
 **px** along the page's long edge, the other worked out from the paper and the picture's shape and shown below it
 with the file's pixel size. 600 dpi is the default: sharp in print and zoomed in on a screen, and an A4 page of the
-benchmark's heaviest picture exports at it in about 8 s. 300 dpi prints as sharp as a photo print, with a quarter of
+benchmark's slowest picture exports at it in about 10 s. 300 dpi prints as sharp as a photo print, with a quarter of
 the pixels. A PNG is at most 16,384 px along a side, which is also the most a Procreate canvas takes (Procreate also
 limits a canvas to 33 to 134 megapixels by iPad, so the readout gives the megapixels); where the paper makes that less
 than the dpi asked for, the box stops there and says so, and goes back to the dpi asked for on a paper that takes it.
