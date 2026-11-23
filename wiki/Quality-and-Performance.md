@@ -54,14 +54,16 @@ Median preview time and region count over the 12 benchmark images, at each level
 
 | Level | Median preview | Slowest | Median regions | Most regions |
 |---|---|---|---|---|
-| Beginner | 0.9 s | 3.1 s | 290 | 826 |
-| Easy | 1.2 s | 5.1 s | 417 | 1,625 |
-| Medium | 1.7 s | 5.6 s | 552 | 1,805 |
-| Hard | 2.5 s | 6.7 s | 750 | 2,385 |
-| Realistic | 3.2 s | 7.9 s | 1,384 | 4,017 |
+| Beginner | 0.8 s | 2.4 s | 290 | 826 |
+| Easy | 1.1 s | 3.8 s | 417 | 1,199 |
+| Medium | 1.5 s | 5.1 s | 552 | 1,887 |
+| Hard | 2.2 s | 9.1 s | 750 | 2,632 |
+| Realistic | 3.6 s | 16.4 s | 1,292 | 4,124 |
 
-Measured on a 16-thread desktop (October 2026, version 0.1.56). Drawing a preview at print size for export adds about
-0.5 s at Beginner and Medium.
+Measured on a 16-thread desktop (November 2026, version 1.0.10), on A4. The slowest are the small cartoons, scaled up
+2-3 times to their working size. An export lays the preview's page out at 300 dpi on its paper, about 2 s more at
+Beginner and Medium and 4 to 7 s at Realistic, and draws a PNG from that layout in 1 to 2 s at 150 to 600 dpi on A4
+(the lion at Realistic: 6 s to lay out, 1.6 s to draw at 600 dpi, 1.1 GB at most; on A2, 37 s, 7.6 s and 3.3 GB).
 
 What makes it fast:
 

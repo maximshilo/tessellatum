@@ -17,7 +17,7 @@ from PySide6.QtCore import QPointF  # noqa: E402
 from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from tessellatum.core import difficulty, pipeline, print_size  # noqa: E402
+from tessellatum.core import difficulty, export, pipeline, print_size  # noqa: E402
 from tessellatum.core.painting import Version  # noqa: E402
 from tessellatum.core.pipeline import Handling, PipelineCancelled  # noqa: E402
 from tessellatum.core.print_size import print_scale  # noqa: E402
@@ -161,16 +161,16 @@ def test_an_opened_picture_is_previewed_with_the_panel_s_settings(drive, tmp_pat
     # Hard with a 2 mm brush: a Custom difficulty.
     assert controls.preset_combo.currentText() == "Custom"
     assert params == dataclasses.replace(difficulty.params_for_preset("Hard"), min_width_mm=2.0)
-    # At its working size (D-012): here the picture's own, smaller than a preview.
-    assert long_edge == pipeline.working_long_edge(image, params, kwargs["handling"]) == 600
+    # At its working size (D-012), the picture scaled up to it (D-009).
+    assert long_edge == pipeline.working_long_edge(image, params, kwargs["handling"]) == 1100
     assert kwargs["style"] == PageStyle.from_settings(0.5, "Dark")
     assert kwargs["handling"] == Handling(text=False, ink_gap_mm=1.0)
     page = drive.window.current_page
-    assert page is not None and page.page.size == (600, 400)  # never upscaled
+    assert page is not None and page.page.size == (1100, 733)
     assert controls.generate_button.isEnabled() and controls.export_button.isEnabled()
     assert drive.window.preview.shown_image() is not None
     assert drive.status() == (
-        f"Preview ready: {page.num_colors_used} colors, {page.num_regions} regions, made at 600 × 400 px."
+        f"Preview ready: {page.num_colors_used} colors, {page.num_regions} regions, made at 1100 × 733 px."
     )
     assert drive.dialogs == []
 
@@ -232,43 +232,45 @@ def test_an_export_is_its_preview_s_page_drawn_at_print_size(drive, tmp_path, mo
     assert len(drive.calls) == calls + 1 and long_edge == 3272 and params == difficulty.params_for_preset("Hard")
 
 
-def test_a_preview_made_at_print_size_is_the_export(drive, drawn, tmp_path):
-    # D-012 (T8): Realistic's brush asks for 2216 px, more than this picture's 2000, so its preview is made at the
-    # picture's own size, which is the export's: the export saves it, neither made again nor drawn.
+def test_every_export_is_drawn_from_the_preview_s_print_layout(drive, drawn, tmp_path):
+    # T3b: Realistic's brush asks for 2216 px, more than this picture's 2000, so its preview is made of the picture
+    # scaled up (D-009). Each export is that page laid out once at 300 dpi on A4, drawn from it, not made again: the PNG
+    # as the PDF's vectors drawn in pixels, the PDF from the same layout, not laid out again.
     window = drive.window
     window.current_image_bgr = _blocks((2000, 1000))
     window.controls.preset_combo.setCurrentText("Realistic")
     window.generate_preview()
     drive.wait()
     preview = window.current_page
-    assert preview.page.size == (2000, 1000) and drive.calls[-1][0][2] == 2000
+    assert preview.page.size == (2216, 1108) and drive.calls[-1][0][2] == 2216
     calls = len(drive.calls)
 
     drive.save_path = str(tmp_path / "page")
     window.export_page()
     drive.wait()
-    assert len(drive.calls) == calls and drawn == []
+    layout = window._print_page
+    assert len(drive.calls) == calls and drawn == [preview] and layout.page.size == (3272, 1636)
+    expected = export.rasterize(layout.drawing, 300)
     with Image.open(tmp_path / "page.png") as png:
-        assert np.asarray(png.convert("RGB"))[:1000].tobytes() == preview.image(Version.PAGE).tobytes()
+        assert png.width == 3272 and png.info["dpi"] == pytest.approx((300, 300), abs=0.2)
+        assert np.asarray(png.convert("RGB"))[: expected.height].tobytes() == expected.tobytes()
     assert drive.dialogs[-1][1] == "Export complete" and not window.controls.progress_row.isVisible()
 
-    # A PDF too: the preview's vector page, at the picture's own size, drawn again only to place its numbers for the
-    # PDF (T2a): not made again.
     window.controls.pdf_radio.setChecked(True)
     drive.save_path = str(tmp_path / "page.pdf")
     window.export_page()
     drive.wait()
     assert len(drive.calls) == calls and drawn == [preview]
-    assert "0 0 2000 1000 re W n" in pdf_reading.sheets((tmp_path / "page.pdf").read_bytes())[0]["content"]
+    assert "0 0 3272 1636 re W n" in pdf_reading.sheets((tmp_path / "page.pdf").read_bytes())[0]["content"]
 
-    # Fewer pixels across the brush: the preview is another setting's, so the export is made again.
+    # Fewer pixels across the brush: the preview is another setting's, so the export is made again, laid out to print.
     control = window.controls.controls["brush_px"]
     control.slider.setValue(controls_panel.slider_position(control.setting, 2.0))
     window.export_page()
     drive.wait()
     (_image, _params, long_edge), kwargs = drive.calls[-1]
-    assert len(drive.calls) == calls + 1 and long_edge == 2000 and kwargs["handling"].brush_px == 2.0
-    assert drive.dialogs[-1][1] == "Export complete"
+    assert len(drive.calls) == calls + 1 and long_edge == 3272 and kwargs["handling"].brush_px == 2.0
+    assert kwargs["vector"] and drive.dialogs[-1][1] == "Export complete"
 
 
 def test_a_running_generation_can_be_cancelled(drive, monkeypatch):
@@ -419,10 +421,12 @@ def test_the_version_asked_for_is_exported(drive, tmp_path):
 
     assert drive.save_names == ["coloring_page_completed.png"]
     (image, params, long_edge), kwargs = drive.calls[-1]
-    expected = pipeline.generate(image, params, long_edge, style=kwargs["style"], handling=kwargs["handling"])
+    assert long_edge == 3272 and kwargs["vector"]
+    page = pipeline.generate(image, params, long_edge, style=kwargs["style"], handling=kwargs["handling"], vector=True)
+    expected = export.rasterize(page.drawing, 300, Version.COMPLETED, page.painting)
     with Image.open(tmp_path / "completed.png") as png:
-        top = png.convert("RGB").crop((0, 0, 600, 400))
-        assert top.tobytes() == expected.image(Version.COMPLETED).tobytes()
+        top = png.convert("RGB").crop((0, 0, *expected.size))
+        assert top.tobytes() == expected.tobytes()
     assert drive.dialogs[-1][1] == "Export complete"
 
     controls.version_combo.setCurrentIndex(controls.version_combo.findData(Version.TINTED))
@@ -494,8 +498,12 @@ def test_zoomed_in_the_preview_shows_its_page_as_it_prints_and_the_export_saves_
     assert drive.dialogs[-1][1] == "Export complete" and not window.controls.progress_row.isVisible()
     with Image.open(tmp_path / "page.png") as png:
         exported = np.asarray(png.convert("RGB"))
-    assert (exported[: 1636] == _array(printed.image(Version.COMPLETED))).all()
-    assert (tile == exported[top : top + tile.shape[0], left : left + tile.shape[1]]).all()
+    # The PNG is the layout's vectors drawn in pixels (T3b); the zoom, the layout's own drawing of them: the same page,
+    # to the anti-aliasing.
+    drawn_png = export.rasterize(printed.drawing, 300, Version.COMPLETED, printed.painting)
+    assert (exported[: 1636] == np.asarray(drawn_png)).all()
+    there = exported[top : top + tile.shape[0], left : left + tile.shape[1]].astype(np.int16)
+    assert np.abs(tile.astype(np.int16) - there).mean() < 4
 
 
 def test_an_export_asked_for_while_the_zoom_draws_the_page_waits_for_it(drive, drawn, monkeypatch, tmp_path):
@@ -577,17 +585,18 @@ def test_a_new_preview_drops_the_page_drawn_for_the_last_one(drive, drawn, monke
     assert (_array(window.preview.shown_image()) == _array(window._print_page.image(Version.PAGE))).all()
 
 
-def test_a_page_no_larger_than_its_preview_is_shown_as_it_is_however_far_in(drive, drawn):
+def test_a_small_picture_s_page_is_shown_as_it_prints_far_in(drive, drawn):
+    # T3b: every page is laid out at 300 dpi to print, however few pixels its picture has, and the zoom shows that.
     window = drive.window
     window.current_image_bgr = _blocks((600, 400))
     window.generate_preview()
     drive.wait()
+    page = window.current_page
     window.preview.zoom_to(3.0)
     drive.wait()
 
-    assert drawn == [] and window._print_worker is None
-    assert window.preview.printed_zoom() == pytest.approx(3.0)
-    assert (_array(window.preview.shown_image()) == _array(window.current_page.image(Version.PAGE))).all()
+    assert drawn == [page] and window._print_page.page.size == (3272, 2181)
+    assert (_array(window.preview.shown_image()) == _array(window._print_page.image(Version.PAGE))).all()
 
 
 def test_a_zoom_while_a_preview_is_made_draws_the_new_page_not_the_last(drive, drawn):
@@ -668,8 +677,8 @@ def test_a_page_drawn_for_the_zoom_while_an_export_with_other_settings_is_made_i
     assert drive.dialogs[-1][1] == "Export complete"
     with Image.open(tmp_path / "page.png") as png:
         exported = np.asarray(png.convert("RGB"))
-    assert (exported[: 1636] == _array(made[0].image(Version.PAGE))).all()
-    assert not (exported[: 1636] == _array(window._print_page.image(Version.PAGE))).all()
+    assert (exported[: 1636] == np.asarray(export.rasterize(made[0].drawing, 300))).all()
+    assert not (exported[: 1636] == np.asarray(export.rasterize(window._print_page.drawing, 300))).all()
 
 
 def test_abort_cancels_an_export_with_other_settings_not_the_zoom_s_drawing(drive, monkeypatch, tmp_path):

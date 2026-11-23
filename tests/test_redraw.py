@@ -54,7 +54,7 @@ def pages():
 
 def test_an_export_has_its_preview_s_regions_colors_and_legend(pages):
     _picture, preview, export = pages
-    assert export.page.size == (1700, 1200)
+    assert export.page.size == (3179, 2244)  # 300 dpi on A4, past the picture's own 1700 x 1200 (T3b)
     assert export.num_regions == preview.num_regions and export.palette_rgb == preview.palette_rgb
     p, e = preview.analysis, export.analysis
     assert set(np.unique(e.region_id_map).tolist()) == set(np.unique(p.region_id_map).tolist())
@@ -108,21 +108,25 @@ def test_a_page_is_made_at_its_working_size_and_an_export_drawn_from_it():
     preview = pipeline.generate(picture, params, 1385)
     assert preview.page.size == (1385, 923) and preview.model.region_id_map.shape == (923, 1385)
     export = pipeline.generate(picture, params, pipeline.export_long_edge(picture))
-    assert export.page.size == (1800, 1200)
+    assert export.page.size == (3272, 2181)
     np.testing.assert_array_equal(export.model.region_id_map, preview.model.region_id_map)  # made there, not again
-    assert export.page.tobytes() == pipeline.draw_page(preview, picture, 1800).page.tobytes()
+    assert export.page.tobytes() == pipeline.draw_page(preview, picture, 3272).page.tobytes()
     # With fewer pixels across the brush, the page is made at the preview's 1100 px and drawn from there.
     coarse = pipeline.generate(picture, params, 1800, handling=pipeline.Handling(brush_px=2.0))
     assert coarse.page.size == (1800, 1200) and coarse.model.region_id_map.shape == (733, 1100)
     pipeline.clear_cache()
 
 
-def test_a_picture_no_larger_than_a_preview_is_made_at_its_own_size():
+def test_a_picture_smaller_than_its_working_size_is_scaled_up_to_it():
+    # D-009: the page is made where its brush is 4 px across, of the picture scaled up where it has fewer pixels.
     pipeline.clear_cache()
     picture = _shapes((1000, 700))
+    working = pipeline.working_long_edge(picture, FINE)
+    assert 1000 < working < 2400
     exported = pipeline.generate(picture, FINE, 2400)
-    made = pipeline._make_page(picture, FINE, 1000)
-    assert exported.page.tobytes() == made.page.tobytes()
+    assert exported.model.region_id_map.shape[1] == working
+    made = pipeline._make_page(picture, FINE, working)
+    np.testing.assert_array_equal(exported.model.region_id_map, made.model.region_id_map)
     pipeline.clear_cache()
 
 

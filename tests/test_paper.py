@@ -48,12 +48,13 @@ def _picture() -> np.ndarray:
     return image
 
 
-def test_a_larger_sheet_makes_the_page_at_more_pixels_never_more_than_the_picture_s():
+def test_a_larger_sheet_makes_the_page_at_more_pixels():
     image, params = _picture(), params_for_preset("Medium")
     edges = [pipeline.working_long_edge(image, params, paper=paper) for paper in (A4, A3, A2)]
-    assert edges[0] < edges[1] <= edges[2] <= 2400
+    assert edges[0] < edges[1] < edges[2]  # past the picture's 2400 px on A2: scaled up (D-009)
     exports = [pipeline.export_long_edge(image, paper) for paper in (A4, A3, A2)]
-    assert exports == [min(2400, long_edge_at_dpi((2400, 1800), 300, paper)) for paper in (A4, A3, A2)]
+    assert exports == [long_edge_at_dpi((2400, 1800), 300, paper) for paper in (A4, A3, A2)]
+    assert edges[2] < exports[2]
 
 
 def test_a_page_made_for_a3_is_finer_and_a4_is_as_before():

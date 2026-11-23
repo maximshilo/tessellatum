@@ -553,7 +553,8 @@ def test_a_picture_without_faces_is_drawn_as_before(monkeypatch):
     monkeypatch.setattr(subject, "find_subject", _no_subject)
     # Drawn in the ink of before 1.0.7: the numbers in one gray, the leaders as wide as the lines.
     style = PageStyle(label_gray=0x8C, leader_gray=0x8C, leader_width_mm=OUTLINE_WIDTH_MM)
-    page = pipeline.generate(image, params, pipeline.PREVIEW_LONG_EDGE, collect_analysis=True, style=style)
+    # At its own 600 px, as it was made before pictures were scaled up to their working size (1.0.10).
+    page = pipeline.generate(image, params, max(image.shape[:2]), collect_analysis=True, style=style)
     assert page.analysis.faces == [] and not page.analysis.detail.any()
     # Its page as v0.1.33 drew it, before faces were given more detail.
     assert hashlib.sha1(page.page.tobytes()).hexdigest() == SCENE_MEDIUM_PAGE_SHA1

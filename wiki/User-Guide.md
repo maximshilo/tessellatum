@@ -24,7 +24,7 @@ and Ctrl+minus, or the buttons above it, and the page is dragged to move it. **F
 **100%** a pixel of the page as it prints on a pixel of the screen, and **Print size** the page as large as on paper,
 by the size the screen reports. Further in than the preview's own pixels, the zoom shows the page as it prints: the
 export's own drawing, with its numbers where and as small as they print. It is drawn in the background the first time
-and kept, so the export saves it without drawing it again. A new preview of the same picture keeps the zoom and the
+and kept, so the export is drawn from it without laying the page out again. A new preview of the same picture keeps the zoom and the
 place, to compare settings there.
 
 ## Paper
@@ -32,11 +32,12 @@ place, to compare settings there.
 **Paper** (A4 by default, A3 or A2, at the top of the region settings) is the sheet the page is made for. Every size
 on paper -- the brush, the smallest region, the lines, the numbers -- applies on that sheet, so a larger one prints the
 picture larger and makes a finer page of it: more and smaller regions, each still as wide as the brush. The page is
-made at more pixels on a larger sheet, never more than the picture's own, so a small picture gains little from A2,
-and a page takes longer to make: a Medium preview of a 2048 px photograph takes 1.5 to 2 times as long on A3 and 1.6
-to 3 times on A2 (a Realistic one of the benchmark's lion, 7 s on A4, 10 s on A3 and 23 s on A2). A picture with too
-few pixels for its sheet makes a crowded page there, its numbers on the lines: give A3 and A2 a large picture. The PDF's sheets are this paper, the page landscape when the picture is wider than tall and the legend on
-a portrait sheet of its own, and a PNG records the resolution that prints it on this paper.
+made at more pixels on a larger sheet, the picture scaled up where it has fewer, so that every region still has room
+for the brush and its number; scaling up adds no detail the picture doesn't have, so a larger picture still makes a
+better page on a larger sheet. A page takes longer to make there: a Medium preview of a 2048 px photograph takes 1.5
+to 2 times as long on A3 and 2.3 to 4 times on A2 (the benchmark's lion: 2 s on A4, 4 s on A3 and 9 s on A2; at
+Realistic, 7 s, 15 s and 34 s). The PDF's sheets are this paper, the page landscape when the picture is wider than
+tall and the legend on a portrait sheet of its own, and a PNG records the resolution that prints it on this paper.
 
 ## Difficulty
 
@@ -122,17 +123,17 @@ smaller ones.
 
 ## Export
 
-The export renders the page at 300 dpi on its paper -- on A4, a long edge of 2,244 to 3,272 px depending on the picture's shape, or the
-picture's own size where that is smaller, since nothing is upscaled. **Version** picks which of the three versions to
-export, in either format; the legend comes with each.
+Every export is the preview's page laid out once to print, at 300 dpi on its paper -- on A4, a long edge of 2,244 to
+3,272 px depending on the picture's shape -- however many pixels the picture has: its regions are the preview's, its
+lines and ink redrawn there, its numbers placed there once, as small as **Smallest number** asks. The PDF and the PNG
+are both drawn from that layout, so they number the page the same way, each number at the same place on paper.
+**Version** picks which of the three versions to export, in either format; the legend comes with each.
 
 - **PDF**: two sheets of vector art, of the page's paper. The page fills the printable area inside 10 mm margins, centered, on a
   landscape sheet when the picture is wider than tall. Its lines are paths of the width asked for and its numbers text,
-  so a printer draws them at its own resolution. Its numbers are placed for it, as small as **Smallest number** asks
-  however few pixels the picture has, so a PDF can number small regions inside them where the preview and the PNG
-  need a leader. Line art's ink, the marks in a face and the letters of signs are
+  so a printer draws them at its own resolution. Line art's ink, the marks in a face and the letters of signs are
   filled outlines, smoothed off the pixel staircase without joining or breaking anything. The painted versions fill
   each region along a path made of the page's own lines. Nothing on the sheet is an image. The legend gets a portrait
   sheet of its own, its swatches 12 mm squares in their exact colors.
-- **PNG**: the page above its legend in one image, which records its resolution, so it prints as large as the PDF's
-  page.
+- **PNG**: the page above its legend in one image: the PDF's page drawn in pixels, at 300 dpi, which the file
+  records, so it prints as large as the PDF's page. A PNG can be drawn at up to 16,384 px across.

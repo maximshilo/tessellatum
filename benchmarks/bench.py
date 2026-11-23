@@ -38,6 +38,7 @@ DEFAULT_RESULTS_DIR = BENCH_DIR / "results"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff"}
 WORKTREE = "WORKTREE"
 PREVIEW = "preview"  # a --long-edge: the size each version previews a page at (see bench_case.asked_long_edge)
+PRINT = "print"  # a --long-edge: the size each version lays a page out at to print (from 1.0.10, 300 dpi on its paper)
 TRACKED_PACKAGES = ("numpy", "opencv-python", "pillow", "numba")
 
 
@@ -76,7 +77,8 @@ def main(argv: list[str] | None = None) -> int:
         default=[PREVIEW],
         dest="long_edges",
         help=f"output long edge(s) in px, or {PREVIEW!r}: the size each version previews a page at (its working size "
-        "from 0.1.56, 1100 px before); 2400 is an export of every benchmark image",
+        f"from 0.1.56, 1100 px before), or {PRINT!r}: the size it lays a page out at to print (300 dpi on the paper "
+        "from 1.0.10, at most the picture's own size before); 2400 is an export of every benchmark image",
     )
     run_p.add_argument("--repeats", type=int, default=3, help="measured runs per case (the median is reported)")
     run_p.add_argument("--warmup", type=int, default=1, help="unmeasured warm-up runs per case")
@@ -120,15 +122,15 @@ def main(argv: list[str] | None = None) -> int:
 
 # -- run --------------------------------------------------------------------
 def _long_edge(text: str) -> int | str:
-    """A ``--long-edge``: a size in px, or ``PREVIEW``."""
-    if text == PREVIEW:
+    """A ``--long-edge``: a size in px, ``PREVIEW`` or ``PRINT``."""
+    if text in (PREVIEW, PRINT):
         return text
     try:
         value = int(text)
     except ValueError:
         value = 0
     if value <= 0:
-        raise argparse.ArgumentTypeError(f"a size in px or {PREVIEW!r}, not {text!r}")
+        raise argparse.ArgumentTypeError(f"a size in px, {PREVIEW!r} or {PRINT!r}, not {text!r}")
     return value
 
 

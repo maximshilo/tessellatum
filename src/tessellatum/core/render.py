@@ -65,10 +65,9 @@ TONE_FIELDS = ("line_gray", "label_gray", "leader_gray")
 LINE_WIDTH_MM_RANGE = (0.1, 1.0)
 LINE_WIDTH_MM_STEP = 0.05
 
-# A line is never drawn thinner than this, whatever the paper asks for. The
-# pipeline never upscales, so a small source prints at a low resolution -- 60
-# dpi for a 600 px image -- where 0.3 mm is less than a pixel and the line
-# would come out too faint to follow.
+# A line is never drawn thinner than this, whatever the paper asks for. A
+# preview is made at as few as 1100 px, about 50 dpi on A2, where 0.2 mm is
+# less than half a pixel and the line would come out too faint to follow.
 MIN_LINE_WIDTH_PX = 1.0
 
 # The line layer is drawn on a grid this many times finer than the page and

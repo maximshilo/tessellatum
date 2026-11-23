@@ -142,6 +142,15 @@ def fit_to(image: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     return cv2.resize(image, size, interpolation=cv2.INTER_NEAREST)
 
 
+def painting_at(painted_bgr: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    """The finished painting at the reference's ``size`` (w, h), to be compared with it: a painting larger than the
+    source -- a page made of the picture scaled up, from 1.0.10 -- area-averaged down to it, as the reference itself is
+    when the page is smaller (``reference_resize``), so that its edges blend as the source's do; else as ``fit_to``."""
+    if painted_bgr.shape[1] > size[0] and painted_bgr.shape[0] > size[1]:
+        return cv2.resize(painted_bgr, size, interpolation=cv2.INTER_AREA)
+    return fit_to(painted_bgr, size)
+
+
 def paint(
     region_id_map: np.ndarray,
     region_color: np.ndarray,

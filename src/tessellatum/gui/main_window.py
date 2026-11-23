@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from tessellatum.core import export, pipeline
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import GeneratedPage
-from tessellatum.core.print_size import print_scale
+from tessellatum.core.print_size import PRINT_DPI, print_scale
 from tessellatum.gui.controls_panel import ControlsPanel
 from tessellatum.gui.preview_widget import PreviewWidget, VersionBar, ZoomBar
 from tessellatum.gui.worker import PipelineWorker
@@ -215,31 +215,21 @@ class MainWindow(QMainWindow):
         self.controls.set_busy(True)
         self.statusBar().showMessage(f"Rendering the {fmt} at print resolution…")
 
-        # 300 dpi on the paper, or the picture's own size where less: the pipeline never upscales. The export is the
-        # preview's page drawn at that size, so that it has the regions and numbering the preview shows (drawn once for
-        # the zoom and the export alike), or the preview itself where it was made at that size; made first if the
-        # settings changed since. A PNG's image is drawn with the page; a PDF draws the version again from what the page
-        # is made of, with its numbers placed for it: as small as the style asks, however few pixels that is here (see
-        # ``pipeline.generate``).
+        # Every export is drawn from the page's print layout: the preview's page laid out at 300 dpi on its paper, its
+        # numbers placed once, as small as the style asks (see ``pipeline.draw_page``), drawn once for the zoom and
+        # the export alike; made first if the settings changed since. The PDF draws it as vectors, the PNG draws the
+        # same vectors in pixels.
         long_edge = pipeline.export_long_edge(self.current_image_bgr, self.controls.get_page_style().paper_format)
         preview = self._preview_to_draw(long_edge)
-        if fmt == "PDF":
-            self._making = True
-            self._worker = self._make_worker(long_edge, drawn_from=preview, vector=True)
-            self._worker.succeeded.connect(self._on_export_ready)
-            self._worker.start()
-            return
         if preview is not None:
-            if long_edge == max(preview.page.size):
-                self._on_export_ready(preview)
-            elif self._print_page is not None:
+            if self._print_page is not None:
                 self._on_export_ready(self._print_page)
             else:
                 self._pending_export_drawn = True
                 self._draw_print_page()  # saved once drawn (see _on_print_page_ready)
             return
         self._making = True
-        self._worker = self._make_worker(long_edge, versions=(version,) if fmt == "PNG" else ())
+        self._worker = self._make_worker(long_edge, vector=True)
         self._worker.succeeded.connect(self._on_export_ready)
         self._worker.start()
 
@@ -253,9 +243,14 @@ class MainWindow(QMainWindow):
         if path is None or fmt is None or version is None:
             return
 
+        paper = page.drawing.style.paper_format
+        size = page.page.size
         try:
             if fmt == "PNG":
-                export.save_png(page.image(version), page.legend, path, page.drawing.style.paper_format)
+                # The vector page drawn in pixels, as the PDF prints it (see ``export.rasterize``).
+                image = export.rasterize(page.drawing, PRINT_DPI, version, page.painting)
+                export.save_png(image, page.legend, path, paper)
+                size = image.size
             else:
                 export.save_pdf(page.drawing, page.palette_rgb, path, version=version, painting=page.painting)
         except Exception as exc:  # noqa: BLE001
@@ -265,9 +260,8 @@ class MainWindow(QMainWindow):
 
         if self.preview.wants_detail():
             self._draw_print_page()  # asked for by a zoom while the export was made
-        width, height = page.page.size
-        paper = page.drawing.style.paper_format
-        dpi = print_scale(page.page.size, paper).dpi
+        width, height = size
+        dpi = print_scale(size, paper).dpi
         printed = f"{width} × {height} px, {dpi:.0f} dpi on {paper.name}"
         self.statusBar().showMessage(f"Exported to {path} ({printed})")
         QMessageBox.information(self, "Export complete", f"Saved to:\n{path}\n\n{printed}")
@@ -297,7 +291,7 @@ class MainWindow(QMainWindow):
     ) -> PipelineWorker:
         """A worker generating the current image at ``long_edge`` with the panel's settings, wired to its progress, and
         drawing ``versions`` of the page too: drawing ``drawn_from`` there, the preview made with those settings, if
-        given; with ``vector``, laid out for a PDF (see ``PipelineWorker``)."""
+        given; with ``vector``, laid out to print (see ``PipelineWorker``)."""
         worker = PipelineWorker(
             self.current_image_bgr,
             self.controls.get_difficulty_params(),
@@ -315,17 +309,16 @@ class MainWindow(QMainWindow):
 
     # -- The preview's page at print size -------------------------------------
     def _print_long_edge(self) -> int | None:
-        """The long edge the preview's page prints at, if it is drawn larger to print; None if the preview is the page
-        as it prints, or there is none."""
+        """The long edge the preview's page is laid out at to print (see ``pipeline.export_long_edge``); None if there
+        is no page."""
         page = self.current_page
         if page is None or page.model is None or self._previewed_image is None:
             return None
-        long_edge = pipeline.export_long_edge(self._previewed_image, page.drawing.style.paper_format)
-        return long_edge if long_edge > max(page.page.size) else None
+        return max(pipeline.export_long_edge(self._previewed_image, page.drawing.style.paper_format), *page.page.size)
 
     def _draw_print_page(self) -> None:
-        """Draw the preview's page at print size, in the background, unless it is drawn or being drawn: for the zoom,
-        which shows it past the preview's own pixels, and for the export, which saves it. Not while a page is being
+        """Lay the preview's page out to print, in the background, unless it is drawn or being drawn: for the zoom,
+        which shows it past the preview's own pixels, and for the export, which draws it. Not while a page is being
         made: a preview, which will replace this one, or an export with other settings."""
         long_edge = self._print_long_edge()
         running = self._print_worker is not None and self._print_worker.isRunning()
@@ -341,6 +334,7 @@ class MainWindow(QMainWindow):
             handling=model.handling,
             versions=tuple(Version),
             drawn_from=page,
+            vector=True,
         )
         worker.succeeded.connect(self._on_print_page_ready)
         worker.failed.connect(self._on_print_page_failed)

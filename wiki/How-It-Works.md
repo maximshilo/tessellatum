@@ -73,10 +73,13 @@ flowchart TD
    path through the paper, never across a line. Those numbers are placed after every region's own, in the room left,
    so no region's own number moves.
 8. **Print size.** A page is made once, at its working size, where its brush is 4 px across: about 1,100 px along a 3:2
-   picture's long edge at Beginner up to 2,200 at Realistic. An export is that page drawn at 300 dpi from its own
-   geometry: each region filled inside its smoothed outline, the lines scaled, the printed ink inside its own smoothed
-   outline, the letters taken again from the picture at that size, and the numbers placed again. So an export always
-   has its preview's regions, colors and legend.
+   picture's long edge at Beginner up to 2,200 at Realistic on A4, from the picture scaled up (bicubic) where it has
+   fewer pixels, since a brush only a pixel or two across can't tell a region from a sliver. It is laid out to print
+   once, at 300 dpi on its paper, from its own geometry: each region filled inside its smoothed outline, the lines
+   scaled, the printed ink inside its own smoothed outline, the letters taken again from the picture at that size, and
+   the numbers placed there in fractions of a pixel. Every export is drawn from that layout: the PDF as vector art, a
+   PNG as the PDF's page rendered in pixels (by QtPdf). So an export always has its preview's regions, colors and
+   legend, and the PDF and the PNG number the page the same way.
 
 ## Line art
 

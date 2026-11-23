@@ -4,6 +4,17 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.10] - 2026-11-23
+
+### Changed
+
+- Every export is laid out once to print, at 300 dpi on its paper, however few pixels the picture has (it used to
+  stop at the picture's own size), and the PDF and the PNG are both drawn from that layout: the PNG is the PDF's page
+  rendered in pixels, so the two number the page the same way, each number at the same place on paper.
+- A picture with fewer pixels than its page needs is scaled up first: a page is made where its brush is 4 px across,
+  so a small picture, or one printed on A3 or A2, gives regions a brush fits and room for their numbers rather than a
+  crowded page with its numbers on the lines. Such pictures take longer to preview.
+
 ## [1.0.9] - 2026-11-23
 
 ### Added
