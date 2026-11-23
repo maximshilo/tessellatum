@@ -139,7 +139,8 @@ class MainWindow(QMainWindow):
 
         # The page at its working size, where its level's brush is a few pixels across: what an export draws larger.
         long_edge = pipeline.working_long_edge(
-            self.current_image_bgr, self.controls.get_difficulty_params(), self.controls.get_handling()
+            self.current_image_bgr, self.controls.get_difficulty_params(), self.controls.get_handling(),
+            self.controls.get_page_style().paper_format,
         )
         self._worker = self._make_worker(long_edge, versions=tuple(Version))
         self._worker.succeeded.connect(self._on_preview_ready)

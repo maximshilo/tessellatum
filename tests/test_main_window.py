@@ -17,7 +17,7 @@ from PySide6.QtCore import QPointF  # noqa: E402
 from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from tessellatum.core import difficulty, pipeline  # noqa: E402
+from tessellatum.core import difficulty, pipeline, print_size  # noqa: E402
 from tessellatum.core.painting import Version  # noqa: E402
 from tessellatum.core.pipeline import Handling, PipelineCancelled  # noqa: E402
 from tessellatum.core.print_size import print_scale  # noqa: E402
@@ -120,6 +120,22 @@ def drive(monkeypatch):
     drive.window.deleteLater()
     _app.processEvents()
     pipeline.clear_cache()
+
+
+def test_a_preview_is_made_at_its_paper_s_working_size(drive, tmp_path):
+    # T3a: a larger sheet makes the page at more pixels, as many as its brush asks for there.
+    Image.fromarray(_blocks((2400, 1600))[:, :, ::-1]).save(tmp_path / "blocks.png")
+    drive.open_path = str(tmp_path / "blocks.png")
+    drive.window.open_image()
+    controls = drive.window.controls
+    controls.preset_combo.setCurrentText("Beginner")
+    controls.paper_combo.setCurrentText("A2")
+    drive.window.generate_preview()
+    drive.wait()
+    (image, params, long_edge), kwargs = drive.calls[-1]
+    assert kwargs["style"].paper == "A2"
+    assert long_edge == pipeline.working_long_edge(image, params, kwargs["handling"], print_size.A2)
+    assert long_edge > pipeline.working_long_edge(image, params, kwargs["handling"])
 
 
 def test_an_opened_picture_is_previewed_with_the_panel_s_settings(drive, tmp_path):
