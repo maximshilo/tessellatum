@@ -782,15 +782,28 @@ def _make_page(
     halo_px = max(1.0, print_scale((w, h)).mm_to_px(ink.HALO_MM))
     report("ink")
 
+    # A picture drawn from its colors spends more detail on its subject and its faces, and keeps their colors apart as
+    # the screen shows them (see ``quantize``). Line art's are drawn by its own ink.
+    detail = in_faces = None
+    in_subject = np.zeros((h, w), dtype=bool)
+    if ink_mask is None and handling.detail:
+        found = detect_faces(image_bgr, resized)
+        if found:
+            in_faces = faces.mask(found, (w, h))
+        in_subject = detect_subject(image_bgr, resized)
+        detail = in_subject | in_faces if in_faces is not None else in_subject
+        if not detail.any():
+            detail = None
+
     check_cancelled()
     labels, palette_bgr = _cache.get_or_compute(
         image_bgr,
         # Line art's colors are taken around its ink, unless line art is turned off (see ``Handling``).
         ("quantize", long_edge, params.num_colors, params.blur_sigma, params.palette_margin_de00,
-         handling.ink_gap_mm if ink_mask is not None else None),
+         handling.ink_gap_mm if ink_mask is not None else None, params.paper_black_lstar, detail is not None),
         lambda: quantize(
             resized, params.num_colors, params.blur_sigma, min_de00=params.palette_margin_de00, ink=ink_mask,
-            halo_px=halo_px,
+            halo_px=halo_px, paper_black_lstar=params.paper_black_lstar, keep=detail,
         ),
     )
     report("quantize")
@@ -815,18 +828,6 @@ def _make_page(
     # difficulty asked for gives the same regions -- the labeling only needs an
     # upper bound -- but not the same meaning, and it sizes its arrays for
     # colors that do not exist.
-    # A picture drawn from its colors spends more detail on its subject and its faces. Line art's are drawn by its own
-    # ink.
-    detail = in_faces = None
-    in_subject = np.zeros((h, w), dtype=bool)
-    if ink_mask is None and handling.detail:
-        found = detect_faces(image_bgr, resized)
-        if found:
-            in_faces = faces.mask(found, (w, h))
-        in_subject = detect_subject(image_bgr, resized)
-        detail = in_subject | in_faces if in_faces is not None else in_subject
-        if not detail.any():
-            detail = None
     # Asked to, a region's corners keep their points where the picture shows them plainly, rather than being rounded
     # to the brush; by default every corner is rounded.
     corner_rule = None

@@ -118,6 +118,14 @@ SETTINGS: tuple[Setting, ...] = (
         "color found.",
     ),
     _difficulty(
+        "paper_black_lstar", "Darkest black on paper", "L*", 1,
+        "How dark the printer and the paints or pencils can go, as a lightness (0 is black). Colors darker than "
+        "that look alike on paper, so they must also keep the color margin as printed, and the colors that frees go "
+        "to the rest of the picture; the faces and the subject keep their dark shades all the same. About 20 for a "
+        "good laser or pigment inkjet and soft pencils, 30 for a weak printer or cheap paper; 0 judges the colors as "
+        "the screen shows them.",
+    ),
+    _difficulty(
         "min_region_area_mm2", "Smallest region", "mm²", 1,
         "The smallest area a region may have on the printed A4 page; smaller ones merge into a neighbor. Never "
         "below the brush's own footprint.",

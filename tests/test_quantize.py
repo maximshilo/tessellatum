@@ -74,7 +74,7 @@ def test_merge_close_colors_joins_the_closest_pair_and_stops_at_the_margin():
     ).reshape(-1, 3).astype(np.float64)
     weights = np.array([300, 100, 50, 50])
 
-    merged, group = _merge_close_colors(centers, weights, MIN_PALETTE_DE00)
+    merged, group, _ = _merge_close_colors(centers, weights, MIN_PALETTE_DE00)
 
     assert group.tolist() == [0, 0, 2, 3]  # the two blues share a slot; which of them keeps it does not matter
     assert merged[0] == pytest.approx((centers[0] * 300 + centers[1] * 100) / 400)
@@ -86,7 +86,7 @@ def test_merge_close_colors_leaves_a_separated_palette_untouched():
         np.array([NEAR_BLUE, GREEN, CYAN], dtype=np.uint8).reshape(-1, 1, 3), cv2.COLOR_BGR2LAB
     ).reshape(-1, 3).astype(np.float64)
 
-    merged, group = _merge_close_colors(centers, np.array([10, 10, 10]), MIN_PALETTE_DE00)
+    merged, group, _ = _merge_close_colors(centers, np.array([10, 10, 10]), MIN_PALETTE_DE00)
 
     assert group.tolist() == [0, 1, 2]
     assert (merged == centers).all()
@@ -108,7 +108,7 @@ def test_merge_close_colors_can_collapse_a_whole_run_of_near_colors():
     ramp = np.linspace(100, 118, 10)  # ten grays a couple of ΔE00 apart
     centers = np.stack([ramp, np.full(10, 128.0), np.full(10, 128.0)], axis=1)
 
-    merged, group = _merge_close_colors(centers, np.ones(10), MIN_PALETTE_DE00)
+    merged, group, _ = _merge_close_colors(centers, np.ones(10), MIN_PALETTE_DE00)
 
     kept = np.unique(group)
     assert len(kept) < 10
@@ -311,3 +311,60 @@ def test_nearest_color_measures_in_l_star_a_star_b_star_a_block_at_a_time(monkey
     assert (nearest == distance.argmin(axis=1)).all()
     # Measured in 8-bit Lab itself, a good share of these would go elsewhere.
     assert (nearest != ((samples[:, None, :] - centers[None, :, :]) ** 2).sum(axis=2).argmin(axis=1)).mean() > 0.1
+
+
+# Three near-blacks a screen shows 5.5 ΔE00 apart and paper with a black of L* 25 at 2.6 and 3.7 (see color.printed_de00),
+# above a colorful band with room for more colors.
+NEAR_BLACKS = (8, 30, 48)
+
+
+def _dark_picture() -> np.ndarray:
+    image = np.zeros((120, 180, 3), dtype=np.uint8)
+    for index, gray in enumerate(NEAR_BLACKS):
+        image[:90, index * 60 : (index + 1) * 60] = gray
+    hue = np.linspace(0, 170, 180).astype(np.uint8)
+    band = np.stack([np.broadcast_to(hue, (30, 180)), np.full((30, 180), 200, np.uint8), np.full((30, 180), 220, np.uint8)], -1)
+    image[90:] = cv2.cvtColor(band, cv2.COLOR_HSV2BGR)
+    return image
+
+
+def _darks(palette: np.ndarray) -> int:
+    from tessellatum.core.color import bgr_to_lab
+
+    return int((bgr_to_lab(palette)[:, 0] < 25).sum())
+
+
+def test_near_blacks_paper_shows_alike_merge_and_the_colors_freed_go_to_the_rest_of_the_picture():
+    image = _dark_picture()
+    _, on_screen = quantize(image, num_colors=8, blur_sigma=0.0, min_de00=4.0)
+    labels, on_paper = quantize(image, num_colors=8, blur_sigma=0.0, min_de00=4.0, paper_black_lstar=25.0)
+
+    assert _darks(on_screen) == 3
+    assert _darks(on_paper) < 3
+    assert len(on_paper) == len(on_screen)  # refilled: the colors freed are asked for again, never more
+    assert labels.max() == len(on_paper) - 1
+
+
+def test_the_faces_and_the_subject_keep_their_near_blacks():
+    image = _dark_picture()
+    keep = np.zeros(image.shape[:2], dtype=bool)
+    keep[:90] = True  # the near-blacks are the subject
+    _, kept = quantize(image, num_colors=8, blur_sigma=0.0, min_de00=4.0, paper_black_lstar=25.0, keep=keep)
+    assert _darks(kept) == 3
+
+
+def test_a_picture_without_darks_paper_can_t_show_is_the_same_page_whatever_the_paper_s_black(sample_image_bgr):
+    on_screen = quantize(sample_image_bgr, num_colors=6, blur_sigma=2.0, min_de00=4.0)
+    on_paper = quantize(sample_image_bgr, num_colors=6, blur_sigma=2.0, min_de00=4.0, paper_black_lstar=25.0)
+    assert np.array_equal(on_screen[0], on_paper[0]) and np.array_equal(on_screen[1], on_paper[1])
+
+
+def test_a_refill_never_gives_more_colors_than_the_screen_s_margin_keeps():
+    rng = np.random.default_rng(3)
+    image = (rng.random((80, 80, 3)) * 60).astype(np.uint8)  # all dark noise: every color near black
+    for black in (0.0, 25.0, 40.0):
+        _, palette = quantize(image, num_colors=12, blur_sigma=0.0, min_de00=4.0, paper_black_lstar=black)
+        if black == 0.0:
+            on_screen = len(palette)
+        assert len(palette) <= on_screen
+        assert pairwise_de00(palette).min() >= 4.0

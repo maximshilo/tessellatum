@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 
 from tessellatum.core import kernels, parallel
-from tessellatum.core.color import MIN_PALETTE_DE00, bgr_to_lab, ciede2000, pairwise_de00
+from tessellatum.core.color import MIN_PALETTE_DE00, bgr_to_lab, ciede2000, pairwise_de00, printed_de00
 from tessellatum.core.ink import near
 
 # The sparse bilateral filter samples its window every sigma_space /
@@ -32,6 +32,13 @@ _TAPS_PER_SIGMA = 6
 _KMEANS_ATTEMPTS = 1
 _KMEANS_MAX_ITERATIONS = 30
 _KMEANS_EPSILON = 0.5
+# Colors the paper's black merges are asked of k-means again (see ``_kmeans_colors``): at most this many more times,
+# and never for more than this many times the colors asked for.
+_REFILLS = 2
+_MOST_CLUSTERS = 2
+# A color more than this share of whose pixels lie where the picture is looked at (its faces and subject) keeps the
+# screen's margin, whatever the paper's black.
+_KEPT_SHARE = 0.5
 
 # The line-art palette (``flat_color_palette``) reads the fills' colors as a
 # histogram of OpenCV's 8-bit Lab, where a step of 1 is 0.39 L* or one unit of
@@ -63,6 +70,8 @@ def quantize(
     min_de00: float = MIN_PALETTE_DE00,
     ink: np.ndarray | None = None,
     halo_px: float = 0.0,
+    paper_black_lstar: float = 0.0,
+    keep: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Reduce ``image_bgr`` to at most ``num_colors`` flat, clearly different colors.
 
@@ -85,6 +94,14 @@ def quantize(
     picking them apart by CIEDE2000 from the start keeps colors a merge
     afterwards would spend. Nothing is random on that path.
 
+    Without it, the margin can also be kept as the colors print
+    (``paper_black_lstar``): paper and paint can't go darker than their own
+    black, so near-blacks a screen shows apart print as one. Those are merged
+    too, but for the colors mostly in ``keep`` (the faces and the subject,
+    whose shading is what the page is looked at for), and the colors that
+    frees are asked of k-means again, so the page keeps as many as the
+    screen's margin would (see ``_kmeans_colors``).
+
     Args:
         image_bgr: HxWx3 uint8 image in BGR order (OpenCV convention).
         num_colors: how many colors to look for.
@@ -95,6 +112,10 @@ def quantize(
             stand as close together as the picture puts them.
         ink: HxW bool, the pixels printed as ink, or None.
         halo_px: how far from the ink its anti-aliased edge reaches.
+        paper_black_lstar: the darkest black paper and paint show, in L*; 0
+            keeps the margin as the screen shows the colors.
+        keep: HxW bool, where the colors keep the screen's margin whatever
+            the paper's black, or None.
 
     Returns:
         (label_map, palette_bgr):
@@ -114,7 +135,8 @@ def quantize(
             fitted = ~ink
     samples = lab.reshape(-1, 3).astype(np.float32)
     if fitted is None:
-        labels, palette_bgr = _kmeans_colors(samples, num_colors, seed, min_de00)
+        kept = None if keep is None else np.asarray(keep, dtype=bool).reshape(-1)
+        labels, palette_bgr = _kmeans_colors(samples, num_colors, seed, min_de00, paper_black_lstar, kept)
         return labels.reshape(lab.shape[:2]), palette_bgr
 
     samples = np.ascontiguousarray(samples[fitted.reshape(-1)])
@@ -127,9 +149,62 @@ def quantize(
 
 
 def _kmeans_colors(
-    samples: np.ndarray, num_colors: int, seed: int, min_de00: float
+    samples: np.ndarray,
+    num_colors: int,
+    seed: int,
+    min_de00: float,
+    paper_black_lstar: float = 0.0,
+    kept: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """K-means over ``samples`` (Nx3 float32 Lab), then the merge: each sample's color, and the palette."""
+    """K-means over ``samples`` (Nx3 float32 Lab), then the merge: each sample's color, and the palette.
+
+    With ``paper_black_lstar``, the merge goes on as the colors print (see
+    ``_merge_close_colors``), and when that merges colors the screen's margin
+    keeps, k-means is asked for that many more and their colors merged the same
+    way, up to ``_REFILLS`` times: the slots the near-blacks gave up go where
+    the picture has colors left to tell apart. The page never gets more colors
+    than the screen's margin keeps, and where printing merges nothing it is the
+    same page as without it.
+    """
+    labels, centers_lab, group, on_screen = _fit_colors(samples, num_colors, seed, min_de00, paper_black_lstar, kept)
+    colors = len(np.unique(group))
+    asked = num_colors
+    most = min(_MOST_CLUSTERS * num_colors, len(samples))
+    for _ in range(_REFILLS):
+        if colors >= on_screen or asked >= most:
+            break
+        asked = min(asked + on_screen - colors, most)
+        refit = _fit_colors(samples, asked, seed, min_de00, paper_black_lstar, kept, down_to=on_screen)
+        if len(np.unique(refit[2])) <= colors:  # asking for more freed nothing
+            break
+        labels, centers_lab, group, _ = refit
+        colors = len(np.unique(group))
+
+    survivors = np.unique(group)  # the colors that survived the merge, in cluster order
+    kept_centers = centers_lab[survivors]
+    order = np.argsort(kept_centers[:, 0])  # sort by L (lightness), darkest first
+    rank = np.empty(len(order), dtype=np.int32)
+    rank[order] = np.arange(len(order), dtype=np.int32)
+
+    final_index = np.zeros(len(centers_lab), dtype=np.int32)  # cluster -> its color's place on the legend
+    final_index[survivors] = rank
+    return final_index[group][labels].astype(np.int32), _lab_centers_to_bgr(kept_centers)[order]
+
+
+def _fit_colors(
+    samples: np.ndarray,
+    num_colors: int,
+    seed: int,
+    min_de00: float,
+    paper_black_lstar: float,
+    kept: np.ndarray | None,
+    down_to: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    """One k-means run and its merge: (each sample's cluster, the centers, each cluster's color, the screen's count).
+
+    The last is how many colors the merge kept at the screen's margin, before
+    it went on as the colors print.
+    """
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, _KMEANS_MAX_ITERATIONS, _KMEANS_EPSILON)
     cv2.setRNGSeed(seed)
     _compactness, labels, centers_lab = cv2.kmeans(
@@ -138,17 +213,13 @@ def _kmeans_colors(
 
     labels = labels.reshape(-1).astype(np.int32)
     pixels_per_color = np.bincount(labels, minlength=len(centers_lab))
-    centers_lab, group = _merge_close_colors(centers_lab, pixels_per_color, min_de00)
-
-    kept = np.unique(group)  # the colors that survived the merge, in cluster order
-    kept_centers = centers_lab[kept]
-    order = np.argsort(kept_centers[:, 0])  # sort by L (lightness), darkest first
-    rank = np.empty(len(order), dtype=np.int32)
-    rank[order] = np.arange(len(order), dtype=np.int32)
-
-    final_index = np.zeros(len(centers_lab), dtype=np.int32)  # cluster -> its color's place on the legend
-    final_index[kept] = rank
-    return final_index[group][labels].astype(np.int32), _lab_centers_to_bgr(kept_centers)[order]
+    kept_pixels = None
+    if paper_black_lstar > 0 and kept is not None:
+        kept_pixels = np.bincount(labels, weights=kept.astype(np.float64), minlength=len(centers_lab))
+    centers_lab, group, on_screen = _merge_close_colors(
+        centers_lab, pixels_per_color, min_de00, paper_black_lstar, kept_pixels, down_to
+    )
+    return labels, centers_lab, group, on_screen
 
 
 def flat_color_palette(samples_lab: np.ndarray, num_colors: int, min_de00: float = MIN_PALETTE_DE00) -> np.ndarray:
@@ -318,8 +389,13 @@ def _lab_centers_to_bgr(centers_lab: np.ndarray) -> np.ndarray:
 
 
 def _merge_close_colors(
-    centers_lab: np.ndarray, pixels_per_color: np.ndarray, min_de00: float
-) -> tuple[np.ndarray, np.ndarray]:
+    centers_lab: np.ndarray,
+    pixels_per_color: np.ndarray,
+    min_de00: float,
+    paper_black_lstar: float = 0.0,
+    kept_pixels: np.ndarray | None = None,
+    down_to: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, int]:
     """Merge the two closest colors over and over, until every two differ by ``min_de00``.
 
     Distance is CIEDE2000 between the colors as they will be printed and
@@ -334,28 +410,39 @@ def _merge_close_colors(
     what keeps the most colors and the closest painting: measured against five
     other mechanisms before it was chosen.
 
+    With ``paper_black_lstar``, the merge then goes on with the colors as paper
+    shows them (``color.printed_de00``), the closest pair first: near-blacks
+    the screen tells apart but paper doesn't. A color more than ``_KEPT_SHARE``
+    of whose pixels are in ``kept_pixels`` keeps the screen's distance to
+    every other. Last, while more than ``down_to`` colors are left, the pair
+    closest by that test merges.
+
     Args:
         centers_lab: Kx3 cluster centers in OpenCV's 8-bit Lab scale.
         pixels_per_color: how many pixels each cluster has.
         min_de00: the margin to reach; 0 or less leaves the centers alone.
+        paper_black_lstar: the paper's darkest black, in L*; 0 or less keeps the
+            screen's distances.
+        kept_pixels: how many of each cluster's pixels lie where colors keep the
+            screen's distances, or None for none.
+        down_to: the most colors to keep, or None.
 
     Returns:
-        (centers_lab, group): the centers, with every survivor moved to its
-        merged color, and for each original cluster the index of the center it
-        ended up in (``group[i] == i`` for a color that survived).
+        (centers_lab, group, on_screen): the centers, with every survivor moved
+        to its merged color; for each original cluster the index of the center
+        it ended up in (``group[i] == i`` for a color that survived); and how
+        many colors the screen's margin kept.
     """
     centers = np.array(centers_lab, dtype=np.float64)
     weights = np.asarray(pixels_per_color, dtype=np.float64).copy()
+    kept = None if kept_pixels is None else np.asarray(kept_pixels, dtype=np.float64).copy()
     group = np.arange(len(centers), dtype=np.int32)
     if min_de00 <= 0:
-        return centers, group
+        return centers, group, len(centers)
 
     alive = list(range(len(centers)))
-    while len(alive) > 1:
-        distance = pairwise_de00(_lab_centers_to_bgr(centers[alive]))
-        first, second = divmod(int(np.argmin(distance)), len(alive))
-        if distance[first, second] >= min_de00:
-            break
+
+    def merge(first: int, second: int) -> None:
         survivor, absorbed = alive[first], alive[second]
         total = weights[survivor] + weights[absorbed]
         if total > 0:
@@ -363,10 +450,45 @@ def _merge_close_colors(
                 centers[survivor] * weights[survivor] + centers[absorbed] * weights[absorbed]
             ) / total
         weights[survivor] = total
+        if kept is not None:
+            kept[survivor] += kept[absorbed]
         group[group == absorbed] = survivor
         alive.remove(absorbed)
 
-    return centers, group
+    while len(alive) > 1:
+        distance = pairwise_de00(_lab_centers_to_bgr(centers[alive]))
+        first, second = divmod(int(np.argmin(distance)), len(alive))
+        if distance[first, second] >= min_de00:
+            break
+        merge(first, second)
+    on_screen = len(alive)
+
+    if paper_black_lstar > 0 or down_to is not None:
+        while len(alive) > 1:
+            apart = _printed_distances(centers[alive], weights[alive], paper_black_lstar, None if kept is None else kept[alive])
+            first, second = divmod(int(np.argmin(apart)), len(alive))
+            if apart[first, second] >= min_de00 and (down_to is None or len(alive) <= down_to):
+                break
+            merge(first, second)
+
+    return centers, group, on_screen
+
+
+def _printed_distances(
+    centers_lab: np.ndarray, weights: np.ndarray, paper_black_lstar: float, kept_pixels: np.ndarray | None
+) -> np.ndarray:
+    """CIEDE2000 between every two colors as paper shows them, but the screen's for a pair with a kept color.
+
+    Infinity down the diagonal, as ``pairwise_de00``.
+    """
+    lab = bgr_to_lab(_lab_centers_to_bgr(centers_lab))
+    distance = printed_de00(lab[:, None, :], lab[None, :, :], paper_black_lstar)
+    if kept_pixels is not None:
+        kept = kept_pixels > _KEPT_SHARE * np.maximum(weights, 1)
+        either = kept[:, None] | kept[None, :]
+        distance = np.where(either, ciede2000(lab[:, None, :], lab[None, :, :]), distance)
+    np.fill_diagonal(distance, np.inf)
+    return distance
 
 
 def _smooth(image_bgr: np.ndarray, blur_sigma: float) -> np.ndarray:

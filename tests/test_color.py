@@ -103,3 +103,16 @@ def test_ciede2000_never_exceeds_the_bound_the_palette_search_relies_on():
             worst = max(worst, float((color.ciede2000(lab_first, lab_second)[apart] / distance[apart]).max()))
 
     assert worst < quantize._SURELY_APART  # 1.47 over 800,000 pairs, against a bound of 3
+
+
+def test_printed_lab_keeps_white_and_moves_black_to_the_paper_s_black():
+    from tessellatum.core.color import ciede2000, printed_de00, printed_lab
+
+    white, black, color = np.array([100.0, 0, 0]), np.array([0.0, 0, 0]), np.array([40.0, 20, -30])
+    assert printed_lab(white, 25) == pytest.approx(white, abs=1e-9)
+    assert printed_lab(black, 25) == pytest.approx([25, 0, 0], abs=1e-9)
+    assert printed_lab(color, 0) == pytest.approx(color)
+    # Near-blacks lose about half their distance; mid-tones and lights none.
+    dark = printed_de00(np.array([0.0, 0, 0]), np.array([10.0, 0, 0]), 25) / ciede2000(np.array([0.0, 0, 0]), np.array([10.0, 0, 0]))
+    assert dark == pytest.approx(0.47, abs=0.01)
+    assert printed_de00(np.array([60.0, 0, 0]), np.array([64.0, 0, 0]), 25) == ciede2000(np.array([60.0, 0, 0]), np.array([64.0, 0, 0]))
