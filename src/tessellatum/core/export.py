@@ -315,8 +315,12 @@ def _fill_ops(
     ``smoothing_mm`` along them as the page's are (see ``render.PageStyle``).
 
     A paint whose area or edge is past the cell budget (see
-    ``PATH_CELL_BUDGET``) is filled in bands (see ``_fill_bands``), then its
-    edge stroked in groups of rings, which together print what one path would.
+    ``PATH_CELL_BUDGET``) is drawn in several paths that together print what
+    one would. Its rings go in groups that keep each ring with every ring it
+    could lie inside or hold, so each group fills by the even-odd rule what
+    it did among the rest (see ``_nests``), down the page, each group within
+    the budget. A nest past the budget on its own is filled in bands (see
+    ``_fill_bands``) and its edge stroked in groups of rings.
     """
     region_color = np.asarray(painting.region_color)
     paints = np.where(painting.region_id_map >= 0, region_color[np.clip(painting.region_id_map, 0, None)], -1)
@@ -325,19 +329,81 @@ def _fill_ops(
     size = painting.region_id_map.shape[1::-1]
     smoothing_px = smoothing_length_px(size, smoothing_mm, paper)
     scale = _cell_scale(size)
+    overlap = FILL_BAND_OVERLAP_MM * px_per_mm
     for paint, rings in sorted(region_outlines(paints, smoothing_px).items()):
         rgb = " ".join(_gray(v) for v in colors[paint])
         ops.append(f"{rgb} rg {rgb} RG")
-        bands = _fill_bands(rings, scale, FILL_BAND_OVERLAP_MM * px_per_mm)
-        edges = _stroke_groups(rings, edge_width, scale)
-        if len(bands) == 1 and len(edges) == 1:
+        measures = _outline_measures(rings)
+        filled, stroked = _cells(measures, scale), _cells(measures, scale, edge_width)
+        if max(filled.sum(), stroked.sum()) <= PATH_CELL_BUDGET:
             ops += [_path(rings, offset=0.5), "B*"]
-        else:
-            for band in bands:
-                ops += [_path(band, offset=0.5), "f*"]
-            for group in edges:
-                ops += [_path(group, offset=0.5), "S"]
+            continue
+        nest = _nests(rings)
+        nest_filled, nest_stroked = np.bincount(nest, filled), np.bincount(nest, stroked)
+        counts = np.array([len(r) for r in rings])
+        down = np.bincount(nest, np.add.reduceat(np.concatenate(rings)[:, 1], np.cumsum(counts) - counts))
+        down /= np.bincount(nest, counts)
+        groups: list[list[int]] = [[]]
+        totals = np.zeros(2)
+        for index in np.argsort(down, kind="stable"):
+            cells = np.array([nest_filled[index], nest_stroked[index]])
+            if cells.max() > PATH_CELL_BUDGET:  # too much on its own: in bands, and its edge in groups
+                members = [i for i in range(len(rings)) if nest[i] == index]
+                part = [rings[i] for i in members]
+                for band in _fill_bands(part, scale, overlap, filled[members]):
+                    ops += [_path(band, offset=0.5), "f*"]
+                for group in _stroke_groups(part, edge_width, scale, stroked[members]):
+                    ops += [_path(group, offset=0.5), "S"]
+                continue
+            if groups[-1] and (totals + cells).max() > PATH_CELL_BUDGET:
+                groups.append([])
+                totals[:] = 0
+            groups[-1].append(index)
+            totals += cells
+        in_group = np.full(nest.max() + 1, -1)
+        for number, group in enumerate(groups):
+            in_group[group] = number
+        for number in range(len(groups)):
+            members = np.flatnonzero(in_group[nest] == number)
+            if members.size:
+                ops += [_path([rings[i] for i in members], offset=0.5), "B*"]
     return ops
+
+
+def _nests(rings: list[np.ndarray]) -> np.ndarray:
+    """Each ring's nest: rings joined wherever one's bounding box holds another's, by number from 0.
+
+    A ring inside another has its box inside the other's, so a nest holds
+    every ring each of its rings lies inside or holds: filled by the even-odd
+    rule on its own, apart from the other nests, it fills what it did among
+    them. Nests are what a set of rings can be cut into without clipping.
+    """
+    counts = np.array([len(r) for r in rings])
+    points = np.concatenate(rings)
+    starts = np.cumsum(counts) - counts
+    low = np.stack([np.minimum.reduceat(points[:, 0], starts), np.minimum.reduceat(points[:, 1], starts)], axis=1)
+    high = np.stack([np.maximum.reduceat(points[:, 0], starts), np.maximum.reduceat(points[:, 1], starts)], axis=1)
+    pairs = []
+    for at in range(0, len(rings), 512):  # which boxes hold each of these, a block at a time
+        inner = slice(at, at + 512)
+        held = (
+            (low[None, :, 0] <= low[inner, None, 0]) & (low[None, :, 1] <= low[inner, None, 1])
+            & (high[None, :, 0] >= high[inner, None, 0]) & (high[None, :, 1] >= high[inner, None, 1])
+        )  # fmt: skip
+        held_ring, holder = np.nonzero(held)
+        pairs.append(np.stack([held_ring + at, holder], axis=1))
+    pairs = np.concatenate(pairs)
+    pairs = pairs[pairs[:, 0] != pairs[:, 1]]
+    nest = np.arange(len(rings))
+    while pairs.size:  # every pair joined: each ring takes the least number in reach, until none changes
+        least = np.minimum(nest[pairs[:, 0]], nest[pairs[:, 1]])
+        before = nest.copy()
+        np.minimum.at(nest, pairs[:, 0], least)
+        np.minimum.at(nest, pairs[:, 1], least)
+        nest = nest[nest]
+        if (nest == before).all():
+            break
+    return np.unique(nest, return_inverse=True)[1]
 
 
 def _picture_ink_ops(drawing: PageDrawing, darken: bool) -> list[str]:
@@ -381,8 +447,14 @@ def _outline_cells(paths: Sequence[np.ndarray], scale: float, width: float | Non
     this comes to 1.00-1.18 times the cells a stroke had when it was cut,
     and twice those of a fill.
     """
+    return _cells(_outline_measures(paths), scale, width)
+
+
+def _outline_measures(paths: Sequence[np.ndarray]) -> tuple[np.ndarray, ...]:
+    """Each of ``paths``' L1 length, the L1 length of the edge closing it, its segments and its turning in radians:
+    what ``_cells`` counts its cells from, filled or stroked."""
     if not len(paths):
-        return np.zeros(0)
+        return (np.zeros(0),) * 4
     counts = np.array([len(p) for p in paths])
     points = np.concatenate(paths).astype(np.float64)
     owner = np.repeat(np.arange(len(paths)), counts)
@@ -391,18 +463,26 @@ def _outline_cells(paths: Sequence[np.ndarray], scale: float, width: float | Non
     steps, owner = steps[keep], owner[:-1][keep]
     length = np.bincount(owner, np.abs(steps).sum(axis=1), len(paths))
     segments = np.bincount(owner, minlength=len(paths))
-    if width is None:
-        ends = np.cumsum(counts)
-        closing = np.abs(points[ends - 1] - points[ends - counts]).sum(axis=1)  # a ring not repeating its start
-        return scale * (length + closing) + segments + 1
-    angle = np.arctan2(steps[:, 1], steps[:, 0])
+    ends = np.cumsum(counts)
+    closing = np.abs(points[ends - 1] - points[ends - counts]).sum(axis=1)  # a ring not repeating its start
+    before, after = steps[:-1], steps[1:]
+    turn = np.abs(np.arctan2(before[:, 0] * after[:, 1] - before[:, 1] * after[:, 0], (before * after).sum(axis=1)))
     same = owner[1:] == owner[:-1]
-    turn = np.abs((np.diff(angle) + np.pi) % (2 * np.pi) - np.pi)
     turning = np.bincount(owner[1:][same], turn[same], len(paths))
+    return length, closing, segments, turning
+
+
+def _cells(measures: tuple[np.ndarray, ...], scale: float, width: float | None = None) -> np.ndarray:
+    """The cells of paths of ``measures`` (see ``_outline_measures``), as ``_outline_cells`` counts them."""
+    length, closing, segments, turning = measures
+    if width is None:
+        return scale * (length + closing) + segments + 1
     return scale * (2 * length + width * (turning + 4)) + 2 * segments
 
 
-def _stroke_groups(paths: list[np.ndarray], width: float, scale: float) -> list[list[np.ndarray]]:
+def _stroke_groups(
+    paths: list[np.ndarray], width: float, scale: float, cells: np.ndarray | None = None
+) -> list[list[np.ndarray]]:
     """``paths`` stroked ``width`` wide at ``scale`` (see ``_outline_cells``), in groups of at most
     ``PATH_CELL_BUDGET`` cells: all of them in one if they fit, as they were.
 
@@ -411,9 +491,10 @@ def _stroke_groups(paths: list[np.ndarray], width: float, scale: float) -> list[
     meet lines in another: where two do, the edges of their round ends are
     drawn twice and come out a shade darker. A path past the budget on its
     own is cut into pieces sharing their ends, which stroked with round ends
-    cover what it does.
+    cover what it does. ``cells`` are the paths' own, if already counted.
     """
-    cells = _outline_cells(paths, scale, width)
+    if cells is None:
+        cells = _outline_cells(paths, scale, width)
     if cells.sum() <= PATH_CELL_BUDGET:
         return [paths]
     pieces = []
@@ -439,7 +520,9 @@ def _stroke_groups(paths: list[np.ndarray], width: float, scale: float) -> list[
     return [[paths[i] for i in sorted(group)] for group in groups]
 
 
-def _fill_bands(rings: list[np.ndarray], scale: float, overlap: float) -> list[list[np.ndarray]]:
+def _fill_bands(
+    rings: list[np.ndarray], scale: float, overlap: float, cells: np.ndarray | None = None
+) -> list[list[np.ndarray]]:
     """``rings`` filled by the even-odd rule at ``scale`` (see ``_outline_cells``), as bands down the page of at most
     ``PATH_CELL_BUDGET`` cells each: all of them in one if they fit, as they were.
 
@@ -451,8 +534,10 @@ def _fill_bands(rings: list[np.ndarray], scale: float, overlap: float) -> list[l
     reaching ``overlap`` past it: clipped ring by ring to a band, by the
     even-odd rule, the rings fill what they filled inside it. Where the bands
     overlap, an edge's anti-aliased pixels are drawn twice, a shade darker.
+    ``cells`` are the rings' own, if already counted.
     """
-    cells = _outline_cells(rings, scale)
+    if cells is None:
+        cells = _outline_cells(rings, scale)
     if cells.sum() <= PATH_CELL_BUDGET:
         return [rings]
     points = np.concatenate(rings)
@@ -545,12 +630,9 @@ def _path(paths: list[np.ndarray], offset: float) -> str:
     hundredth of 0.1-0.4 mm, far finer than a printer's dot.
     """
     points = np.concatenate(paths) + offset
-    words = [f"{x:.2f} {y:.2f} l" for x, y in points.tolist()]
-    at = 0
-    for path in paths:
-        words[at] = words[at][:-1] + "m"
-        at += len(path)
-    return "\n".join(words)
+    # One format for the whole path, filled in at once: under half the time of formatting each point.
+    template = "\n".join("%.2f %.2f m" + "\n%.2f %.2f l" * (len(path) - 1) for path in paths)
+    return template % tuple(points.ravel().tolist())
 
 
 def _disk(x: float, y: float, radius: float) -> str:

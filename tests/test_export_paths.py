@@ -179,3 +179,21 @@ def test_a_stroke_past_the_budget_on_its_own_is_cut_into_pieces_sharing_their_en
     assert (joined == path).all()
     for a, b in zip(pieces[:-1], pieces[1:]):
         assert (a[-1] == b[0]).all()
+
+
+def test_rings_in_nests_fill_apart_what_they_did_together():
+    # Sheets with holes and islands in the holes, rings apart, and rings side by side.
+    rings = []
+    for i in range(4):
+        x = 120 * i
+        rings += [_square(x, 0, x + 100, 100), _circle(x + 50, 50, 30), _circle(x + 50, 50, 12), _circle(x + 50, 50, 5)]
+    rings += [_circle(60 + 120 * i, 160, 45) for i in range(4)]
+    rings += [_square(500, 0, 520, 20), _square(520, 0, 540, 20)]  # side by side
+    nest = export._nests(rings)
+    assert len(set(nest.tolist())) == 4 + 4 + 2
+    points = np.random.default_rng(2).uniform(-5, 545, size=(6000, 2))
+    filled = _even_odd(rings, points)
+    apart = np.zeros_like(filled)
+    for number in set(nest.tolist()):
+        apart |= _even_odd([ring for ring, n in zip(rings, nest) if n == number], points)
+    assert (apart == filled).all()
