@@ -48,8 +48,8 @@ MIN_SLIDER_WIDTH = 80
 
 TONE_TOOLTIPS = {
     "Light": "Fainter lines, numbers and leaders, which vanish under the palest paints.",
-    "Medium": "Gray lines, lighter gray numbers that don't read as writing in the picture, and the numbers written "
-    "outside their regions in a gray of their own, with their leaders.",
+    "Medium": "Gray lines and numbers that don't read as writing in the picture, and the numbers written outside "
+    "their regions in a lighter gray of their own, with their leaders.",
     "Dark": "Darker lines, numbers and leaders, easier to follow on paper.",
 }
 CUSTOM_TONE = "Custom"

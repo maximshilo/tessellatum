@@ -551,8 +551,9 @@ def test_a_picture_without_faces_is_drawn_as_before(monkeypatch):
     # (see ``subject``), neither of them about faces: they are left out here.
     monkeypatch.setattr(pipeline, "smooth_regions", lambda picture, ids, colors, *rest: (ids, colors))
     monkeypatch.setattr(subject, "find_subject", _no_subject)
-    # Drawn in the ink of before 1.0.7: the numbers in one gray, the leaders as wide as the lines.
-    style = PageStyle(label_gray=0x8C, leader_gray=0x8C, leader_width_mm=OUTLINE_WIDTH_MM)
+    # Drawn in the ink of before 1.0.7: the lines at L* 38 (until 1.0.13), the numbers in one gray, the leaders as wide
+    # as the lines.
+    style = PageStyle(line_gray=0x59, label_gray=0x8C, leader_gray=0x8C, leader_width_mm=OUTLINE_WIDTH_MM)
     # At its own 600 px, as it was made before pictures were scaled up to their working size (1.0.10).
     page = pipeline.generate(image, params, max(image.shape[:2]), collect_analysis=True, style=style)
     assert page.analysis.faces == [] and not page.analysis.detail.any()

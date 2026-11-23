@@ -84,12 +84,14 @@ def test_the_tinted_version_is_the_page_multiplied_by_a_wash_of_each_region_s_pa
 
 
 def test_a_wash_keeps_the_numbers_as_much_darker_than_what_is_round_them_as_on_paper():
-    # A wash multiplies the page: a number's gray keeps its ratio to the paint round it, on the darkest paint too, where
-    # it is about as dark as the page's lines are on paper (a little darker from 1.0.7's darker numbers).
+    # A wash multiplies the page: a number's gray keeps its ratio to the paint round it, on the darkest paint too. From
+    # 1.0.14 a number inside its region is in the lines' gray, so on any wash it prints as the lines there do; on the
+    # darkest it is still a gray, not black.
     darkest = tint_rgb((0, 0, 0))[0]
     number = round(LABEL_GRAY * darkest / PAPER)
     assert number / darkest == pytest.approx(LABEL_GRAY / PAPER, abs=0.005)
-    assert abs(number - LINE_GRAY) <= 0x10
+    assert number == round(LINE_GRAY * darkest / PAPER)
+    assert number >= 0x20
 
 
 def test_the_page_version_is_the_page_itself_and_a_painted_one_needs_what_it_is_painted_with():

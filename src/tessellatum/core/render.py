@@ -44,20 +44,20 @@ from tessellatum.core.text import Lettering
 # Gray rather than black, so that a line disappears under the paint that is
 # meant to cover it, and so that a number reads as part of the page's
 # apparatus rather than as writing in the picture (QUALITY_BENCHMARKS.md).
-# The numbers written outside their regions, and the leaders pointing them in, are a third gray, so that a number with
-# a leader is told at a glance from one inside its region. The user's pick from four (T2b): the lines at L* 38, the
-# numbers inside their regions at 54, the leaders and their numbers at 70, each 16 L* from the next.
-LINE_GRAY = 0x59
-LABEL_GRAY = 0x81
+# The user's pick (2026-11-23): the lines and the numbers inside their regions at L* 34, one gray,
+# a number told from a line by its shape; the numbers written outside their regions, the leaders pointing them in and
+# their dots at L* 70, a gray of their own, so that a number with a leader is told at a glance from one inside its
+# region. Through 1.0.13 the numbers inside their regions were a step lighter than the lines: 38, 54 and 70.
+LINE_GRAY = 0x50
+LABEL_GRAY = 0x50
 LEADER_GRAY = 0xAB
 
 # The tones the app offers for the page's ink, (line gray, number gray, leader gray), lightest first. Medium is the
-# grays above; Light and Dark are 15 L* lighter and darker, all three alike, so the grays stay as far apart in every
-# tone.
+# grays above; Light and Dark are 15 L* lighter and darker, all three alike: 49 / 49 / 85 and 19 / 19 / 55.
 TONES = {
-    "Light": (0x7E, 0xA8, 0xD4),
+    "Light": (0x74, 0x74, 0xD4),
     "Medium": (LINE_GRAY, LABEL_GRAY, LEADER_GRAY),
-    "Dark": (0x36, 0x5C, 0x84),
+    "Dark": (0x2E, 0x2E, 0x84),
 }
 DEFAULT_TONE = "Medium"
 # The ink's three grays, as ``PageStyle`` names them, in the order of a tone in ``TONES``.

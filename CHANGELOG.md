@@ -4,6 +4,16 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.14] - 2026-11-23
+
+### Changed
+
+- **Medium**, the default tone, prints the lines and the numbers inside their regions in one gray, L* 34 (they were
+  38 and 54), so a number reads as clearly as the line beside it; the numbers written outside their regions, with
+  their leaders and dots, stay a lighter gray of their own (L* 70), told at a glance from a number inside its region.
+  Light and Dark keep 15 L* either side: 49, 49 and 85, and 19, 19 and 55. The app picks up the new grays
+  for a tone it kept from an earlier run; a Custom tone keeps its own.
+
 ## [1.0.13] - 2026-11-23
 
 ### Fixed

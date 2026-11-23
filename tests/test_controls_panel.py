@@ -181,6 +181,17 @@ def test_a_tone_sets_all_three_grays(panel):
     assert panel.tone_combo.itemData(len(TONES), Qt.ToolTipRole)
 
 
+def test_medium_shows_its_grays_as_34_34_and_70_fresh_or_kept_between_runs(panel, tmp_path):
+    fields = ("line_gray", "label_gray", "leader_gray")
+    assert [panel.controls[field].value_label.text() for field in fields] == ["34 L*", "34 L*", "70 L*"]
+    store = _store(tmp_path)
+    store.setValue("style/tone", "Medium")
+    store.setValue("settings/label_gray", 0x81)  # kept by an older version, as Medium was: the tone's grays win
+    kept = ControlsPanel(store=store)
+    assert kept.tone_combo.currentText() == "Medium"
+    assert [kept.controls[field].value_label.text() for field in fields] == ["34 L*", "34 L*", "70 L*"]
+
+
 def test_moving_a_gray_picks_a_custom_tone_starting_from_the_tone(panel):
     panel.tone_combo.setCurrentText("Dark")
     _move(panel, "leader_gray", 0x70)
