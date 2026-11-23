@@ -4,6 +4,17 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.12] - 2026-11-23
+
+### Changed
+
+- **Crowded numbers no longer print across lines** where they can help it. In a cluster of tiny regions, a number
+  that fits neither in its region at the smallest size nor outside it on a leader used to be written where it was,
+  lines through it. On a page laid out to print (every export, and the zoom), it now goes smaller inside its own
+  region, down to half **Smallest number** (1 pt at the least), and only a number that fits nowhere even then is
+  written across its lines. On the benchmark's print pages, numbers on lines fall from 18.7 to 6.6 a page (lion at
+  Realistic: 102 to 48 on A4, 1,403 to 784 on A2); 0.4% of the numbers print under the smallest size.
+
 ## [1.0.11] - 2026-11-23
 
 ### Added
