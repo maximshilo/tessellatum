@@ -57,6 +57,10 @@ _SETTLE_RADIUS = 1.5 * _BIN
 # A pixel takes the color nearest it in L*a*b*, which is 8-bit Lab with its L
 # scaled back by 100/255: squared, each channel's difference counts this much.
 _LAB_WEIGHT = np.array([(100 / 255) ** 2, 1.0, 1.0])
+# How much a difference in lightness counts in k-means against one in a* or b*, both in L*a*b* units. K-means runs in
+# OpenCV's 8-bit Lab, whose L is L* stretched by 255/100, so that is the weight it has unless this says otherwise.
+_KMEANS_LIGHTNESS_WEIGHT = 255 / 100
+_OPENCV_LIGHTNESS_SCALE = 255 / 100
 # How many pixels are given their color at a time: the pixels-by-colors scores
 # of one block stay a few MB instead of the whole page's.
 _NEAREST_BLOCK = 1 << 16
@@ -206,10 +210,16 @@ def _fit_colors(
     it went on as the colors print.
     """
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, _KMEANS_MAX_ITERATIONS, _KMEANS_EPSILON)
+    stretch = _KMEANS_LIGHTNESS_WEIGHT / _OPENCV_LIGHTNESS_SCALE
+    if stretch != 1.0:
+        samples = samples.copy()
+        samples[:, 0] *= stretch
     cv2.setRNGSeed(seed)
     _compactness, labels, centers_lab = cv2.kmeans(
         samples, min(num_colors, len(samples)), None, criteria, attempts=_KMEANS_ATTEMPTS, flags=cv2.KMEANS_PP_CENTERS
     )
+    if stretch != 1.0:
+        centers_lab[:, 0] /= stretch
 
     labels = labels.reshape(-1).astype(np.int32)
     pixels_per_color = np.bincount(labels, minlength=len(centers_lab))
