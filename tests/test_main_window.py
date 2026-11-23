@@ -86,17 +86,19 @@ class _Drive:
         real = pipeline.generate
         monkeypatch.setattr(pipeline, "generate", lambda *args, **kwargs: self.calls.append((args, kwargs)) or real(*args, **kwargs))
         self.window = MainWindow()
+        # The tests' PNGs at 300 dpi, a quarter of the default's pixels: the default and others are tested on their own.
+        self.window.controls.set_export_dpi(300)
 
     def wait(self) -> None:
-        """Until the window's workers are done -- making or exporting a page, drawing it at print size, and any stopped
-        -- and their last signals have reached the window."""
+        """Until the window's workers are done -- making or exporting a page, drawing it at print size or in pixels,
+        and any stopped -- and their last signals have reached the window."""
         deadline = time.monotonic() + TIMEOUT_S
         window = self.window
 
         def running() -> bool:
             return any(
                 worker is not None and worker.isRunning()
-                for worker in (window._worker, window._print_worker, *window._retired)
+                for worker in (window._worker, window._print_worker, window._raster_worker, *window._retired)
             )
 
         while True:
@@ -187,8 +189,8 @@ def test_a_png_and_a_pdf_are_exported_at_300_dpi_on_a4(drive, tmp_path):
     assert long_edge == 3272 and kwargs["style"] == PageStyle() and kwargs["handling"] == Handling()
     with Image.open(tmp_path / "page.png") as png:
         assert png.width == 3272 and png.info["dpi"] == pytest.approx((300, 300), abs=0.2)
-    assert drive.dialogs == [("information", "Export complete", f"Saved to:\n{tmp_path / 'page.png'}\n\n3272 × 1636 px, 300 dpi on A4")]
-    assert drive.status().endswith("(3272 × 1636 px, 300 dpi on A4)")
+    assert drive.dialogs == [("information", "Export complete", f"Saved to:\n{tmp_path / 'page.png'}\n\n3,272 × 1,636 px, 300 dpi on A4")]
+    assert drive.status().endswith("(3,272 × 1,636 px, 300 dpi on A4)")
 
     controls.pdf_radio.setChecked(True)
     drive.save_path = str(tmp_path / "page.pdf")
@@ -526,7 +528,7 @@ def test_an_export_asked_for_while_the_zoom_draws_the_page_waits_for_it(drive, d
     drive.wait()
 
     assert drawn == [window.current_page] and len(drive.calls) == 1
-    saved = f"Saved to:\n{tmp_path / 'page.png'}\n\n3272 × 1636 px, 300 dpi on A4"
+    saved = f"Saved to:\n{tmp_path / 'page.png'}\n\n3,272 × 1,636 px, 300 dpi on A4"
     assert drive.dialogs == [("information", "Export complete", saved)]
     assert window.controls.generate_button.isEnabled()
 
@@ -724,3 +726,32 @@ def test_a_zoom_while_an_export_is_made_with_other_settings_draws_the_preview_s_
 
     assert drive.dialogs[-1][1] == "Export complete" and len(drawn) == 2
     assert drawn[-1] is shown and window._print_page.model is shown.model  # the page the preview shows
+
+
+def test_a_png_is_drawn_at_the_resolution_asked_for(drive, tmp_path):
+    # T3c: in dots per inch, or in pixels along its long edge; the legend drawn at it too, the file recording it.
+    window = drive.window
+    window.current_image_bgr = _blocks((2000, 1000))
+    window.generate_preview()
+    drive.wait()
+    controls = window.controls
+    controls.set_export_dpi(150)
+    drive.save_path = str(tmp_path / "at150.png")
+    window.export_page()
+    drive.wait()
+    layout = window._print_page
+    expected = export.rasterize(layout.drawing, 150)
+    with Image.open(tmp_path / "at150.png") as png:
+        assert png.width == expected.width == 1636 and png.info["dpi"] == pytest.approx((150, 150), abs=0.2)
+        assert np.asarray(png.convert("RGB"))[: expected.height].tobytes() == expected.tobytes()
+        assert png.height > expected.height  # its legend below
+    assert drive.dialogs[-1][1] == "Export complete" and "1,636 × 818 px, 150 dpi on A4" in drive.dialogs[-1][2]
+
+    controls.resolution_unit.setCurrentIndex(controls.resolution_unit.findData(controls_panel.PIXELS))
+    controls.resolution_spin.setValue(5000)
+    drive.save_path = str(tmp_path / "wide.png")
+    window.export_page()
+    drive.wait()
+    with Image.open(tmp_path / "wide.png") as png:
+        assert png.width == 5000
+    assert window._print_page is layout  # every resolution drawn from the one layout

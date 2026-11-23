@@ -4,6 +4,15 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.11] - 2026-11-23
+
+### Added
+
+- **Resolution** in the export box: the PNG in dots per inch (150, 300 or 600, or any other) or in pixels along its
+  long edge, the other shown as it is set, with the file's pixel size. 600 dpi by default. A PNG is at most 16,384 px
+  along a side, the most a Procreate canvas takes; the box says when a paper caps it. The legend is drawn at the same
+  resolution, and the PNG is drawn in the background.
+
 ## [1.0.10] - 2026-11-23
 
 ### Changed

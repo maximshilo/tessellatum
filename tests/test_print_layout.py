@@ -125,3 +125,20 @@ def test_a_png_is_the_pdf_s_page_without_its_margins(laid_out, tmp_path):
     crop = sheet[round(top) : round(top) + png.shape[0], round(left) : round(left) + png.shape[1]]
     assert crop.shape == png.shape
     assert np.abs(crop - png).mean() < 2.0
+
+
+def test_a_png_s_legend_is_drawn_at_its_resolution(laid_out, tmp_path):
+    # T3c: the page and its legend, both at the dpi asked for, which the file records.
+    from PIL import Image
+
+    sizes = {}
+    for dpi in (150, 600):
+        path = tmp_path / f"page{dpi}.png"
+        size = export.export_png(laid_out.drawing, laid_out.palette_rgb, path, dpi)
+        assert size == export.raster_size(laid_out.drawing, dpi)
+        with Image.open(path) as png:
+            assert png.width == size[0] and png.info["dpi"] == pytest.approx((dpi, dpi), abs=0.5)
+            sizes[dpi] = png.size
+    # Four times the pixels each way at four times the dpi, legend and all, but for rounding.
+    assert sizes[600][0] == pytest.approx(4 * sizes[150][0], abs=4)
+    assert sizes[600][1] == pytest.approx(4 * sizes[150][1], rel=0.02)

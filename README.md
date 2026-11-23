@@ -45,7 +45,7 @@ domain ([sources](tests/sample_images/SOURCES.md)).
 ![Tessellatum's window: settings on the left, the coloring page and its legend on the right](docs/assets/screenshot.png)
 
 Pick a difficulty from Beginner to Realistic, or tune any of 27 settings; preview the page, its painted version and a
-tinted painting guide; export a 300 dpi PNG or a PDF of vector art on A4, A3 or A2.
+tinted painting guide; export a PNG at the resolution you choose (600 dpi by default) or a PDF of vector art, on A4, A3 or A2.
 
 ## Highlights
 
@@ -68,7 +68,8 @@ tinted painting guide; export a 300 dpi PNG or a PDF of vector art on A4, A3 or 
 
 **Engineering**
 - Interactive speed: Numba-compiled kernels and multithreading, a preview in about 1–4 seconds.
-- Print output: a purpose-built vector PDF writer, and 300 dpi PNGs rendered from the same vector page (QtPdf).
+- Print output: a purpose-built vector PDF writer, and PNGs at any resolution rendered from the same vector page
+  (QtPdf).
 - Quality assurance: 1,300+ automated tests, including pixel-exact equivalence tests, and a benchmark harness that
   scores every version on speed and image quality (ΔE00, SSIM, OCR error rate, edge F1).
 - Desktop delivery: cross-platform Qt 6 interface with background workers (Windows, macOS, Linux), standalone Windows
