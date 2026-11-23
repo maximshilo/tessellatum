@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Any, Callable, Sequence
 
 import numpy as np
 from PySide6.QtCore import QThread, Signal
@@ -75,6 +75,26 @@ class PipelineWorker(QThread):
         except PipelineCancelled:
             self.cancelled.emit()
             return
+        except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
+            self.failed.emit(str(exc))
+            return
+        self.succeeded.emit(result)
+
+
+class TaskWorker(QThread):
+    """Runs ``task`` off the UI thread: what it returns is ``succeeded``'s, what it raises ``failed``'s message. For a
+    step that can't be cancelled, such as drawing a page in pixels (see ``export.rasterize``)."""
+
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, task: Callable[[], Any]):
+        super().__init__()
+        self._task = task
+
+    def run(self) -> None:
+        try:
+            result = self._task()
         except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
             self.failed.emit(str(exc))
             return

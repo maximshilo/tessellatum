@@ -16,7 +16,14 @@ from PIL import Image
 from tessellatum.core.boundaries import region_outlines, smoothing_length_px
 from tessellatum.core.ink_outline import ink_outline
 from tessellatum.core.labels import baseline_bbox, font
-from tessellatum.core.legend import LABEL_FONT_RATIO, SWATCH_BORDER_MM, SWATCH_GAP_MM, SWATCH_MM, number_fill
+from tessellatum.core.legend import (
+    LABEL_FONT_RATIO,
+    SWATCH_BORDER_MM,
+    SWATCH_GAP_MM,
+    SWATCH_MM,
+    number_fill,
+    render_legend,
+)
 from tessellatum.core.painting import Painting, Version, tint_rgb
 from tessellatum.core.print_size import A4, MM_PER_INCH, PT_PER_INCH, PaperFormat, print_scale
 from tessellatum.core.render import PageDrawing, number_origin
@@ -38,6 +45,24 @@ _MEASURING_EM_PX = 1000
 MAX_RASTER_LONG_EDGE = 16384
 # The Qt application ``rasterize`` starts where none runs (a script, the benchmark), kept while the module is.
 _qt_application = None
+
+
+def export_png(
+    drawing: PageDrawing,
+    palette_rgb: Sequence[tuple[int, int, int]],
+    path: Path,
+    dpi: float,
+    version: Version = Version.PAGE,
+    painting: Painting | None = None,
+) -> tuple[int, int]:
+    """Save ``version`` of the page laid out in ``drawing`` as a PNG at ``dpi`` on its paper: the page drawn there
+    (see ``rasterize``) above its legend of ``palette_rgb`` drawn at the same resolution, the file recording it.
+    Returns the page's pixels (width, height)."""
+    page = rasterize(drawing, dpi, version, painting)
+    palette_bgr = np.asarray(palette_rgb, dtype=np.uint8).reshape(-1, 3)[:, ::-1]
+    legend = render_legend(palette_bgr, width=page.width, px_per_mm=dpi / MM_PER_INCH)
+    save_png(page, legend, path, drawing.style.paper_format)
+    return page.size
 
 
 def save_png(page: Image.Image, legend: Image.Image, path: Path, paper: PaperFormat = A4) -> None:
