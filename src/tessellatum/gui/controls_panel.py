@@ -24,15 +24,16 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QSlider,
+    QSpinBox,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from tessellatum.core import difficulty, settings
+from tessellatum.core import difficulty, export, settings
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import Handling
-from tessellatum.core.print_size import PAPERS
+from tessellatum.core.print_size import MM_PER_INCH, PAPERS, print_scale
 from tessellatum.core.render import DEFAULT_TONE, TONE_FIELDS, TONES, PageStyle
 from tessellatum.core.settings import Setting
 
@@ -61,6 +62,22 @@ PAPER_TOOLTIP = (
 )
 DEFAULT_PAPER = "A4"
 
+# The PNG's resolution (T3c): in dots per inch on its paper, or in pixels along its long edge.
+DPI, PIXELS = "dpi", "px"
+DPI_PRESETS = (150, 300, 600)
+# 600 dpi: an A4 export of the benchmark's heaviest page (the lion at Realistic) lays out in 6 s and draws at 600 dpi in
+# 1.6 s more, at 1.1 GB, within the 15 s and 2 GB a default may take (D-011).
+DEFAULT_DPI = 600
+MIN_DPI = 72
+MIN_PIXELS = 500
+RESOLUTION_TOOLTIP = (
+    "How finely the PNG is drawn: in dots per inch on its paper, or in pixels along its long edge, the other worked "
+    "out from the paper and the picture's shape. 300 dpi prints as sharp as a photo print; 600 is sharper still, for "
+    "small numbers and for coloring zoomed in on a screen. A PNG is at most 16,384 px along a side: as much as "
+    "Procreate's canvases take, which hold 33 to 134 megapixels by iPad. The PDF is vector art, sharp at any size: "
+    "an app that turns it into pixels picks its own resolution."
+)
+
 CUSTOM_TOOLTIP = "Set every difficulty setting yourself. Moving any of them picks Custom, starting from the preset."
 
 # Where the panel keeps its settings between runs (see ``ControlsPanel``): the preset, the tone, each setting by name,
@@ -68,6 +85,9 @@ CUSTOM_TOOLTIP = "Set every difficulty setting yourself. Moving any of them pick
 _PRESET_KEY = "difficulty/preset"
 _TONE_KEY = "style/tone"
 _PAPER_KEY = "style/paper"
+_UNIT_KEY = "export/unit"
+_DPI_KEY = "export/dpi"
+_PIXELS_KEY = "export/pixels"
 _SETTING_KEY = "settings/{}"
 _SWITCH_KEY = "handling/{}"
 
@@ -274,9 +294,44 @@ class ControlsPanel(QWidget):
         format_layout.setContentsMargins(0, 0, 0, 0)
         format_layout.addWidget(self.png_radio)
         format_layout.addWidget(self.pdf_radio)
+        self._picture_size: tuple[int, int] | None = None
+        self.resolution_spin = QSpinBox()
+        self.resolution_spin.setGroupSeparatorShown(True)
+        self.resolution_spin.setToolTip(RESOLUTION_TOOLTIP)
+        self.resolution_unit = QComboBox()
+        self.resolution_unit.addItem("dpi", DPI)
+        self.resolution_unit.addItem("px", PIXELS)
+        self.resolution_unit.setItemData(0, "Dots per inch on the paper", Qt.ToolTipRole)
+        self.resolution_unit.setItemData(1, "Pixels along the page's long edge", Qt.ToolTipRole)
+        self.resolution_unit.setToolTip(RESOLUTION_TOOLTIP)
+        resolution_row = QWidget()
+        resolution_layout = QHBoxLayout(resolution_row)
+        resolution_layout.setContentsMargins(0, 0, 0, 0)
+        resolution_layout.addWidget(self.resolution_spin, 1)
+        resolution_layout.addWidget(self.resolution_unit)
+        self.dpi_buttons: dict[int, QPushButton] = {}
+        presets_row = QWidget()
+        presets_layout = QHBoxLayout(presets_row)
+        presets_layout.setContentsMargins(0, 0, 0, 0)
+        for dpi in DPI_PRESETS:
+            button = QPushButton(f"{dpi} dpi")
+            button.setToolTip(f"Draw the PNG at {dpi} dots per inch on its paper.")
+            button.clicked.connect(lambda _checked=False, dpi=dpi: self.set_export_dpi(dpi))
+            presets_layout.addWidget(button)
+            self.dpi_buttons[dpi] = button
+        self.resolution_readout = QLabel()
+        self.resolution_readout.setWordWrap(True)
+        self.resolution_readout.setStyleSheet("color: #666;")
+        # Each mode's value, the one not shown kept for it: dots per inch, and pixels along the long edge (None until
+        # first shown, then what the dpi came to).
+        self._dpi, self._pixels = DEFAULT_DPI, None
         export_form = QFormLayout()
         export_form.addRow("Version", self.version_combo)
         export_form.addRow("Format", format_row)
+        export_form.addRow("Resolution", resolution_row)
+        export_form.addRow("", presets_row)
+        export_form.addRow(self.resolution_readout)
+        export_form.labelForField(resolution_row).setToolTip(RESOLUTION_TOOLTIP)
         export_group.setLayout(export_form)
 
         self.generate_button = QPushButton("Generate Preview")
@@ -325,11 +380,15 @@ class ControlsPanel(QWidget):
         for name, control in self.controls.items():
             control.edited.connect(lambda name=name: self._on_setting_edited(name))
         self.tone_combo.currentTextChanged.connect(self._on_tone_changed)
-        self.paper_combo.currentTextChanged.connect(lambda _name: self._save())
+        self.paper_combo.currentTextChanged.connect(lambda _name: self._on_print_changed())
+        self.resolution_unit.currentIndexChanged.connect(lambda _index: self._on_unit_changed())
+        self.resolution_spin.valueChanged.connect(lambda _value: self._on_resolution_edited())
+        self.png_radio.toggled.connect(lambda _checked: self._show_resolution())
         for check in self._switches.values():
             check.toggled.connect(lambda _checked: self._save())
 
         self._show_preset(difficulty.DEFAULT_PRESET)
+        self._show_resolution()
         self._load()
 
     # -- Settings --------------------------------------------------------
@@ -384,6 +443,9 @@ class ControlsPanel(QWidget):
             self.paper_combo.setCurrentText(DEFAULT_PAPER)
             for check in self._switches.values():
                 check.setChecked(True)
+            self._dpi, self._pixels = DEFAULT_DPI, None
+            self.resolution_unit.setCurrentIndex(self.resolution_unit.findData(DPI))
+            self._show_resolution()
         finally:
             self._loading = False
         self._save()
@@ -398,6 +460,10 @@ class ControlsPanel(QWidget):
             self._store.setValue(_SETTING_KEY.format(name), control.value())
         for name, check in self._switches.items():
             self._store.setValue(_SWITCH_KEY.format(name), check.isChecked())
+        self._store.setValue(_UNIT_KEY, self._unit())
+        self._store.setValue(_DPI_KEY, self._dpi)
+        if self._pixels is not None:
+            self._store.setValue(_PIXELS_KEY, self._pixels)
 
     def _load(self) -> None:
         """The settings kept in the store, where it has them; anything it lacks or can't read keeps its default."""
@@ -431,6 +497,15 @@ class ControlsPanel(QWidget):
                 kept = self._store.value(_SWITCH_KEY.format(name))
                 if kept is not None:
                     check.setChecked(kept in (True, "true", "True", 1, "1"))
+            for key, attr in ((_DPI_KEY, "_dpi"), (_PIXELS_KEY, "_pixels")):
+                try:
+                    setattr(self, attr, int(self._store.value(key)))
+                except (TypeError, ValueError):
+                    pass
+            unit = self._store.value(_UNIT_KEY)
+            if unit in (DPI, PIXELS):
+                self.resolution_unit.setCurrentIndex(self.resolution_unit.findData(unit))
+            self._show_resolution()
         finally:
             self._loading = False
 
@@ -471,11 +546,114 @@ class ControlsPanel(QWidget):
     def get_export_version(self) -> Version:
         return self.version_combo.currentData()
 
-    def set_busy(self, busy: bool) -> None:
+    # -- The PNG's resolution ------------------------------------------------
+    def set_picture_size(self, size: tuple[int, int] | None) -> None:
+        """The picture's pixels (width, height), whose shape sets how large the page prints, or None."""
+        self._picture_size = size
+        self._show_resolution()
+
+    def set_export_dpi(self, dpi: float) -> None:
+        """Draw the PNG at ``dpi``, shown in dots per inch."""
+        self._dpi = round(dpi)
+        self.resolution_unit.blockSignals(True)
+        self.resolution_unit.setCurrentIndex(self.resolution_unit.findData(DPI))
+        self.resolution_unit.blockSignals(False)
+        self._show_resolution()
+        self._save()
+
+    def get_export_resolution(self) -> tuple[str, int]:
+        """The PNG's resolution as asked for: (``DPI``, dots per inch) or (``PIXELS``, pixels along the long edge)."""
+        return self._unit(), self.resolution_spin.value()
+
+    def get_export_dpi(self, printed_long_mm: float | None = None) -> float:
+        """The dots per inch the PNG is drawn at, on a page ``printed_long_mm`` long on paper (by default, the
+        picture's): as asked, or for a size in pixels, what puts that many along the long edge."""
+        if self._unit() == DPI:
+            return float(self.resolution_spin.value())
+        long_mm = printed_long_mm if printed_long_mm is not None else self._printed_long_mm()
+        return self.resolution_spin.value() * MM_PER_INCH / long_mm
+
+    def _unit(self) -> str:
+        return self.resolution_unit.currentData()
+
+    def _printed_long_mm(self) -> float:
+        """How long the page prints along its long edge: the picture's shape on the paper, or with no picture the
+        paper's printable area."""
+        paper = PAPERS[self.paper_combo.currentText()]
+        if self._picture_size is None:
+            return max(paper.printable_mm())
+        return max(print_scale(self._picture_size, paper).printed_size_mm)
+
+    def _on_unit_changed(self) -> None:
+        # The other mode starts at what the shown one asked for; loaded, at what it was kept at.
+        long_mm = self._printed_long_mm()
+        if self._loading:
+            pass
+        elif self._unit() == PIXELS:
+            self._pixels = round(long_mm * self._dpi / MM_PER_INCH)
+        else:
+            self._dpi = round(self._pixels * MM_PER_INCH / long_mm) if self._pixels else self._dpi
+        self._show_resolution()
+        self._save()
+
+    def _on_resolution_edited(self) -> None:
+        if self._unit() == DPI:
+            self._dpi = self.resolution_spin.value()
+        else:
+            self._pixels = self.resolution_spin.value()
+        self._show_resolution()
+        self._save()
+
+    def _on_print_changed(self) -> None:
+        self._show_resolution()
+        self._save()
+
+    def _show_resolution(self) -> None:
+        """The resolution's box in its mode, within what a PNG takes on this page (see ``export.MAX_RASTER_LONG_EDGE``),
+        and what it comes to: the file's pixels and the dpi."""
+        long_mm = self._printed_long_mm()
+        most_dpi = int((export.MAX_RASTER_LONG_EDGE - 0.5) * MM_PER_INCH / long_mm)
+        spin = self.resolution_spin
+        spin.blockSignals(True)
+        if self._unit() == DPI:
+            spin.setRange(MIN_DPI, most_dpi)
+            spin.setSingleStep(25)
+            spin.setValue(self._dpi)  # within the range: the most this paper takes, if more was asked
+            dpi = float(spin.value())
+        else:
+            spin.setRange(MIN_PIXELS, export.MAX_RASTER_LONG_EDGE)
+            spin.setSingleStep(100)
+            if self._pixels is None:
+                self._pixels = round(long_mm * self._dpi / MM_PER_INCH)
+            spin.setValue(self._pixels)
+            dpi = spin.value() * MM_PER_INCH / long_mm
+        spin.blockSignals(False)
+        png = self.png_radio.isChecked()
+        for widget in (spin, self.resolution_unit, *self.dpi_buttons.values()):
+            widget.setEnabled(png)
+        if not png:
+            self.resolution_readout.setText("The PDF is vector art: it prints sharp at any size.")
+            return
+        paper = self.paper_combo.currentText()
+        if self._picture_size is None:
+            text = f"{round(long_mm * dpi / MM_PER_INCH):,} px along the long edge at {dpi:.0f} dpi on {paper}."
+        else:
+            printed = print_scale(self._picture_size, PAPERS[paper]).printed_size_mm
+            width, height = (max(1, round(mm * dpi / MM_PER_INCH)) for mm in printed)
+            text = f"{width:,} × {height:,} px ({width * height / 1e6:.0f} Mpx) at {dpi:.0f} dpi on {paper}."
+        capped = self._dpi > most_dpi if self._unit() == DPI else spin.value() == export.MAX_RASTER_LONG_EDGE
+        if capped:
+            text += f" The most a PNG takes: {export.MAX_RASTER_LONG_EDGE:,} px along a side."
+        self.resolution_readout.setText(text)
+
+    def set_busy(self, busy: bool, cancellable: bool = True) -> None:
+        """Busy, or not: while busy the progress row shows, and the buttons that start something are off. A step that
+        can't be ``cancellable`` shows a busy bar with no percentage and no abort."""
         self.progress_row.setVisible(busy)
+        self.progress_bar.setRange(0, 100 if cancellable else 0)
         if busy:
             self.progress_bar.setValue(0)
-            self.abort_button.setEnabled(True)
+            self.abort_button.setEnabled(cancellable)
         self.generate_button.setEnabled(not busy)
         self.export_button.setEnabled(not busy and self.export_button.property("hasResult") is True)
         self.open_button.setEnabled(not busy)

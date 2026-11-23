@@ -23,10 +23,10 @@ from PySide6.QtWidgets import (
 from tessellatum.core import export, pipeline
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import GeneratedPage
-from tessellatum.core.print_size import PRINT_DPI, print_scale
-from tessellatum.gui.controls_panel import ControlsPanel
+from tessellatum.core.print_size import MM_PER_INCH, print_scale
+from tessellatum.gui.controls_panel import DPI, ControlsPanel
 from tessellatum.gui.preview_widget import PreviewWidget, VersionBar, ZoomBar
-from tessellatum.gui.worker import PipelineWorker
+from tessellatum.gui.worker import PipelineWorker, TaskWorker
 
 OPEN_IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.gif)"
 
@@ -80,6 +80,8 @@ class MainWindow(QMainWindow):
         self._pending_export_path: Path | None = None
         self._pending_export_format: str | None = None
         self._pending_export_version: Version | None = None
+        self._pending_export_resolution: tuple[str, int] | None = None  # the PNG's, as the panel asked for it
+        self._raster_worker: TaskWorker | None = None  # drawing the PNG in pixels
         self._pending_export_drawn = False  # whether the export waits for the preview's page drawn at print size
         self._ready_message = ""  # the status of the preview shown
         # Whether _worker is making a page whose end the window hasn't handled yet. (Its last signal can come while Qt
@@ -118,6 +120,8 @@ class MainWindow(QMainWindow):
             return
 
         self.controls.set_thumbnail(_bgr_to_pixmap(self.current_image_bgr))
+        height, width = self.current_image_bgr.shape[:2]
+        self.controls.set_picture_size((width, height))
         self.current_page = None
         self._drop_print_page()
         self.controls.set_export_enabled(False)
@@ -130,6 +134,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No image", "Open an image first.")
             return
         if (self._worker is not None and self._worker.isRunning()) or self._pending_export_path is not None:
+            return
+        if self._raster_worker is not None:
             return
 
         self._drop_print_page()  # the zoom asks for the new page's
@@ -194,7 +200,7 @@ class MainWindow(QMainWindow):
         if self.current_image_bgr is None:
             QMessageBox.warning(self, "No image", "Open an image first.")
             return
-        if self._worker is not None and self._worker.isRunning():
+        if (self._worker is not None and self._worker.isRunning()) or self._raster_worker is not None:
             return
 
         fmt = self.controls.get_output_format()
@@ -212,6 +218,7 @@ class MainWindow(QMainWindow):
         self._pending_export_path = path
         self._pending_export_format = fmt
         self._pending_export_version = version
+        self._pending_export_resolution = self.controls.get_export_resolution()
         self.controls.set_busy(True)
         self.statusBar().showMessage(f"Rendering the {fmt} at print resolution…")
 
@@ -239,37 +246,58 @@ class MainWindow(QMainWindow):
         path = self._pending_export_path
         fmt = self._pending_export_format
         version = self._pending_export_version
+        resolution = self._pending_export_resolution
         self._clear_pending_export()
         if path is None or fmt is None or version is None:
             return
 
-        paper = page.drawing.style.paper_format
-        size = page.page.size
-        try:
-            if fmt == "PNG":
-                # The vector page drawn in pixels, as the PDF prints it (see ``export.rasterize``).
-                image = export.rasterize(page.drawing, PRINT_DPI, version, page.painting)
-                export.save_png(image, page.legend, path, paper)
-                size = image.size
-            else:
+        if fmt == "PDF":
+            try:
                 export.save_pdf(page.drawing, page.palette_rgb, path, version=version, painting=page.painting)
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Export failed", str(exc))
-            self.statusBar().showMessage("Export failed.")
+            except Exception as exc:  # noqa: BLE001
+                self._on_export_failed(str(exc))
+                return
+            self._on_export_saved(page, path, page.page.size)
             return
 
+        # The vector page drawn in pixels, as the PDF prints it (see ``export.rasterize``), at the resolution asked
+        # for: in the background, since at 600 dpi on A2 it takes seconds. It can't be stopped once started.
+        unit, value = resolution
+        printed_long_mm = max(print_scale(page.page.size, page.drawing.style.paper_format).printed_size_mm)
+        dpi = value if unit == DPI else value * MM_PER_INCH / printed_long_mm
+        self.controls.set_busy(True, cancellable=False)
+        self.statusBar().showMessage(f"Drawing the PNG at {dpi:.0f} dpi…")
+        worker = TaskWorker(
+            lambda: export.export_png(page.drawing, page.palette_rgb, path, dpi, version, page.painting)
+        )
+        worker.succeeded.connect(lambda size: self._on_export_saved(page, path, size))
+        worker.failed.connect(self._on_export_failed)
+        self._raster_worker = worker
+        worker.start()
+
+    def _on_export_saved(self, page: GeneratedPage, path: Path, size: tuple[int, int]) -> None:
+        self._raster_worker = None
+        self.controls.set_busy(False)
         if self.preview.wants_detail():
             self._draw_print_page()  # asked for by a zoom while the export was made
+        paper = page.drawing.style.paper_format
         width, height = size
         dpi = print_scale(size, paper).dpi
-        printed = f"{width} × {height} px, {dpi:.0f} dpi on {paper.name}"
+        printed = f"{width:,} × {height:,} px, {dpi:.0f} dpi on {paper.name}"
         self.statusBar().showMessage(f"Exported to {path} ({printed})")
         QMessageBox.information(self, "Export complete", f"Saved to:\n{path}\n\n{printed}")
+
+    def _on_export_failed(self, message: str) -> None:
+        self._raster_worker = None
+        self.controls.set_busy(False)
+        QMessageBox.critical(self, "Export failed", message)
+        self.statusBar().showMessage("Export failed.")
 
     def _clear_pending_export(self) -> None:
         self._pending_export_path = None
         self._pending_export_format = None
         self._pending_export_version = None
+        self._pending_export_resolution = None
         self._pending_export_drawn = False
 
     def _preview_to_draw(self, long_edge: int) -> GeneratedPage | None:
@@ -390,7 +418,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         # Stop what is still running, rather than leave a thread to be destroyed with the window.
-        for worker in (self._worker, self._print_worker, *self._retired):
+        for worker in (self._worker, self._print_worker, self._raster_worker, *self._retired):
             if worker is not None and worker.isRunning():
                 worker.requestInterruption()
                 worker.wait()

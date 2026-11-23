@@ -328,3 +328,53 @@ def test_the_paper_is_a_page_setting_kept_between_runs_and_reset_to_a4(tmp_path)
     store = _store(tmp_path)
     store.setValue("style/paper", "Letter")  # not a sheet the app offers: the default
     assert ControlsPanel(store=store).get_page_style().paper == "A4"
+
+
+def test_the_png_s_resolution_is_asked_for_in_dpi_or_pixels_and_shown_as_both():
+    # T3c: 600 dpi by default; the other unit worked out from the paper and the picture's shape, shown live.
+    panel = ControlsPanel()
+    assert panel.get_export_resolution() == (controls_panel.DPI, 600) and panel.get_export_dpi() == 600
+    assert panel.resolution_readout.text() == "6,543 px along the long edge at 600 dpi on A4."
+    panel.set_picture_size((3000, 2000))  # 3:2, 277 mm long on A4
+    assert panel.resolution_readout.text() == "6,543 × 4,362 px (29 Mpx) at 600 dpi on A4."
+
+    panel.resolution_unit.setCurrentIndex(panel.resolution_unit.findData(controls_panel.PIXELS))
+    assert panel.get_export_resolution() == (controls_panel.PIXELS, 6543)
+    assert panel.get_export_dpi() == pytest.approx(600, abs=0.1)
+    panel.resolution_spin.setValue(3272)
+    assert panel.get_export_dpi() == pytest.approx(300, abs=0.1)
+    assert panel.get_export_dpi(printed_long_mm=138.5) == pytest.approx(600, abs=0.1)
+    assert "3,272 × 2,181 px" in panel.resolution_readout.text()
+    panel.resolution_unit.setCurrentIndex(panel.resolution_unit.findData(controls_panel.DPI))
+    assert panel.get_export_resolution() == (controls_panel.DPI, 300)
+
+    panel.dpi_buttons[150].click()
+    assert panel.get_export_resolution() == (controls_panel.DPI, 150)
+    panel.pdf_radio.setChecked(True)  # a PDF is vector art: no resolution of its own
+    assert not panel.resolution_spin.isEnabled() and not panel.dpi_buttons[600].isEnabled()
+    assert "vector" in panel.resolution_readout.text()
+
+
+def test_the_png_s_resolution_is_capped_at_what_a_png_takes_on_its_paper():
+    panel = ControlsPanel()
+    panel.set_picture_size((3000, 2000))
+    panel.set_export_dpi(1200)
+    assert panel.get_export_dpi() == 1200 and "The most" not in panel.resolution_readout.text()
+    panel.paper_combo.setCurrentText("A2")  # 574 mm long: 16,384 px is 724 dpi
+    assert panel.get_export_dpi() == 724
+    assert panel.resolution_readout.text().endswith("The most a PNG takes: 16,384 px along a side.")
+    panel.paper_combo.setCurrentText("A4")  # what was asked for, where the paper takes it
+    assert panel.get_export_dpi() == 1200
+
+
+def test_the_png_s_resolution_is_kept_between_runs_and_reset_to_600_dpi(tmp_path):
+    first = ControlsPanel(store=_store(tmp_path))
+    first.resolution_unit.setCurrentIndex(first.resolution_unit.findData(controls_panel.PIXELS))
+    first.resolution_spin.setValue(5000)
+    again = ControlsPanel(store=_store(tmp_path))
+    assert again.get_export_resolution() == (controls_panel.PIXELS, 5000)
+    again.reset()
+    assert again.get_export_resolution() == (controls_panel.DPI, 600)
+    store = _store(tmp_path)
+    store.setValue("export/unit", "furlongs")  # not a unit the app offers: the default
+    assert ControlsPanel(store=store).get_export_resolution() == (controls_panel.DPI, 600)
