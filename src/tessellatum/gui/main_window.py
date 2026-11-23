@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QSettings, Qt, QThread
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -91,7 +91,7 @@ class MainWindow(QMainWindow):
         # export saves. Drawn in the background when either first asks for it, and dropped with the preview.
         self._print_page: GeneratedPage | None = None
         self._print_worker: PipelineWorker | None = None
-        self._retired: list[PipelineWorker] = []  # workers stopped but maybe not finished yet: kept until they are
+        self._retired: list[QThread] = []  # workers stopped but maybe not finished yet: kept until they are
 
         self.controls.open_image_requested.connect(self.open_image)
         self.controls.generate_requested.connect(self.generate_preview)
@@ -275,8 +275,15 @@ class MainWindow(QMainWindow):
         self._raster_worker = worker
         worker.start()
 
+    def _retire_raster_worker(self) -> None:
+        # Its signal can come before its thread ends: kept until it has, so it isn't destroyed while running.
+        worker, self._raster_worker = self._raster_worker, None
+        self._retired = [retired for retired in self._retired if not retired.isFinished()]
+        if worker is not None and not worker.isFinished():
+            self._retired.append(worker)
+
     def _on_export_saved(self, page: GeneratedPage, path: Path, size: tuple[int, int]) -> None:
-        self._raster_worker = None
+        self._retire_raster_worker()
         self.controls.set_busy(False)
         if self.preview.wants_detail():
             self._draw_print_page()  # asked for by a zoom while the export was made
@@ -288,7 +295,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Export complete", f"Saved to:\n{path}\n\n{printed}")
 
     def _on_export_failed(self, message: str) -> None:
-        self._raster_worker = None
+        self._retire_raster_worker()
         self.controls.set_busy(False)
         QMessageBox.critical(self, "Export failed", message)
         self.statusBar().showMessage("Export failed.")
