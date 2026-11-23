@@ -195,8 +195,8 @@ SETTINGS: tuple[Setting, ...] = (
     _gray("line_gray", "Line gray", "How dark the lines print, as a lightness: 0 is black, 100 white."),
     _gray(
         "label_gray", "Number gray",
-        "How dark a number inside its region prints, as a lightness: 0 is black, 100 white. Lighter than the lines, "
-        "it reads as part of the page rather than as writing in the picture.",
+        "How dark a number inside its region prints, as a lightness: 0 is black, 100 white. Gray, like the lines, it "
+        "reads as part of the page rather than as writing in the picture.",
     ),
     _gray(
         "leader_gray", "Leader gray",

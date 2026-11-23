@@ -267,7 +267,8 @@ def test_the_default_grays_are_gray_and_the_default_width_is_the_print_model_s()
 
     assert style.line_width_mm == OUTLINE_WIDTH_MM
     assert 0 < style.line_gray < PAPER and style.line_gray == LINE_GRAY
-    assert style.line_gray < style.label_gray < style.leader_gray < PAPER  # the user's pick (T2b): leaders lightest
+    # The user's pick (2026-11-23): the numbers inside their regions in the lines' gray, the leaders lighter.
+    assert style.line_gray == style.label_gray < style.leader_gray < PAPER
     assert (style.leader_gray, style.leader_width_mm) == (LEADER_GRAY, render_module.LEADER_WIDTH_MM)
     assert style.leader_width_mm < style.line_width_mm  # D-002: leaders thinner than the lines
 
@@ -282,19 +283,20 @@ def test_lightness_is_cie_l_star(gray):
 
 
 def test_the_tones_the_app_offers_step_all_three_grays_alike_and_keep_them_apart():
-    # D-052 (Q36): Light / Medium / Dark, Medium being the default grays, the others 15 L* either side of it. D-002:
-    # the lines, the numbers inside their regions and the leaders each a gray of their own, at least 15 L* apart.
+    # D-052 (Q36): Light / Medium / Dark, Medium being the default grays, the others 15 L* either side of it. The user's
+    # pick (2026-11-23): the lines and the numbers inside their regions one gray, the leaders and their numbers a gray of
+    # their own, lighter.
     assert list(render_module.TONES) == ["Light", "Medium", "Dark"]
     assert render_module.TONES["Medium"] == (LINE_GRAY, LABEL_GRAY, LEADER_GRAY)
     assert render_module.DEFAULT_TONE == "Medium"
+    shown = {name: [round(render_module.lightness(gray)) for gray in tone] for name, tone in render_module.TONES.items()}
+    assert shown == {"Light": [49, 49, 85], "Medium": [34, 34, 70], "Dark": [19, 19, 55]}
     medium = [_lightness(gray) for gray in render_module.TONES["Medium"]]
     for tone in render_module.TONES.values():
         lightness = [_lightness(gray) for gray in tone]
         assert all(0 <= gray < PAPER for gray in tone)
-        assert tone[0] < tone[1]  # a number inside its region is lighter than a line
-        for a in range(3):
-            for b in range(a + 1, 3):
-                assert abs(lightness[a] - lightness[b]) >= 15 - 0.5
+        assert tone[0] == tone[1]  # a number inside its region in the lines' gray
+        assert lightness[2] - lightness[1] >= 15 - 0.5  # a number with a leader lighter, told apart at a glance
         offsets = [mine - theirs for mine, theirs in zip(lightness, medium)]
         assert max(offsets) - min(offsets) == pytest.approx(0, abs=2.0)  # all three moved alike
     lines = [_lightness(tone[0]) for tone in render_module.TONES.values()]

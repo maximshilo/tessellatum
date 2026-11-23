@@ -57,9 +57,9 @@ flowchart TD
    along its length to take the pixel staircase off it, but never by more than a pixel, so the page stays closed.
 6. **Ink.** Lines go down as a round pen 0.2 mm across (by default), a size on paper, on a grid four times finer than the
    page and averaged back down, which anti-aliases them and lets them be thinner than a pixel. Lines and numbers print
-   gray rather than black, so they vanish under the paint meant to cover them, in three grays at least 15 L* apart: the
-   lines darkest, the numbers inside their regions lighter, and the numbers written outside with their leaders
-   lightest, so the two kinds of number are told apart at a glance. Leaders are half as wide as the lines by default.
+   gray rather than black, so they vanish under the paint meant to cover them, in two grays: the lines and the numbers
+   inside their regions in one (L* 34 by default), and the numbers written outside with their leaders in a lighter one
+   (L* 70), so the two kinds of number are told apart at a glance. Leaders are half as wide as the lines by default.
 7. **Number.** Every region gets its number, never smaller than 3 pt on paper by default (1 pt at the least), and never
    where any of a line's ink falls. The preview draws none under 10 px either, in whole pixels; the page laid out to
    print, which every export and the zoom are drawn from, places its numbers again for vectors, at any fraction of a

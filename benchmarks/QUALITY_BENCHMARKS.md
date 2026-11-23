@@ -99,10 +99,11 @@ the page paintable is recorded as an intended trade-off.
 - Every region enclosed, with no gap where two regions' paint can run together.
 - Smooth lines, not the pixel grid's staircase.
 - Lines on the image's real edges.
-- Thin lines, gray rather than black, so they disappear under the paint: 0.2 mm by default. Numbers are a step
-  lighter than the lines and small, so they read as part of the page and not as writing in the image. A number written
-  outside its region, its leader and the leader's dot are a third gray, lighter still by default, and the leader thinner
-  than the lines (0.1 mm), so the two kinds of number are told apart and a leader doesn't read as a boundary.
+- Thin lines, gray rather than black, so they disappear under the paint: 0.2 mm by default. Numbers are small and
+  gray, in the lines' gray by default (L* 34; a step lighter until 1.0.13), so they read as part of the page and not as
+  writing in the image. A number written outside its region, its leader and the leader's dot are a gray of their own,
+  lighter by default (L* 70), and the leader thinner than the lines (0.1 mm), so the two kinds of number are told apart
+  and a leader doesn't read as a boundary.
 
 | metric | what it measures | target |
 |---|---|---|
