@@ -1514,3 +1514,14 @@ def test_a_bar_or_a_ring_thinner_than_the_brush_has_no_corners_to_paint():
     assert not bm.corner_tips(narrow, BRUSH_5PX)[narrow == 20].any()
     tips = bm.corner_tips(ring, 10.0)
     assert not tips[12:28, :8].any() and not tips[:8, 12:28].any()
+
+
+def test_a_painting_larger_than_its_source_is_area_averaged_down_to_it():
+    # From 1.0.10 a page can be made of the picture scaled up: its painting is compared at the source's size with its
+    # edges blended as the source's are, not sampled.
+    painting = np.zeros((40, 60, 3), dtype=np.uint8)
+    painting[:, 31:] = 200  # an edge through the middle of the source's column 15, at half the size
+    down = bm.painting_at(painting, (30, 20))
+    assert down.shape == (20, 30, 3) and down[0, 15, 0] == 100  # half and half
+    same = np.zeros((20, 30, 3), dtype=np.uint8)
+    assert bm.painting_at(same, (30, 20)) is same

@@ -353,7 +353,8 @@ Absolute metrics, per result. Fidelity is scored on the *finished painting*
 is: the printed ink -- line art's, from 0.1.35 the detail marks in a face, and from
 0.1.41 the lettering -- in its gray, the lettering in its own tone, bare paper white)
 against the source
-image at output size. Paintability is scored on the region map and the numbers, at print size
+image at output size; a page larger than its source (from 1.0.10, made of the picture scaled up)
+is scored at the source's size, its painting area-averaged down to it (`painting_at`). Paintability is scored on the region map and the numbers, at print size
 (see "Print scale" above). Line quality is scored on the lines drawn, the region
 map and the source image, and the palette on the legend's colors. Line art, faces,
 text and gradients are also scored against the image's manifest entry: on how the page keeps

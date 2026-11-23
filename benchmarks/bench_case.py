@@ -446,7 +446,7 @@ def main() -> int:
             page_data.lettering,
             page_data.lettering_area,
         )
-        quality.update(bm.fidelity(reference, bm.fit_to(painted, (w, h))))
+        quality.update(bm.fidelity(reference, bm.painting_at(painted, (w, h))))
         quality["undersized_regions"] = bm.count_undersized(
             page_data.region_id_map, page_data.min_region_area_px, page_data.detail
         )

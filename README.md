@@ -67,7 +67,7 @@ tinted painting guide; export a PNG at the resolution you choose (600 dpi by def
 - Boundary extraction on the pixel-crack graph, constrained smoothing and supersampled anti-aliasing.
 
 **Engineering**
-- Interactive speed: Numba-compiled kernels and multithreading, a preview in about 1–3 seconds.
+- Interactive speed: Numba-compiled kernels and multithreading, a preview in about 1–4 seconds.
 - Print output: a purpose-built vector PDF writer, and PNGs at any resolution rendered from the same vector page
   (QtPdf).
 - Quality assurance: 1,300+ automated tests, including pixel-exact equivalence tests, and a benchmark harness that
