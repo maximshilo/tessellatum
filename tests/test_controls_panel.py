@@ -60,7 +60,10 @@ def test_the_region_slider_moves_in_equal_ratios():
 def test_every_setting_has_a_slider_in_its_section_with_its_tooltip_and_unit(panel):
     for s in settings.SETTINGS:
         control = panel.controls[s.name]
-        assert control.setting is s and control.toolTip() == s.tooltip
+        # One that means nothing yet (the mixing settings, without My paints) is off, and says why first.
+        reason = s.disabled_reason(panel.snapshot().chosen())
+        assert control.setting is s and control.isEnabled() == (reason is None)
+        assert control.toolTip() == (s.tooltip if reason is None else f"{reason} {s.tooltip}")
         assert control.value_label.text() == s.text(control.value())
         assert panel.sections[s.group].body.isAncestorOf(control)
     # The tone sits with the lines; the faces', line art's and text's own settings start folded away.

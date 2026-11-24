@@ -46,7 +46,7 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 | Module | Role |
 |---|---|
 | `core/pipeline.py` | Orchestration: working size, stage cache, the full generation, drawing a page at print size |
-| `core/settings.py`, `core/difficulty.py` | Every user setting with its range and default; the five presets |
+| `core/settings.py`, `core/difficulty.py` | The settings registry: every user setting, slider or choice, with its range, default and description; the five presets |
 | `core/print_size.py` | The print model: A4, A3 and A2 geometry, pixels per millimetre, unit conversions |
 | `core/quantize.py`, `core/color.py` | Bilateral filter, k-means palette, CIEDE2000 merge, a palette from the painter's paints and the colors they mix; exact color conversion |
 | `core/paints.py`, `core/paint_kits.py` | The painter's paints: read from text and from palette files; generic sample kits to start from |
@@ -75,6 +75,15 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
   revision count, the picture (with a content hash worked out off the GUI thread) and the page made of it, with the
   settings it was made with, so it knows whether the page is still what the settings would make: the legend and the
   export options don't count, as changing them doesn't make the page again.
+- **Settings registry.** `core/settings.py` describes every setting once, Qt-free: the 30 sliders (`Setting`: the
+  pipeline field it sets, range, step, unit) and the 11 choices (`Choice`: the difficulty, paper, Coloring on, Colors
+  from, paints, mixing, tone, legend and the three handling switches), each with its category and section, level
+  (intent, precise, advanced), unit kind, aliases for search, update policy (only the legend applies at once; the
+  rest with Generate), an enablement predicate over the document's choices that returns the reason to show, and its
+  persistence key (unchanged from earlier versions). Validation (`check`) refuses a value with a reason and never
+  clamps. Tests check that every field of `DifficultyParams`, `PageStyle` and `Handling` is covered once (two
+  internal fields named as such), that the presets' values match `difficulty.py`, that every entry has a control in
+  the panel, and that a settings file written by earlier versions loads.
 - **Commands.** `gui/actions.py` defines each command once; the window builds the menu bar from it, the panel's
   buttons trigger the same `QAction`s, and each action is enabled with its button.
 
