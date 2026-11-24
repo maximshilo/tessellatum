@@ -42,15 +42,15 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 | `core/pipeline.py` | Orchestration: working size, stage cache, the full generation, drawing a page at print size |
 | `core/settings.py`, `core/difficulty.py` | Every user setting with its range and default; the five presets |
 | `core/print_size.py` | The print model: A4, A3 and A2 geometry, pixels per millimetre, unit conversions |
-| `core/quantize.py`, `core/color.py` | Bilateral filter, k-means palette, CIEDE2000 merge, a palette from the painter's paints; exact color conversion |
-| `core/paints.py` | The painter's paints: read from text and from palette files |
-| `core/mixing.py`, `spectral_data.py` | Mixing recipes by Kubelka-Munk theory over reflectance curves; spectral.js's data (MIT) |
+| `core/quantize.py`, `core/color.py` | Bilateral filter, k-means palette, CIEDE2000 merge, a palette from the painter's paints and the colors they mix; exact color conversion |
+| `core/paints.py`, `core/paint_kits.py` | The painter's paints: read from text and from palette files; generic sample kits to start from |
+| `core/mixing.py`, `spectral_data.py` | Mixing recipes and a palette's two-paint mixes by Kubelka-Munk theory over reflectance curves; spectral.js's data (MIT) |
 | `core/ink.py`, `faces.py`, `subject.py`, `text.py` | Line-art decision and ink; the three detectors; lettering |
 | `core/regions.py`, `texture.py`, `tones.py`, `marks.py` | Regions, brush rule, line-art regions; edge vote; face tones and marks |
 | `core/boundaries.py`, `labels.py`, `render.py` | One line per boundary; number placement; page rendering |
 | `core/painting.py`, `legend.py`, `color_names.py`, `redraw.py`, `export.py`, `swatches.py` | Painted versions; legend and its color names; print-size redraw; PNG and PDF; palette files |
 | `core/kernels.py`, `parallel.py` | Numba-compiled pixel loops; the shared thread pool |
-| `gui/main_window.py`, `controls_panel.py`, `preview_widget.py`, `worker.py`, `paints_dialog.py` | Window, settings panel, zoomable preview, background worker, the paints' list |
+| `gui/main_window.py`, `controls_panel.py`, `preview_widget.py`, `worker.py`, `paints_dialog.py` | Window, settings panel, zoomable preview, background worker, the paints' list (swatches, a color picker, sample kits) |
 
 ## Data model
 
