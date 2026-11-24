@@ -4,21 +4,25 @@
 
 ```mermaid
 flowchart TB
-    GUI["Presentation: MainWindow · ControlsPanel · PreviewWidget · theme (PySide6)"]
+    GUI["Presentation: MainWindow · actions · ControlsPanel · PreviewWidget · theme (PySide6)"]
+    APP["Application: Document · DocumentSettings (QtCore, no widgets)"]
     W["Concurrency: PipelineWorker (QThread) · warm-up thread · thread pool"]
     O["Orchestration: pipeline.py · settings.py · difficulty.py · print_size.py"]
     AN["Picture analysis: ink · faces · subject · text"]
     RG["Color and regions: color · quantize · regions · texture · tones · marks"]
     DR["Drawing and output: boundaries · labels · render · legend · painting · redraw · ink_outline · export"]
     K["Compute kernels: kernels.py (Numba) · parallel.py"]
+    GUI --> APP
     GUI --> W --> O
+    APP --> O
     O --> AN & RG & DR
     AN & RG & DR --> K
 ```
 
 The core (`src/tessellatum/core/`) never imports the GUI or Qt: the pipeline is a plain function of an image and three
 settings objects, which is what lets the tests and the benchmark harness call it directly. All work runs off the UI
-thread.
+thread. The application layer (`src/tessellatum/app/`) holds what the user edits, apart from any widget, so it is
+tested without a window.
 
 ## Repository
 
@@ -26,7 +30,8 @@ thread.
 src/tessellatum/
   main.py          entry point
   core/            the pipeline: 29 modules
-  gui/             the Qt interface: 5 modules, and theme/ (tokens, style, icons, motion)
+  app/             the document and its settings snapshot (QtCore only)
+  gui/             the Qt interface: 6 modules, and theme/ (tokens, style, icons, motion)
   resources/       the four bundled models and their licenses (MODELS.md); fonts/ (Inter, OFL) and icons/
                    (Lucide, ISC)
 tests/             pytest suite and the benchmark images (CC0 / public domain)
@@ -51,6 +56,8 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 | `core/boundaries.py`, `labels.py`, `render.py` | One line per boundary; number placement; page rendering |
 | `core/painting.py`, `legend.py`, `color_names.py`, `redraw.py`, `export.py`, `swatches.py` | Painted versions; legend and its color names; print-size redraw; PNG and PDF; palette files |
 | `core/kernels.py`, `parallel.py` | Numba-compiled pixel loops; the shared thread pool |
+| `app/snapshot.py`, `app/document.py` | `DocumentSettings`, every setting as one immutable value; `Document`, the picture, its settings and the page made of them |
+| `gui/actions.py` | Every command as one `QAction`: text, icon, shortcut, menu |
 | `gui/main_window.py`, `controls_panel.py`, `preview_widget.py`, `worker.py`, `paints_dialog.py` | Window, settings panel, zoomable preview, background worker, the paints' list (swatches, a color picker, sample kits) |
 
 ## Data model
@@ -61,6 +68,15 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 - **Result:** `GeneratedPage`, holding the page and legend images plus three descriptions of how the page was made:
   `PageModel` (region map, colors, ink, strokes and numbers, to redraw it at print size), `PageDrawing` (its geometry,
   for the vector PDF) and `Painting` (which paint goes where, for the painted versions).
+
+- **Document.** `DocumentSettings` holds every setting the panel shows (the preset, each slider's value, tone,
+  paper, medium, legend, paints, switches, export options) as one frozen, comparable value, and works out the three
+  pipeline objects from it. The panel announces each edit as a new snapshot; the window's `Document` keeps it with a
+  revision count, the picture (with a content hash worked out off the GUI thread) and the page made of it, with the
+  settings it was made with, so it knows whether the page is still what the settings would make: the legend and the
+  export options don't count, as changing them doesn't make the page again.
+- **Commands.** `gui/actions.py` defines each command once; the window builds the menu bar from it, the panel's
+  buttons trigger the same `QAction`s, and each action is enabled with its button.
 
 ## Runtime
 

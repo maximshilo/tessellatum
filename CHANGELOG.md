@@ -4,6 +4,27 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.1] - 2026-11-24
+
+### Added
+
+- **A menu bar** (File, Edit, View, Generate, Help) with every command the app has, and **keyboard shortcuts** for
+  them: Open (Ctrl+O), Export (Ctrl+E), Generate Preview (Ctrl+Enter or F5), Cancel (Esc), the Page, Completed and
+  Tinted versions (Ctrl+1, 2, 3), Zoom In and Out (Ctrl+plus and minus), Fit Page (Ctrl+0) and 100% (Ctrl+Alt+0).
+  On macOS they use Cmd and sit in the system's menu bar. A button and its menu item are the same command, enabled
+  and disabled together, and the buttons' tooltips name their shortcuts.
+- **View > Appearance**: System (following the system's light or dark setting), Light or Dark, kept between runs.
+- **Help > About Tessellatum**: the version, and the licenses of the app and of what it bundles.
+
+### Changed
+
+- Under the hood, the picture, its settings and the page made of them live in one document model, apart from the
+  window: the groundwork for undo, projects and recovery.
+
+### Fixed
+
+- In dark mode, the empty canvas's "Open an image" text was nearly black on the dark canvas.
+
 ## [1.1.0] - 2026-11-24
 
 ### Added
