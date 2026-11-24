@@ -22,6 +22,8 @@ Each release's notes on GitHub are its section below.
   S-CIELAB, the error as the eye sees the page from 40 cm (informational). The verdict allows the trade the printed
   palette makes, a little more error in a large dark area for better colors elsewhere, within set bounds. The
   benchmark also takes a preset colored on a screen, such as `Medium-Screen`.
+- A dark portrait among the benchmark images: Velázquez's *Juan de Pareja* (The Met, CC0), a dark-skinned face
+  in a dark painting; it is in the gallery too.
 
 ## [1.0.15] - 2026-11-23
 
