@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from tessellatum.core import export, pipeline
+from tessellatum.core.legend import render_legend
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import GeneratedPage
 from tessellatum.core.print_size import MM_PER_INCH, print_scale
@@ -29,6 +31,9 @@ from tessellatum.gui.preview_widget import PreviewWidget, VersionBar, ZoomBar
 from tessellatum.gui.worker import PipelineWorker, TaskWorker
 
 OPEN_IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.gif)"
+# The preview's legend is drawn at least this many pixels a millimeter on paper (300 dpi), finer than a preview's
+# page, so that its names and codes stay sharp zoomed in.
+PREVIEW_LEGEND_PX_PER_MM = 300 / MM_PER_INCH
 
 
 class MainWindow(QMainWindow):
@@ -97,6 +102,7 @@ class MainWindow(QMainWindow):
         self.controls.generate_requested.connect(self.generate_preview)
         self.controls.export_requested.connect(self.export_page)
         self.controls.abort_requested.connect(self.abort_generation)
+        self.controls.legend_detail_changed.connect(self._show_legend)
         self.version_bar.version_changed.connect(self.preview.show_version)
         self.preview.detail_wanted.connect(self._draw_print_page)
 
@@ -182,11 +188,30 @@ class MainWindow(QMainWindow):
         versions = {version: page.image(version) for version in Version}
         long_edge = self._print_long_edge()
         print_scale = 1.0 if long_edge is None else long_edge / max(page.page.size)
+        legend, legend_scale = self._preview_legend(page)
         self.preview.show_page(
-            versions, page.legend, self.version_bar.version(), print_scale, keep_view=same_picture,
-            paper=page.drawing.style.paper_format,
+            versions, legend, self.version_bar.version(), print_scale, keep_view=same_picture,
+            paper=page.drawing.style.paper_format, legend_scale=legend_scale,
         )
         self.version_bar.setEnabled(True)
+
+    def _preview_legend(self, page: GeneratedPage):
+        """The legend of ``page`` as the panel asks for it now, drawn finer than the page, and how many of its pixels go
+        to one of the page's (see ``PreviewWidget.show_page``)."""
+        paper = page.drawing.style.paper_format
+        page_px_per_mm = print_scale(page.page.size, paper).px_per_mm
+        legend_scale = max(1.0, PREVIEW_LEGEND_PX_PER_MM / page_px_per_mm)
+        palette_bgr = np.asarray(page.palette_rgb, dtype=np.uint8).reshape(-1, 3)[:, ::-1]
+        legend = render_legend(
+            palette_bgr, round(page.page.width * legend_scale), page_px_per_mm * legend_scale,
+            self.controls.get_legend_detail(),
+        )
+        return legend, legend_scale
+
+    def _show_legend(self, _detail: str = "") -> None:
+        """Show the page's legend as the panel now asks for it: the page itself is the same."""
+        if self.current_page is not None and self.current_page.drawing is not None:
+            self.preview.set_legend(*self._preview_legend(self.current_page))
 
     def _on_worker_failed(self, message: str) -> None:
         self._making = False
@@ -250,7 +275,10 @@ class MainWindow(QMainWindow):
         self._clear_pending_export()
         if path is None or fmt is None or version is None:
             return
-
+        # The legend as the panel asks for it now: changing it doesn't make the page again (see _preview_to_draw).
+        drawing = page.drawing
+        style = dataclasses.replace(drawing.style, legend_detail=self.controls.get_legend_detail())
+        page = dataclasses.replace(page, drawing=dataclasses.replace(drawing, style=style))
         if fmt == "PDF":
             try:
                 export.save_pdf(page.drawing, page.palette_rgb, path, version=version, painting=page.painting)
@@ -314,7 +342,9 @@ class MainWindow(QMainWindow):
         if page is None or page.model is None or long_edge < max(page.page.size):
             return None
         model = page.model
-        current = (self.controls.get_difficulty_params(), self.controls.get_page_style(), self.controls.get_handling())
+        # What the legend writes doesn't change the page: the export writes the panel's (see _on_export_ready).
+        style = dataclasses.replace(self.controls.get_page_style(), legend_detail=model.style.legend_detail)
+        current = (self.controls.get_difficulty_params(), style, self.controls.get_handling())
         return page if (model.params, model.style, model.handling) == current else None
 
     def _make_worker(

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from tessellatum.core import legend as legend_module
-from tessellatum.core.legend import render_legend
+from tessellatum.core.legend import LEGEND_DETAILS, NAME_HEX_RGB, NUMBER_ONLY, render_legend
 
 PALETTE_BGR = np.array([(30, 30, 30), (200, 220, 240), (60, 120, 200)], dtype=np.uint8)
 
@@ -35,17 +35,25 @@ def test_a_swatch_and_its_gap_are_their_size_on_paper(px_per_mm):
     assert image.shape[0] / px_per_mm == pytest.approx(legend_module.SWATCH_MM + 2 * legend_module.SWATCH_GAP_MM, abs=1.5 / px_per_mm)
 
 
-def test_forty_colors_wrap_into_rows_that_fit_a_quarter_of_a_sheet():
+def test_forty_colors_numbered_only_wrap_into_rows_that_fit_a_quarter_of_a_sheet():
     px_per_mm = 11.81  # 300 dpi
     palette = np.array([(i * 6, 100, 255 - i * 6) for i in range(40)], dtype=np.uint8)
-    image = render_legend(palette, round(190 * px_per_mm), px_per_mm)
+    image = render_legend(palette, round(190 * px_per_mm), px_per_mm, NUMBER_ONLY)
     # 12 swatches a row across 190 mm, so 4 rows: 4 x 15 mm + 3 mm.
     assert image.height / px_per_mm == pytest.approx(63, abs=0.5)
 
 
+def test_sixty_four_colors_with_their_details_fit_a_portrait_a4_sheet():
+    px_per_mm = 11.81  # 300 dpi
+    palette = np.array([(i * 4, 100, 255 - i * 4) for i in range(64)], dtype=np.uint8)
+    image = render_legend(palette, round(190 * px_per_mm), px_per_mm, NAME_HEX_RGB)
+    # 4 cells a row across 190 mm, so 16 rows: 16 x 15 mm + 3 mm, within the sheet's 277.
+    assert image.height / px_per_mm == pytest.approx(243, abs=0.5)
+
+
 def test_each_number_is_written_in_white_on_a_dark_swatch_and_in_black_on_a_light_one():
     px_per_mm = 7.39
-    image = np.asarray(render_legend(PALETTE_BGR, 2000, px_per_mm))
+    image = np.asarray(render_legend(PALETTE_BGR, 2000, px_per_mm, NUMBER_ONLY))
     x0, y0, x1, y1 = _first_swatch(image)
     step = x1 - x0 - 1 + round(legend_module.SWATCH_GAP_MM * px_per_mm)
     border = round(legend_module.SWATCH_BORDER_MM * px_per_mm)

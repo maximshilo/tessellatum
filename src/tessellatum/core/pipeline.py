@@ -616,7 +616,8 @@ def draw_page(
     if rendered.printed_ink is not None:
         printed_ink = rendered.printed_ink  # less the hatching cleared behind numbers
     legend = render_legend(
-        model.palette_bgr[: model.legend_size], width=w, px_per_mm=print_scale((w, h), paper).px_per_mm
+        model.palette_bgr[: model.legend_size], width=w, px_per_mm=print_scale((w, h), paper).px_per_mm,
+        detail=style.legend_detail,
     )
     painting = Painting(
         region_id_map=region_id_map,
@@ -938,7 +939,9 @@ def _make_page(
     if rendered.printed_ink is not None:
         printed_ink = rendered.printed_ink  # less the hatching cleared behind numbers
     used_palette_bgr = palette_bgr[used_color_indices]
-    legend = render_legend(used_palette_bgr, width=w, px_per_mm=print_scale((w, h), paper).px_per_mm)
+    legend = render_legend(
+        used_palette_bgr, width=w, px_per_mm=print_scale((w, h), paper).px_per_mm, detail=style.legend_detail
+    )
     report("render")
 
     # Legend colors first, so a color index means the same color in region_color as in the renumbered regions.

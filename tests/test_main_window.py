@@ -755,3 +755,34 @@ def test_a_png_is_drawn_at_the_resolution_asked_for(drive, tmp_path):
     with Image.open(tmp_path / "wide.png") as png:
         assert png.width == 5000
     assert window._print_page is layout  # every resolution drawn from the one layout
+
+
+def test_the_legend_s_detail_changes_the_preview_s_legend_and_the_export_without_making_the_page_again(drive, tmp_path):
+    window = drive.window
+    window.current_image_bgr = _blocks((4000, 2000))
+    window.generate_preview()
+    drive.wait()
+    calls = len(drive.calls)
+    detailed = window.preview._legend
+    # Drawn finer than the page, at 300 dpi, and shown at the page's scale.
+    page_px_per_mm = print_scale(window.current_page.page.size).px_per_mm
+    assert detailed.width() == pytest.approx(window.current_page.page.width * 300 / 25.4 / page_px_per_mm, abs=1)
+    assert window.preview._legend_size[0] == pytest.approx(window.current_page.page.width, abs=0.5)
+
+    window.controls.legend_combo.setCurrentText("Number only")
+    numbered = window.preview._legend
+    assert len(drive.calls) == calls and numbered != detailed  # the names and codes gone, the page not made again
+    assert window.preview._legend_size[0] == pytest.approx(window.current_page.page.width, abs=0.5)
+
+    window.controls.pdf_radio.setChecked(True)
+    drive.save_path = str(tmp_path / "page.pdf")
+    window.export_page()
+    drive.wait()
+    assert len(drive.calls) == calls  # drawn from the preview, not made again
+    legend_sheet = pdf_reading.sheets((tmp_path / "page.pdf").read_bytes())[1]["content"]
+    assert "RGB" not in legend_sheet
+    window.controls.legend_combo.setCurrentText("Name, hex and RGB")
+    window.export_page()
+    drive.wait()
+    assert len(drive.calls) == calls
+    assert "RGB" in pdf_reading.sheets((tmp_path / "page.pdf").read_bytes())[1]["content"]

@@ -66,6 +66,7 @@ class PreviewWidget(QGraphicsView):
         self._previews: dict[Version, QImage] = {}
         self._details: dict[Version, QImage] = {}
         self._legend: QImage | None = None
+        self._legend_size: tuple[float, float] = (0.0, 0.0)  # the legend's size in the scene, which its image may exceed
         self._version = Version.PAGE
         self._print_scale = 1.0
         self._paper = A4
@@ -97,6 +98,7 @@ class PreviewWidget(QGraphicsView):
         print_scale: float = 1.0,
         keep_view: bool = False,
         paper: PaperFormat = A4,
+        legend_scale: float = 1.0,
     ) -> None:
         """Show a new page: each of its ``versions`` above the legend, ``shown`` of them, fitted to the window.
 
@@ -104,7 +106,8 @@ class PreviewWidget(QGraphicsView):
         zoomed in past its pixels the widget asks for it as it prints (see ``show_detail``). With ``keep_view``, a page
         of the picture shown is shown as far in and in the same place, unless the view is fitted to the window; made at
         another size (another level's, see ``pipeline.working_long_edge``), as far in on paper, the same point of the
-        picture in the middle. ``paper`` is the sheet the page is made for.
+        picture in the middle. ``paper`` is the sheet the page is made for. ``legend`` may be drawn finer than the
+        page, ``legend_scale`` of its pixels to one of the page's, so that its small print stays sharp zoomed in.
         """
         size = next(iter(versions.values())).size
         keep = keep_view and not self._fitted and self._page_size is not None
@@ -118,7 +121,6 @@ class PreviewWidget(QGraphicsView):
                 held = (middle, inverse.map(middle) * ratio, self.zoom() / ratio)
         self._previews = {version: pil_to_qimage(image) for version, image in versions.items()}
         self._details = {}
-        self._legend = pil_to_qimage(legend)
         self._version = shown
         self._page_size = size
         self._print_scale = max(1.0, print_scale)
@@ -130,10 +132,7 @@ class PreviewWidget(QGraphicsView):
             self._legend_item = self._scene.addPixmap(QPixmap())
             for item in (self._page_item, self._legend_item):
                 item.setTransformationMode(Qt.SmoothTransformation)
-        width, height = size
-        self._legend_item.setPos((width - legend.width) / 2, height + LEGEND_GAP)
-        legend_rect = QRectF(self._legend_item.pos().x(), self._legend_item.pos().y(), legend.width, legend.height)
-        self._scene.setSceneRect(QRectF(0, 0, width, height).united(legend_rect))
+        self._place_legend(legend, legend_scale)
         if held is not None:
             middle, point, zoom = held
             self._held = (middle, point, self.viewportTransform())  # the zoom holds that point there
@@ -273,6 +272,24 @@ class PreviewWidget(QGraphicsView):
         fit = min((size.width() - margin) / rect.width(), (size.height() - margin) / rect.height())
         return max(fit, 1e-3) * self.devicePixelRatioF()
 
+    def set_legend(self, legend: Image.Image, legend_scale: float = 1.0) -> None:
+        """Show ``legend`` under the page shown, in place of its own (``legend_scale`` as ``show_page`` takes it)."""
+        if self._page_size is None:
+            return
+        self._place_legend(legend, legend_scale)
+        if self._fitted:
+            self.fit_to_window()  # the legend may be taller or shorter than it was
+        self._sharpen()
+
+    def _place_legend(self, legend: Image.Image, legend_scale: float) -> None:
+        self._legend = pil_to_qimage(legend)
+        self._legend_size = (legend.width / legend_scale, legend.height / legend_scale)
+        self._shown.pop("legend", None)
+        width, height = self._page_size
+        self._legend_item.setPos((width - self._legend_size[0]) / 2, height + LEGEND_GAP)
+        legend_rect = QRectF(self._legend_item.pos().x(), self._legend_item.pos().y(), *self._legend_size)
+        self._scene.setSceneRect(QRectF(0, 0, width, height).united(legend_rect))
+
     def _zoomed(self) -> None:
         self._sharpen_timer.start()
         self.zoom_changed.emit(self.printed_zoom())
@@ -287,8 +304,7 @@ class PreviewWidget(QGraphicsView):
             return
         zoom = self.zoom()
         _show_at(self._page_item, self.shown_image(), self._page_size, zoom, self._shown, "page")
-        legend_size = (self._legend.width(), self._legend.height())
-        _show_at(self._legend_item, self._legend, legend_size, zoom, self._shown, "legend")
+        _show_at(self._legend_item, self._legend, self._legend_size, zoom, self._shown, "legend")
 
 
 def _show_at(

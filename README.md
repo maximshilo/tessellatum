@@ -18,7 +18,8 @@
 </p>
 
 **Tessellatum** turns any picture (a photograph, a painting, a cartoon or a comic) into a printable
-paint-by-numbers page: flat, outlined regions, each with a number, and a matching color legend. It pairs classical
+paint-by-numbers page: flat, outlined regions, each with a number, and a matching color legend that names every
+color and gives its hex code and RGB values. It pairs classical
 image analysis with compact neural networks that run entirely on-device, and holds every page to physical rules of
 paintability on the sheet it is made for (A4, A3 or A2): no region narrower than the brush, no number too small to read, no two colors too close
 to tell apart.

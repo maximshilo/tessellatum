@@ -28,6 +28,7 @@ from tessellatum.core.labels import (
     place_labels,
     text_bbox,
 )
+from tessellatum.core.legend import DEFAULT_LEGEND_DETAIL
 from tessellatum.core.print_size import (
     MIN_LABEL_SIZE_PT,
     MIN_REGION_AREA_MM2,
@@ -120,6 +121,8 @@ class PageStyle:
     paper may get between its lines before each side of it gets its number
     (see ``labels``). All are on paper: the sheet named ``paper``, one of
     ``print_size.PAPERS``, which the page is made for (see ``scale``).
+    ``legend_detail`` is what the legend writes beside each swatch (see
+    ``legend.swatch_texts``).
 
     The numbers' placement decides which of line art's regions have room for
     one, and a region with none joins the area beside it (see
@@ -140,6 +143,7 @@ class PageStyle:
     text_gap_mm: float = TEXT_GAP_MM
     split_neck_mm: float | None = SPLIT_NECK_MM  # None numbers every region once, as before 1.0.6
     paper: str = "A4"
+    legend_detail: str = DEFAULT_LEGEND_DETAIL  # what the legend writes beside each swatch (``legend.LEGEND_DETAILS``)
 
     @property
     def paper_format(self) -> PaperFormat:
