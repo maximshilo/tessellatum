@@ -22,10 +22,15 @@ from tessellatum.core.legend import (
     SWATCH_GAP_MM,
     SWATCH_MM,
     DEFAULT_LEGEND_DETAIL,
+    HEADING_BASELINE_MM,
+    HEADING_MM,
+    HEADING_PT,
+    NAME_GRAY,
     cell_mm,
+    legend_sections,
     number_fill,
+    plain,
     render_legend,
-    swatch_texts,
 )
 from tessellatum.core.painting import Painting, Version, tint_rgb
 from tessellatum.core.print_size import A4, MM_PER_INCH, PT_PER_INCH, PaperFormat, print_scale
@@ -75,16 +80,18 @@ def export_png(
     painting: Painting | None = None,
     names: Sequence[str] | None = None,
     recipes: Sequence[Sequence[str]] | None = None,
+    mixes: Sequence[Sequence[str] | None] | None = None,
 ) -> tuple[int, int]:
     """Save ``version`` of the page laid out in ``drawing`` as a PNG at ``dpi`` on its paper: the page drawn there
     (see ``rasterize``) above its legend of ``palette_rgb`` drawn at the same resolution, the file recording it,
-    the colors called ``names`` and mixed as ``recipes`` say (see ``legend.swatch_texts``). Returns the page's
+    the colors called ``names`` and mixed as ``recipes`` say (see ``legend.swatch_texts``), and the colors mixed from
+    the paints in a section of their own with their ``mixes`` (see ``legend.legend_sections``). Returns the page's
     pixels (width, height)."""
     page = rasterize(drawing, dpi, version, painting)
     palette_bgr = np.asarray(palette_rgb, dtype=np.uint8).reshape(-1, 3)[:, ::-1]
     legend = render_legend(
         palette_bgr, width=page.width, px_per_mm=dpi / MM_PER_INCH, detail=drawing.style.legend_detail, names=names,
-        recipes=recipes,
+        recipes=recipes, mixes=mixes,
     )
     save_png(page, legend, path, drawing.style.paper_format)
     return page.size
@@ -114,6 +121,7 @@ def save_pdf(
     painting: Painting | None = None,
     names: Sequence[str] | None = None,
     recipes: Sequence[Sequence[str]] | None = None,
+    mixes: Sequence[Sequence[str] | None] | None = None,
 ) -> None:
     """Save as two sheets of vector art, of the paper the page was made for (``drawing.style.paper``): the coloring
     page, then its legend.
@@ -155,14 +163,15 @@ def save_pdf(
     from the top margin: its swatches, ``legend.SWATCH_MM`` squares in their
     exact colors, numbered as the page is, and beside each what the style's
     ``legend_detail`` asks for (its name, hex code and RGB values), as text,
-    the colors called ``names`` and mixed as ``recipes`` say (see ``legend.swatch_texts``).
+    the colors called ``names`` and mixed as ``recipes`` say (see ``legend.swatch_texts``); colors mixed from the
+    painter's paints, with ``mixes``, in a section of their own under a heading (see ``legend.legend_sections``).
     The file carries no date, so the same page always gives the same bytes.
     """
     document = _Document()
     numbers = document.font(_number_font())
     _page_sheet(document, drawing, numbers, version, painting)
     _legend_sheet(
-        document, palette_rgb, numbers, drawing.style.paper_format, drawing.style.legend_detail, names, recipes
+        document, palette_rgb, numbers, drawing.style.paper_format, drawing.style.legend_detail, names, recipes, mixes
     )
     Path(path).write_bytes(document.to_bytes())
 
@@ -608,47 +617,64 @@ def _legend_sheet(
     detail: str = DEFAULT_LEGEND_DETAIL,
     names: Sequence[str] | None = None,
     recipes: Sequence[Sequence[str]] | None = None,
+    mixes: Sequence[Sequence[str] | None] | None = None,
 ) -> None:
     """The legend's portrait sheet of ``paper``, drawn in millimeters from the top-left margin, y down, with ``detail``
-    beside each swatch, the colors called ``names``, mixed as ``recipes`` say."""
+    beside each swatch, the colors called ``names``, mixed as ``recipes`` say; with ``mixes``, in two sections, as the
+    page's legend (see ``legend.legend_sections``)."""
     area_w, area_h = paper.printable_mm()
     cell = SWATCH_MM + SWATCH_GAP_MM
-    columns = max(1, int(area_w // cell_mm(detail)))
-    rows = -(-len(palette_rgb) // columns)
+    sections = legend_sections(palette_rgb, detail, names, recipes, mixes)
+    # Each section: its heading's line, if it has one, then its rows.
+    placed = []
+    height = 0.0
+    for heading, start, stop, cell_detail, texts in sections:
+        columns = max(1, int(area_w // cell_mm(cell_detail)))
+        top = height + (HEADING_MM if heading else 0.0)
+        placed.append((heading, height, top, start, stop, cell_detail, columns, texts))
+        height = top + -(-(stop - start) // columns) * cell
     # A legend never runs past the sheet: 40 colors take a quarter of an A4 sheet numbered only, and 64 with their
-    # details 243 mm of its 277.
-    fit = min(1.0, area_h / (rows * cell + SWATCH_GAP_MM))
-    texts = swatch_texts(palette_rgb, detail, names, recipes)
+    # details 243 mm of its 277 (with mixed colors, in two sections, at most 271).
+    fit = min(1.0, area_h / (height + SWATCH_GAP_MM)) if height > 0 else 1.0
     scale = _PT_PER_MM * fit
     em = SWATCH_MM * LABEL_FONT_RATIO
     ops = [
         f"q {_num(scale, 8)} 0 0 {_num(-scale, 8)} {_num(paper.margin_mm * _PT_PER_MM)} "
         f"{_num((paper.height_mm - paper.margin_mm) * _PT_PER_MM)} cm"
     ]
-    for index, rgb in enumerate(palette_rgb):
-        row, column = divmod(index, columns)
-        x, y = SWATCH_GAP_MM + column * cell_mm(detail), SWATCH_GAP_MM + row * cell
-        inset = SWATCH_BORDER_MM / 2  # the frame lies inside the swatch, as on the page's legend
-        ops.append(f"{' '.join(_gray(v) for v in rgb)} rg {_num(x)} {_num(y)} {_num(SWATCH_MM)} {_num(SWATCH_MM)} re f")
-        ops.append(
-            f"0 G {_num(SWATCH_BORDER_MM)} w {_num(x + inset)} {_num(y + inset)} "
-            f"{_num(SWATCH_MM - SWATCH_BORDER_MM)} {_num(SWATCH_MM - SWATCH_BORDER_MM)} re S"
-        )
-        # The number's text box is centered on the swatch, as on the page's legend: Pillow's box, which runs across from
-        # where the pen starts to where it ends, and up and down over the ink.
-        text = str(index + 1)
-        box_x0, box_y0, box_x1, box_y1 = (v / _MEASURING_EM_PX for v in baseline_bbox(text, _MEASURING_EM_PX))
-        origin_x = x + SWATCH_MM / 2 - (box_x0 + box_x1) / 2 * em
-        origin_y = y + SWATCH_MM / 2 - (box_y0 + box_y1) / 2 * em
-        ops.append(
-            f"{_gray(number_fill(rgb)[0])} g BT /F1 {_num(em)} Tf 1 0 0 -1 {_num(origin_x)} {_num(origin_y)} Tm "
-            f"{_text(text)} Tj ET"
-        )
-        for line in texts[index]:
+    for heading, heading_y, top, start, stop, cell_detail, columns, texts in placed:
+        if heading:
             ops.append(
-                f"{_gray(line.gray)} g BT /F1 {_num(line.size_mm)} Tf 1 0 0 -1 {_num(x + line.x_mm)} "
-                f"{_num(y + line.baseline_mm)} Tm {_text(line.text)} Tj ET"
+                f"{_gray(NAME_GRAY)} g BT /F1 {_num(HEADING_PT / _PT_PER_MM)} Tf 1 0 0 -1 {_num(SWATCH_GAP_MM)} "
+                f"{_num(heading_y + HEADING_BASELINE_MM)} Tm {_text(plain(heading))} Tj ET"
             )
+        for offset, rgb in enumerate(palette_rgb[start:stop]):
+            index = start + offset
+            row, column = divmod(offset, columns)
+            x, y = SWATCH_GAP_MM + column * cell_mm(cell_detail), top + SWATCH_GAP_MM + row * cell
+            inset = SWATCH_BORDER_MM / 2  # the frame lies inside the swatch, as on the page's legend
+            ops.append(
+                f"{' '.join(_gray(v) for v in rgb)} rg {_num(x)} {_num(y)} {_num(SWATCH_MM)} {_num(SWATCH_MM)} re f"
+            )
+            ops.append(
+                f"0 G {_num(SWATCH_BORDER_MM)} w {_num(x + inset)} {_num(y + inset)} "
+                f"{_num(SWATCH_MM - SWATCH_BORDER_MM)} {_num(SWATCH_MM - SWATCH_BORDER_MM)} re S"
+            )
+            # The number's text box is centered on the swatch, as on the page's legend: Pillow's box, which runs
+            # across from where the pen starts to where it ends, and up and down over the ink.
+            text = str(index + 1)
+            box_x0, box_y0, box_x1, box_y1 = (v / _MEASURING_EM_PX for v in baseline_bbox(text, _MEASURING_EM_PX))
+            origin_x = x + SWATCH_MM / 2 - (box_x0 + box_x1) / 2 * em
+            origin_y = y + SWATCH_MM / 2 - (box_y0 + box_y1) / 2 * em
+            ops.append(
+                f"{_gray(number_fill(rgb)[0])} g BT /F1 {_num(em)} Tf 1 0 0 -1 {_num(origin_x)} {_num(origin_y)} Tm "
+                f"{_text(text)} Tj ET"
+            )
+            for line in texts[offset]:
+                ops.append(
+                    f"{_gray(line.gray)} g BT /F1 {_num(line.size_mm)} Tf 1 0 0 -1 {_num(x + line.x_mm)} "
+                    f"{_num(y + line.baseline_mm)} Tm {_text(line.text)} Tj ET"
+                )
     ops.append("Q")
     document.page(_sheet_size_mm(False, paper), "\n".join(ops), {"Font": {"F1": numbers}})
 

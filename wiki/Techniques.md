@@ -28,8 +28,8 @@ box scoring and unclipping) for text, with shape filters on paper.
 | Bilateral filtering | Smoothing grain before quantization while keeping edges |
 | CIELAB and CIEDE2000 | Perceptual color distances: palette margin, color tests, tone settling |
 | Black point compensation | The palette's colors as paper shows them, its darkest black at L* 25: near-blacks it can't tell apart are merged |
-| Facility location (greedy, then swaps) | Choosing the painter's own paints that paint the picture best, by CIEDE2000 over its colors in Lab bins |
-| Spectral reflectance reconstruction and Kubelka-Munk mixing | Mixing recipes from the painter's paints: reflectance curves from sRGB, mixed by K/S, searched over whole-part ratios by CIEDE2000 |
+| Facility location (greedy, then swaps) | Choosing the painter's own paints that paint the picture best, by CIEDE2000 over its colors in Lab bins; then, if asked, two-paint mixes added greedily, each only if the pixels it would paint come at least 3 ΔE00 nearer on average and are at least 1% of the picture |
+| Spectral reflectance reconstruction and Kubelka-Munk mixing | Mixing recipes from the painter's paints: reflectance curves from sRGB, mixed by K/S, searched over whole-part ratios by CIEDE2000; the predicted colors of the mixes a palette may take |
 | Color naming | Each legend color named by the nearest of about 800 everyday names (the xkcd color survey, CC0) by CIEDE2000; colors and names paired off closest first, so a legend never names two colors alike |
 | Morphological closing and opening | Paper behind ink lines; ground behind lettering; thin-ink detection |
 | Black-hat transform | Thin dark marks in faces |

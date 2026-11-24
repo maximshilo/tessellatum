@@ -60,12 +60,46 @@ tall and the legend on a portrait sheet of its own, and a PNG records the resolu
   Every legend color is exactly one of your paints, called by its own name; a paint with no name gets the everyday
   name of its color.
 
-**Paints…** lists them, one a line: a hex code (`#5A6B2F`, `5A6B2F`, `#fff`) or three numbers from 0 to 255
-(`90 107 47`, `90, 107, 47`), the rest of the line its name, either side of the color. Lines starting with `#` and
-text or `//` are comments; a line with no color is pointed out, not guessed at. **Load palette file…** adds the colors
-of a GIMP (`.gpl`), Adobe Swatch Exchange (`.ase`) or Procreate (`.swatches`) palette, or a text file in the same
-form, so a palette exported from the app reads back. Up to 256 paints; the list is kept for next time, and switching
-back to The picture keeps it. Choosing My paints with none listed opens the list.
+**Paints…** opens the list of your paints: a row each, its swatch, its hex code, its name and a ✕ to delete it.
+- **Add color…** opens a color picker: pick on the wheel, type a hex code or RGB values, or use **Pick Screen Color**,
+  an eyedropper, to take the color from anywhere on the screen (a photo of your swatches, or the picture in the
+  preview). The new paint is named with its color's everyday name, selected so that typing replaces it with the
+  paint's own. A color already listed is not added twice.
+- Click a swatch to pick its color again (a name the list gave it follows the new color; one you typed stays);
+  double-click a name to change it.
+- **Start from a kit…** offers a few generic sets to start from: **Basic acrylics (12)** (titanium white, mars black,
+  lemon and cadmium yellow, yellow ochre, cadmium red, alizarin crimson, ultramarine and phthalo blue, sap green,
+  burnt sienna, burnt umber), **Primaries (5)** (white, black, a yellow, a red and a blue: the box mixing is made
+  for), **Colored pencils (24)**, **Earth palette (8)** and **Grays (6)** (black to white in even steps of
+  lightness). With paints listed, it asks whether the kit **replaces** them (the default) or is **added**. A kit's
+  colors are typical of its pigments, not any maker's: real tubes and pencils differ a little, so replace a color with
+  your own (picked from a photo of your swatches) where it matters.
+- **Load palette file…** adds the colors of a GIMP (`.gpl`), Adobe Swatch Exchange (`.ase`) or Procreate
+  (`.swatches`) palette, or a text file, so a palette exported from the app reads back.
+- **Edit as text** shows the list as lines of text, to paste a list or type one: a paint a line, a hex code
+  (`#5A6B2F`, `5A6B2F`, `#fff`) or three numbers from 0 to 255 (`90 107 47`, `90, 107, 47`), the rest of the line its
+  name, either side of the color. Lines starting with `#` and text or `//` are comments; a line with no color is
+  pointed out, not guessed at. Clicking it again reads the text back into the list.
+
+Up to 256 paints; the list is kept for next time, and switching back to The picture keeps it. Choosing My paints with
+none listed opens the list.
+
+**Mix colors from my paints** (under Colors from, with My paints) lets the page also take colors mixed from two of
+your paints, in 1 + 1, 2 + 1 or 3 + 1 parts, where the picture has colors none of your paints comes close to. Your
+paints come first, chosen as without mixing; a mix is added only if it earns its place:
+- **Mix if closer by** (3 ΔE00 by default): the parts of the picture it would paint come out at least this much
+  closer to the picture, on average, than with the colors already taken; about 2.3 is the smallest difference an eye
+  sees side by side, so a mix is never added for a change no one would see.
+- **and it paints at least** (1% by default): those parts are at least this share of the picture, the faces and the
+  subject counting twice, so nothing is mixed for a speck.
+
+There is no fixed number of mixes: a box that covers the picture well gets few or none, a few paints get many, up to
+Colors in all. A mix is never within the color margin of a paint you have, nor of another color on the legend. The
+legend then has two sections, **Your paints** and **Mixed colors** (numbered on from the paints), each mix with its
+everyday name and its recipe: "1 Titanium white", "1 Ivory black", whatever the Legend setting (a mix can't be painted
+without it). A palette file names a mix with its recipe too: "12 gray (1 Ivory black + 1 Titanium white)". The mixes'
+colors are predicted, by the same model of paint as the recipes (see Legend): your own paints may mix a little
+differently, and the painted versions of the page show the predicted colors.
 
 ## Difficulty
 
@@ -103,6 +137,9 @@ smaller ones.
 - **Pixels across brush**: how finely a page is made (4 by default, 2 to 8). A 3:2 picture's page is about 1,100 px
   along its long edge at Beginner and 2,200 at Realistic, never fewer than 1,100, nor more than the picture has or
   than 300 dpi. Not part of the difficulty: moving it keeps the preset.
+- **Mix if closer by** and **and it paints at least**: when a color mixed from your paints earns its place, with
+  Mix colors from my paints (see **Colors from**): 3 ΔE00 closer where it paints (1 to 10) over at least 1% of the
+  picture (0.1 to 10%). Not part of the difficulty.
 - **Sharpest corner**: corners down to this angle keep their points rather than being rounded to the brush. 180°, the
   default, rounds every corner; 20° keeps a triangle's points. The spikes of fur and foliage are rounded all the same.
 - **Corner contrast**: how plainly the picture must show a corner's point for it to be kept.
@@ -137,7 +174,8 @@ smaller ones.
   10 at most, the mix nearest the color by CIEDE2000, a second or third paint only when it brings the mix at least 1
   ΔE00 nearer. A color no mix comes within 5 ΔE00 of says "closest mix, 7 dE00 off". The page keeps its own colors
   (with Colors from: The picture), so this is how to get a picture's colors from a small box of paints; with My paints
-  every recipe is a single paint. Mixing is modeled, not measured: your own tubes of the same colors mix a little
+  every recipe is a single paint, and the colors mixed from them (Mix colors from my paints) are listed in a section
+  of their own with theirs. Mixing is modeled, not measured: your own tubes of the same colors mix a little
   differently, so a recipe is where to start. With no paints listed it shows hex and RGB instead.
   Changing it redraws the preview's legend at once and applies to the next export, without making the page again.
 - **Leader width**: 0.1 mm by default, half the default line, so a leader doesn't read as a boundary. Numbers keep as

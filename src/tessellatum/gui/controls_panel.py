@@ -79,6 +79,15 @@ COLORS_FROM_TOOLTIP = (
     "name on the legend. Every color on the legend is then one you have; two closer than the color margin are never "
     "both used."
 )
+MIX_TOOLTIP = (
+    "With My paints: the page may also take colors mixed from two of your paints, in 1 + 1 to 3 + 1 parts, where the "
+    "picture has colors none of your paints comes close to. Your paints come first; a mix is added only if it brings "
+    "the parts of the picture it paints clearly closer (Mix if closer by) and paints enough of it (and it paints at "
+    "least), so a box that covers the picture gets few mixes or none, and a few paints get many. The legend lists "
+    "them under Mixed colors, each with its recipe. Mixed as real paint mixes (blue and yellow make green), by a "
+    "model: your own paints may mix a little differently."
+)
+MIX_FIELDS = ("mix_gain_de00", "mix_min_share_pct")
 PALETTE = "Palette"
 PALETTE_TOOLTIP = (
     "The legend's colors as a palette file, for coloring the page in a painting app with exactly its colors, each "
@@ -131,6 +140,7 @@ _LEGEND_KEY = "style/legend"
 _PALETTE_FORMAT_KEY = "export/palette"
 _COLORS_FROM_KEY = "difficulty/colors_from"
 _PAINTS_KEY = "difficulty/paints"
+_MIX_KEY = "difficulty/mix_paints"
 _UNIT_KEY = "export/unit"
 _DPI_KEY = "export/dpi"
 _PIXELS_KEY = "export/pixels"
@@ -324,6 +334,9 @@ class ControlsPanel(QWidget):
         colors_from_layout.addWidget(self.paints_button)
         self.sections[settings.REGIONS].form.insertRow(2, "Colors from", colors_from_row)
         self.sections[settings.REGIONS].form.labelForField(colors_from_row).setToolTip(COLORS_FROM_TOOLTIP)
+        self.mix_check = QCheckBox("Mix colors from my paints")
+        self.mix_check.setToolTip(MIX_TOOLTIP)
+        self.sections[settings.REGIONS].form.insertRow(3, QLabel(""), self.mix_check)
         # Every section's labels as wide as the widest, so that the sliders line up from one section to the next.
         labels = [
             section.form.labelForField(section.form.itemAt(row, QFormLayout.FieldRole).widget())
@@ -476,6 +489,7 @@ class ControlsPanel(QWidget):
         self.medium_combo.currentTextChanged.connect(lambda _name: self._on_medium_changed())
         self.legend_combo.currentTextChanged.connect(self._on_legend_changed)
         self.colors_from_combo.currentTextChanged.connect(lambda _name: self._on_colors_from_changed())
+        self.mix_check.toggled.connect(lambda _checked: self._on_mix_changed())
         self.paints_button.clicked.connect(self.edit_paints)
         self.resolution_unit.currentIndexChanged.connect(lambda _index: self._on_unit_changed())
         self.resolution_spin.valueChanged.connect(lambda _value: self._on_resolution_edited())
@@ -543,6 +557,7 @@ class ControlsPanel(QWidget):
             self.legend_combo.setCurrentText(DEFAULT_LEGEND_DETAIL)
             self.palette_combo.setCurrentIndex(0)
             self.colors_from_combo.setCurrentText(PICTURE_COLORS)  # the paints listed are kept, for next time
+            self.mix_check.setChecked(False)
             self._show_paints()
             for check in self._switches.values():
                 check.setChecked(True)
@@ -564,6 +579,7 @@ class ControlsPanel(QWidget):
         self._store.setValue(_PALETTE_FORMAT_KEY, self.palette_combo.currentData())
         self._store.setValue(_COLORS_FROM_KEY, self.colors_from_combo.currentText())
         self._store.setValue(_PAINTS_KEY, paints_text(self._paints))
+        self._store.setValue(_MIX_KEY, self.mix_check.isChecked())
         for name, control in self.controls.items():
             self._store.setValue(_SETTING_KEY.format(name), control.value())
         for name, check in self._switches.items():
@@ -601,6 +617,7 @@ class ControlsPanel(QWidget):
             colors_from = self._store.value(_COLORS_FROM_KEY)
             if colors_from in COLORS_FROM:
                 self.colors_from_combo.setCurrentText(colors_from)
+            self.mix_check.setChecked(self._store.value(_MIX_KEY) in (True, "true", "True", 1, "1"))
             self._show_paints()
             palette_format = self._store.value(_PALETTE_FORMAT_KEY)
             if palette_format in swatches.FORMATS:
@@ -670,7 +687,9 @@ class ControlsPanel(QWidget):
 
     def get_handling(self) -> Handling:
         switches = {name: check.isChecked() for name, check in self._switches.items()}
-        return Handling(**switches, **self._chosen(settings.HANDLING), paints=self.get_paints())
+        paints = self.get_paints()
+        mix = bool(paints) and self.mix_check.isChecked()
+        return Handling(**switches, **self._chosen(settings.HANDLING), paints=paints, mix_paints=mix)
 
     def get_paints(self) -> tuple:
         """The painter's paints the page is to take its colors from: none unless Colors from is My paints."""
@@ -707,7 +726,16 @@ class ControlsPanel(QWidget):
         self._show_paints()
         self._save()
 
+    def _on_mix_changed(self) -> None:
+        self._show_paints()
+        self._save()
+
     def _show_paints(self) -> None:
+        # Mixing, and its two thresholds, only mean something when the colors come from the paints.
+        from_paints = self.colors_from_combo.currentText() == MY_PAINTS
+        self.mix_check.setEnabled(from_paints)
+        for name in MIX_FIELDS:
+            self.controls[name].setEnabled(from_paints and self.mix_check.isChecked())
         count = len(self._paints)
         self.paints_button.setText(f"Paints ({count})…" if count else "Paints…")
         if self.colors_from_combo.currentText() == MY_PAINTS and not self._paints:

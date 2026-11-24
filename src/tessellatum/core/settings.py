@@ -146,6 +146,20 @@ SETTINGS: tuple[Setting, ...] = (
         "edges follow the picture's more closely and the brush find parts of a region too thin to paint, and take "
         "longer. At 2, every page is made at about 1,100 px.",
     ),
+    # When a color mixed from the painter's paints earns its place (Mix colors from my paints; see quantize.MixRule).
+    Setting(
+        "mix_gain_de00", HANDLING, REGIONS, "Mix if closer by", "ΔE00", 1.0, 10.0, 0.5,
+        "With Mix colors from my paints: a color mixed from two of your paints is added only if the parts of the "
+        "picture it would paint come out at least this much closer to the picture, on average, than with the colors "
+        "already taken (CIEDE2000; about 2.3 is the smallest difference an eye sees side by side). Higher, fewer "
+        "mixes and only the ones that clearly matter; lower, more of them.",
+    ),
+    Setting(
+        "mix_min_share_pct", HANDLING, REGIONS, "and it paints at least", "%", 0.1, 10.0, 0.1,
+        "With Mix colors from my paints: a mixed color is added only if it would paint at least this share of the "
+        "picture (faces and the subject count twice), so that nothing is mixed for a speck. Higher, fewer mixes.",
+        log=True,
+    ),
     _difficulty(
         "sharpest_corner_deg", "Sharpest corner", "°", 1,
         "The sharpest corner whose point is kept, rather than rounded off where the brush can't reach: a painter "

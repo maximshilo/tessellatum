@@ -486,3 +486,24 @@ def test_the_legend_offers_recipes_and_the_paints_listed_for_them_tell_the_windo
     panel.set_paints(paints)
     assert told == [paints] and panel.colors_from_combo.currentText() == "The picture"
     assert panel.get_handling().paints == () and panel.listed_paints() == paints
+
+
+def test_mixing_is_offered_with_my_paints_kept_between_runs_and_off_after_a_reset(tmp_path):
+    first = ControlsPanel(store=_store(tmp_path))
+    assert not first.mix_check.isChecked() and not first.mix_check.isEnabled()
+    assert not first.controls["mix_gain_de00"].isEnabled() and not first.get_handling().mix_paints
+    paints = (("Titanium white", (250, 250, 250)), ("Ivory black", (20, 20, 20)))
+    first.set_paints(paints)
+    assert first.mix_check.isEnabled() and not first.controls["mix_min_share_pct"].isEnabled()
+    first.mix_check.setChecked(True)
+    assert first.controls["mix_gain_de00"].isEnabled() and first.controls["mix_min_share_pct"].isEnabled()
+    _move(first, "mix_gain_de00", 4.0)
+    handling = first.get_handling()
+    assert handling.mix_paints and handling.mix_gain_de00 == 4.0 and handling.mix_rule() is not None
+    again = ControlsPanel(store=_store(tmp_path))
+    assert again.mix_check.isChecked() and again.get_handling().mix_gain_de00 == 4.0
+    again.colors_from_combo.setCurrentText("The picture")
+    assert not again.mix_check.isEnabled() and not again.get_handling().mix_paints
+    again.reset()
+    assert not again.mix_check.isChecked()
+    assert again.get_handling().mix_gain_de00 == settings.setting("mix_gain_de00").default == 3.0

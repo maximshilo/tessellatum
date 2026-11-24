@@ -207,6 +207,7 @@ class MainWindow(QMainWindow):
         legend = render_legend(
             palette_bgr, round(page.page.width * legend_scale), page_px_per_mm * legend_scale,
             self.controls.get_legend_detail(), names=page.color_names or None, recipes=self._recipes(page),
+            mixes=page.mixes or None,
         )
         return legend, legend_scale
 
@@ -303,7 +304,7 @@ class MainWindow(QMainWindow):
         page = dataclasses.replace(page, drawing=dataclasses.replace(drawing, style=style))
         if fmt == PALETTE:
             try:
-                written = swatches.save_palette(path, page.palette_rgb, names=page.color_names or None)
+                written = swatches.save_palette(path, page.palette_rgb, names=_palette_names(page))
             except Exception as exc:  # noqa: BLE001
                 self._on_export_failed(str(exc))
                 return
@@ -313,7 +314,7 @@ class MainWindow(QMainWindow):
             try:
                 export.save_pdf(
                     page.drawing, page.palette_rgb, path, version=version, painting=page.painting,
-                    names=page.color_names or None, recipes=self._recipes(page),
+                    names=page.color_names or None, recipes=self._recipes(page), mixes=page.mixes or None,
                 )
             except Exception as exc:  # noqa: BLE001
                 self._on_export_failed(str(exc))
@@ -332,7 +333,7 @@ class MainWindow(QMainWindow):
         worker = TaskWorker(
             lambda: export.export_png(
                 page.drawing, page.palette_rgb, path, dpi, version, page.painting, names=page.color_names or None,
-                recipes=recipes,
+                recipes=recipes, mixes=page.mixes or None,
             )
         )
         worker.succeeded.connect(lambda size: self._on_export_saved(page, path, size))
@@ -520,3 +521,15 @@ def _bgr_to_pixmap(image_bgr: np.ndarray) -> QPixmap:
     h, w, _ = rgb.shape
     qimage = QImage(rgb.tobytes(), w, h, w * 3, QImage.Format_RGB888)
     return QPixmap.fromImage(qimage)
+
+
+def _palette_names(page: GeneratedPage) -> list[str] | None:
+    """The names a palette file gives ``page``'s colors: the legend's, a mixed color's with its recipe after it,
+    "gray (1 Ivory black + 1 Titanium white)"."""
+    if not page.color_names:
+        return None
+    if not page.mixes:
+        return list(page.color_names)
+    return [
+        name if lines is None else f"{name} ({' + '.join(lines)})" for name, lines in zip(page.color_names, page.mixes)
+    ]

@@ -4,6 +4,31 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.21] - 2026-11-24
+
+### Added
+
+- **Mixed colors.** With Colors from: My paints, a new box, **Mix colors from my paints**, lets the page also take
+  colors mixed from two of your paints (1 + 1, 2 + 1 or 3 + 1 parts, predicted as paint mixes), where the picture has
+  colors none of your paints comes close to. Your paints come first, chosen as before; a mix is added only if the
+  parts of the picture it would paint come out at least **3 ΔE00** closer on average (**Mix if closer by**) and are
+  at least **1%** of the picture (**and it paints at least**), both settings. There is no fixed number of mixes: on
+  the benchmark pictures a 5-paint kit gets about 6 and a 24-pencil box about 4, each bringing the page clearly
+  closer. The legend lists them in a section of their own, **Mixed colors**, after **Your paints**, each with its
+  name and recipe, in the preview, the PNG and the PDF; a palette file names each with its recipe.
+- **An easier paints list.** Paints… is now a list of swatches: **Add color…** opens a color picker whose **Pick
+  Screen Color** takes a color from anywhere on the screen (a photo of your swatches, or the picture in the preview),
+  named for you; click a swatch to pick it again, double-click a name to change it, ✕ to delete. **Edit as text**
+  still takes a pasted list.
+- **Sample kits** to start from: Basic acrylics (12), Primaries (5), Colored pencils (24), Earth palette (8) and
+  Grays (6), generic pigments in typical colors (approximate: real tubes differ), replacing the list or added to it.
+- The benchmark makes pages from the kits (`Medium-KitPrimaries`) and with mixing (`Medium-Paints24-Mix`), and
+  counts a page's mixed colors.
+
+### Fixed
+
+- The paints list no longer says "The first 256 are used" when exactly 256 are listed.
+
 ## [1.0.20] - 2026-11-24
 
 ### Added

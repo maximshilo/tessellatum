@@ -53,6 +53,21 @@ flowchart TD
    counted into bins rather than its pixels, so it takes a fraction of a second. The same margins hold: a paint is
    never taken within the color margin of one already taken, on screen or as printed.
 
+   With **Mix colors from my paints** as well, the palette may also take colors mixed from two of the paints, in
+   1 + 1, 2 + 1 or 3 + 1 parts (their colors predicted as below). The paints come first, chosen exactly as without
+   mixing; then, while Colors leaves room, the mix that brings the picture nearest is added, but only if it earns its
+   place: the pixels it would take over (those nearer it than every color taken) come at least **3 ΔE00** nearer on
+   average, above the ~2.3 at which a difference starts to be seen, and they are at least **1%** of the picture, the
+   faces' and the subject's counting twice. A mix added later can take pixels from an earlier one, so each is checked
+   again against all the others and dropped (and its room offered again) if it no longer meets the rule. A mix is
+   never within the color margin of any paint, chosen or not (the paint does it without mixing), nor of any color
+   taken. How many mixes a page gets follows from the picture and the paints: on the 13 benchmark pictures at Medium,
+   the five primaries get 5.7 mixes on average and bring the page from 14.3 to 8.5 ΔE00 from the picture, a
+   24-pencil box 4.0 (8.7 to 6.3), 48 paints spread over the gamut 2.2, and six grays almost none, as mixing two grays
+   rarely brings anything clearly closer. Against taking every mix that helps at all, the rule keeps 85-97% of the
+   gain with about half the mixes. Only the bins a mix could be nearer than the paints are measured against it
+   (CIEDE2000 is never less than a third of the Lab distance), which keeps the step to a few tenths of a second.
+
    The legend can also say how to mix each color from the painter's paints. Mixing paint is subtractive, so averaging
    RGB is wrong (blue and yellow would make gray). Each paint's color is turned into a reflectance curve, 38 samples
    from 380 to 750 nm, as a weighted sum of seven primary curves (spectral.js's variant of Scott Burns' method, which

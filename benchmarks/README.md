@@ -120,6 +120,13 @@ farthest-point sampling in CIELAB over a 9-level grid, from black, the same set
 every time. Versions before 1.0.19 can't make such a page: the case fails, saying so.
 Its ΔE00 measures how well that set covers the picture, so compare it with the
 same set's on another version, not with the preset's own palette.
+From 1.0.21, `-Kit<Key>` (say `Medium-KitPrimaries`) makes it from one of the
+app's sample kits (`paint_kits.KITS`: Acrylics, Primaries, Pencils, Earth,
+Grays), and either suffix followed by `-Mix` (`Medium-Paints24-Mix`,
+`Medium-KitEarth-Mix`) also lets the palette take colors mixed from two of the
+paints, as the app's Mix colors from my paints does; `case.json` then counts the
+legend's mixed colors under `mixed_colors`. Versions before 1.0.21 can't make
+those pages.
 
 `Max` is the setting the version's own `difficulty.finest_params()` gives:
 from 0.1.26, 40 colors, regions of at least 30 mm² on paper, no smoothing,

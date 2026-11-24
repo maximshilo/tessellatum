@@ -852,3 +852,37 @@ def test_the_legend_s_recipes_mix_each_color_from_the_paints_listed_and_follow_t
     assert "Titanium white" in legend_sheet and "RGB" not in legend_sheet
     controls.set_paints(())
     assert window.preview._legend == coded
+
+
+def test_mixed_colors_come_after_the_paints_on_the_preview_s_legend_the_pdf_and_the_palette_file(drive, tmp_path):
+    window = drive.window
+    window.current_image_bgr = _blocks((4000, 2000))
+    controls = window.controls
+    # Blue, white and yellow: the green and the cyan block are mixes.
+    controls.set_paints((("Blue", (40, 40, 200)), ("Titanium white", (250, 250, 250)), ("Yellow", (250, 220, 20))))
+    controls.mix_check.setChecked(True)
+    window.generate_preview()
+    drive.wait()
+    _args, kwargs = drive.calls[-1]
+    assert kwargs["handling"].mix_paints
+    page = window.current_page
+    start = next(i for i, lines in enumerate(page.mixes) if lines is not None)
+    assert start >= 1 and all(lines is not None for lines in page.mixes[start:])
+    assert all(name in ("Blue", "Titanium white", "Yellow") for name in page.color_names[:start])
+
+    controls.palette_radio.setChecked(True)
+    controls.palette_combo.setCurrentIndex(controls.palette_combo.findData(".gpl"))
+    drive.save_path = str(tmp_path / "colors.gpl")
+    window.export_page()
+    drive.wait()
+    text = (tmp_path / "colors.gpl").read_text(encoding="utf-8")
+    for index in range(start, len(page.palette_rgb)):
+        recipe = " + ".join(page.mixes[index])
+        assert f"{index + 1} {page.color_names[index]} ({recipe})" in text
+
+    controls.pdf_radio.setChecked(True)
+    drive.save_path = str(tmp_path / "page.pdf")
+    window.export_page()
+    drive.wait()
+    legend_sheet = pdf_reading.sheets((tmp_path / "page.pdf").read_bytes())[1]["content"]
+    assert "(Your paints)" in legend_sheet and all(f"({line})" in legend_sheet for line in page.mixes[start])
