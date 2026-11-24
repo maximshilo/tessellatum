@@ -46,8 +46,8 @@ COMMANDS = (
     Command("cancel", "&Cancel", GENERATE, "Stop making the page", "cancel", ("Esc",)),
     *(Command(f"show_{v.name.lower()}", f"&{v.value}", VIEW, v.description, None, (f"Ctrl+{i}",), checkable=True)
       for i, v in enumerate(Version, start=1)),
-    Command("zoom_in", "Zoom &In", VIEW, "Zoom in (or the mouse wheel)", "zoom_in", (QKeySequence.ZoomIn, "Ctrl+=")),
-    Command("zoom_out", "Zoom &Out", VIEW, "Zoom out (or the mouse wheel)", "zoom_out", (QKeySequence.ZoomOut,)),
+    Command("zoom_in", "Zoom &In", VIEW, "Zoom in; the mouse wheel zooms too", "zoom_in", (QKeySequence.ZoomIn, "Ctrl+=")),
+    Command("zoom_out", "Zoom &Out", VIEW, "Zoom out; the mouse wheel zooms too", "zoom_out", (QKeySequence.ZoomOut,)),
     Command("fit", "&Fit Page", VIEW, "The whole page in the window", "fit", ("Ctrl+0",)),
     Command("actual_pixels", "&100%", VIEW, "A pixel of the page as it prints on a pixel of the screen",
             "actual_size", ("Ctrl+Alt+0",)),
