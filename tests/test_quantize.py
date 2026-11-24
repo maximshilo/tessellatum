@@ -314,7 +314,8 @@ def test_nearest_color_measures_in_l_star_a_star_b_star_a_block_at_a_time(monkey
 
 
 # Three near-blacks a screen shows 5.5 ΔE00 apart and paper with a black of L* 25 at 2.6 and 3.7 (see color.printed_de00),
-# above a colorful band with room for more colors.
+# above a colorful band with room for more colors. Asked for 12 colors, k-means gives each near-black its own from every
+# one of 30 random starts tried (asked for 8, from 25: its start differs from one platform to another).
 NEAR_BLACKS = (8, 30, 48)
 
 
@@ -336,8 +337,8 @@ def _darks(palette: np.ndarray) -> int:
 
 def test_near_blacks_paper_shows_alike_merge_and_the_colors_freed_go_to_the_rest_of_the_picture():
     image = _dark_picture()
-    _, on_screen = quantize(image, num_colors=8, blur_sigma=0.0, min_de00=4.0)
-    labels, on_paper = quantize(image, num_colors=8, blur_sigma=0.0, min_de00=4.0, paper_black_lstar=25.0)
+    _, on_screen = quantize(image, num_colors=12, blur_sigma=0.0, min_de00=4.0)
+    labels, on_paper = quantize(image, num_colors=12, blur_sigma=0.0, min_de00=4.0, paper_black_lstar=25.0)
 
     assert _darks(on_screen) == 3
     assert _darks(on_paper) < 3
@@ -349,7 +350,7 @@ def test_the_faces_and_the_subject_keep_their_near_blacks():
     image = _dark_picture()
     keep = np.zeros(image.shape[:2], dtype=bool)
     keep[:90] = True  # the near-blacks are the subject
-    _, kept = quantize(image, num_colors=8, blur_sigma=0.0, min_de00=4.0, paper_black_lstar=25.0, keep=keep)
+    _, kept = quantize(image, num_colors=12, blur_sigma=0.0, min_de00=4.0, paper_black_lstar=25.0, keep=keep)
     assert _darks(kept) == 3
 
 
