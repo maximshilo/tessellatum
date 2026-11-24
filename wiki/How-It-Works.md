@@ -52,6 +52,14 @@ flowchart TD
    best, and improved by swapping a paint taken for one left over while that helps. It works on the picture's colors
    counted into bins rather than its pixels, so it takes a fraction of a second. The same margins hold: a paint is
    never taken within the color margin of one already taken, on screen or as printed.
+
+   The legend can also say how to mix each color from the painter's paints. Mixing paint is subtractive, so averaging
+   RGB is wrong (blue and yellow would make gray). Each paint's color is turned into a reflectance curve, 38 samples
+   from 380 to 750 nm, as a weighted sum of seven primary curves (spectral.js's variant of Scott Burns' method, which
+   gives back exactly the same color); the paints are mixed by Kubelka-Munk theory, averaging their absorption over
+   scattering (K/S) with each share weighted by its luminance; and the mix's curve is seen as sRGB under D65 again.
+   Every pair of paints in every ratio of whole parts up to 10 is mixed once, triples among each color's most
+   promising paints, and the nearest mix by CIEDE2000 is the recipe.
 2. **Regionize.** Same-color pixels are grouped into connected regions; regions smaller than the difficulty's
    threshold merge into the neighbor they share the most boundary with, and neighbors left sharing a color by that
    merge become one region, so the page never draws a line between two areas the painter fills alike.

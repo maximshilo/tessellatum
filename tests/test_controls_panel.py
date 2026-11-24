@@ -474,3 +474,15 @@ def test_the_paints_listed_are_kept_and_the_page_takes_its_colors_from_them_when
     again.reset()
     assert again.colors_from_combo.currentText() == "The picture"
     assert ControlsPanel(store=_store(tmp_path)).get_paints() == ()
+
+
+def test_the_legend_offers_recipes_and_the_paints_listed_for_them_tell_the_window(tmp_path):
+    panel = ControlsPanel(store=_store(tmp_path))
+    assert [panel.legend_combo.itemText(i) for i in range(panel.legend_combo.count())][-1] == "Name and recipe"
+    told = []
+    panel.paints_changed.connect(lambda: told.append(panel.listed_paints()))
+    panel.legend_combo.setCurrentText("Name and recipe")
+    paints = (("Titanium white", (255, 255, 255)),)
+    panel.set_paints(paints)
+    assert told == [paints] and panel.colors_from_combo.currentText() == "The picture"
+    assert panel.get_handling().paints == () and panel.listed_paints() == paints

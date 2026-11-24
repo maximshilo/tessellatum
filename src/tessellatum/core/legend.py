@@ -31,7 +31,10 @@ LABEL_FONT_RATIO = 0.42
 NUMBER_ONLY = "Number only"
 NAME = "Name"
 NAME_HEX_RGB = "Name, hex and RGB"
-LEGEND_DETAILS = (NUMBER_ONLY, NAME, NAME_HEX_RGB)
+# The name, then how to mix the color from the painter's paints (see ``mixing``), "3 Titanium white" a line; with no
+# recipes to show, as NAME_HEX_RGB.
+NAME_RECIPE = "Name and recipe"
+LEGEND_DETAILS = (NUMBER_ONLY, NAME, NAME_HEX_RGB, NAME_RECIPE)
 DEFAULT_LEGEND_DETAIL = NAME_HEX_RGB
 
 # The text beside a swatch, on paper: the name in 8 pt, wrapped onto two lines at most, and below it the hex code and
@@ -78,20 +81,30 @@ def detail_line(rgb: tuple[int, int, int]) -> str:
 
 
 def swatch_texts(
-    palette_rgb: Sequence[tuple[int, int, int]], detail: str, names: Sequence[str] | None = None
+    palette_rgb: Sequence[tuple[int, int, int]],
+    detail: str,
+    names: Sequence[str] | None = None,
+    recipes: Sequence[Sequence[str]] | None = None,
 ) -> list[list[LegendText]]:
     """The lines of text beside each of ``palette_rgb``'s swatches with ``detail``, centered on the swatch's height:
-    each color's name from ``names`` (``color_names.name_colors``' if None), in plain ASCII, as the PDF writes it."""
+    each color's name from ``names`` (``color_names.name_colors``' if None), in plain ASCII, as the PDF writes it, and
+    with NAME_RECIPE its recipe's lines from ``recipes`` (see ``mixing.recipe_lines``), each cut to the column."""
     if detail == NUMBER_ONLY or len(palette_rgb) == 0:
         return [[] for _ in palette_rgb]
     names = [plain(name) for name in (name_colors(palette_rgb) if names is None else names)]
+    if detail == NAME_RECIPE and not recipes:
+        detail = NAME_HEX_RGB
     name_mm, detail_mm = NAME_PT * _MM_PER_PT, DETAIL_PT * _MM_PER_PT
     cap = _cap_height()
     texts = []
-    for rgb, name in zip(palette_rgb, names):
-        lines = [(line, name_mm, NAME_GRAY) for line in _wrap(name, name_mm, TEXT_COLUMN_MM, NAME_LINES)]
+    for i, (rgb, name) in enumerate(zip(palette_rgb, names)):
+        name_lines = 1 if detail == NAME_RECIPE else NAME_LINES
+        lines = [(line, name_mm, NAME_GRAY) for line in _wrap(name, name_mm, TEXT_COLUMN_MM, name_lines)]
         if detail == NAME_HEX_RGB:
             lines.append((detail_line(rgb), detail_mm, DETAIL_GRAY))
+        elif detail == NAME_RECIPE and recipes is not None and i < len(recipes):
+            for step in recipes[i]:
+                lines.append((_wrap(plain(step), detail_mm, TEXT_COLUMN_MM, 1)[0], detail_mm, DETAIL_GRAY))
         # Baselines one under the other; the block, from the first line's capitals to the last baseline, centered.
         baselines = [0.0]
         for _, next_size, _ in lines[1:]:
@@ -163,9 +176,11 @@ def render_legend(
     px_per_mm: float,
     detail: str = DEFAULT_LEGEND_DETAIL,
     names: Sequence[str] | None = None,
+    recipes: Sequence[Sequence[str]] | None = None,
 ) -> Image.Image:
     """Render a wrapped grid of numbered color swatches, ``width`` pixels wide, at ``px_per_mm`` pixels a millimeter,
-    with ``detail`` beside each (one of ``LEGEND_DETAILS``), the colors called ``names`` (see ``swatch_texts``)."""
+    with ``detail`` beside each (one of ``LEGEND_DETAILS``), the colors called ``names``, mixed as ``recipes`` say
+    (see ``swatch_texts``)."""
     swatch = max(8, round(SWATCH_MM * px_per_mm))
     gap = max(2, round(SWATCH_GAP_MM * px_per_mm))
     border = max(1, round(SWATCH_BORDER_MM * px_per_mm))
@@ -178,7 +193,7 @@ def render_legend(
     draw = ImageDraw.Draw(legend)
     font = ImageFont.load_default(size=round(swatch * LABEL_FONT_RATIO))
     palette_rgb = [(int(bgr[2]), int(bgr[1]), int(bgr[0])) for bgr in palette_bgr]
-    texts = swatch_texts(palette_rgb, detail, names)
+    texts = swatch_texts(palette_rgb, detail, names, recipes)
 
     for index, rgb in enumerate(palette_rgb):
         row, col = divmod(index, cols)

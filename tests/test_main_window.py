@@ -827,3 +827,28 @@ def test_a_page_made_from_the_paints_listed_is_painted_in_them_and_its_legend_ca
     owned = {rgb: name for name, rgb in paints}
     assert sorted(page.color_names) == ["Cadmium red", "Lemon", "Sap green", "Ultramarine"]
     assert page.color_names == [owned[rgb] for rgb in page.palette_rgb]
+
+
+def test_the_legend_s_recipes_mix_each_color_from_the_paints_listed_and_follow_them(drive, tmp_path):
+    window = drive.window
+    window.current_image_bgr = _blocks((4000, 2000))
+    window.generate_preview()
+    drive.wait()
+    calls = len(drive.calls)
+    controls = window.controls
+    controls.legend_combo.setCurrentText("Name and recipe")
+    coded = window.preview._legend  # no paints listed: the codes
+    controls.set_paints((("Titanium white", (255, 255, 255)), ("Ultramarine", (25, 0, 89)), ("Lemon", (250, 240, 60))))
+    assert controls.colors_from_combo.currentText() == "The picture"  # listed for the recipes, the colors the picture's
+    with_recipes = window.preview._legend
+    assert with_recipes != coded and len(drive.calls) == calls  # the legend drawn again, the page not made again
+
+    controls.pdf_radio.setChecked(True)
+    drive.save_path = str(tmp_path / "page.pdf")
+    window.export_page()
+    drive.wait()
+    assert len(drive.calls) == calls
+    legend_sheet = pdf_reading.sheets((tmp_path / "page.pdf").read_bytes())[1]["content"]
+    assert "Titanium white" in legend_sheet and "RGB" not in legend_sheet
+    controls.set_paints(())
+    assert window.preview._legend == coded

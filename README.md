@@ -19,7 +19,7 @@
 
 **Tessellatum** turns any picture (a photograph, a painting, a cartoon or a comic) into a printable
 paint-by-numbers page: flat, outlined regions, each with a number, and a matching color legend that names every
-color and gives its hex code and RGB values. It pairs classical
+color and gives its hex code and RGB values, or how to mix it from your own paints. It pairs classical
 image analysis with compact neural networks that run entirely on-device, and holds every page to physical rules of
 paintability on the sheet it is made for (A4, A3 or A2): no region narrower than the brush, no number too small to read, no two colors too close
 to tell apart.
@@ -64,6 +64,8 @@ tinted painting guide; export a PNG at the resolution you choose (600 dpi by def
   how the palette prints).
 - Combinatorial optimization: a palette chosen from the painter's own paints as a facility-location problem (greedy
   selection with swap refinement).
+- Physical color mixing: spectral reflectance reconstructed from sRGB and mixed by Kubelka-Munk theory, for recipes
+  that mix each color from the painter's paints.
 - Mathematical morphology to detect ink lines, fine facial features and text backgrounds.
 - Euclidean distance transforms and Voronoi partitioning to remove every region a brush can't paint.
 - Connected-component labeling, contour tracing and polygon simplification.

@@ -4,6 +4,18 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.20] - 2026-11-24
+
+### Added
+
+- **Mixing recipes.** A fourth **Legend** option, **Name and recipe**, writes under each color's name how to mix it
+  from the paints you list (Paints…): "3 Titanium white", "1 Ultramarine", one to three of them in whole parts adding
+  up to 10 at most. The mixes are worked out as paint mixes, not as light does: each paint's color becomes a
+  reflectance curve and the paints are mixed by Kubelka-Munk theory, so blue and yellow make green. A color no mix
+  comes within 5 ΔE00 of says how far off its closest is. The paints need not be the page's colors: with Colors from:
+  The picture, the page keeps the picture's colors and the legend says how to mix each. The model is spectral.js's
+  (MIT), whose data ships with the app with its license.
+
 ## [1.0.19] - 2026-11-24
 
 ### Added

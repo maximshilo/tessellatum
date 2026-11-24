@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from tessellatum.core import difficulty, export, settings, swatches
-from tessellatum.core.legend import DEFAULT_LEGEND_DETAIL, LEGEND_DETAILS, NAME, NAME_HEX_RGB, NUMBER_ONLY
+from tessellatum.core.legend import DEFAULT_LEGEND_DETAIL, LEGEND_DETAILS, NAME, NAME_HEX_RGB, NAME_RECIPE, NUMBER_ONLY
 from tessellatum.core.paints import distinct, paints_text, parse_paints
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import Handling
@@ -68,6 +68,7 @@ LEGEND_TOOLTIPS = {
     NUMBER_ONLY: "Each color's swatch with its number in it, and nothing beside it.",
     NAME: "Each color's everyday name beside its swatch (\"dusty rose\", \"olive green\"): the nearest of about 800 names, every color a different one.",
     NAME_HEX_RGB: "Its name, and under it its hex code and RGB values (\"#C0737A  RGB 192 115 122\"), exactly the color the page is painted with: to find it in a painting app, or match a paint or pencil to it.",
+    NAME_RECIPE: "Its name, and how to mix it from the paints you list (Paints…): \"3 Titanium white\", \"1 Ultramarine\", parts of one to three of them, mixed as real paint mixes (blue and yellow make green). A model of paint, not of your own tubes: a place to start. A color no mix comes within 5 ΔE00 of says how far off its closest is. With no paints listed, as Name, hex and RGB.",
 }
 PICTURE_COLORS = "The picture"
 MY_PAINTS = "My paints"
@@ -243,6 +244,7 @@ class ControlsPanel(QWidget):
     abort_requested = Signal()
     # What the legend writes beside each swatch was changed: it applies to the page shown, which isn't made again.
     legend_detail_changed = Signal(str)
+    paints_changed = Signal()  # the paints listed, which the legend's recipes are mixed from
 
     def __init__(self, parent: QWidget | None = None, store: QSettings | None = None):
         """``store``, if given, is where the panel keeps its settings between runs: read now, written on each change."""
@@ -677,10 +679,19 @@ class ControlsPanel(QWidget):
     def set_paints(self, paints: tuple) -> None:
         """The paints listed (name, RGB each), kept whether or not the page takes its colors from them."""
         self._paints = distinct(paints)
-        if self._paints and self.colors_from_combo.currentText() != MY_PAINTS:
+        if self._paints and self.colors_from_combo.currentText() != MY_PAINTS and not self._wants_recipes():
             self.colors_from_combo.setCurrentText(MY_PAINTS)  # listing paints is asking for them
         self._show_paints()
         self._save()
+        self.paints_changed.emit()
+
+    def listed_paints(self) -> tuple:
+        """The paints listed, (name, RGB) each, whether or not the page takes its colors from them: what the legend's
+        recipes are mixed from."""
+        return self._paints
+
+    def _wants_recipes(self) -> bool:
+        return self.legend_combo.currentText() == NAME_RECIPE
 
     def edit_paints(self) -> None:
         """Ask for the paints in their dialog."""
