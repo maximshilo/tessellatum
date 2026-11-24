@@ -168,3 +168,36 @@ def test_the_result_is_current_until_a_setting_that_makes_the_page_changes():
     assert doc.result_is_current()
     doc.set_settings(doc.settings().with_values(num_colors=10).replace(preset=CUSTOM))
     assert not doc.result_is_current()
+
+
+def test_a_document_deleted_while_hashing_leaves_the_thread_quiet():
+    """The hashing thread reports through an object that outlives the document: deleting the document first raises
+    nothing in the thread, and a document made after still gets its own hash."""
+    import threading
+
+    from PySide6.QtCore import QEvent
+
+    errors = []
+    previous = threading.excepthook
+    threading.excepthook = errors.append
+    try:
+        for _ in range(5):
+            doc = Document()
+            doc.set_source(np.random.default_rng(0).integers(0, 255, (1500, 2000, 3), np.uint8))
+            doc.deleteLater()
+            _app.sendPostedEvents(None, QEvent.DeferredDelete)
+            del doc
+        survivor = Document()
+        found = []
+        survivor.source_identified.connect(found.append)
+        image = np.full((50, 60, 3), 9, np.uint8)
+        survivor.set_source(image)
+        wait_for(lambda: found)
+        assert found == [content_hash(image)]
+        deadline = time.monotonic() + 5
+        while threading.active_count() > 1 and any(t.name == "source-hash" for t in threading.enumerate()):
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+    finally:
+        threading.excepthook = previous
+    assert errors == []

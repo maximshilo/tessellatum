@@ -4,6 +4,14 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.4] - 2026-11-25
+
+### Fixed
+
+- Closing the window within moments of opening a large picture raised an error in the background thread that
+  identifies the picture (its content hash), and raced the window's teardown. The thread now reports through an
+  object that outlives every window.
+
 ## [1.1.3] - 2026-11-25
 
 ### Added
