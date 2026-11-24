@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from tessellatum.core import difficulty, export, settings
+from tessellatum.core.legend import DEFAULT_LEGEND_DETAIL, LEGEND_DETAILS, NAME, NAME_HEX_RGB, NUMBER_ONLY
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import Handling
 from tessellatum.core.print_size import MM_PER_INCH, PAPERS, print_scale
@@ -61,6 +62,15 @@ PAPER_TOOLTIP = (
     "and takes longer; the PDF's sheets are this size."
 )
 DEFAULT_PAPER = "A4"
+
+LEGEND_TOOLTIPS = {
+    NUMBER_ONLY: "Each color's swatch with its number in it, and nothing beside it.",
+    NAME: "Each color's everyday name beside its swatch (\"dusty rose\", \"olive green\"): the nearest of about 800 names, every color a different one.",
+    NAME_HEX_RGB: "Its name, and under it its hex code and RGB values (\"#C0737A  RGB 192 115 122\"), exactly the color the page is painted with: to find it in a painting app, or match a paint or pencil to it.",
+}
+LEGEND_TOOLTIP = "What the legend writes beside each color's swatch, to find, buy or mix it by. " + " ".join(
+    f"{name}: {tip}" for name, tip in LEGEND_TOOLTIPS.items()
+)
 
 MEDIUM_TOOLTIPS = {
     difficulty.PAPER_MEDIUM: "Colored on paper, with paints or pencils: colors darker than the darkest black on paper "
@@ -98,6 +108,7 @@ _PRESET_KEY = "difficulty/preset"
 _TONE_KEY = "style/tone"
 _PAPER_KEY = "style/paper"
 _MEDIUM_KEY = "difficulty/medium"
+_LEGEND_KEY = "style/legend"
 _UNIT_KEY = "export/unit"
 _DPI_KEY = "export/dpi"
 _PIXELS_KEY = "export/pixels"
@@ -209,6 +220,8 @@ class ControlsPanel(QWidget):
     generate_requested = Signal()
     export_requested = Signal()
     abort_requested = Signal()
+    # What the legend writes beside each swatch was changed: it applies to the page shown, which isn't made again.
+    legend_detail_changed = Signal(str)
 
     def __init__(self, parent: QWidget | None = None, store: QSettings | None = None):
         """``store``, if given, is where the panel keeps its settings between runs: read now, written on each change."""
@@ -253,6 +266,14 @@ class ControlsPanel(QWidget):
         self.tone_combo.setItemData(len(TONES), CUSTOM_TONE_TOOLTIP, Qt.ToolTipRole)
         self.tone_combo.setCurrentText(DEFAULT_TONE)
         self.sections[settings.LINES].form.insertRow(1, "Tone", self.tone_combo)
+        self.legend_combo = QComboBox()
+        self.legend_combo.addItems(list(LEGEND_DETAILS))
+        for index, name in enumerate(LEGEND_DETAILS):
+            self.legend_combo.setItemData(index, LEGEND_TOOLTIPS[name], Qt.ToolTipRole)
+        self.legend_combo.setCurrentText(DEFAULT_LEGEND_DETAIL)
+        self.legend_combo.setToolTip(LEGEND_TOOLTIP)
+        self.sections[settings.LINES].form.insertRow(2, "Legend", self.legend_combo)
+        self.sections[settings.LINES].form.labelForField(self.legend_combo).setToolTip(LEGEND_TOOLTIP)
         self.paper_combo = QComboBox()
         self.paper_combo.addItems(list(PAPERS))
         self.paper_combo.setCurrentText(DEFAULT_PAPER)
@@ -403,6 +424,7 @@ class ControlsPanel(QWidget):
         self.tone_combo.currentTextChanged.connect(self._on_tone_changed)
         self.paper_combo.currentTextChanged.connect(lambda _name: self._on_print_changed())
         self.medium_combo.currentTextChanged.connect(lambda _name: self._on_medium_changed())
+        self.legend_combo.currentTextChanged.connect(self._on_legend_changed)
         self.resolution_unit.currentIndexChanged.connect(lambda _index: self._on_unit_changed())
         self.resolution_spin.valueChanged.connect(lambda _value: self._on_resolution_edited())
         self.png_radio.toggled.connect(lambda _checked: self._show_resolution())
@@ -464,6 +486,7 @@ class ControlsPanel(QWidget):
             self._show_tone(DEFAULT_TONE)
             self.paper_combo.setCurrentText(DEFAULT_PAPER)
             self.medium_combo.setCurrentText(difficulty.DEFAULT_MEDIUM)
+            self.legend_combo.setCurrentText(DEFAULT_LEGEND_DETAIL)
             for check in self._switches.values():
                 check.setChecked(True)
             self._dpi, self._pixels = DEFAULT_DPI, None
@@ -480,6 +503,7 @@ class ControlsPanel(QWidget):
         self._store.setValue(_TONE_KEY, self.tone_combo.currentText())
         self._store.setValue(_PAPER_KEY, self.paper_combo.currentText())
         self._store.setValue(_MEDIUM_KEY, self.medium_combo.currentText())
+        self._store.setValue(_LEGEND_KEY, self.legend_combo.currentText())
         for name, control in self.controls.items():
             self._store.setValue(_SETTING_KEY.format(name), control.value())
         for name, check in self._switches.items():
@@ -508,6 +532,9 @@ class ControlsPanel(QWidget):
             medium = self._store.value(_MEDIUM_KEY)
             if medium in difficulty.MEDIA:
                 self.medium_combo.setCurrentText(medium)
+            legend = self._store.value(_LEGEND_KEY)
+            if legend in LEGEND_DETAILS:
+                self.legend_combo.setCurrentText(legend)
             for name, control in self.controls.items():
                 kept = self._store.value(_SETTING_KEY.format(name))
                 try:
@@ -563,7 +590,13 @@ class ControlsPanel(QWidget):
 
     def get_page_style(self) -> PageStyle:
         # The grays on their sliders, the tone's unless Custom.
-        return PageStyle(**self._chosen(settings.STYLE), paper=self.paper_combo.currentText())
+        return PageStyle(
+            **self._chosen(settings.STYLE), paper=self.paper_combo.currentText(), legend_detail=self.get_legend_detail()
+        )
+
+    def get_legend_detail(self) -> str:
+        """What the legend writes beside each swatch (one of ``legend.LEGEND_DETAILS``)."""
+        return self.legend_combo.currentText()
 
     def get_handling(self) -> Handling:
         switches = {name: check.isChecked() for name, check in self._switches.items()}
@@ -649,6 +682,11 @@ class ControlsPanel(QWidget):
             params = difficulty.for_medium(difficulty.params_for_preset(name), medium)
             self.preset_combo.setItemData(index, difficulty.describe(params), Qt.ToolTipRole)
         self._save()
+
+    def _on_legend_changed(self, detail: str) -> None:
+        self._save()
+        if not self._loading:
+            self.legend_detail_changed.emit(detail)
 
     def _on_print_changed(self) -> None:
         self._show_resolution()

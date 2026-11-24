@@ -420,3 +420,21 @@ def test_a_screen_keeps_a_margin_already_under_its_own():
     custom = difficulty.custom_params(24, 6.0, 0.9, palette_margin_de00=1.0, paper_black_lstar=30.0)
     assert difficulty.for_medium(custom, "Screen") == dataclasses.replace(custom, paper_black_lstar=0.0)
     assert difficulty.for_medium(custom, "Paper and paint") is custom
+
+
+def test_what_the_legend_writes_is_kept_and_says_so_when_changed(tmp_path):
+    first = ControlsPanel(store=_store(tmp_path))
+    assert first.get_legend_detail() == "Name, hex and RGB" == first.get_page_style().legend_detail
+    changed = []
+    first.legend_detail_changed.connect(changed.append)
+    first.legend_combo.setCurrentText("Number only")
+    assert changed == ["Number only"] and first.get_page_style().legend_detail == "Number only"
+    again = ControlsPanel(store=_store(tmp_path))
+    assert again.get_legend_detail() == "Number only"
+    again.reset()
+    assert again.get_legend_detail() == "Name, hex and RGB"
+    store = _store(tmp_path)
+    store.remove("style/legend")  # kept by a version without it: the default
+    assert ControlsPanel(store=store).get_legend_detail() == "Name, hex and RGB"
+    store.setValue("style/legend", "Everything")  # not a choice the app offers
+    assert ControlsPanel(store=store).get_legend_detail() == "Name, hex and RGB"

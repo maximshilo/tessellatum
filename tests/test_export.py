@@ -12,7 +12,20 @@ from PIL import Image, ImageFont
 from tessellatum.core import export, text
 from tessellatum.core.boundaries import smoothing_length_px, trace_boundaries
 from tessellatum.core.ink_outline import ink_outline
-from tessellatum.core.legend import LABEL_FONT_RATIO, SWATCH_BORDER_MM, SWATCH_GAP_MM, SWATCH_MM, render_legend
+from tessellatum.core.color_names import name_colors
+from tessellatum.core.legend import (
+    LABEL_FONT_RATIO,
+    LEGEND_DETAILS,
+    NAME,
+    NAME_HEX_RGB,
+    NUMBER_ONLY,
+    SWATCH_BORDER_MM,
+    SWATCH_GAP_MM,
+    SWATCH_MM,
+    cell_mm,
+    detail_line,
+    render_legend,
+)
 from tessellatum.core.painting import Painting, Version, completed, tint_rgb, tinted
 from tessellatum.core.print_size import A4, print_scale
 from tessellatum.core.regions import extract_regions
@@ -302,10 +315,10 @@ def test_the_numbers_are_text_in_the_page_s_font_embedded_where_the_page_writes_
     assert not labels and any(label.leader is not None for label in rendered.labels)
 
     font = first["objects"][first["resources"]["Font"]["F1"]][0]
-    assert "/Subtype /TrueType /BaseFont /Aileron-Regular /FirstChar 48 /LastChar 57" in font
+    assert "/Subtype /TrueType /BaseFont /Aileron-Regular /FirstChar 32 /LastChar 126" in font
     widths = [float(v) for v in re.search(r"/Widths \[(.*?)\]", font).group(1).split()]
     aileron = ImageFont.load_default(size=1000)
-    assert widths == pytest.approx([aileron.getlength(str(d)) for d in range(10)], abs=1)
+    assert widths == pytest.approx([aileron.getlength(chr(c)) for c in range(32, 127)], abs=1)
     descriptor = first["objects"][int(re.search(r"/FontDescriptor (\d+) 0 R", font).group(1))][0]
     embedded = first["objects"][int(re.search(r"/FontFile2 (\d+) 0 R", descriptor).group(1))][1]
     assert embedded == aileron.font_bytes  # Pillow's own Aileron, CC0, whole
@@ -326,21 +339,36 @@ def test_a_leader_runs_to_a_dot_inside_its_region(tmp_path):
     assert f"q /Dk gs {width:.4f}".rstrip("0").rstrip(".") + f" w {gray} G {gray} g" in first["content"]
 
 
-def test_the_legend_is_vector_swatches_in_their_exact_colors_numbered_on_its_own_sheet(tmp_path):
+@pytest.mark.parametrize("detail", LEGEND_DETAILS)
+def test_the_legend_is_vector_swatches_in_their_exact_colors_numbered_on_its_own_sheet(tmp_path, detail):
     palette = [(i * 6, 100, 255 - i * 6) for i in range(30)] + [(250, 250, 250), (5, 5, 5)]
-    path, (_, second) = _save(tmp_path, _drawn(ALIGNED, _split(ALIGNED), [0, 1]).drawing, palette)
+    style = PageStyle(legend_detail=detail)
+    path, (_, second) = _save(tmp_path, _drawn(ALIGNED, _split(ALIGNED), [0, 1], style).drawing, palette)
     content = second["content"]
 
     fills = re.findall(r"(\S+) (\S+) (\S+) rg (\S+) (\S+) (\S+) (\S+) re f", content)
     assert len(fills) == len(palette)
-    per_row = int(A4.printable_mm()[0] // (SWATCH_MM + SWATCH_GAP_MM))  # 12 across 190 mm
+    cell = cell_mm(detail)
+    per_row = int(A4.printable_mm()[0] // cell)  # 12 across 190 mm numbered only, 4 with the colors' details
+    assert per_row == (12 if detail == NUMBER_ONLY else 4)
     for index, ((r, g, b, x, y, w, h), rgb) in enumerate(zip(fills, palette)):
         assert tuple(round(float(v) * 255) for v in (r, g, b)) == rgb
         row, column = divmod(index, per_row)
-        assert (float(x), float(y)) == pytest.approx((SWATCH_GAP_MM + column * (SWATCH_MM + SWATCH_GAP_MM), SWATCH_GAP_MM + row * (SWATCH_MM + SWATCH_GAP_MM)))
+        assert (float(x), float(y)) == pytest.approx((SWATCH_GAP_MM + column * cell, SWATCH_GAP_MM + row * (SWATCH_MM + SWATCH_GAP_MM)))
         assert (float(w), float(h)) == (SWATCH_MM, SWATCH_MM)
     assert content.count(f"0 G {SWATCH_BORDER_MM} w") == len(palette)
     numbers = re.findall(r"(\S+) g BT /F1 (\S+) Tf 1 0 0 -1 \S+ \S+ Tm \((\d+)\) Tj ET", content)
+    # Beside each swatch, its name, then its hex code and RGB values, as text; nothing numbered only.
+    written = re.findall(r"BT /F1 \S+ Tf 1 0 0 -1 \S+ \S+ Tm \(([^)]*)\) Tj ET", content)
+    beside = [text for text in written if not text.isdigit()]
+    names = name_colors(palette)
+    if detail == NUMBER_ONLY:
+        assert beside == []
+    else:
+        expected = [[name] + ([detail_line(rgb)] if detail == NAME_HEX_RGB else []) for name, rgb in zip(names, palette)]
+        assert " ".join(beside) == " ".join(" ".join(lines) for lines in expected)  # a name may wrap onto two lines
+    if detail == NAME_HEX_RGB:
+        assert "#FAFAFA  RGB 250 250 250" in beside and "#050505  RGB 5 5 5" in beside
     assert [text for _, _, text in numbers] == [str(i + 1) for i in range(len(palette))]
     assert all(float(size) == pytest.approx(SWATCH_MM * LABEL_FONT_RATIO) for _, size, _ in numbers)
     assert [fill for fill, _, _ in numbers][-2:] == ["0", "1"]  # black on the light swatch, white on the dark one
@@ -350,12 +378,28 @@ def test_the_legend_is_vector_swatches_in_their_exact_colors_numbered_on_its_own
     sheet = pdf_reading.render(path, 1, 2.0)
     for index, rgb in enumerate(palette):
         row, column = divmod(index, per_row)
-        x0 = round((A4.margin_mm + SWATCH_GAP_MM + column * (SWATCH_MM + SWATCH_GAP_MM)) * 2)
+        x0 = round((A4.margin_mm + SWATCH_GAP_MM + column * cell) * 2)
         y0 = round((A4.margin_mm + SWATCH_GAP_MM + row * (SWATCH_MM + SWATCH_GAP_MM)) * 2)
         swatch = sheet[y0 + 2 : y0 + 22, x0 + 2 : x0 + 22]
         assert tuple(swatch[1, 1]) == pytest.approx(rgb, abs=1)
         ys, xs = np.nonzero((np.abs(swatch - np.array(rgb)) > 40).any(axis=2))
         assert ((ys.min() + ys.max()) / 2, (xs.min() + xs.max()) / 2) == pytest.approx((9.5, 9.5), abs=1)
+
+
+def test_a_pdf_reader_finds_each_color_s_name_hex_code_and_rgb_on_the_legend_sheet(tmp_path):
+    pytest.importorskip("PySide6.QtPdf")
+    from PySide6.QtPdf import QPdfDocument
+
+    palette = [(i * 4, 100, 255 - i * 4) for i in range(64)]
+    path, (_, second) = _save(tmp_path, _drawn(ALIGNED, _split(ALIGNED), [0, 1]).drawing, palette)
+    # 64 colors with their details fit the A4 sheet as they are, not scaled down: 16 rows of 15 mm.
+    assert re.match(rf"q {PT_PER_MM:.8f} 0 0 -{PT_PER_MM:.8f} ", second["content"])
+    document = QPdfDocument()
+    assert document.load(str(path)) == QPdfDocument.Error.None_
+    found = " ".join(document.getAllText(1).text().split())
+    for name, rgb in zip(name_colors(palette), palette):
+        assert detail_line(rgb).replace("  ", " ") in found
+        assert name in found
 
 
 def test_the_same_page_gives_the_same_file(tmp_path):

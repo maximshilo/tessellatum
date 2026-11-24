@@ -40,7 +40,7 @@ def test_the_defaults_are_the_pipeline_s_own():
 def test_every_field_the_pipeline_takes_a_number_for_is_offered_or_set_otherwise():
     offered = {s.name for s in settings.SETTINGS}
     # The thinnest line and the leader's dot are drawing details, the switches are boxes.
-    otherwise = {"min_line_width_px", "leader_dot_ratio", "line_art", "detail", "text", "paper"}  # paper: a combo
+    otherwise = {"min_line_width_px", "leader_dot_ratio", "line_art", "detail", "text", "paper", "legend_detail"}  # combos
     for owner in OWNERS.values():
         for field in dataclasses.fields(owner):
             assert field.name in offered | otherwise, field.name

@@ -108,6 +108,13 @@ smaller ones.
   in a lighter gray of its own, told from them at a glance. Gray rather than black, the numbers read as the page's
   apparatus rather than as writing in the picture. Light and Dark move all three by 15; Light is for pale paints, under
   which darker lines would show. Moving any of the three picks Custom.
+- **Legend**: what the legend writes beside each color's swatch, to find, buy or mix the color by. **Name, hex and
+  RGB** (the default) gives its everyday name ("dusty rose", "olive green") in 8 pt and under it, in 7 pt, its hex code
+  and RGB values (`#C0737A  RGB 192 115 122`): exactly the color the page is painted with, to type into a painting app
+  or match a paint or pencil against. **Name** gives the name alone, **Number only** the numbered swatches as before.
+  The name is the nearest by CIEDE2000 of about 800 names from the xkcd color survey (CC0), every color on a legend a
+  different one. With the details, four colors fit across a portrait A4 sheet, so 64 colors take 243 mm of its 277.
+  Changing it redraws the preview's legend at once and applies to the next export, without making the page again.
 - **Leader width**: 0.1 mm by default, half the default line, so a leader doesn't read as a boundary. Numbers keep as
   clear of a leader as of a line however thin it is drawn.
 - **Line smoothing**: how far along a line its pixel staircase is smoothed.
@@ -151,7 +158,8 @@ are both drawn from that layout, so they number the page the same way, each numb
   so a printer draws them at its own resolution. Line art's ink, the marks in a face and the letters of signs are
   filled outlines, smoothed off the pixel staircase without joining or breaking anything. The painted versions fill
   each region along a path made of the page's own lines. Nothing on the sheet is an image. The legend gets a portrait
-  sheet of its own, its swatches 12 mm squares in their exact colors.
+  sheet of its own, its swatches 12 mm squares in their exact colors, their names and codes as text a PDF reader can
+  search and copy.
 - **PNG**: the page above its legend in one image: the PDF's page drawn in pixels, at the **Resolution** asked
   for, which the file records, so it prints as large as the PDF's page.
 

@@ -4,6 +4,22 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.17] - 2026-11-24
+
+### Added
+
+- **Color names, hex codes and RGB on the legend.** Beside each swatch, its everyday name ("dusty rose", "olive
+  green"), and under it its hex code and RGB values (`#C0737A  RGB 192 115 122`), exactly the color the page is
+  painted with: to find it in a painting app, or match a paint or pencil to it. The name is the nearest by CIEDE2000
+  of about 800 names from the xkcd color survey (CC0), every color on a legend a different one. A new setting,
+  **Legend** (under Lines and numbers): Name, hex and RGB (the default), Name, or Number only, as before. Changing it
+  redraws the preview's legend at once and applies to the next export without making the page again. In the PDF the
+  names and codes are text, which a reader can search and copy; 64 colors with their details still fit an A4 sheet.
+
+### Changed
+
+- The preview draws its legend at 300 dpi, so its small print stays sharp zoomed in.
+
 ## [1.0.16] - 2026-11-23
 
 ### Added

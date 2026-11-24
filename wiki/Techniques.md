@@ -28,6 +28,7 @@ box scoring and unclipping) for text, with shape filters on paper.
 | Bilateral filtering | Smoothing grain before quantization while keeping edges |
 | CIELAB and CIEDE2000 | Perceptual color distances: palette margin, color tests, tone settling |
 | Black point compensation | The palette's colors as paper shows them, its darkest black at L* 25: near-blacks it can't tell apart are merged |
+| Color naming | Each legend color named by the nearest of about 800 everyday names (the xkcd color survey, CC0) by CIEDE2000; colors and names paired off closest first, so a legend never names two colors alike |
 | Morphological closing and opening | Paper behind ink lines; ground behind lettering; thin-ink detection |
 | Black-hat transform | Thin dark marks in faces |
 | Directional closings with line segments | Closing small breaks in ink lines |

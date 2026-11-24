@@ -1,9 +1,22 @@
-"""Build the color-index -> swatch legend shown alongside the coloring page."""
+"""Build the color-index -> swatch legend shown alongside the coloring page.
+
+Each color gets a swatch with its number in it and, as the legend's detail setting asks, its name (see
+``color_names``) and its hex code and RGB values beside it, to find, buy or mix it by. The text's layout is worked out
+here in millimeters, once, and drawn by both the raster legend (``render_legend``) and the PDF's legend sheet
+(``export``), so the two wrap and place it alike.
+"""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from functools import lru_cache
+from typing import Sequence
+
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+
+from tessellatum.core.color_names import hex_code, name_colors
+from tessellatum.core.print_size import MM_PER_INCH, PT_PER_INCH
 
 # A swatch's size on paper, so that a legend prints as large on an export as on a preview of the same picture, and a
 # number on it stays legible at 300 dpi: 12 mm swatches 3 mm apart, framed 0.5 mm wide, numbered 0.42 of a swatch high
@@ -13,13 +26,127 @@ SWATCH_GAP_MM = 3.0
 SWATCH_BORDER_MM = 0.5
 LABEL_FONT_RATIO = 0.42
 
+# What the legend says beside each swatch (the setting "Legend details").
+NUMBER_ONLY = "Number only"
+NAME = "Name"
+NAME_HEX_RGB = "Name, hex and RGB"
+LEGEND_DETAILS = (NUMBER_ONLY, NAME, NAME_HEX_RGB)
+DEFAULT_LEGEND_DETAIL = NAME_HEX_RGB
 
-def render_legend(palette_bgr: np.ndarray, width: int, px_per_mm: float) -> Image.Image:
-    """Render a wrapped grid of numbered color swatches, ``width`` pixels wide, at ``px_per_mm`` pixels a millimeter."""
+# The text beside a swatch, on paper: the name in 8 pt, wrapped onto two lines at most, and below it the hex code and
+# RGB values in 7 pt, the smallest a legend prints (legible on a printed sheet, as small print on a label is). It
+# starts 1.5 mm right of the swatch and takes a column 30.5 mm wide, which the longest values line, "#FFFFFF  RGB 255
+# 255 255" (30.2 mm), fits; so a cell is 47 mm across, four to a portrait A4 sheet's 190 mm, and 64 colors take 16
+# rows, 243 mm of its 277.
+NAME_PT = 8.0
+DETAIL_PT = 7.0
+TEXT_GAP_MM = 1.5
+TEXT_COLUMN_MM = 30.5
+NAME_LINES = 2
+# Lines one under the other are this many ems apart, baseline to baseline.
+LINE_SPACING = 1.2
+NAME_GRAY = 0
+DETAIL_GRAY = 80
+
+_MM_PER_PT = MM_PER_INCH / PT_PER_INCH
+# The size the text is measured at, in pixels an em: large enough that rounding to whole pixels is a thousandth of one.
+_MEASURING_EM_PX = 1000
+
+
+@dataclass(frozen=True)
+class LegendText:
+    """A line of text beside a swatch: ``x_mm`` right of the swatch's left edge, its baseline ``baseline_mm`` below the
+    swatch's top, ``size_mm`` an em, in the gray ``gray`` (0 black)."""
+
+    text: str
+    x_mm: float
+    baseline_mm: float
+    size_mm: float
+    gray: int
+
+
+def cell_mm(detail: str) -> float:
+    """How wide a swatch's cell is with ``detail`` beside it, gap included, on paper."""
+    text = TEXT_GAP_MM + TEXT_COLUMN_MM if detail != NUMBER_ONLY else 0.0
+    return SWATCH_MM + SWATCH_GAP_MM + text
+
+
+def detail_line(rgb: tuple[int, int, int]) -> str:
+    """The hex code and RGB values of ``rgb``, as the legend writes them: ``#5A6B2F  RGB 90 107 47``."""
+    return f"{hex_code(rgb)}  RGB {int(rgb[0])} {int(rgb[1])} {int(rgb[2])}"
+
+
+def swatch_texts(palette_rgb: Sequence[tuple[int, int, int]], detail: str) -> list[list[LegendText]]:
+    """The lines of text beside each of ``palette_rgb``'s swatches with ``detail``, centered on the swatch's height."""
+    if detail == NUMBER_ONLY or len(palette_rgb) == 0:
+        return [[] for _ in palette_rgb]
+    names = name_colors(palette_rgb)
+    name_mm, detail_mm = NAME_PT * _MM_PER_PT, DETAIL_PT * _MM_PER_PT
+    cap = _cap_height()
+    texts = []
+    for rgb, name in zip(palette_rgb, names):
+        lines = [(line, name_mm, NAME_GRAY) for line in _wrap(name, name_mm, TEXT_COLUMN_MM, NAME_LINES)]
+        if detail == NAME_HEX_RGB:
+            lines.append((detail_line(rgb), detail_mm, DETAIL_GRAY))
+        # Baselines one under the other; the block, from the first line's capitals to the last baseline, centered.
+        baselines = [0.0]
+        for _, next_size, _ in lines[1:]:
+            baselines.append(baselines[-1] + LINE_SPACING * next_size)
+        top = cap * lines[0][1]
+        height = baselines[-1] + top
+        offset = (SWATCH_MM - height) / 2 + top
+        texts.append(
+            [
+                LegendText(text, SWATCH_MM + TEXT_GAP_MM, offset + baseline, size, gray)
+                for (text, size, gray), baseline in zip(lines, baselines)
+            ]
+        )
+    return texts
+
+
+def text_width_mm(text: str, size_mm: float) -> float:
+    """How far ``text`` runs, written ``size_mm`` an em, in the legend's font."""
+    return _advance(text) * size_mm
+
+
+def _wrap(text: str, size_mm: float, width_mm: float, most: int) -> list[str]:
+    """``text`` broken between words into lines no wider than ``width_mm``, ``most`` of them at most: a word that won't
+    fit on the last goes on it all the same, never cut."""
+    lines: list[str] = []
+    for word in text.split():
+        if lines and (len(lines) == most or text_width_mm(f"{lines[-1]} {word}", size_mm) <= width_mm):
+            lines[-1] = f"{lines[-1]} {word}"
+        else:
+            lines.append(word)
+    return lines or [""]
+
+
+@lru_cache(maxsize=4096)
+def _advance(text: str) -> float:
+    """``text``'s advance, in ems."""
+    return _font(_MEASURING_EM_PX).getlength(text) / _MEASURING_EM_PX
+
+
+@lru_cache(maxsize=1)
+def _cap_height() -> float:
+    """How tall the font's capitals stand above the baseline, in ems."""
+    return -_font(_MEASURING_EM_PX).getbbox("H", anchor="ls")[1] / _MEASURING_EM_PX
+
+
+@lru_cache(maxsize=256)
+def _font(size: float) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    return ImageFont.load_default(size=size)
+
+
+def render_legend(
+    palette_bgr: np.ndarray, width: int, px_per_mm: float, detail: str = DEFAULT_LEGEND_DETAIL
+) -> Image.Image:
+    """Render a wrapped grid of numbered color swatches, ``width`` pixels wide, at ``px_per_mm`` pixels a millimeter,
+    with ``detail`` beside each (one of ``LEGEND_DETAILS``)."""
     swatch = max(8, round(SWATCH_MM * px_per_mm))
     gap = max(2, round(SWATCH_GAP_MM * px_per_mm))
     border = max(1, round(SWATCH_BORDER_MM * px_per_mm))
-    cell_w = swatch + gap
+    cell_w = swatch + gap + round((cell_mm(detail) - SWATCH_MM - SWATCH_GAP_MM) * px_per_mm)
     cols = max(1, width // cell_w)
     rows = (len(palette_bgr) + cols - 1) // cols
     height = rows * (swatch + gap) + gap
@@ -27,13 +154,14 @@ def render_legend(palette_bgr: np.ndarray, width: int, px_per_mm: float) -> Imag
     legend = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(legend)
     font = ImageFont.load_default(size=round(swatch * LABEL_FONT_RATIO))
+    palette_rgb = [(int(bgr[2]), int(bgr[1]), int(bgr[0])) for bgr in palette_bgr]
+    texts = swatch_texts(palette_rgb, detail)
 
-    for index, bgr in enumerate(palette_bgr):
+    for index, rgb in enumerate(palette_rgb):
         row, col = divmod(index, cols)
         x0 = gap + col * cell_w
         y0 = gap + row * (swatch + gap)
         x1, y1 = x0 + swatch, y0 + swatch
-        rgb = (int(bgr[2]), int(bgr[1]), int(bgr[0]))
 
         draw.rectangle([x0, y0, x1, y1], fill=rgb, outline="black", width=border)
 
@@ -47,6 +175,14 @@ def render_legend(palette_bgr: np.ndarray, width: int, px_per_mm: float) -> Imag
             fill=text_color,
             font=font,
         )
+        for line in texts[index]:
+            draw.text(
+                (x0 + line.x_mm * px_per_mm, y0 + line.baseline_mm * px_per_mm),
+                line.text,
+                fill=(line.gray,) * 3,
+                font=_font(line.size_mm * px_per_mm),
+                anchor="ls",
+            )
 
     return legend
 

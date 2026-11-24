@@ -21,8 +21,11 @@ from tessellatum.core.legend import (
     SWATCH_BORDER_MM,
     SWATCH_GAP_MM,
     SWATCH_MM,
+    DEFAULT_LEGEND_DETAIL,
+    cell_mm,
     number_fill,
     render_legend,
+    swatch_texts,
 )
 from tessellatum.core.painting import Painting, Version, tint_rgb
 from tessellatum.core.print_size import A4, MM_PER_INCH, PT_PER_INCH, PaperFormat, print_scale
@@ -36,6 +39,8 @@ LEGEND_GAP_MM = 6.0
 FILL_EDGE_MM = 0.1
 
 _PT_PER_MM = PT_PER_INCH / MM_PER_INCH
+# The characters the embedded font covers: printable ASCII, the numbers' digits and the legend's names and codes.
+FIRST_CHAR, LAST_CHAR = 32, 126
 # The size Pillow's measurements of a number's text box are taken at, in pixels an em: large enough that rounding them
 # to whole pixels is a thousandth of the em.
 _MEASURING_EM_PX = 1000
@@ -74,7 +79,7 @@ def export_png(
     Returns the page's pixels (width, height)."""
     page = rasterize(drawing, dpi, version, painting)
     palette_bgr = np.asarray(palette_rgb, dtype=np.uint8).reshape(-1, 3)[:, ::-1]
-    legend = render_legend(palette_bgr, width=page.width, px_per_mm=dpi / MM_PER_INCH)
+    legend = render_legend(palette_bgr, width=page.width, px_per_mm=dpi / MM_PER_INCH, detail=drawing.style.legend_detail)
     save_png(page, legend, path, drawing.style.paper_format)
     return page.size
 
@@ -140,13 +145,14 @@ def save_pdf(
 
     The legend gets a portrait sheet of its own, across the printable width
     from the top margin: its swatches, ``legend.SWATCH_MM`` squares in their
-    exact colors, numbered as the page is. The file carries no date, so the
-    same page always gives the same bytes.
+    exact colors, numbered as the page is, and beside each what the style's
+    ``legend_detail`` asks for (its name, hex code and RGB values), as text.
+    The file carries no date, so the same page always gives the same bytes.
     """
     document = _Document()
     numbers = document.font(_number_font())
     _page_sheet(document, drawing, numbers, version, painting)
-    _legend_sheet(document, palette_rgb, numbers, drawing.style.paper_format)
+    _legend_sheet(document, palette_rgb, numbers, drawing.style.paper_format, drawing.style.legend_detail)
     Path(path).write_bytes(document.to_bytes())
 
 
@@ -584,14 +590,22 @@ def _clip_ring(ring: np.ndarray, y: float, below: bool) -> np.ndarray:
 
 
 def _legend_sheet(
-    document: _Document, palette_rgb: Sequence[tuple[int, int, int]], numbers: int, paper: PaperFormat = A4
+    document: _Document,
+    palette_rgb: Sequence[tuple[int, int, int]],
+    numbers: int,
+    paper: PaperFormat = A4,
+    detail: str = DEFAULT_LEGEND_DETAIL,
 ) -> None:
-    """The legend's portrait sheet of ``paper``, drawn in millimeters from the top-left margin, y down."""
+    """The legend's portrait sheet of ``paper``, drawn in millimeters from the top-left margin, y down, with ``detail``
+    beside each swatch."""
     area_w, area_h = paper.printable_mm()
     cell = SWATCH_MM + SWATCH_GAP_MM
-    columns = max(1, int(area_w // cell))
+    columns = max(1, int(area_w // cell_mm(detail)))
     rows = -(-len(palette_rgb) // columns)
-    fit = min(1.0, area_h / (rows * cell + SWATCH_GAP_MM))  # a legend never runs past the sheet; 40 colors take a quarter of it
+    # A legend never runs past the sheet: 40 colors take a quarter of an A4 sheet numbered only, and 64 with their
+    # details 243 mm of its 277.
+    fit = min(1.0, area_h / (rows * cell + SWATCH_GAP_MM))
+    texts = swatch_texts(palette_rgb, detail)
     scale = _PT_PER_MM * fit
     em = SWATCH_MM * LABEL_FONT_RATIO
     ops = [
@@ -600,7 +614,7 @@ def _legend_sheet(
     ]
     for index, rgb in enumerate(palette_rgb):
         row, column = divmod(index, columns)
-        x, y = SWATCH_GAP_MM + column * cell, SWATCH_GAP_MM + row * cell
+        x, y = SWATCH_GAP_MM + column * cell_mm(detail), SWATCH_GAP_MM + row * cell
         inset = SWATCH_BORDER_MM / 2  # the frame lies inside the swatch, as on the page's legend
         ops.append(f"{' '.join(_gray(v) for v in rgb)} rg {_num(x)} {_num(y)} {_num(SWATCH_MM)} {_num(SWATCH_MM)} re f")
         ops.append(
@@ -617,6 +631,11 @@ def _legend_sheet(
             f"{_gray(number_fill(rgb)[0])} g BT /F1 {_num(em)} Tf 1 0 0 -1 {_num(origin_x)} {_num(origin_y)} Tm "
             f"{_text(text)} Tj ET"
         )
+        for line in texts[index]:
+            ops.append(
+                f"{_gray(line.gray)} g BT /F1 {_num(line.size_mm)} Tf 1 0 0 -1 {_num(x + line.x_mm)} "
+                f"{_num(y + line.baseline_mm)} Tm {_text(line.text)} Tj ET"
+            )
     ops.append("Q")
     document.page(_sheet_size_mm(False, paper), "\n".join(ops), {"Font": {"F1": numbers}})
 
@@ -656,10 +675,12 @@ def _gray(level: int) -> str:
 
 
 def _text(text: str) -> str:
-    """``text`` as a PDF string: the page's numbers are digits, which the embedded font's widths cover."""
-    if not text.isdigit():
-        raise ValueError(f"the PDF writes digits only, got {text!r}")
-    return f"({text})"
+    """``text`` as a PDF string: printable ASCII, which the embedded font's widths cover, with its parentheses and
+    backslashes escaped."""
+    if not all(FIRST_CHAR <= ord(c) <= LAST_CHAR for c in text):
+        raise ValueError(f"the PDF writes printable ASCII only, got {text!r}")
+    escaped = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    return f"({escaped})"
 
 
 def _num(value: float, places: int = 4) -> str:
@@ -678,7 +699,7 @@ class _TrueType:
     ascent: int
     descent: int
     cap_height: int
-    digit_advances: tuple[int, ...]  # the advance widths of "0" to "9", in font units
+    advances: tuple[int, ...]  # the advance widths of the characters FIRST_CHAR to LAST_CHAR, in font units
 
     @classmethod
     def parse(cls, data: bytes) -> _TrueType:
@@ -695,8 +716,8 @@ class _TrueType:
         cap_height = struct.unpack(">h", data[os2 + 88 : os2 + 90])[0] if os2_version >= 2 else round(0.7 * units_per_em)
         glyphs = _cmap_bmp(data, tables["cmap"][0])
         advances = []
-        for digit in "0123456789":
-            glyph = min(glyphs[ord(digit)], metrics - 1)  # glyphs past the last metric take its advance
+        for char in range(FIRST_CHAR, LAST_CHAR + 1):
+            glyph = min(glyphs.get(char, 0), metrics - 1)  # glyphs past the last metric take its advance
             advances.append(struct.unpack(">H", data[hmtx + 4 * glyph : hmtx + 4 * glyph + 2])[0])
         return cls(data, _postscript_name(data, tables["name"][0]), units_per_em, bbox, ascent, descent, cap_height, tuple(advances))
 
@@ -775,7 +796,7 @@ class _Document:
         return self.add(f"<< {entries}/Filter /FlateDecode /Length {len(packed)} >>\nstream\n".encode() + packed + b"\nendstream")
 
     def font(self, face: _TrueType) -> int:
-        """``face`` embedded whole, as a simple font of the digits."""
+        """``face`` embedded whole, as a simple font of printable ASCII: the numbers' digits and the legend's text."""
         program = self.stream(f"/Length1 {len(face.data)} ", face.data)
         descriptor = self.add(
             (
@@ -786,8 +807,8 @@ class _Document:
         )
         return self.add(
             (
-                f"<< /Type /Font /Subtype /TrueType /BaseFont /{face.name} /FirstChar 48 /LastChar 57 "
-                f"/Widths [{' '.join(face.em(v) for v in face.digit_advances)}] /FontDescriptor {descriptor} 0 R "
+                f"<< /Type /Font /Subtype /TrueType /BaseFont /{face.name} /FirstChar {FIRST_CHAR} /LastChar {LAST_CHAR} "
+                f"/Widths [{' '.join(face.em(v) for v in face.advances)}] /FontDescriptor {descriptor} 0 R "
                 "/Encoding /WinAnsiEncoding >>"
             ).encode()
         )
