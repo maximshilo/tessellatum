@@ -122,7 +122,8 @@ def text_width_mm(text: str, size_mm: float) -> float:
 
 def _wrap(text: str, size_mm: float, width_mm: float, most: int) -> list[str]:
     """``text`` broken between words into lines no wider than ``width_mm``, ``most`` of them at most. What won't fit
-    on the last is left off at a word's end, marked "..."; a single word too long for a line is kept whole."""
+    on the last is left off at a word's end, marked "..." (even if the mark itself then runs over); a single word too
+    long for a line is kept whole."""
     lines: list[str] = []
     words = text.split()
     for at, word in enumerate(words):
@@ -134,7 +135,7 @@ def _wrap(text: str, size_mm: float, width_mm: float, most: int) -> list[str]:
             last = lines[-1]
             while " " in last and text_width_mm(f"{last} ...", size_mm) > width_mm:
                 last = last.rsplit(" ", 1)[0]
-            lines[-1] = f"{last} ..." if text_width_mm(f"{last} ...", size_mm) <= width_mm else last
+            lines[-1] = f"{last} ..."
             break
     return lines or [""]
 

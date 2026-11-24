@@ -108,12 +108,12 @@ def test_no_more_paints_than_asked_for_and_none_that_doesn_t_help():
 
 
 def test_two_paints_closer_than_the_margin_are_never_both_taken():
-    picture = [(40, 60, 200), (44, 62, 196), (200, 120, 30)]  # two reds a hair apart
+    picture = [(40, 60, 200), (40, 60, 215), (200, 120, 30)]  # two reds 3 ΔE00 apart
     paints = np.array(picture, dtype=np.uint8)
     _labels, chosen = quantize.paint_palette(_samples(_flat(picture)), paints, num_colors=3, min_de00=4.0)
     lab = bgr_to_lab(paints[chosen])
     assert len(chosen) == 2 and ciede2000(lab[0], lab[1]) >= 4.0
-    _labels, all_three = quantize.paint_palette(_samples(_flat(picture)), paints, num_colors=3, min_de00=0.0)
+    _labels, all_three = quantize.paint_palette(_samples(_flat(picture)), paints, num_colors=3, min_de00=2.0)
     assert len(all_three) == 3
 
 
