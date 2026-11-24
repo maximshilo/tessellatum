@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tessellatum.core import difficulty, export, settings
+from tessellatum.core import difficulty, export, settings, swatches
 from tessellatum.core.legend import DEFAULT_LEGEND_DETAIL, LEGEND_DETAILS, NAME, NAME_HEX_RGB, NUMBER_ONLY
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import Handling
@@ -68,6 +68,14 @@ LEGEND_TOOLTIPS = {
     NAME: "Each color's everyday name beside its swatch (\"dusty rose\", \"olive green\"): the nearest of about 800 names, every color a different one.",
     NAME_HEX_RGB: "Its name, and under it its hex code and RGB values (\"#C0737A  RGB 192 115 122\"), exactly the color the page is painted with: to find it in a painting app, or match a paint or pencil to it.",
 }
+PALETTE = "Palette"
+PALETTE_TOOLTIP = (
+    "The legend's colors as a palette file, for coloring the page in a painting app with exactly its colors, each "
+    "named by its number and its name on the legend (\"7 dusty rose\"). Procreate: a .swatches file of 30 colors at "
+    "most, so a larger legend is saved as several (\"1-30\", \"31-60\"). Adobe Swatch Exchange (.ase): Photoshop, "
+    "Illustrator, Affinity, Procreate and others. GIMP palette (.gpl): GIMP, Krita, Inkscape and others."
+)
+SCREEN_HINT = "Coloring on a screen: export the Palette to load the legend's colors into your painting app."
 LEGEND_TOOLTIP = "What the legend writes beside each color's swatch, to find, buy or mix it by. " + " ".join(
     f"{name}: {tip}" for name, tip in LEGEND_TOOLTIPS.items()
 )
@@ -109,6 +117,7 @@ _TONE_KEY = "style/tone"
 _PAPER_KEY = "style/paper"
 _MEDIUM_KEY = "difficulty/medium"
 _LEGEND_KEY = "style/legend"
+_PALETTE_FORMAT_KEY = "export/palette"
 _UNIT_KEY = "export/unit"
 _DPI_KEY = "export/dpi"
 _PIXELS_KEY = "export/pixels"
@@ -330,12 +339,23 @@ class ControlsPanel(QWidget):
         self.version_combo.setToolTip("Which version of the page to export: the preview can show each of them.")
         self.png_radio = QRadioButton("PNG (image)")
         self.pdf_radio = QRadioButton("PDF")
+        self.palette_radio = QRadioButton("Palette")
+        self.palette_radio.setToolTip(PALETTE_TOOLTIP)
         self.png_radio.setChecked(True)
+        self.palette_combo = QComboBox()
+        for suffix, title in swatches.FORMATS.items():
+            self.palette_combo.addItem(title.split(" (")[0], suffix)
+        self.palette_combo.setToolTip(PALETTE_TOOLTIP)
+        self.screen_hint = QLabel(SCREEN_HINT)
+        self.screen_hint.setWordWrap(True)
+        self.screen_hint.setStyleSheet("color: #666;")
+        self.screen_hint.setVisible(False)  # shown coloring on a screen
         format_row = QWidget()
         format_layout = QHBoxLayout(format_row)
         format_layout.setContentsMargins(0, 0, 0, 0)
         format_layout.addWidget(self.png_radio)
         format_layout.addWidget(self.pdf_radio)
+        format_layout.addWidget(self.palette_radio)
         self._picture_size: tuple[int, int] | None = None
         self.resolution_spin = QSpinBox()
         self.resolution_spin.setGroupSeparatorShown(True)
@@ -370,6 +390,9 @@ class ControlsPanel(QWidget):
         export_form = QFormLayout()
         export_form.addRow("Version", self.version_combo)
         export_form.addRow("Format", format_row)
+        export_form.addRow("Palette", self.palette_combo)
+        export_form.labelForField(self.palette_combo).setToolTip(PALETTE_TOOLTIP)
+        export_form.addRow(self.screen_hint)
         export_form.addRow("Resolution", resolution_row)
         export_form.addRow("", presets_row)
         export_form.addRow(self.resolution_readout)
@@ -428,6 +451,8 @@ class ControlsPanel(QWidget):
         self.resolution_unit.currentIndexChanged.connect(lambda _index: self._on_unit_changed())
         self.resolution_spin.valueChanged.connect(lambda _value: self._on_resolution_edited())
         self.png_radio.toggled.connect(lambda _checked: self._show_resolution())
+        self.palette_radio.toggled.connect(lambda _checked: self._show_resolution())
+        self.palette_combo.currentIndexChanged.connect(lambda _index: self._save())
         for check in self._switches.values():
             check.toggled.connect(lambda _checked: self._save())
 
@@ -487,6 +512,7 @@ class ControlsPanel(QWidget):
             self.paper_combo.setCurrentText(DEFAULT_PAPER)
             self.medium_combo.setCurrentText(difficulty.DEFAULT_MEDIUM)
             self.legend_combo.setCurrentText(DEFAULT_LEGEND_DETAIL)
+            self.palette_combo.setCurrentIndex(0)
             for check in self._switches.values():
                 check.setChecked(True)
             self._dpi, self._pixels = DEFAULT_DPI, None
@@ -504,6 +530,7 @@ class ControlsPanel(QWidget):
         self._store.setValue(_PAPER_KEY, self.paper_combo.currentText())
         self._store.setValue(_MEDIUM_KEY, self.medium_combo.currentText())
         self._store.setValue(_LEGEND_KEY, self.legend_combo.currentText())
+        self._store.setValue(_PALETTE_FORMAT_KEY, self.palette_combo.currentData())
         for name, control in self.controls.items():
             self._store.setValue(_SETTING_KEY.format(name), control.value())
         for name, check in self._switches.items():
@@ -535,6 +562,9 @@ class ControlsPanel(QWidget):
             legend = self._store.value(_LEGEND_KEY)
             if legend in LEGEND_DETAILS:
                 self.legend_combo.setCurrentText(legend)
+            palette_format = self._store.value(_PALETTE_FORMAT_KEY)
+            if palette_format in swatches.FORMATS:
+                self.palette_combo.setCurrentIndex(self.palette_combo.findData(palette_format))
             for name, control in self.controls.items():
                 kept = self._store.value(_SETTING_KEY.format(name))
                 try:
@@ -603,7 +633,14 @@ class ControlsPanel(QWidget):
         return Handling(**switches, **self._chosen(settings.HANDLING))
 
     def get_output_format(self) -> str:
+        """"PNG", "PDF", or "Palette": the legend's colors as a palette file (see ``get_palette_format``)."""
+        if self.palette_radio.isChecked():
+            return PALETTE
         return "PDF" if self.pdf_radio.isChecked() else "PNG"
+
+    def get_palette_format(self) -> str:
+        """The palette file's suffix: one of ``swatches.FORMATS``."""
+        return self.palette_combo.currentData()
 
     def get_export_version(self) -> Version:
         return self.version_combo.currentData()
@@ -672,6 +709,7 @@ class ControlsPanel(QWidget):
         medium = self.medium_combo.currentText()
         screen = medium == difficulty.SCREEN_MEDIUM
         self.controls["paper_black_lstar"].setEnabled(not screen)
+        self.screen_hint.setVisible(screen)
         margin = self.controls["palette_margin_de00"]
         cap = (
             f" Coloring on a screen, the page keeps its colors at most {difficulty.SCREEN_MARGIN_DE00:g} ΔE00 apart, "
@@ -713,8 +751,14 @@ class ControlsPanel(QWidget):
             dpi = spin.value() * MM_PER_INCH / long_mm
         spin.blockSignals(False)
         png = self.png_radio.isChecked()
+        palette = self.palette_radio.isChecked()
         for widget in (spin, self.resolution_unit, *self.dpi_buttons.values()):
             widget.setEnabled(png)
+        self.palette_combo.setEnabled(palette)
+        self.version_combo.setEnabled(not palette)
+        if palette:
+            self.resolution_readout.setText("The palette holds the legend's colors, named as on the legend.")
+            return
         if not png:
             self.resolution_readout.setText("The PDF is vector art: it prints sharp at any size.")
             return

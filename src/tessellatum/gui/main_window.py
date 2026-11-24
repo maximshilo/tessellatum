@@ -21,12 +21,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tessellatum.core import export, pipeline
+from tessellatum.core import export, pipeline, swatches
 from tessellatum.core.legend import render_legend
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import GeneratedPage
 from tessellatum.core.print_size import MM_PER_INCH, print_scale
-from tessellatum.gui.controls_panel import DPI, ControlsPanel
+from tessellatum.gui.controls_panel import DPI, PALETTE, ControlsPanel
 from tessellatum.gui.preview_widget import PreviewWidget, VersionBar, ZoomBar
 from tessellatum.gui.worker import PipelineWorker, TaskWorker
 
@@ -230,9 +230,14 @@ class MainWindow(QMainWindow):
 
         fmt = self.controls.get_output_format()
         version = self.controls.get_export_version()
-        suffix = ".png" if fmt == "PNG" else ".pdf"
-        file_filter = "PNG image (*.png)" if fmt == "PNG" else "PDF document (*.pdf)"
-        name = "coloring_page" if version is Version.PAGE else f"coloring_page_{version.value.lower()}"
+        if fmt == PALETTE:
+            suffix = self.controls.get_palette_format()
+            file_filter = swatches.FORMATS[suffix]
+            name = "coloring_page_palette"
+        else:
+            suffix = ".png" if fmt == "PNG" else ".pdf"
+            file_filter = "PNG image (*.png)" if fmt == "PNG" else "PDF document (*.pdf)"
+            name = "coloring_page" if version is Version.PAGE else f"coloring_page_{version.value.lower()}"
         path_str, _ = QFileDialog.getSaveFileName(self, "Export Coloring Page", f"{name}{suffix}", file_filter)
         if not path_str:
             return
@@ -253,6 +258,9 @@ class MainWindow(QMainWindow):
         # same vectors in pixels.
         long_edge = pipeline.export_long_edge(self.current_image_bgr, self.controls.get_page_style().paper_format)
         preview = self._preview_to_draw(long_edge)
+        if preview is not None and fmt == PALETTE:
+            self._on_export_ready(preview)  # the preview's legend: nothing to draw
+            return
         if preview is not None:
             if self._print_page is not None:
                 self._on_export_ready(self._print_page)
@@ -279,6 +287,14 @@ class MainWindow(QMainWindow):
         drawing = page.drawing
         style = dataclasses.replace(drawing.style, legend_detail=self.controls.get_legend_detail())
         page = dataclasses.replace(page, drawing=dataclasses.replace(drawing, style=style))
+        if fmt == PALETTE:
+            try:
+                written = swatches.save_palette(path, page.palette_rgb)
+            except Exception as exc:  # noqa: BLE001
+                self._on_export_failed(str(exc))
+                return
+            self._on_palette_saved(written)
+            return
         if fmt == "PDF":
             try:
                 export.save_pdf(page.drawing, page.palette_rgb, path, version=version, painting=page.painting)
@@ -321,6 +337,15 @@ class MainWindow(QMainWindow):
         printed = f"{width:,} × {height:,} px, {dpi:.0f} dpi on {paper.name}"
         self.statusBar().showMessage(f"Exported to {path} ({printed})")
         QMessageBox.information(self, "Export complete", f"Saved to:\n{path}\n\n{printed}")
+
+    def _on_palette_saved(self, written: list[Path]) -> None:
+        self.controls.set_busy(False)
+        if self.preview.wants_detail():
+            self._draw_print_page()  # asked for by a zoom while the export was made
+        files = "\n".join(str(path) for path in written)
+        note = f"{len(written)} palettes of at most {swatches.PROCREATE_MAX_SWATCHES} colors" if len(written) > 1 else ""
+        self.statusBar().showMessage(f"Exported the palette to {written[0]}" + (f" ({note})" if note else ""))
+        QMessageBox.information(self, "Export complete", f"Saved to:\n{files}" + (f"\n\n{note}" if note else ""))
 
     def _on_export_failed(self, message: str) -> None:
         self._retire_raster_worker()

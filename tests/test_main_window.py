@@ -786,3 +786,26 @@ def test_the_legend_s_detail_changes_the_preview_s_legend_and_the_export_without
     drive.wait()
     assert len(drive.calls) == calls
     assert "RGB" in pdf_reading.sheets((tmp_path / "page.pdf").read_bytes())[1]["content"]
+
+
+@pytest.mark.parametrize("suffix", [".swatches", ".ase", ".gpl"])
+def test_the_palette_is_exported_from_the_preview_s_legend_without_drawing_the_page(drive, tmp_path, suffix):
+    from tessellatum.core import swatches
+
+    window = drive.window
+    window.current_image_bgr = _blocks((4000, 2000))
+    window.generate_preview()
+    drive.wait()
+    calls = len(drive.calls)
+    controls = window.controls
+    controls.palette_radio.setChecked(True)
+    controls.palette_combo.setCurrentIndex(controls.palette_combo.findData(suffix))
+    drive.save_path = str(tmp_path / "colors")  # the suffix is added for the format
+    window.export_page()
+    drive.wait()
+    path = tmp_path / f"colors{suffix}"
+    assert len(drive.calls) == calls and window._print_page is None  # nothing made or drawn
+    expected = tmp_path / f"expected{suffix}"
+    swatches.save_palette(expected, window.current_page.palette_rgb, title="colors")
+    assert path.read_bytes() == expected.read_bytes()
+    assert drive.dialogs[-1] == ("information", "Export complete", f"Saved to:\n{path}")
