@@ -6,6 +6,8 @@ there, and its numbers placed again, as small as the style lets them print. If a
 the export makes the page with it first. Every setting has a tooltip; sizes are on the printed page, on the sheet
 **Paper** names; the panel keeps them between runs, and **Reset** puts them all back.
 
+The window follows your system's light or dark appearance, and changes with it while open.
+
 ## The three versions
 
 Every preview is drawn in three versions, and the bar above it switches between them, keeping the zoom and the scroll:

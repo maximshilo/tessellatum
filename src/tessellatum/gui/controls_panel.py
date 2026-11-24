@@ -223,10 +223,10 @@ class Section(QWidget):
     def __init__(self, title: str, expanded: bool = True, parent: QWidget | None = None):
         super().__init__(parent)
         self.toggle = QToolButton()
+        self.toggle.setObjectName("sectionHeader")  # styled by the theme (see ``theme.style``)
         self.toggle.setText(title)
         self.toggle.setCheckable(True)
         self.toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.toggle.setStyleSheet("QToolButton { border: none; font-weight: bold; }")
         self.body = QWidget()
         self.form = QFormLayout(self.body)
         self.form.setContentsMargins(12, 0, 0, 4)
@@ -259,6 +259,8 @@ class ControlsPanel(QWidget):
     def __init__(self, parent: QWidget | None = None, store: QSettings | None = None):
         """``store``, if given, is where the panel keeps its settings between runs: read now, written on each change."""
         super().__init__(parent)
+        self.setObjectName("sidebar")  # the theme's sidebar surface
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self._store = store
         self._loading = False
 
@@ -266,7 +268,7 @@ class ControlsPanel(QWidget):
         self.thumbnail_label = QLabel("No image loaded")
         self.thumbnail_label.setAlignment(Qt.AlignCenter)
         self.thumbnail_label.setFixedSize(THUMBNAIL_SIZE, THUMBNAIL_SIZE)
-        self.thumbnail_label.setStyleSheet("border: 1px solid #999; color: #777;")
+        self.thumbnail_label.setObjectName("thumbnail")
 
         self.preset_combo = QComboBox()
         self.preset_combo.addItems(difficulty.preset_names())
@@ -388,7 +390,7 @@ class ControlsPanel(QWidget):
         self.palette_combo.setToolTip(PALETTE_TOOLTIP)
         self.screen_hint = QLabel(SCREEN_HINT)
         self.screen_hint.setWordWrap(True)
-        self.screen_hint.setStyleSheet("color: #666;")
+        self.screen_hint.setProperty("role", "hint")
         self.screen_hint.setVisible(False)  # shown coloring on a screen
         format_row = QWidget()
         format_layout = QHBoxLayout(format_row)
@@ -423,7 +425,7 @@ class ControlsPanel(QWidget):
             self.dpi_buttons[dpi] = button
         self.resolution_readout = QLabel()
         self.resolution_readout.setWordWrap(True)
-        self.resolution_readout.setStyleSheet("color: #666;")
+        self.resolution_readout.setProperty("role", "hint")
         # Each mode's value, the one not shown kept for it: dots per inch, and pixels along the long edge (None until
         # first shown, then what the dpi came to).
         self._dpi, self._pixels = DEFAULT_DPI, None
@@ -440,23 +442,30 @@ class ControlsPanel(QWidget):
         export_group.setLayout(export_form)
 
         self.generate_button = QPushButton("Generate Preview")
+        self.generate_button.setProperty("primary", True)  # the one primary action
         self.export_button = QPushButton("Export…")
         self.export_button.setEnabled(False)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setFormat("%p%")
-        self.progress_bar.setTextVisible(True)
+        # The percentage beside the bar, not on it: text on a bar half filled with the accent can't keep its contrast.
+        self.progress_bar.setTextVisible(False)
+        self.progress_label = QLabel("0%")
+        self.progress_label.setProperty("role", "secondary")
+        self.progress_label.setMinimumWidth(self.progress_label.fontMetrics().horizontalAdvance("100%") + 4)
+        self.progress_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         self.abort_button = QPushButton("✕")
+        self.abort_button.setObjectName("abortButton")  # a square button: the theme gives it no side padding
         self.abort_button.setToolTip("Cancel generation")
         self.abort_button.setFixedWidth(28)
 
         self.progress_row = QWidget()
         progress_row_layout = QHBoxLayout(self.progress_row)
         progress_row_layout.setContentsMargins(0, 0, 0, 0)
-        progress_row_layout.addWidget(self.progress_bar)
+        progress_row_layout.addWidget(self.progress_bar, 1)
+        progress_row_layout.addWidget(self.progress_label)
         progress_row_layout.addWidget(self.abort_button)
         self.progress_row.setVisible(False)
 
@@ -501,6 +510,7 @@ class ControlsPanel(QWidget):
 
         self._show_preset(difficulty.DEFAULT_PRESET)
         self._show_resolution()
+        self._show_paints()  # the mixing settings stand aside until the colors come from the paints
         self._load()
 
     # -- Settings --------------------------------------------------------
@@ -890,15 +900,19 @@ class ControlsPanel(QWidget):
         can't be ``cancellable`` shows a busy bar with no percentage and no abort."""
         self.progress_row.setVisible(busy)
         self.progress_bar.setRange(0, 100 if cancellable else 0)
+        self.progress_label.setVisible(cancellable)
         if busy:
             self.progress_bar.setValue(0)
+            self.progress_label.setText("0%")
             self.abort_button.setEnabled(cancellable)
         self.generate_button.setEnabled(not busy)
         self.export_button.setEnabled(not busy and self.export_button.property("hasResult") is True)
         self.open_button.setEnabled(not busy)
 
     def set_progress(self, percent: int) -> None:
-        self.progress_bar.setValue(max(0, min(100, percent)))
+        percent = max(0, min(100, percent))
+        self.progress_bar.setValue(percent)
+        self.progress_label.setText(f"{percent}%")
 
     def set_export_enabled(self, enabled: bool) -> None:
         self.export_button.setProperty("hasResult", enabled)

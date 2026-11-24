@@ -80,8 +80,9 @@ tinted painting guide; export a PNG at the resolution you choose (600 dpi by def
   (QtPdf).
 - Quality assurance: 1,300+ automated tests, including pixel-exact equivalence tests, and a benchmark harness that
   scores every version on speed and image quality (ΔE00, SSIM, OCR error rate, edge F1).
-- Desktop delivery: cross-platform Qt 6 interface with background workers, standalone builds for Windows, macOS and
-  Linux, each made, self-tested and released by GitHub Actions.
+- Desktop delivery: cross-platform Qt 6 interface with background workers and a token-based light/dark design
+  system (WCAG AA contrast, tested), standalone builds for Windows, macOS and Linux, each made, self-tested and
+  released by GitHub Actions.
 
 ## How it works
 
@@ -144,4 +145,6 @@ python3 -m venv .venv
 ## License
 
 [Apache License 2.0](LICENSE). The bundled detection models are MIT or Apache 2.0 licensed
-([details](src/tessellatum/resources/MODELS.md)).
+([details](src/tessellatum/resources/MODELS.md)); the Inter typeface is under the SIL Open Font License 1.1
+([text](src/tessellatum/resources/fonts/OFL.txt)) and the Lucide icons under the ISC license
+([text](src/tessellatum/resources/icons/LICENSE)).
