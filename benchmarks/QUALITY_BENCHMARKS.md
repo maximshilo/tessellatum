@@ -75,8 +75,9 @@ shown to follow what people see better than ΔE00 mean.
 that paper prints alike (see Palette). Giving those colors to the picture's colorful parts and its subject raises the
 dark area's error, so ΔE00 mean, ΔE00 p95 and SSIM get worse on exactly the pictures the change is for. On a case where
 `printed close pairs` fell, they may get worse when all of these hold, and the case isn't counted in their regressions:
-- ΔE00 mean rose by at most 1.0 and at most 10% of its value;
-- `vivid ΔE00` or `subject ΔE00` improved;
+- ΔE00 mean rose by at most 1.0 and at most 10% of its value, ΔE00 p95 by at most 10% of its own, and SSIM fell by at
+  most 0.02;
+- `vivid ΔE00` or `subject ΔE00` improved by more than its tolerance;
 - no face metric is worse by more than 3 of its tolerances, and no face feature is lost.
 
 The verdict lists those cases.
@@ -152,7 +153,7 @@ the paper's lightness look larger.
 |---|---|---|
 | palette min ΔE00 | smallest CIEDE2000 difference between two legend colors | ≥ the page's color margin |
 | close color pairs | pairs of legend colors closer than the page's color margin | regression |
-| printed min ΔE00 | the same as printed, with black point compensation to a paper black of L* 25 | ≥ the page's color margin |
+| printed min ΔE00 | the same as printed, with black point compensation to a paper black of L* 25 | ≥ the page's color margin, on pages made for paper (not Screen or Max) |
 | printed close pairs | pairs of legend colors closer than the page's color margin, as printed | regression |
 | colors < L* 25, colors > L* 90 | legend colors near black and near white | inform |
 | flat colors ΔE00 | on line art, mean distance from each of the artwork's flat colors to the nearest legend color | at most 2.5 above the best a legend of that many colors could reach, where the manifest's colors are the file's exact values |
