@@ -4,6 +4,15 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.3] - 2026-11-25
+
+### Added
+
+- **A logo**, "Tesserae": a rounded tile cut into regions, as a page is, in the app's Viridian with a warm ochre. It
+  is the app's icon on Windows (Explorer, the taskbar), macOS (the Dock) and Linux, and its window icon, drawn
+  simpler at 16 to 24 px so it stays legible there.
+- The README banner and the social preview carry the logo, in the app's typeface and accent.
+
 ## [1.1.2] - 2026-11-24
 
 ### Changed

@@ -57,3 +57,6 @@ The README, these wiki pages and the gallery describe the project as it is, so t
 - **Images:** `docs/make_assets.py` regenerates the gallery, the README banner and the social preview with the current
   pipeline, and `docs/make_screenshot.py` the app screenshot. Run them when the pages change visibly, and before a
   release. The social preview is uploaded by hand in the repository's settings.
+- **Logo and icons:** edit the logo in `packaging/icons/make_logo.py`, then run it and `make_icons.py` (both in
+  `packaging/icons/`) to write the SVG masters and every platform's icon into `src/tessellatum/resources/`, and
+  `docs/make_assets.py` for the banner.

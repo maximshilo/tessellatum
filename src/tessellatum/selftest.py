@@ -48,6 +48,10 @@ def check_interface_assets() -> None:
     lacking += [f"{name}.svg" for name in icons.missing()]
     if not (icons.ICONS_DIR / "LICENSE").is_file():
         lacking.append("icons/LICENSE")
+    from tessellatum import main
+
+    lacking += [f"app-icon/{size}.png" for size in main.APP_ICON_SIZES
+                if not (main.APP_ICON_DIR / f"{size}.png").is_file()]
     if lacking:
         raise RuntimeError(f"the interface's assets are missing: {', '.join(lacking)}")
 
