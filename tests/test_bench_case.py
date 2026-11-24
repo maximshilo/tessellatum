@@ -640,3 +640,11 @@ def test_a_preset_colored_on_a_screen_has_no_paper_black_and_a_margin_of_at_most
     screen = bench_case.preset_params(difficulty, "Medium-Screen")
     assert (screen.paper_black_lstar, screen.palette_margin_de00) == (0.0, 2.5)
     assert screen == difficulty.for_medium(difficulty.params_for_preset("Medium"), "Screen")
+
+
+def test_a_preset_name_says_the_paints_its_page_is_made_from_and_whether_it_mixes():
+    assert bench_case.paints_of("Medium") == ("Medium", None, False)
+    assert bench_case.paints_of("Medium-Paints24") == ("Medium", 24, False)
+    assert bench_case.paints_of("Medium-Screen-Paints12-Mix") == ("Medium-Screen", 12, True)
+    assert bench_case.paints_of("Hard-KitPrimaries") == ("Hard", "Primaries", False)
+    assert bench_case.paints_of("Easy-KitEarth-Mix") == ("Easy", "Earth", True)

@@ -36,6 +36,9 @@ MOST_PARTS = 10
 MOST_PAINTS_WEIGHED = 64
 # The paints weighed for a color's three-paint recipes: those its best one- and two-paint recipes use.
 TRIPLE_PAINTS = 8
+# The parts a palette's mixed color is made in (see ``pair_mixes``): two paints, 4 parts in all at most, as a painter
+# mixes a color to paint with rather than to match.
+MIX_PARTS = ((1, 1), (2, 1), (1, 2), (3, 1), (1, 3))
 
 _BASE = np.array([BASE_SPECTRA[key] for key in "WCMYRGB"])  # 7 x 38
 _CMF = np.array(CIE_CMF)  # 3 x 38
@@ -155,6 +158,32 @@ def recipes(
             best = triple
         found.append(best)
     return found
+
+
+def pair_mixes(paints_rgb: np.ndarray, weighed: Sequence[int] | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Every mix of two of the ``weighed`` paints of ``paints_rgb`` (n x 3, 8-bit sRGB; all of them if None) in the
+    parts ``MIX_PARTS`` allow, each color once: (pairs, parts, rgb), the two paints' indices (k x 2), how many parts
+    of each (k x 2), and the color mixed (k x 3 uint8). Pairs go in the order the paints are weighed, the parts
+    fewest first, and a color two recipes make is the first's: the palette's mixed colors (see
+    ``quantize.paint_palette``)."""
+    paints = np.asarray(paints_rgb, dtype=np.uint8).reshape(-1, 3)
+    weighed = list(range(len(paints))) if weighed is None else [int(p) for p in weighed]
+    pairs = np.array(list(itertools.combinations(weighed, 2)), dtype=np.int64).reshape(-1, 2)
+    if len(pairs) == 0:
+        return pairs, np.zeros((0, 2), dtype=np.int64), np.zeros((0, 3), dtype=np.uint8)
+    ratios = np.array(MIX_PARTS, dtype=np.float64)
+    curves = reflectance(paints)
+    rgb = np.stack([seen_rgb(mix(curves[pair], ratios)) for pair in pairs])  # pairs x ratios x 3
+    all_pairs = np.repeat(pairs, len(ratios), axis=0)
+    all_parts = np.tile(np.array(MIX_PARTS, dtype=np.int64), (len(pairs), 1))
+    flat = rgb.reshape(-1, 3)
+    # Each color once, the first recipe found for it: the simplest parts, then the paints weighed first.
+    order = np.lexsort((np.arange(len(flat)), all_parts.sum(axis=1)))
+    code = flat[order].astype(np.int64) @ np.array([65536, 256, 1])
+    _, first = np.unique(code, return_index=True)
+    keep = np.sort(order[first])
+    keep = keep[np.argsort(all_parts[keep].sum(axis=1), kind="stable")]
+    return all_pairs[keep], all_parts[keep], flat[keep]
 
 
 def recipe_lines(recipe: Recipe, paints: Sequence[tuple[str, tuple[int, int, int]]]) -> list[str]:

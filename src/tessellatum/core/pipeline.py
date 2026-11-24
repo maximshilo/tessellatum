@@ -14,14 +14,14 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from tessellatum.core import faces, ink, kernels, marks, redraw, subject, text, tones
+from tessellatum.core import faces, ink, kernels, marks, mixing, redraw, subject, text, tones
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.labels import text_box_size
 from tessellatum.core.color_names import legend_names
 from tessellatum.core.legend import render_legend
 from tessellatum.core.painting import Painting, Version, render_version
 from tessellatum.core.print_size import A4, MM_PER_INCH, PaperFormat, long_edge_at_dpi, print_scale
-from tessellatum.core.quantize import quantize
+from tessellatum.core.quantize import MIX_GAIN_DE00, MIX_MIN_SHARE, MixRule, quantize
 from tessellatum.core.regions import (
     CornerRule,
     Region,
@@ -177,7 +177,9 @@ class Handling:
 
     And how finely: a page is made with ``brush_px`` pixels across its brush on paper (see ``working_long_edge``).
 
-    And with what: ``paints``, the painter's own, or none.
+    And with what: ``paints``, the painter's own, or none; and with ``mix_paints``, colors mixed from two of them as
+    well, each where it brings the pixels it paints ``mix_gain_de00`` nearer on average and they are at least
+    ``mix_min_share_pct`` of the picture (see ``quantize.mixed_palette``).
     """
 
     line_art: bool = True
@@ -193,6 +195,16 @@ class Handling:
     # The painter's own paints, (name, RGB) each: given, the palette is chosen from them (see ``quantize``) and the
     # legend calls them by their names. Empty, the colors are the picture's own.
     paints: tuple[tuple[str, tuple[int, int, int]], ...] = ()
+    # With paints, colors mixed from two of them too, where a mix earns its place (see ``quantize.MixRule``).
+    mix_paints: bool = False
+    mix_gain_de00: float = MIX_GAIN_DE00
+    mix_min_share_pct: float = MIX_MIN_SHARE * 100
+
+    def mix_rule(self) -> MixRule | None:
+        """The rule mixed colors are chosen by, or None if none are to be."""
+        if not (self.mix_paints and self.paints):
+            return None
+        return MixRule(self.mix_gain_de00, self.mix_min_share_pct / 100)
 
 
 @dataclass
@@ -216,6 +228,9 @@ class PageModel:
     line_art: ink.LineArt
     ink_lines: np.ndarray
     drawn_from_colors: bool  # not drawn from line art's ink
+    # Each palette color's recipe as the legend writes it ("1 Ivory black" a line) if it is mixed from the paints, None
+    # if not; empty with no mixing. Legend colors first, as the palette.
+    mixes: list[list[str] | None] = field(default_factory=list)
 
 
 @dataclass
@@ -230,6 +245,9 @@ class GeneratedPage:
     drawing: PageDrawing | None = None  # what ``page`` was drawn from, to draw it again off the pixel grid (see ``export``)
     painting: Painting | None = None  # what ``page`` is painted with, for its painted versions (see ``painting``)
     model: PageModel | None = None  # what ``page`` is made of, to draw it again larger (see ``draw_page``)
+    # Each legend color's recipe if it is mixed from the painter's paints, None if it is one of them; empty with no
+    # mixing (see ``Handling.mix_paints``). The legend lists the mixed colors after the paints.
+    mixes: list[list[str] | None] = field(default_factory=list)
     _images: dict[Version, Image.Image] = field(default_factory=dict, init=False, repr=False, compare=False)
 
     def image(self, version: Version = Version.PAGE) -> Image.Image:
@@ -290,6 +308,14 @@ _cache = _StageCache(max_entries=16)
 def clear_cache() -> None:
     """Forget cached intermediate results (see ``_StageCache``)."""
     _cache.clear()
+
+
+def _mix_lines(recipe, paints: tuple[tuple[str, tuple[int, int, int]], ...]) -> list[str] | None:
+    """A palette color's recipe from ``quantize`` -- None for a paint, else (paint, parts) each -- as the legend writes
+    it: "1 Ivory black" a line."""
+    if recipe is None:
+        return None
+    return mixing.recipe_lines(mixing.Recipe(tuple(recipe), (0, 0, 0), 0.0), paints)
 
 
 def _paints_bgr(paints: tuple[tuple[str, tuple[int, int, int]], ...]) -> np.ndarray | None:
@@ -630,9 +656,10 @@ def draw_page(
     if rendered.printed_ink is not None:
         printed_ink = rendered.printed_ink  # less the hatching cleared behind numbers
     names = legend_names(model.palette_rgb[: model.legend_size], handling.paints)
+    mixes = model.mixes[: model.legend_size]
     legend = render_legend(
         model.palette_bgr[: model.legend_size], width=w, px_per_mm=print_scale((w, h), paper).px_per_mm,
-        detail=style.legend_detail, names=names,
+        detail=style.legend_detail, names=names, mixes=mixes or None,
     )
     painting = Painting(
         region_id_map=region_id_map,
@@ -679,6 +706,7 @@ def draw_page(
         legend=legend,
         palette_rgb=model.palette_rgb[: model.legend_size],
         color_names=names,
+        mixes=mixes,
         num_colors_used=model.legend_size,
         num_regions=len(regions),
         analysis=analysis,
@@ -813,18 +841,22 @@ def _make_page(
             detail = None
 
     check_cancelled()
-    labels, palette_bgr = _cache.get_or_compute(
+    mix_rule = handling.mix_rule()
+    quantized = _cache.get_or_compute(
         image_bgr,
         # Line art's colors are taken around its ink, unless line art is turned off (see ``Handling``).
         ("quantize", long_edge, params.num_colors, params.blur_sigma, params.palette_margin_de00,
          handling.ink_gap_mm if ink_mask is not None else None, params.paper_black_lstar, detail is not None,
-         tuple(rgb for _name, rgb in handling.paints)),
+         tuple(rgb for _name, rgb in handling.paints), mix_rule),
         lambda: quantize(
             resized, params.num_colors, params.blur_sigma, min_de00=params.palette_margin_de00, ink=ink_mask,
             halo_px=halo_px, paper_black_lstar=params.paper_black_lstar, keep=detail,
-            paints_bgr=_paints_bgr(handling.paints),
+            paints_bgr=_paints_bgr(handling.paints), mix=mix_rule,
         ),
     )
+    labels, palette_bgr = quantized[:2]
+    # Each palette color's recipe, as the legend writes it, if it is mixed: none without mixing.
+    palette_mixes = [] if mix_rule is None else [_mix_lines(recipe, handling.paints) for recipe in quantized[2]]
     report("quantize")
 
     check_cancelled()
@@ -958,9 +990,10 @@ def _make_page(
         printed_ink = rendered.printed_ink  # less the hatching cleared behind numbers
     used_palette_bgr = palette_bgr[used_color_indices]
     names = legend_names([(int(b[2]), int(b[1]), int(b[0])) for b in used_palette_bgr], handling.paints)
+    used_mixes = [palette_mixes[i] for i in used_color_indices] if palette_mixes else []
     legend = render_legend(
         used_palette_bgr, width=w, px_per_mm=print_scale((w, h), paper).px_per_mm, detail=style.legend_detail,
-        names=names,
+        names=names, mixes=used_mixes or None,
     )
     report("render")
 
@@ -1008,12 +1041,14 @@ def _make_page(
         palette_bgr=palette_bgr[order], palette_rgb=painting.palette_rgb, legend_size=len(used_color_indices),
         printed_ink=printing["ink"], clearable=clearable, ink_gray=ink_gray, strokes=rendered.strokes,
         labels=rendered.labels, line_art=line_art, ink_lines=ink_lines, drawn_from_colors=ink_mask is None,
+        mixes=[palette_mixes[i] for i in order] if palette_mixes else [],
     )
     return GeneratedPage(
         page=rendered.image,
         legend=legend,
         palette_rgb=palette_rgb,
         color_names=names,
+        mixes=used_mixes,
         num_colors_used=len(used_color_indices),
         num_regions=len(regions),
         analysis=analysis,

@@ -35,6 +35,14 @@ NAME_HEX_RGB = "Name, hex and RGB"
 # recipes to show, as NAME_HEX_RGB.
 NAME_RECIPE = "Name and recipe"
 LEGEND_DETAILS = (NUMBER_ONLY, NAME, NAME_HEX_RGB, NAME_RECIPE)
+
+# A legend with colors mixed from the painter's paints (see ``quantize.mixed_palette``) has two sections, each under a
+# heading in 9 pt, on a line 5 mm high: the paints, then the mixed colors.
+PAINTS_HEADING = "Your paints"
+MIXED_HEADING = "Mixed colors: mix each from your paints, in the parts given"
+HEADING_PT = 9.0
+HEADING_MM = 5.0
+HEADING_BASELINE_MM = 4.5
 DEFAULT_LEGEND_DETAIL = NAME_HEX_RGB
 
 # The text beside a swatch, on paper: the name in 8 pt, wrapped onto two lines at most, and below it the hex code and
@@ -170,6 +178,43 @@ def _font(size: float) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return ImageFont.load_default(size=size)
 
 
+def mixed_from(mixes: Sequence[Sequence[str] | None] | None) -> int | None:
+    """Where a legend's mixed colors start (they follow its paints), or None if it has none: ``mixes`` gives each color's
+    recipe as the legend writes it, None for a paint."""
+    if not mixes:
+        return None
+    first = next((i for i, lines in enumerate(mixes) if lines is not None), None)
+    if first is not None and any(lines is None for lines in mixes[first:]):
+        raise ValueError("a legend's mixed colors come after its paints")
+    return first
+
+
+def legend_sections(
+    palette_rgb: Sequence[tuple[int, int, int]],
+    detail: str,
+    names: Sequence[str] | None = None,
+    recipes: Sequence[Sequence[str]] | None = None,
+    mixes: Sequence[Sequence[str] | None] | None = None,
+) -> list[tuple[str, int, int, str, list[list[LegendText]]]]:
+    """A legend's sections: (heading, first color, past the last, the detail its cells have, each swatch's text) each.
+    Without mixes, one section with no heading. With them, the paints under ``PAINTS_HEADING`` with ``detail``, and the
+    mixed colors under ``MIXED_HEADING``, each with its name and its recipe from ``mixes``, whatever ``detail`` is
+    (a mixed color can't be painted without it)."""
+    names = list(name_colors(palette_rgb) if names is None else names)
+    start = mixed_from(mixes)
+    if start is None:
+        return [("", 0, len(palette_rgb), detail, swatch_texts(palette_rgb, detail, names, recipes))]
+    sections = []
+    if start > 0:
+        paint_recipes = list(recipes[:start]) if recipes else None
+        sections.append(
+            (PAINTS_HEADING, 0, start, detail, swatch_texts(palette_rgb[:start], detail, names[:start], paint_recipes))
+        )
+    mixed_texts = swatch_texts(palette_rgb[start:], NAME_RECIPE, names[start:], list(mixes[start:]))
+    sections.append((MIXED_HEADING, start, len(palette_rgb), NAME_RECIPE, mixed_texts))
+    return sections
+
+
 def render_legend(
     palette_bgr: np.ndarray,
     width: int,
@@ -177,10 +222,53 @@ def render_legend(
     detail: str = DEFAULT_LEGEND_DETAIL,
     names: Sequence[str] | None = None,
     recipes: Sequence[Sequence[str]] | None = None,
+    mixes: Sequence[Sequence[str] | None] | None = None,
 ) -> Image.Image:
     """Render a wrapped grid of numbered color swatches, ``width`` pixels wide, at ``px_per_mm`` pixels a millimeter,
     with ``detail`` beside each (one of ``LEGEND_DETAILS``), the colors called ``names``, mixed as ``recipes`` say
-    (see ``swatch_texts``)."""
+    (see ``swatch_texts``). With ``mixes`` (each color's recipe as mixed colors are written, None for a paint), in
+    two sections with headings (see ``legend_sections``): the paints, then the colors mixed from them."""
+    palette_bgr = np.asarray(palette_bgr, dtype=np.uint8).reshape(-1, 3)
+    if mixed_from(mixes) is None:
+        return _swatch_grid(palette_bgr, width, px_per_mm, detail, names, recipes)
+    palette_rgb = [(int(bgr[2]), int(bgr[1]), int(bgr[0])) for bgr in palette_bgr]
+    parts = []
+    for heading, start, stop, cell_detail, texts in legend_sections(palette_rgb, detail, names, recipes, mixes):
+        parts.append(_heading_strip(heading, width, px_per_mm))
+        parts.append(_swatch_grid(palette_bgr[start:stop], width, px_per_mm, cell_detail, texts=texts, first=start + 1))
+    legend = Image.new("RGB", (width, sum(part.height for part in parts)), "white")
+    y = 0
+    for part in parts:
+        legend.paste(part, (0, y))
+        y += part.height
+    return legend
+
+
+def _heading_strip(heading: str, width: int, px_per_mm: float) -> Image.Image:
+    """A section's heading, ``HEADING_MM`` high on paper, in line with the swatches below it."""
+    strip = Image.new("RGB", (width, max(1, round(HEADING_MM * px_per_mm))), "white")
+    ImageDraw.Draw(strip).text(
+        (max(2, round(SWATCH_GAP_MM * px_per_mm)), HEADING_BASELINE_MM * px_per_mm),
+        heading,
+        fill=(NAME_GRAY,) * 3,
+        font=_font(HEADING_PT * _MM_PER_PT * px_per_mm),
+        anchor="ls",
+    )
+    return strip
+
+
+def _swatch_grid(
+    palette_bgr: np.ndarray,
+    width: int,
+    px_per_mm: float,
+    detail: str = DEFAULT_LEGEND_DETAIL,
+    names: Sequence[str] | None = None,
+    recipes: Sequence[Sequence[str]] | None = None,
+    texts: list[list[LegendText]] | None = None,
+    first: int = 1,
+) -> Image.Image:
+    """The swatches of ``palette_bgr`` in a wrapped grid, numbered from ``first``, with ``texts`` beside them (as
+    ``swatch_texts`` gives them for ``detail``, ``names`` and ``recipes`` if None)."""
     swatch = max(8, round(SWATCH_MM * px_per_mm))
     gap = max(2, round(SWATCH_GAP_MM * px_per_mm))
     border = max(1, round(SWATCH_BORDER_MM * px_per_mm))
@@ -193,7 +281,8 @@ def render_legend(
     draw = ImageDraw.Draw(legend)
     font = ImageFont.load_default(size=round(swatch * LABEL_FONT_RATIO))
     palette_rgb = [(int(bgr[2]), int(bgr[1]), int(bgr[0])) for bgr in palette_bgr]
-    texts = swatch_texts(palette_rgb, detail, names, recipes)
+    if texts is None:
+        texts = swatch_texts(palette_rgb, detail, names, recipes)
 
     for index, rgb in enumerate(palette_rgb):
         row, col = divmod(index, cols)
@@ -203,7 +292,7 @@ def render_legend(
 
         draw.rectangle([x0, y0, x1, y1], fill=rgb, outline="black", width=border)
 
-        text = str(index + 1)
+        text = str(index + first)
         text_color = number_fill(rgb)
         bbox = draw.textbbox((0, 0), text, font=font)
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]

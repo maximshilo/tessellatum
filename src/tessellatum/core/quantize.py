@@ -11,15 +11,18 @@ are picked rather than by merging afterwards, which spends colors and leaves
 shades the artwork does not have.
 
 With the painter's own paints given, the palette is chosen from them instead
-(``paint_palette``): the ones that paint the picture best.
+(``paint_palette``): the ones that paint the picture best; and, if asked, colors
+mixed from two of them where a mix earns its place (``mixed_palette``).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import cv2
 import numpy as np
 
-from tessellatum.core import kernels, parallel
+from tessellatum.core import kernels, mixing, parallel
 from tessellatum.core.color import MIN_PALETTE_DE00, bgr_to_lab, ciede2000, pairwise_de00, printed_de00
 from tessellatum.core.ink import near
 
@@ -56,6 +59,26 @@ _PAINT_BIN = 8.0
 _KEPT_WEIGHT = 2.0
 # The most swaps of a paint taken for one left over, after the greedy choice.
 _SWAP_ROUNDS = 8
+# A palette's mixed colors (``mixed_palette``) are mixed from this many of the paints at most -- all of them if there
+# are no more, else those taken and then those nearest the most of the picture: 276 pairs, about 1,400 mixes.
+MIX_MOST_PAINTS = 24
+# When a mixed color earns its place in a palette, by default (see ``MixRule``): the pixels it is used for get this
+# much nearer, in CIEDE2000 on average -- clearly more than the ~2.3 a side-by-side difference starts to be seen at --
+# and they are at least this share of the picture.
+MIX_GAIN_DE00 = 3.0
+MIX_MIN_SHARE = 0.01
+# How many times the mixes taken are added to and checked again (see ``mixed_palette``).
+_MIX_ROUNDS = 4
+
+
+@dataclass(frozen=True)
+class MixRule:
+    """When a color mixed from two paints earns its place in a palette (see ``mixed_palette``): the pixels it would be
+    used for -- those nearer it than every other color taken -- get ``gain_de00`` nearer on average, in CIEDE2000,
+    and they are at least ``min_share`` of the picture (0-1), the faces and the subject counted twice."""
+
+    gain_de00: float = MIX_GAIN_DE00
+    min_share: float = MIX_MIN_SHARE
 # Two colors farther apart than this many times the margin in plain Lab distance
 # clear it without CIEDE2000 being computed: it is never that much larger.
 _SURELY_APART = 3.0
@@ -90,7 +113,8 @@ def quantize(
     paper_black_lstar: float = 0.0,
     keep: np.ndarray | None = None,
     paints_bgr: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
+    mix: MixRule | None = None,
+) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, tuple]:
     """Reduce ``image_bgr`` to at most ``num_colors`` flat, clearly different colors.
 
     K-means minimizes distance in Lab, where equal distances are not equally
@@ -137,6 +161,9 @@ def quantize(
         paints_bgr: Mx3 uint8, the painter's own paints, or None. Given, the
             colors are chosen from them (``paint_palette``), on line art as on
             any other picture, and are exactly theirs.
+        mix: with ``paints_bgr``, colors mixed from two of the paints are
+            taken too where they meet this rule (``mixed_palette``), and the
+            result has a third item, the recipes.
 
     Returns:
         (label_map, palette_bgr):
@@ -144,7 +171,10 @@ def quantize(
                 past the palette, on the ink.
             palette_bgr: Kx3 uint8 array of BGR colors, K <= num_colors,
                 ordered from darkest to lightest (by perceptual lightness)
-                so numbering reads naturally.
+                so numbering reads naturally; with ``mix``, the paints so,
+                then the mixed colors so.
+            recipes (only with ``mix``): each palette color's, None for a
+                paint (see ``mixed_palette``).
     """
     smoothed = _smooth(image_bgr, blur_sigma)
 
@@ -159,16 +189,22 @@ def quantize(
         paints_bgr = np.asarray(paints_bgr, dtype=np.uint8).reshape(-1, 3)
         chosen_from = slice(None) if fitted is None else fitted.reshape(-1)
         kept = None if keep is None else np.asarray(keep, dtype=bool).reshape(-1)[chosen_from]
-        labels, chosen = paint_palette(
-            np.ascontiguousarray(samples[chosen_from]), paints_bgr, num_colors, min_de00, paper_black_lstar, kept
-        )
-        palette_bgr = paints_bgr[chosen]
+        chosen_samples = np.ascontiguousarray(samples[chosen_from])
+        extra: tuple = ()
+        if mix is not None:
+            labels, palette_bgr, recipes = mixed_palette(
+                chosen_samples, paints_bgr, num_colors, min_de00, mix, paper_black_lstar, kept
+            )
+            extra = (recipes,)
+        else:
+            labels, chosen = paint_palette(chosen_samples, paints_bgr, num_colors, min_de00, paper_black_lstar, kept)
+            palette_bgr = paints_bgr[chosen]
         if fitted is None:
-            return labels.reshape(lab.shape[:2]), palette_bgr
+            return (labels.reshape(lab.shape[:2]), palette_bgr, *extra)
         label_map = np.full(lab.shape[:2], len(palette_bgr), dtype=np.int32)
         label_map[fitted] = labels
         label_map[~fitted & ~ink] = _nearest_fitted(label_map, fitted)[~fitted & ~ink]
-        return label_map, palette_bgr
+        return (label_map, palette_bgr, *extra)
     if fitted is None:
         kept = None if keep is None else np.asarray(keep, dtype=bool).reshape(-1)
         labels, palette_bgr = _kmeans_colors(samples, num_colors, seed, min_de00, paper_black_lstar, kept)
@@ -648,23 +684,45 @@ def paint_palette(
     paint_lab = bgr_to_lab(paints_bgr)
     coarse, coarse_lab, weight = _binned(samples_lab, kept, _PAINT_BIN)
     distance = ciede2000(coarse_lab[:, None, :], paint_lab[None, :, :]).astype(np.float32)  # bins x paints
+    clash = _clashes(paint_lab, distance, coarse, kept, min_de00, paper_black_lstar)
+    taken = _take_paints(distance, weight, clash, num_colors)
+    chosen = np.array(sorted(taken, key=lambda p: (paint_lab[p, 0], p)), dtype=np.int64)
+    fine, fine_lab, _ = _binned(samples_lab, None, _BIN)
+    bin_paint = np.argmin(ciede2000(fine_lab[:, None, :], paint_lab[chosen][None, :, :]), axis=1).astype(np.int32)
+    return bin_paint[fine], chosen
 
-    clash = np.zeros((len(paints_bgr), len(paints_bgr)), dtype=bool)
+
+def _clashes(
+    lab: np.ndarray,
+    distance: np.ndarray,
+    coarse: np.ndarray,
+    kept: np.ndarray | None,
+    min_de00: float,
+    paper_black_lstar: float,
+) -> np.ndarray:
+    """Which two of the colors at ``lab`` are closer than ``min_de00``: as the screen shows them and, with
+    ``paper_black_lstar``, as paper does, unless one of them is mostly used in ``kept`` (see ``paint_palette``).
+    ``distance`` is bins x colors, ``coarse`` each sample's bin."""
+    clash = np.zeros((len(lab), len(lab)), dtype=bool)
     if min_de00 > 0:
-        apart = ciede2000(paint_lab[:, None, :], paint_lab[None, :, :])
+        apart = ciede2000(lab[:, None, :], lab[None, :, :])
         if paper_black_lstar > 0:
-            printed = printed_de00(paint_lab[:, None, :], paint_lab[None, :, :], paper_black_lstar)
+            printed = printed_de00(lab[:, None, :], lab[None, :, :], paper_black_lstar)
             if kept is not None:
                 mostly_kept = _kept_share(coarse, kept, distance) > _KEPT_SHARE
                 printed = np.where(mostly_kept[:, None] | mostly_kept[None, :], apart, printed)
             apart = np.minimum(apart, printed)
         clash = apart < min_de00
         np.fill_diagonal(clash, False)
+    return clash
 
+
+def _take_paints(distance: np.ndarray, weight: np.ndarray, clash: np.ndarray, num_colors: int) -> list[int]:
+    """The paints ``paint_palette`` takes: greedily, then improved by swaps."""
     taken: list[int] = []
-    allowed = np.ones(len(paints_bgr), dtype=bool)
-    nearest = np.zeros(len(coarse_lab), dtype=np.float32)
-    while len(taken) < min(num_colors, len(paints_bgr)):
+    allowed = np.ones(distance.shape[1], dtype=bool)
+    nearest = np.zeros(len(distance), dtype=np.float32)
+    while len(taken) < min(num_colors, distance.shape[1]):
         # What each paint would save: how much nearer it brings each bin than its nearest paint so far, weighted.
         if taken:
             gain = weight @ np.maximum(nearest[:, None] - distance, 0)
@@ -679,11 +737,192 @@ def paint_palette(
         allowed[best] = False
         nearest = distance[:, best] if len(taken) == 1 else np.minimum(nearest, distance[:, best])
 
-    taken = _swap_paints(taken, distance, weight, clash)
-    chosen = np.array(sorted(taken, key=lambda p: (paint_lab[p, 0], p)), dtype=np.int64)
+    return _swap_paints(taken, distance, weight, clash)
+
+
+def mixed_palette(
+    samples_lab: np.ndarray,
+    paints_bgr: np.ndarray,
+    num_colors: int,
+    min_de00: float,
+    rule: MixRule,
+    paper_black_lstar: float = 0.0,
+    kept: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, tuple]:
+    """The painter's paints that paint ``samples_lab`` best, and then colors mixed from two of them that earn their
+    place: each sample's color, the colors, and each color's recipe.
+
+    Paints first: they are chosen exactly as ``paint_palette`` chooses them. Then, while ``num_colors`` leaves room, a
+    mix is added -- two of the paints in 1 + 1 to 3 + 1 parts (``mixing.pair_mixes``, its color predicted as real
+    paint mixes) -- if it meets ``rule``: the pixels it would take over, those nearer it than every color taken, get
+    ``rule.gain_de00`` nearer on average, and are ``rule.min_share`` of the picture, the faces and the subject counted
+    twice (``_KEPT_WEIGHT``). Of those that do, the one that brings the picture nearest is added, and so on. A mix
+    added later can take pixels from one added earlier, so every mix is then checked again against all the colors
+    taken, and one that no longer meets the rule is dropped (the one that does least first) and not offered again;
+    the room it leaves is offered to the others, ``_MIX_ROUNDS`` times at most.
+
+    A mix is never within the margin of any paint, chosen or not (the paint does it without mixing), nor nearer one
+    than ``rule.gain_de00``, nor within the margin of another color taken; the margin is kept as ``paint_palette``
+    keeps it. Nothing is random.
+
+    Returns:
+        (labels, palette_bgr, recipes): each sample's index into the palette; the palette, the paints darkest first
+        and then the mixes darkest first; and for each color None (a paint) or its recipe, ((paint, parts), (paint,
+        parts)), the paint with more parts first.
+    """
+    paints_bgr = np.asarray(paints_bgr, dtype=np.uint8).reshape(-1, 3)
+    if len(paints_bgr) == 0:
+        raise ValueError("no paints to choose from")
+    paint_lab = bgr_to_lab(paints_bgr)
+    coarse, coarse_lab, weight = _binned(samples_lab, kept, _PAINT_BIN)
+    distance = ciede2000(coarse_lab[:, None, :], paint_lab[None, :, :]).astype(np.float32)  # bins x paints
+    clash = _clashes(paint_lab, distance, coarse, kept, min_de00, paper_black_lstar)
+    paints_taken = sorted(_take_paints(distance, weight, clash, num_colors), key=lambda p: (paint_lab[p, 0], p))
+    mixes: list[int] = []
+    if len(paints_taken) < num_colors and len(paints_bgr) > 1:
+        weighed = _mix_paints(paints_taken, distance, weight)
+        pairs, parts, mix_rgb = mixing.pair_mixes(paints_bgr[:, ::-1], weighed)
+        mix_lab = bgr_to_lab(np.ascontiguousarray(mix_rgb[:, ::-1]))
+        mixes = _take_mixes(
+            paints_taken, paint_lab, mix_lab, distance, coarse, coarse_lab, weight, kept, min_de00, paper_black_lstar,
+            num_colors - len(paints_taken), rule,
+        )
+        mixes.sort(key=lambda m: (mix_lab[m, 0], m))
+    palette_bgr = paints_bgr[paints_taken]
+    palette_lab = paint_lab[paints_taken]
+    recipes: tuple = (None,) * len(paints_taken)
+    if mixes:
+        palette_bgr = np.concatenate([palette_bgr, np.ascontiguousarray(mix_rgb[mixes][:, ::-1])])
+        palette_lab = np.concatenate([palette_lab, mix_lab[mixes]])
+        recipes += tuple(
+            tuple(sorted(((int(p), int(n)) for p, n in zip(pairs[m], parts[m])), key=lambda pn: (-pn[1], pn[0])))
+            for m in mixes
+        )
     fine, fine_lab, _ = _binned(samples_lab, None, _BIN)
-    bin_paint = np.argmin(ciede2000(fine_lab[:, None, :], paint_lab[chosen][None, :, :]), axis=1).astype(np.int32)
-    return bin_paint[fine], chosen
+    bin_color = np.argmin(ciede2000(fine_lab[:, None, :], palette_lab[None, :, :]), axis=1).astype(np.int32)
+    return bin_color[fine], palette_bgr, recipes
+
+
+def _mix_paints(taken: list[int], distance: np.ndarray, weight: np.ndarray) -> list[int]:
+    """The paints a palette's mixes are made from, in the order listed: all of them, or ``MIX_MOST_PAINTS`` -- those
+    taken, then those nearest the most of the picture."""
+    count = distance.shape[1]
+    if count <= MIX_MOST_PAINTS:
+        return list(range(count))
+    share = np.bincount(np.argmin(distance, axis=1), weights=weight, minlength=count)
+    picked = list(taken)[:MIX_MOST_PAINTS]
+    for paint in np.lexsort((np.arange(count), -share)):
+        if len(picked) == MIX_MOST_PAINTS:
+            break
+        if int(paint) not in picked:
+            picked.append(int(paint))
+    return sorted(picked)
+
+
+def _take_mixes(
+    paints_taken: list[int],
+    paint_lab: np.ndarray,
+    mix_lab: np.ndarray,
+    distance: np.ndarray,
+    coarse: np.ndarray,
+    coarse_lab: np.ndarray,
+    weight: np.ndarray,
+    kept: np.ndarray | None,
+    min_de00: float,
+    paper_black_lstar: float,
+    room: int,
+    rule: MixRule,
+) -> list[int]:
+    """The mixes ``mixed_palette`` takes, ``room`` at most, by index into ``mix_lab``."""
+    if len(mix_lab) == 0 or room <= 0:
+        return []
+    total = float(weight.sum())
+    nearest = distance[:, paints_taken].min(axis=1)
+    mix_distance = _distances_within(coarse_lab, mix_lab, nearest)  # bins x mixes
+    # The most a mix can do is what it does against the paints alone: it only does less as colors are added. One that
+    # can't meet the rule even so is not weighed.
+    closer = np.maximum(nearest[:, None] - mix_distance, 0)
+    hopeful = _earns_place(weight @ closer, weight @ (closer > 0), total, rule, upper_bound=True)
+    hopeful &= ciede2000(mix_lab[:, None, :], paint_lab[None, :, :]).min(axis=1) >= max(min_de00, rule.gain_de00)
+    candidates = np.flatnonzero(hopeful)
+    if len(candidates) == 0:
+        return []
+    paint_count = len(paint_lab)
+    joint_lab = np.concatenate([paint_lab, mix_lab[candidates]])
+    joint_distance = np.concatenate([distance, mix_distance[:, candidates]], axis=1)
+    clash = _clashes(joint_lab, joint_distance, coarse, kept, min_de00, paper_black_lstar)
+    apart = ~clash[paint_count:, :paint_count].any(axis=1)  # within the margin of no paint at all
+    candidates = candidates[apart]
+    clash = clash[paint_count:, paint_count:][apart][:, apart]
+    columns = mix_distance[:, candidates]  # bins x candidates
+
+    banned = np.zeros(len(candidates), dtype=bool)
+    taken: list[int] = []  # into candidates
+    for _ in range(_MIX_ROUNDS):
+        now = nearest.copy()
+        allowed = ~banned
+        for t in taken:
+            now = np.minimum(now, columns[:, t])
+            allowed &= ~clash[t]
+            allowed[t] = False
+        while len(taken) < room and allowed.any():
+            live = np.flatnonzero(allowed)
+            gain = np.maximum(now[:, None] - columns[:, live], 0)
+            saving = weight @ gain
+            ok = _earns_place(saving, weight @ (gain > 0), total, rule)
+            if not ok.any():
+                break
+            best = int(live[np.flatnonzero(ok)[np.argmax(saving[ok])]])
+            taken.append(best)
+            allowed &= ~clash[best]
+            allowed[best] = False
+            now = np.minimum(now, columns[:, best])
+        dropped = False
+        while taken:
+            # Each mix against every other color taken: how much nearer it brings the pixels it is nearest.
+            savings, used = [], []
+            for t in taken:
+                without = nearest
+                for other in taken:
+                    if other != t:
+                        without = np.minimum(without, columns[:, other])
+                gain = np.maximum(without - columns[:, t], 0)
+                savings.append(float(weight @ gain))
+                used.append(float(weight @ (gain > 0)))
+            ok = _earns_place(np.array(savings), np.array(used), total, rule)
+            if ok.all():
+                break
+            worst = min(np.flatnonzero(~ok), key=lambda i: (savings[i], i))
+            banned[taken[worst]] = True
+            del taken[worst]
+            dropped = True
+        if not dropped:
+            break
+    return [int(candidates[t]) for t in taken]
+
+
+def _distances_within(lab: np.ndarray, colors_lab: np.ndarray, reach: np.ndarray) -> np.ndarray:
+    """CIEDE2000 from each of ``lab`` (n x 3) to each of ``colors_lab`` (m x 3), n x m float32, where it can be less
+    than ``reach`` (n) and infinite elsewhere: a color more than ``_SURELY_APART`` times that from a bin in plain Lab
+    distance is surely farther, and is never computed."""
+    squared = (lab**2).sum(axis=1)[:, None] + (colors_lab**2).sum(axis=1)[None, :] - 2 * lab @ colors_lab.T
+    near = squared < (_SURELY_APART * reach.astype(np.float64))[:, None] ** 2
+    distance = np.full(near.shape, np.inf, dtype=np.float32)
+    rows, columns = np.nonzero(near)
+    distance[rows, columns] = ciede2000(lab[rows], colors_lab[columns])
+    return distance
+
+
+def _earns_place(
+    saving: np.ndarray, used: np.ndarray, total: float, rule: MixRule, upper_bound: bool = False
+) -> np.ndarray:
+    """Whether mixes that would bring pixels weighing ``used`` (of ``total``) nearer by ``saving`` in all meet
+    ``rule``. With ``upper_bound``, whether they might, given that both can only shrink as colors are added: their
+    saving reaches the gain times the share, and their pixels the share."""
+    enough = (used >= rule.min_share * total) & (used > 0)
+    if upper_bound:
+        return enough & (saving >= rule.gain_de00 * rule.min_share * total)
+    return enough & (saving >= rule.gain_de00 * np.maximum(used, 1e-12))
 
 
 def _swap_paints(taken: list[int], distance: np.ndarray, weight: np.ndarray, clash: np.ndarray) -> list[int]:

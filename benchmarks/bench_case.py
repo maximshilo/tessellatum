@@ -285,8 +285,10 @@ SCREEN_MARGIN_DE00 = 2.5
 
 
 # A preset's page made from a painter's own paints (from 1.0.19): "Medium-Paints24" is Medium with its colors chosen
-# from a set of 24, ``synthetic_paints(24)``, as the app's "Colors from: My paints" does.
-PAINTS_SUFFIX = re.compile(r"-Paints(\d+)$")
+# from a set of 24, ``synthetic_paints(24)``, as the app's "Colors from: My paints" does. From 1.0.21, "Medium-KitEarth"
+# from the app's sample kit of that key (``paint_kits``), and either with "-Mix" after it with colors mixed from the
+# paints too, as "Mix colors from my paints" does.
+PAINTS_SUFFIX = re.compile(r"-(?:Paints(\d+)|Kit([A-Za-z]+))(-Mix)?$")
 
 
 def synthetic_paints(count: int) -> tuple[tuple[str, tuple[int, int, int]], ...]:
@@ -309,13 +311,14 @@ def synthetic_paints(count: int) -> tuple[tuple[str, tuple[int, int, int]], ...]
     return tuple((f"Paint {i + 1}", tuple(int(v) for v in grid[t])) for i, t in enumerate(taken))
 
 
-def paints_of(preset: str) -> tuple[str, int | None]:
-    """The preset a name's page is made at, and how many synthetic paints it is made from (None: the picture's own
-    colors)."""
+def paints_of(preset: str) -> tuple[str, int | str | None, bool]:
+    """The preset a name's page is made at; what paints it is made from: how many synthetic ones (an int), a sample
+    kit's key (a str), or None for the picture's own colors; and whether colors are mixed from them too."""
     found = PAINTS_SUFFIX.search(preset)
     if found is None:
-        return preset, None
-    return preset[: found.start()], int(found.group(1))
+        return preset, None, False
+    paints = int(found.group(1)) if found.group(1) is not None else found.group(2)
+    return preset[: found.start()], paints, found.group(3) is not None
 
 
 def made_for_paper(preset: str) -> bool:
@@ -326,7 +329,7 @@ def made_for_paper(preset: str) -> bool:
 
 def preset_params(difficulty, name: str):
     """The difficulty parameters of preset ``name`` in the version whose ``difficulty`` module is given."""
-    name, _paints = paints_of(name)
+    name, _paints, _mix = paints_of(name)
     if name.endswith(SCREEN_SUFFIX):
         params = preset_params(difficulty, name[: -len(SCREEN_SUFFIX)])
         screen = {}
@@ -439,14 +442,24 @@ def main() -> int:
             return 2
         page_options["style"] = PageStyle(paper=args.paper)
     paper = bm.print_size.PAPERS[args.paper]
-    _preset, paint_count = paints_of(args.preset)
-    if paint_count is not None:
+    _preset, paint_set, mix = paints_of(args.preset)
+    if paint_set is not None:
         from tessellatum.core.pipeline import Handling
 
-        if "paints" not in {field.name for field in dataclasses.fields(Handling)}:
+        fields = {field.name for field in dataclasses.fields(Handling)}
+        if "paints" not in fields:
             print("this version makes pages from the picture's own colors only", file=sys.stderr)
             return 2
-        page_options["handling"] = Handling(paints=synthetic_paints(paint_count))
+        if (mix and "mix_paints" not in fields) or (isinstance(paint_set, str) and "mix_paints" not in fields):
+            print("this version has no sample kits nor mixed colors", file=sys.stderr)
+            return 2
+        if isinstance(paint_set, str):
+            from tessellatum.core import paint_kits
+
+            paints = paint_kits.kit(paint_set).paints
+        else:
+            paints = synthetic_paints(paint_set)
+        page_options["handling"] = Handling(paints=paints, **({"mix_paints": True} if mix else {}))
 
     def run_once(collect_analysis: bool = False):
         probe.reset()
@@ -499,6 +512,8 @@ def main() -> int:
         "ink_fraction": bm.ink_fraction(page_rgb),
         **limits,
     }
+    if getattr(result, "mixes", None):  # from 1.0.21: how many of the legend's colors are mixed from the paints
+        quality["mixed_colors"] = sum(lines is not None for lines in result.mixes)
 
     args.out.mkdir(parents=True, exist_ok=True)
     result.page.save(args.out / "page.png")
