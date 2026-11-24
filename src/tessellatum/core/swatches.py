@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Sequence
 
 from tessellatum.core.color_names import name_colors
+from tessellatum.core.legend import plain
 
 GPL = ".gpl"
 ASE = ".ase"
@@ -46,10 +47,14 @@ PROCREATE_MAX_SWATCHES = 30
 GPL_COLUMNS = 12
 
 
-def entries(palette_rgb: Sequence[tuple[int, int, int]]) -> list[tuple[str, tuple[int, int, int]]]:
-    """Each of ``palette_rgb`` (the legend's, in its order) with the name it is saved under: "7 dusty rose"."""
+def entries(
+    palette_rgb: Sequence[tuple[int, int, int]], names: Sequence[str] | None = None
+) -> list[tuple[str, tuple[int, int, int]]]:
+    """Each of ``palette_rgb`` (the legend's, in its order) with the name it is saved under: "7 dusty rose", its name
+    from ``names`` (``color_names.name_colors``' if None), as the legend writes it."""
     rgb = [tuple(int(v) for v in color) for color in palette_rgb]
-    return [(f"{i + 1} {name}", color) for i, (name, color) in enumerate(zip(name_colors(rgb), rgb))]
+    names = name_colors(rgb) if names is None else [plain(name) for name in names]
+    return [(f"{i + 1} {name}", color) for i, (name, color) in enumerate(zip(names, rgb))]
 
 
 def gpl_bytes(title: str, colors: Sequence[tuple[str, tuple[int, int, int]]]) -> bytes:
@@ -89,16 +94,21 @@ def procreate_bytes(title: str, colors: Sequence[tuple[str, tuple[int, int, int]
     return archive.getvalue()
 
 
-def save_palette(path: Path, palette_rgb: Sequence[tuple[int, int, int]], title: str | None = None) -> list[Path]:
+def save_palette(
+    path: Path,
+    palette_rgb: Sequence[tuple[int, int, int]],
+    title: str | None = None,
+    names: Sequence[str] | None = None,
+) -> list[Path]:
     """Save the legend ``palette_rgb`` as a palette file of the format ``path``'s suffix names (one of ``FORMATS``),
-    the palette called ``title`` (the file's name if not given). Returns the files written: one, or for a Procreate
+    the palette called ``title`` (the file's name if not given), its colors ``names`` (see ``entries``). Returns the files written: one, or for a Procreate
     palette of more than 30 colors, one for each 30, named for the colors it holds ("page 1-30.swatches")."""
     path = Path(path)
     suffix = path.suffix.lower()
     if suffix not in FORMATS:
         raise ValueError(f"not a palette format: {path.suffix!r}")
     title = title or path.stem
-    colors = entries(palette_rgb)
+    colors = entries(palette_rgb, names)
     if suffix == GPL:
         path.write_bytes(gpl_bytes(title, colors))
         return [path]

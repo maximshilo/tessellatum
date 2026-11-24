@@ -204,7 +204,7 @@ class MainWindow(QMainWindow):
         palette_bgr = np.asarray(page.palette_rgb, dtype=np.uint8).reshape(-1, 3)[:, ::-1]
         legend = render_legend(
             palette_bgr, round(page.page.width * legend_scale), page_px_per_mm * legend_scale,
-            self.controls.get_legend_detail(),
+            self.controls.get_legend_detail(), names=page.color_names or None,
         )
         return legend, legend_scale
 
@@ -289,7 +289,7 @@ class MainWindow(QMainWindow):
         page = dataclasses.replace(page, drawing=dataclasses.replace(drawing, style=style))
         if fmt == PALETTE:
             try:
-                written = swatches.save_palette(path, page.palette_rgb)
+                written = swatches.save_palette(path, page.palette_rgb, names=page.color_names or None)
             except Exception as exc:  # noqa: BLE001
                 self._on_export_failed(str(exc))
                 return
@@ -297,7 +297,10 @@ class MainWindow(QMainWindow):
             return
         if fmt == "PDF":
             try:
-                export.save_pdf(page.drawing, page.palette_rgb, path, version=version, painting=page.painting)
+                export.save_pdf(
+                    page.drawing, page.palette_rgb, path, version=version, painting=page.painting,
+                    names=page.color_names or None,
+                )
             except Exception as exc:  # noqa: BLE001
                 self._on_export_failed(str(exc))
                 return
@@ -312,7 +315,9 @@ class MainWindow(QMainWindow):
         self.controls.set_busy(True, cancellable=False)
         self.statusBar().showMessage(f"Drawing the PNG at {dpi:.0f} dpi…")
         worker = TaskWorker(
-            lambda: export.export_png(page.drawing, page.palette_rgb, path, dpi, version, page.painting)
+            lambda: export.export_png(
+                page.drawing, page.palette_rgb, path, dpi, version, page.painting, names=page.color_names or None
+            )
         )
         worker.succeeded.connect(lambda size: self._on_export_saved(page, path, size))
         worker.failed.connect(self._on_export_failed)

@@ -103,6 +103,20 @@ def name_colors(palette_rgb: Sequence[tuple[int, int, int]]) -> list[str]:
     return [name if name is not None else "" for name in chosen]
 
 
+def legend_names(
+    palette_rgb: Sequence[tuple[int, int, int]], paints: Sequence[tuple[str, tuple[int, int, int]]] = ()
+) -> list[str]:
+    """The names a legend of ``palette_rgb`` writes: a color that is one of the painter's ``paints`` (exactly) with a
+    name has that name; the rest are named as ``name_colors`` names them."""
+    own = {tuple(int(v) for v in rgb): name for name, rgb in reversed(list(paints)) if name}
+    colors = [tuple(int(v) for v in rgb) for rgb in palette_rgb]
+    names = [own.get(rgb, "") for rgb in colors]
+    unnamed = [i for i, name in enumerate(names) if not name]
+    for i, name in zip(unnamed, name_colors([colors[i] for i in unnamed])):
+        names[i] = name
+    return names
+
+
 def hex_code(rgb: tuple[int, int, int]) -> str:
     """``rgb`` as a hex color code, ``#5A6B2F``."""
     return "#" + "".join(f"{int(v):02X}" for v in rgb)

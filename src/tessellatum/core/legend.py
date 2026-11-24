@@ -8,6 +8,7 @@ here in millimeters, once, and drawn by both the raster legend (``render_legend`
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Sequence
@@ -76,11 +77,14 @@ def detail_line(rgb: tuple[int, int, int]) -> str:
     return f"{hex_code(rgb)}  RGB {int(rgb[0])} {int(rgb[1])} {int(rgb[2])}"
 
 
-def swatch_texts(palette_rgb: Sequence[tuple[int, int, int]], detail: str) -> list[list[LegendText]]:
-    """The lines of text beside each of ``palette_rgb``'s swatches with ``detail``, centered on the swatch's height."""
+def swatch_texts(
+    palette_rgb: Sequence[tuple[int, int, int]], detail: str, names: Sequence[str] | None = None
+) -> list[list[LegendText]]:
+    """The lines of text beside each of ``palette_rgb``'s swatches with ``detail``, centered on the swatch's height:
+    each color's name from ``names`` (``color_names.name_colors``' if None), in plain ASCII, as the PDF writes it."""
     if detail == NUMBER_ONLY or len(palette_rgb) == 0:
         return [[] for _ in palette_rgb]
-    names = name_colors(palette_rgb)
+    names = [plain(name) for name in (name_colors(palette_rgb) if names is None else names)]
     name_mm, detail_mm = NAME_PT * _MM_PER_PT, DETAIL_PT * _MM_PER_PT
     cap = _cap_height()
     texts = []
@@ -104,20 +108,34 @@ def swatch_texts(palette_rgb: Sequence[tuple[int, int, int]], detail: str) -> li
     return texts
 
 
+def plain(text: str) -> str:
+    """``text`` in printable ASCII, on one line: accents dropped ("Céruléen" -> "Ceruleen"), any other letter a "?"."""
+    decomposed = unicodedata.normalize("NFKD", " ".join(str(text).split()))
+    kept = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return "".join(c if " " <= c <= "~" else "?" for c in kept)
+
+
 def text_width_mm(text: str, size_mm: float) -> float:
     """How far ``text`` runs, written ``size_mm`` an em, in the legend's font."""
     return _advance(text) * size_mm
 
 
 def _wrap(text: str, size_mm: float, width_mm: float, most: int) -> list[str]:
-    """``text`` broken between words into lines no wider than ``width_mm``, ``most`` of them at most: a word that won't
-    fit on the last goes on it all the same, never cut."""
+    """``text`` broken between words into lines no wider than ``width_mm``, ``most`` of them at most. What won't fit
+    on the last is left off at a word's end, marked "..."; a single word too long for a line is kept whole."""
     lines: list[str] = []
-    for word in text.split():
-        if lines and (len(lines) == most or text_width_mm(f"{lines[-1]} {word}", size_mm) <= width_mm):
+    words = text.split()
+    for at, word in enumerate(words):
+        if lines and text_width_mm(f"{lines[-1]} {word}", size_mm) <= width_mm:
             lines[-1] = f"{lines[-1]} {word}"
-        else:
+        elif len(lines) < most:
             lines.append(word)
+        else:
+            last = lines[-1]
+            while " " in last and text_width_mm(f"{last} ...", size_mm) > width_mm:
+                last = last.rsplit(" ", 1)[0]
+            lines[-1] = f"{last} ..." if text_width_mm(f"{last} ...", size_mm) <= width_mm else last
+            break
     return lines or [""]
 
 
@@ -139,10 +157,14 @@ def _font(size: float) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 
 
 def render_legend(
-    palette_bgr: np.ndarray, width: int, px_per_mm: float, detail: str = DEFAULT_LEGEND_DETAIL
+    palette_bgr: np.ndarray,
+    width: int,
+    px_per_mm: float,
+    detail: str = DEFAULT_LEGEND_DETAIL,
+    names: Sequence[str] | None = None,
 ) -> Image.Image:
     """Render a wrapped grid of numbered color swatches, ``width`` pixels wide, at ``px_per_mm`` pixels a millimeter,
-    with ``detail`` beside each (one of ``LEGEND_DETAILS``)."""
+    with ``detail`` beside each (one of ``LEGEND_DETAILS``), the colors called ``names`` (see ``swatch_texts``)."""
     swatch = max(8, round(SWATCH_MM * px_per_mm))
     gap = max(2, round(SWATCH_GAP_MM * px_per_mm))
     border = max(1, round(SWATCH_BORDER_MM * px_per_mm))
@@ -155,7 +177,7 @@ def render_legend(
     draw = ImageDraw.Draw(legend)
     font = ImageFont.load_default(size=round(swatch * LABEL_FONT_RATIO))
     palette_rgb = [(int(bgr[2]), int(bgr[1]), int(bgr[0])) for bgr in palette_bgr]
-    texts = swatch_texts(palette_rgb, detail)
+    texts = swatch_texts(palette_rgb, detail, names)
 
     for index, rgb in enumerate(palette_rgb):
         row, col = divmod(index, cols)
