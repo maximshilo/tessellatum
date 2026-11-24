@@ -25,6 +25,24 @@ from tessellatum.app.snapshot import DocumentSettings
 _tokens = itertools.count(1)
 
 
+class _Hashes(QObject):
+    """Where the hashing threads report, for every document: an object that outlives them all, so that a thread never
+    emits from a document deleted while it hashed (which raises in the thread, and races the deletion). A document
+    deleted meanwhile is simply no longer connected; each takes only its own picture's hash, by its token."""
+
+    found = Signal(int, str)  # a load's token and its picture's hash
+
+
+_hashes: _Hashes | None = None
+
+
+def _hash_reports() -> _Hashes:
+    global _hashes
+    if _hashes is None:
+        _hashes = _Hashes()  # made on the GUI thread, by the first document, and kept for the process
+    return _hashes
+
+
 @dataclass(eq=False)
 class Source:
     """The picture: its pixels (BGR), where it came from, and its content hash once worked out."""
@@ -49,7 +67,6 @@ class Document(QObject):
     source_identified = Signal(str)  # the picture's content hash, once worked out
     result_changed = Signal()
     dirty_changed = Signal(bool)
-    _hashed = Signal(int, str)  # from the hashing thread: the source's token and its hash
 
     def __init__(self, settings: DocumentSettings | None = None, parent: QObject | None = None):
         super().__init__(parent)
@@ -59,7 +76,7 @@ class Document(QObject):
         self._source: Source | None = None
         self._result = None
         self._result_settings: DocumentSettings | None = None
-        self._hashed.connect(self._on_hashed)
+        _hash_reports().found.connect(self._on_hashed)  # queued: the threads emit it
 
     # -- Settings ---------------------------------------------------------------
     def settings(self) -> DocumentSettings:
@@ -97,7 +114,7 @@ class Document(QObject):
         if self._source is not None:
             source = self._source
             threading.Thread(
-                target=lambda: self._hashed.emit(source.token, content_hash(source.image)),
+                target=lambda reports=_hash_reports(): reports.found.emit(source.token, content_hash(source.image)),
                 name="source-hash", daemon=True,
             ).start()
         return self._source
