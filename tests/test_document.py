@@ -10,7 +10,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QCoreApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tessellatum.app import snapshot  # noqa: E402
 from tessellatum.app.document import Document, content_hash  # noqa: E402
@@ -19,7 +19,9 @@ from tessellatum.core import difficulty, settings  # noqa: E402
 from tessellatum.core.pipeline import Handling  # noqa: E402
 from tessellatum.core.render import TONE_FIELDS, TONES, PageStyle  # noqa: E402
 
-_app = QCoreApplication.instance() or QCoreApplication([])
+# A QApplication though the model needs none: the first application made is the suite's, and the widget tests run
+# after this file need one. What the model itself imports is checked below.
+_app = QApplication.instance() or QApplication([])
 
 PAINTS = (("Ultramarine", (32, 0, 177)), ("Titanium white", (250, 250, 250)))
 

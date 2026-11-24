@@ -4,6 +4,18 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.2] - 2026-11-24
+
+### Changed
+
+- A setting that means nothing with the choices made is turned off, and its tooltip says why first: the faces' and
+  subject's settings without **More detail on faces and subject**, the line-art settings without **Print line art's
+  own ink**, Print lettering up to and Gap beside text without **Print text**, joining the darkest black on a screen
+  and the mixing settings without My paints and Mix, which were already off.
+- Under the hood, every setting, sliders and choices alike, is described once in a settings registry: where it
+  belongs, how advanced it is, what kind of quantity it is, when a change applies, when it means nothing and why, the
+  words to search it by, and the key it is kept under. Settings kept by earlier versions load as before.
+
 ## [1.1.1] - 2026-11-24
 
 ### Added

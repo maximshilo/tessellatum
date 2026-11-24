@@ -16,19 +16,19 @@ from types import MappingProxyType
 from typing import Mapping
 
 from tessellatum.core import difficulty, settings, swatches
-from tessellatum.core.legend import DEFAULT_LEGEND_DETAIL, LEGEND_DETAILS
+from tessellatum.core.legend import DEFAULT_LEGEND_DETAIL
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import Handling
-from tessellatum.core.print_size import PAPERS
 from tessellatum.core.render import DEFAULT_TONE, TONE_FIELDS, TONES, PageStyle
-
-CUSTOM = "Custom"
-CUSTOM_TONE = "Custom"
-DEFAULT_PAPER = "A4"
-PICTURE_COLORS = "The picture"
-MY_PAINTS = "My paints"
-COLORS_FROM = (PICTURE_COLORS, MY_PAINTS)
-SWITCHES = ("line_art", "detail", "text")
+from tessellatum.core.settings import (  # noqa: F401 - the registry's names for the choices' values, kept here too
+    COLORS_FROM,
+    CUSTOM,
+    CUSTOM_TONE,
+    DEFAULT_PAPER,
+    MY_PAINTS,
+    PICTURE_COLORS,
+    SWITCHES,
+)
 
 PNG, PDF, PALETTE = "PNG", "PDF", "Palette"
 FORMATS = (PNG, PDF, PALETTE)
@@ -59,6 +59,14 @@ def default_values(preset: str = difficulty.DEFAULT_PRESET, tone: str = DEFAULT_
     return values
 
 
+# Each choice's field here, and its entry in the registry.
+_CHOICE_FIELDS = {
+    "preset": "preset", "tone": "tone", "paper": "paper", "medium": "medium", "legend": "legend_detail",
+    "colors_from": "colors_from", "paints": "paints", "mix": "mix_paints", "line_art": "line_art",
+    "detail": "detail", "text": "text",
+}
+
+
 @dataclass(frozen=True)
 class DocumentSettings:
     preset: str = difficulty.DEFAULT_PRESET
@@ -81,11 +89,14 @@ class DocumentSettings:
         missing = {s.name for s in settings.SETTINGS} - set(self.values)
         if missing:
             raise ValueError(f"no value for {', '.join(sorted(missing))}")
-        for name, allowed in (("preset", (*difficulty.preset_names(),)), ("tone", (*TONES, CUSTOM_TONE)),
-                              ("paper", tuple(PAPERS)), ("medium", tuple(difficulty.MEDIA)),
-                              ("legend", tuple(LEGEND_DETAILS)), ("colors_from", COLORS_FROM)):
-            if getattr(self, name) not in allowed:
-                raise ValueError(f"{name} {getattr(self, name)!r} is not one of {', '.join(allowed)}")
+        for name, entry in _CHOICE_FIELDS.items():
+            reason = settings.choice(entry).check(getattr(self, name))
+            if reason is not None:
+                raise ValueError(f"{name}: {reason}")
+
+    def chosen(self) -> dict:
+        """The choices, by their registry names: what the registry's enablement reads (``disabled_reason``)."""
+        return {entry: getattr(self, name) for name, entry in _CHOICE_FIELDS.items()}
 
     def __eq__(self, other):
         if not isinstance(other, DocumentSettings):

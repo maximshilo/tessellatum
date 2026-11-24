@@ -53,7 +53,19 @@ from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import Handling
 from tessellatum.core.print_size import MM_PER_INCH, PAPERS, print_scale
 from tessellatum.core.render import DEFAULT_TONE, TONE_FIELDS, TONES, PageStyle
-from tessellatum.core.settings import Setting
+from tessellatum.core.settings import (  # noqa: F401 - the registry's strings, by the panel's names for them
+    COLORS_FROM_TOOLTIP,
+    CUSTOM_TONE_TOOLTIP,
+    CUSTOM_TOOLTIP,
+    LEGEND_TOOLTIP,
+    LEGEND_TOOLTIPS,
+    MEDIUM_TOOLTIP,
+    MEDIUM_TOOLTIPS,
+    MIX_TOOLTIP,
+    PAPER_TOOLTIP,
+    TONE_TOOLTIPS,
+    Setting,
+)
 
 THUMBNAIL_SIZE = 220
 
@@ -64,40 +76,7 @@ LOG_SLIDER_STEPS = 120
 # A slider is never narrower than this, however narrow the panel is dragged: below it a handle has no room to move.
 MIN_SLIDER_WIDTH = 80
 
-TONE_TOOLTIPS = {
-    "Light": "Fainter lines, numbers and leaders, which vanish under the palest paints.",
-    "Medium": "Gray lines and numbers that don't read as writing in the picture, and the numbers written outside "
-    "their regions in a lighter gray of their own, with their leaders.",
-    "Dark": "Darker lines, numbers and leaders, easier to follow on paper.",
-}
-CUSTOM_TONE_TOOLTIP = "Set the three grays yourself. Moving any of them picks Custom, starting from the tone."
 
-PAPER_TOOLTIP = (
-    "The sheet the page is made for: every size on paper (the brush, the smallest region, the lines, the numbers) "
-    "applies on it. A larger sheet prints the picture larger, so it makes a finer page, with more and smaller regions, "
-    "and takes longer; the PDF's sheets are this size."
-)
-LEGEND_TOOLTIPS = {
-    NUMBER_ONLY: "Each color's swatch with its number in it, and nothing beside it.",
-    NAME: "Each color's everyday name beside its swatch (\"dusty rose\", \"olive green\"): the nearest of about 800 names, every color a different one.",
-    NAME_HEX_RGB: "Its name, and under it its hex code and RGB values (\"#C0737A  RGB 192 115 122\"), exactly the color the page is painted with: to find it in a painting app, or match a paint or pencil to it.",
-    NAME_RECIPE: "Its name, and how to mix it from the paints you list (Paints…): \"3 Titanium white\", \"1 Ultramarine\", parts of one to three of them, mixed as real paint mixes (blue and yellow make green). A model of paint, not of your own tubes: a place to start. A color no mix comes within 5 ΔE00 of says how far off its closest is. With no paints listed, as Name, hex and RGB.",
-}
-COLORS_FROM_TOOLTIP = (
-    "Where the page's colors come from. The picture: the colors it finds in it. My paints: the paints or pencils you "
-    "list (Paints…), at most as many as Colors asks for, the ones that paint the picture best, each called by its own "
-    "name on the legend. Every color on the legend is then one you have; two closer than the color margin are never "
-    "both used."
-)
-MIX_TOOLTIP = (
-    "With My paints: the page may also take colors mixed from two of your paints, in 1 + 1 to 3 + 1 parts, where the "
-    "picture has colors none of your paints comes close to. Your paints come first; a mix is added only if it brings "
-    "the parts of the picture it paints clearly closer (Mix if closer by) and paints enough of it (and it paints at "
-    "least), so a box that covers the picture gets few mixes or none, and a few paints get many. The legend lists "
-    "them under Mixed colors, each with its recipe. Mixed as real paint mixes (blue and yellow make green), by a "
-    "model: your own paints may mix a little differently."
-)
-MIX_FIELDS = ("mix_gain_de00", "mix_min_share_pct")
 PALETTE_TOOLTIP = (
     "The legend's colors as a palette file, for coloring the page in a painting app with exactly its colors, each "
     "named by its number and its name on the legend (\"7 dusty rose\"). Procreate: a .swatches file of 30 colors at "
@@ -105,21 +84,7 @@ PALETTE_TOOLTIP = (
     "Illustrator, Affinity, Procreate and others. GIMP palette (.gpl): GIMP, Krita, Inkscape and others."
 )
 SCREEN_HINT = "Coloring on a screen: export the Palette to load the legend's colors into your painting app."
-LEGEND_TOOLTIP = "What the legend writes beside each color's swatch, to find, buy or mix it by. " + " ".join(
-    f"{name}: {tip}" for name, tip in LEGEND_TOOLTIPS.items()
-)
 
-MEDIUM_TOOLTIPS = {
-    difficulty.PAPER_MEDIUM: "Colored on paper, with paints or pencils: colors darker than the darkest black on paper "
-    "look alike there, so they also keep the color margin as printed.",
-    difficulty.SCREEN_MEDIUM: "Colored on a screen, in an app such as Procreate: every color is picked exactly, so "
-    "there is no darkest black on paper, and the color margin is at most "
-    f"{difficulty.SCREEN_MARGIN_DE00:g} ΔE00, enough to keep two neighboring regions apart. More of the picture's "
-    "shades stay on the legend.",
-}
-MEDIUM_TOOLTIP = "What the page will be colored with. " + " ".join(
-    f"{name}: {tip}" for name, tip in MEDIUM_TOOLTIPS.items()
-)
 
 # The PNG's resolution (T3c): in dots per inch on its paper, or in pixels along its long edge.
 DPI_PRESETS = (150, 300, 600)
@@ -135,24 +100,23 @@ RESOLUTION_TOOLTIP = (
     "an app that turns it into pixels picks its own resolution."
 )
 
-CUSTOM_TOOLTIP = "Set every difficulty setting yourself. Moving any of them picks Custom, starting from the preset."
 
 # Where the panel keeps its settings between runs (see ``ControlsPanel``): the preset, the tone, each setting by name,
 # and each switch.
-_PRESET_KEY = "difficulty/preset"
-_TONE_KEY = "style/tone"
-_PAPER_KEY = "style/paper"
-_MEDIUM_KEY = "difficulty/medium"
-_LEGEND_KEY = "style/legend"
+# The document's settings are kept under their registry keys (``Setting.key``, ``Choice.key``); the export's options,
+# which are no document setting (D-008), under keys of their own.
+_PRESET_KEY = settings.choice("preset").key
+_TONE_KEY = settings.choice("tone").key
+_PAPER_KEY = settings.choice("paper").key
+_MEDIUM_KEY = settings.choice("medium").key
+_LEGEND_KEY = settings.choice("legend_detail").key
+_COLORS_FROM_KEY = settings.choice("colors_from").key
+_PAINTS_KEY = settings.choice("paints").key
+_MIX_KEY = settings.choice("mix_paints").key
 _PALETTE_FORMAT_KEY = "export/palette"
-_COLORS_FROM_KEY = "difficulty/colors_from"
-_PAINTS_KEY = "difficulty/paints"
-_MIX_KEY = "difficulty/mix_paints"
 _UNIT_KEY = "export/unit"
 _DPI_KEY = "export/dpi"
 _PIXELS_KEY = "export/pixels"
-_SETTING_KEY = "settings/{}"
-_SWITCH_KEY = "handling/{}"
 
 
 def slider_steps(setting: Setting) -> int:
@@ -287,6 +251,7 @@ class ControlsPanel(QWidget):
             self.preset_combo.setItemData(index, difficulty.describe(difficulty.params_for_preset(name)), Qt.ToolTipRole)
         self.preset_combo.setItemData(self.preset_combo.findText(CUSTOM), CUSTOM_TOOLTIP, Qt.ToolTipRole)
         self.preset_combo.setCurrentText(difficulty.DEFAULT_PRESET)
+        self.preset_combo.setToolTip(settings.choice("preset").tooltip)
         self.reset_button = QPushButton("Reset")
         self.reset_button.setToolTip("Put every setting back to its default, and the difficulty to Medium.")
         preset_row = QWidget()
@@ -311,6 +276,7 @@ class ControlsPanel(QWidget):
             self.tone_combo.setItemData(index, TONE_TOOLTIPS[name], Qt.ToolTipRole)
         self.tone_combo.setItemData(len(TONES), CUSTOM_TONE_TOOLTIP, Qt.ToolTipRole)
         self.tone_combo.setCurrentText(DEFAULT_TONE)
+        self.tone_combo.setToolTip(settings.choice("tone").tooltip)
         self.sections[settings.LINES].form.insertRow(1, "Tone", self.tone_combo)
         self.legend_combo = QComboBox()
         self.legend_combo.addItems(list(LEGEND_DETAILS))
@@ -339,7 +305,7 @@ class ControlsPanel(QWidget):
         self.colors_from_combo.addItems(list(COLORS_FROM))
         self.colors_from_combo.setToolTip(COLORS_FROM_TOOLTIP)
         self.paints_button = QPushButton("Paints…")
-        self.paints_button.setToolTip("List the paints or pencils you have, or load them from a palette file.")
+        self.paints_button.setToolTip(settings.choice("paints").tooltip)
         colors_from_row = QWidget()
         colors_from_layout = QHBoxLayout(colors_from_row)
         colors_from_layout.setContentsMargins(0, 0, 0, 0)
@@ -347,7 +313,7 @@ class ControlsPanel(QWidget):
         colors_from_layout.addWidget(self.paints_button)
         self.sections[settings.REGIONS].form.insertRow(2, "Colors from", colors_from_row)
         self.sections[settings.REGIONS].form.labelForField(colors_from_row).setToolTip(COLORS_FROM_TOOLTIP)
-        self.mix_check = QCheckBox("Mix colors from my paints")
+        self.mix_check = QCheckBox(settings.choice("mix_paints").label)
         self.mix_check.setToolTip(MIX_TOOLTIP)
         self.sections[settings.REGIONS].form.insertRow(3, QLabel(""), self.mix_check)
         # Every section's labels as wide as the widest, so that the sliders line up from one section to the next.
@@ -360,23 +326,12 @@ class ControlsPanel(QWidget):
         for label in labels:
             label.setMinimumWidth(label_width)
 
-        self.line_art_check = QCheckBox("Print line art's own ink")
-        self.line_art_check.setToolTip(
-            "On a cartoon or a comic, print its ink lines and paint the areas they enclose. "
-            "Off, it is drawn from its colors like a photograph."
-        )
-        self.detail_check = QCheckBox("More detail on faces and subject")
-        self.detail_check.setToolTip(
-            "On a photograph or a painting, regions in the faces and the subject found may be smaller (see Face and "
-            "subject detail), a face is painted in a few tones, and its thin dark marks (pupils, lip lines) are "
-            "printed."
-        )
-        self.text_check = QCheckBox("Print text")
-        self.text_check.setToolTip(
-            "Print the letters of the signs, titles and captions found in the picture, their ground left bare, "
-            "and keep the numbers off them."
-        )
-        self._switches = {"line_art": self.line_art_check, "detail": self.detail_check, "text": self.text_check}
+        self._switches: dict[str, QCheckBox] = {}
+        for name in settings.SWITCHES:
+            check = QCheckBox(settings.choice(name).label)
+            check.setToolTip(settings.choice(name).tooltip)
+            self._switches[name] = check
+        self.line_art_check, self.detail_check, self.text_check = (self._switches[n] for n in settings.SWITCHES)
         handling_group = QGroupBox("Picture handling")
         handling_layout = QVBoxLayout()
         for check in self._switches.values():
@@ -518,7 +473,14 @@ class ControlsPanel(QWidget):
         self.version_combo.currentIndexChanged.connect(lambda _index: self._save())
         self.palette_combo.currentIndexChanged.connect(lambda _index: self._save())
         for check in self._switches.values():
-            check.toggled.connect(lambda _checked: self._save())
+            check.toggled.connect(lambda _checked: self._on_switch_changed())
+
+        # Each of the registry's choices, by name, and the control that edits it.
+        self.choice_widgets: dict[str, QWidget] = {
+            "preset": self.preset_combo, "paper": self.paper_combo, "medium": self.medium_combo,
+            "colors_from": self.colors_from_combo, "paints": self.paints_button, "mix_paints": self.mix_check,
+            "tone": self.tone_combo, "legend_detail": self.legend_combo, **self._switches,
+        }
 
         self._show_preset(difficulty.DEFAULT_PRESET)
         self._show_resolution()
@@ -615,9 +577,9 @@ class ControlsPanel(QWidget):
         self._store.setValue(_PAINTS_KEY, paints_text(self._paints))
         self._store.setValue(_MIX_KEY, self.mix_check.isChecked())
         for name, control in self.controls.items():
-            self._store.setValue(_SETTING_KEY.format(name), control.value())
+            self._store.setValue(control.setting.key, control.value())
         for name, check in self._switches.items():
-            self._store.setValue(_SWITCH_KEY.format(name), check.isChecked())
+            self._store.setValue(settings.choice(name).key, check.isChecked())
         self._store.setValue(_UNIT_KEY, self._unit())
         self._store.setValue(_DPI_KEY, self._dpi)
         if self._pixels is not None:
@@ -657,7 +619,7 @@ class ControlsPanel(QWidget):
             if palette_format in swatches.FORMATS:
                 self.palette_combo.setCurrentIndex(self.palette_combo.findData(palette_format))
             for name, control in self.controls.items():
-                kept = self._store.value(_SETTING_KEY.format(name))
+                kept = self._store.value(control.setting.key)
                 try:
                     value = float(kept)
                 except (TypeError, ValueError):
@@ -669,7 +631,7 @@ class ControlsPanel(QWidget):
                     continue
                 control.set_value(value)
             for name, check in self._switches.items():
-                kept = self._store.value(_SWITCH_KEY.format(name))
+                kept = self._store.value(settings.choice(name).key)
                 if kept is not None:
                     check.setChecked(kept in (True, "true", "True", 1, "1"))
             for key, attr in ((_DPI_KEY, "_dpi"), (_PIXELS_KEY, "_pixels")):
@@ -811,12 +773,42 @@ class ControlsPanel(QWidget):
         self._show_paints()
         self._save()
 
+    def _on_switch_changed(self) -> None:
+        self._show_enablement()
+        self._save()
+
+    def _chosen(self) -> dict:
+        """The choices the registry's enablement reads, as shown (see ``Setting.disabled_reason``)."""
+        return {
+            "medium": self.medium_combo.currentText(), "colors_from": self.colors_from_combo.currentText(),
+            "mix_paints": self.mix_check.isChecked(),
+            **{name: check.isChecked() for name, check in self._switches.items()},
+        }
+
+    def _show_enablement(self) -> None:
+        """Every setting that means nothing with the choices as they are turned off, its reason first in its
+        tooltip: the darkest black on a screen, the mixing settings without My paints and Mix, the faces', line
+        art's and text's settings without their switches."""
+        chosen = self._chosen()
+        screen = chosen["medium"] == difficulty.SCREEN_MEDIUM
+        for name, control in self.controls.items():
+            tip = control.setting.tooltip
+            if name == "palette_margin_de00" and screen:
+                tip += (
+                    f" Coloring on a screen, the page keeps its colors at most {difficulty.SCREEN_MARGIN_DE00:g} ΔE00 "
+                    "apart, whatever this says."
+                )
+            reason = control.setting.disabled_reason(chosen)
+            control.setEnabled(reason is None)
+            control.setToolTip(tip if reason is None else f"{reason} {tip}")
+        mix = settings.choice("mix_paints")
+        reason = mix.disabled_reason(chosen)
+        self.mix_check.setEnabled(reason is None)
+        self.mix_check.setToolTip(mix.tooltip if reason is None else f"{reason} {mix.tooltip}")
+
     def _show_paints(self) -> None:
         # Mixing, and its two thresholds, only mean something when the colors come from the paints.
-        from_paints = self.colors_from_combo.currentText() == MY_PAINTS
-        self.mix_check.setEnabled(from_paints)
-        for name in MIX_FIELDS:
-            self.controls[name].setEnabled(from_paints and self.mix_check.isChecked())
+        self._show_enablement()
         count = len(self._paints)
         self.paints_button.setText(f"Paints ({count})…" if count else "Paints…")
         if self.colors_from_combo.currentText() == MY_PAINTS and not self._paints:
@@ -898,14 +890,8 @@ class ControlsPanel(QWidget):
         # which the margin's and the levels' tooltips say.
         medium = self.medium_combo.currentText()
         screen = medium == difficulty.SCREEN_MEDIUM
-        self.controls["paper_black_lstar"].setEnabled(not screen)
+        self._show_enablement()  # the darkest black off, the margin's tooltip saying its cap
         self.screen_hint.setVisible(screen)
-        margin = self.controls["palette_margin_de00"]
-        cap = (
-            f" Coloring on a screen, the page keeps its colors at most {difficulty.SCREEN_MARGIN_DE00:g} ΔE00 apart, "
-            "whatever this says."
-        )
-        margin.setToolTip(margin.setting.tooltip + (cap if screen else ""))
         for index, name in enumerate(difficulty.PRESETS):
             params = difficulty.for_medium(difficulty.params_for_preset(name), medium)
             self.preset_combo.setItemData(index, difficulty.describe(params), Qt.ToolTipRole)

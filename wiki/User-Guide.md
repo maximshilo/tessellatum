@@ -226,6 +226,10 @@ smaller ones.
 - **Print text**: the letters of signs, titles and captions found are printed, their ground left bare, and no number
   goes on them.
 
+A setting that means nothing with the choices made is turned off, and its tooltip says why first: the darkest
+black when coloring on a screen, the mixing settings without My paints and Mix, and the faces', line art's and text's
+own settings while their switch above is off.
+
 **Abort** stops a page in progress.
 
 ## Export
