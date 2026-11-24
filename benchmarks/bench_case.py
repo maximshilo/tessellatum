@@ -67,7 +67,14 @@ FACE_KEYS = (
     "face_regions_per_dm2",
 )
 # Subject fields, None unless the image's manifest entry outlines its subject.
-SUBJECT_KEYS = ("subject_density", "background_density", "subject_density_ratio", "subject_de00_mean", "subject_ssim")
+SUBJECT_KEYS = (
+    "subject_density",
+    "background_density",
+    "subject_density_ratio",
+    "subject_de00_mean",
+    "subject_ssim",
+    "subject_scielab_de00_mean",
+)
 # The faces the pipeline found: None for versions that don't look for faces (before 0.1.33), and the recall also
 # unless the image's manifest entry has faces.
 FOUND_FACE_KEYS = ("faces_found", "face_found_recall", "stray_faces")
@@ -270,8 +277,28 @@ def label_box(text: str, font_size: int, point, page_size: tuple[int, int]) -> t
     return (x0, y0, x0 + tw, y0 + th)
 
 
+# A preset's page colored on a screen (from 1.0.16): "Medium-Screen" is Medium with no paper black and the color margin
+# at most SCREEN_MARGIN_DE00, as the app's "Coloring on: Screen" asks; a version without a paper black gets the margin.
+SCREEN_SUFFIX = "-Screen"  # not a slash: the preset is part of the case directory's name
+SCREEN_MARGIN_DE00 = 2.5
+
+
+def made_for_paper(preset: str) -> bool:
+    """Whether a preset's page is meant to keep its colors apart as printed: not one colored on a screen, nor Max,
+    which every version is compared at as it was."""
+    return not preset.endswith(SCREEN_SUFFIX) and preset != "Max"
+
+
 def preset_params(difficulty, name: str):
     """The difficulty parameters of preset ``name`` in the version whose ``difficulty`` module is given."""
+    if name.endswith(SCREEN_SUFFIX):
+        params = preset_params(difficulty, name[: -len(SCREEN_SUFFIX)])
+        screen = {}
+        if hasattr(params, "palette_margin_de00"):  # from 0.1.49
+            screen["palette_margin_de00"] = min(params.palette_margin_de00, SCREEN_MARGIN_DE00)
+        if hasattr(params, "paper_black_lstar"):
+            screen["paper_black_lstar"] = 0.0
+        return dataclasses.replace(params, **screen)
     if name == "Max" and hasattr(difficulty, "finest_params"):
         return difficulty.finest_params()
     if name in EXTRA_PRESETS:
@@ -446,7 +473,9 @@ def main() -> int:
             page_data.lettering,
             page_data.lettering_area,
         )
-        quality.update(bm.fidelity(reference, bm.painting_at(painted, (w, h))))
+        painting = bm.painting_at(painted, (w, h))
+        quality.update(bm.fidelity(reference, painting))
+        quality.update(bm.vivid_fidelity(reference, painting))
         quality["undersized_regions"] = bm.count_undersized(
             page_data.region_id_map, page_data.min_region_area_px, page_data.detail
         )
@@ -480,6 +509,9 @@ def main() -> int:
             page_data.strokes, page_data.region_id_map, print_scale.mm_to_px(bm.JAGGEDNESS_SMOOTHING_MM)
         )
         source = bm.fit_to(reference, page_data.region_id_map.shape[::-1])
+        # Fidelity as the eye sees the page from SCIELAB_VIEWING_MM away (from 1.0.16; it only informs).
+        seen_de = bm.scielab_map(source, painted, bm.px_per_degree(print_scale.px_per_mm))
+        quality["scielab_de00_mean"] = float(seen_de.mean())
         edges = bm.source_edges(source, print_scale.mm_to_px(bm.EDGE_SMOOTHING_MM))
         quality.update(
             bm.edge_alignment(
@@ -487,6 +519,11 @@ def main() -> int:
             )
         )
         quality.update(bm.palette_separation(page_data.legend_bgr, limits["palette_margin_de00"]))
+        quality.update(
+            # Judged on one paper for every version and setting, bench_metrics.PAPER_BLACK_LSTAR (from 1.0.16).
+            bm.printed_separation(page_data.legend_bgr, limits["palette_margin_de00"])
+        )
+        quality["made_for_paper"] = made_for_paper(args.preset)
         # Line art is scored against the image's manifest entry: its flat colors, and its ink lines if it has ink colors.
         flat_colors, ink_colors = (
             np.array(getattr(image_info, name, ()), dtype=np.uint8).reshape(-1, 3)[:, ::-1]  # the manifest's are RGB
@@ -527,6 +564,7 @@ def main() -> int:
             subject = bm.outline_pixels(page_data.region_id_map.shape, [s.outline for s in subjects])
             quality.update(bm.subject_detail(page_data.region_id_map, subject, print_scale.px_per_mm))
             quality.update(bm.subject_fidelity(source, painted, subject))
+            quality["subject_scielab_de00_mean"] = float(seen_de[subject].mean()) if subject.any() else None
         faces = annotations.faces if annotations else ()
         if faces:
             quality.update(bm.face_fidelity(source, painted, [_xywh(face.box) for face in faces]))

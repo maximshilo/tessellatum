@@ -62,6 +62,18 @@ PAPER_TOOLTIP = (
 )
 DEFAULT_PAPER = "A4"
 
+MEDIUM_TOOLTIPS = {
+    difficulty.PAPER_MEDIUM: "Colored on paper, with paints or pencils: colors darker than the darkest black on paper "
+    "look alike there, so they also keep the color margin as printed.",
+    difficulty.SCREEN_MEDIUM: "Colored on a screen, in an app such as Procreate: every color is picked exactly, so "
+    "there is no darkest black on paper, and the color margin is at most "
+    f"{difficulty.SCREEN_MARGIN_DE00:g} ΔE00, enough to keep two neighboring regions apart. More of the picture's "
+    "shades stay on the legend.",
+}
+MEDIUM_TOOLTIP = "What the page will be colored with. " + " ".join(
+    f"{name}: {tip}" for name, tip in MEDIUM_TOOLTIPS.items()
+)
+
 # The PNG's resolution (T3c): in dots per inch on its paper, or in pixels along its long edge.
 DPI, PIXELS = "dpi", "px"
 DPI_PRESETS = (150, 300, 600)
@@ -85,6 +97,7 @@ CUSTOM_TOOLTIP = "Set every difficulty setting yourself. Moving any of them pick
 _PRESET_KEY = "difficulty/preset"
 _TONE_KEY = "style/tone"
 _PAPER_KEY = "style/paper"
+_MEDIUM_KEY = "difficulty/medium"
 _UNIT_KEY = "export/unit"
 _DPI_KEY = "export/dpi"
 _PIXELS_KEY = "export/pixels"
@@ -246,6 +259,14 @@ class ControlsPanel(QWidget):
         self.paper_combo.setToolTip(PAPER_TOOLTIP)
         self.sections[settings.REGIONS].form.insertRow(0, "Paper", self.paper_combo)
         self.sections[settings.REGIONS].form.labelForField(self.paper_combo).setToolTip(PAPER_TOOLTIP)
+        self.medium_combo = QComboBox()
+        self.medium_combo.addItems(list(difficulty.MEDIA))
+        for index, name in enumerate(difficulty.MEDIA):
+            self.medium_combo.setItemData(index, MEDIUM_TOOLTIPS[name], Qt.ToolTipRole)
+        self.medium_combo.setCurrentText(difficulty.DEFAULT_MEDIUM)
+        self.medium_combo.setToolTip(MEDIUM_TOOLTIP)
+        self.sections[settings.REGIONS].form.insertRow(1, "Coloring on", self.medium_combo)
+        self.sections[settings.REGIONS].form.labelForField(self.medium_combo).setToolTip(MEDIUM_TOOLTIP)
         # Every section's labels as wide as the widest, so that the sliders line up from one section to the next.
         labels = [
             section.form.labelForField(section.form.itemAt(row, QFormLayout.FieldRole).widget())
@@ -381,6 +402,7 @@ class ControlsPanel(QWidget):
             control.edited.connect(lambda name=name: self._on_setting_edited(name))
         self.tone_combo.currentTextChanged.connect(self._on_tone_changed)
         self.paper_combo.currentTextChanged.connect(lambda _name: self._on_print_changed())
+        self.medium_combo.currentTextChanged.connect(lambda _name: self._on_medium_changed())
         self.resolution_unit.currentIndexChanged.connect(lambda _index: self._on_unit_changed())
         self.resolution_spin.valueChanged.connect(lambda _value: self._on_resolution_edited())
         self.png_radio.toggled.connect(lambda _checked: self._show_resolution())
@@ -441,6 +463,7 @@ class ControlsPanel(QWidget):
             self.tone_combo.setCurrentText(DEFAULT_TONE)
             self._show_tone(DEFAULT_TONE)
             self.paper_combo.setCurrentText(DEFAULT_PAPER)
+            self.medium_combo.setCurrentText(difficulty.DEFAULT_MEDIUM)
             for check in self._switches.values():
                 check.setChecked(True)
             self._dpi, self._pixels = DEFAULT_DPI, None
@@ -456,6 +479,7 @@ class ControlsPanel(QWidget):
         self._store.setValue(_PRESET_KEY, self.preset_combo.currentText())
         self._store.setValue(_TONE_KEY, self.tone_combo.currentText())
         self._store.setValue(_PAPER_KEY, self.paper_combo.currentText())
+        self._store.setValue(_MEDIUM_KEY, self.medium_combo.currentText())
         for name, control in self.controls.items():
             self._store.setValue(_SETTING_KEY.format(name), control.value())
         for name, check in self._switches.items():
@@ -481,6 +505,9 @@ class ControlsPanel(QWidget):
             paper = self._store.value(_PAPER_KEY)
             if paper in PAPERS:
                 self.paper_combo.setCurrentText(paper)
+            medium = self._store.value(_MEDIUM_KEY)
+            if medium in difficulty.MEDIA:
+                self.medium_combo.setCurrentText(medium)
             for name, control in self.controls.items():
                 kept = self._store.value(_SETTING_KEY.format(name))
                 try:
@@ -529,8 +556,10 @@ class ControlsPanel(QWidget):
     def get_difficulty_params(self) -> difficulty.DifficultyParams:
         preset = self.preset_combo.currentText()
         if preset != "Custom":
-            return difficulty.params_for_preset(preset)
-        return difficulty.custom_params(**self._chosen(settings.DIFFICULTY))
+            params = difficulty.params_for_preset(preset)
+        else:
+            params = difficulty.custom_params(**self._chosen(settings.DIFFICULTY))
+        return difficulty.for_medium(params, self.medium_combo.currentText())
 
     def get_page_style(self) -> PageStyle:
         # The grays on their sliders, the tone's unless Custom.
@@ -602,6 +631,23 @@ class ControlsPanel(QWidget):
         else:
             self._pixels = self.resolution_spin.value()
         self._show_resolution()
+        self._save()
+
+    def _on_medium_changed(self) -> None:
+        # On a screen there is no darkest black on paper: its slider stands aside. The color margin is capped there,
+        # which the margin's and the levels' tooltips say.
+        medium = self.medium_combo.currentText()
+        screen = medium == difficulty.SCREEN_MEDIUM
+        self.controls["paper_black_lstar"].setEnabled(not screen)
+        margin = self.controls["palette_margin_de00"]
+        cap = (
+            f" Coloring on a screen, the page keeps its colors at most {difficulty.SCREEN_MARGIN_DE00:g} ΔE00 apart, "
+            "whatever this says."
+        )
+        margin.setToolTip(margin.setting.tooltip + (cap if screen else ""))
+        for index, name in enumerate(difficulty.PRESETS):
+            params = difficulty.for_medium(difficulty.params_for_preset(name), medium)
+            self.preset_combo.setItemData(index, difficulty.describe(params), Qt.ToolTipRole)
         self._save()
 
     def _on_print_changed(self) -> None:

@@ -366,6 +366,8 @@ whether a brush can paint the bands a gradient breaks into:
 |---|---|---|
 | ΔE00 mean / p95 | CIEDE2000 color error between painting and source | lower |
 | SSIM | structural similarity of luma between painting and source | higher |
+| vivid ΔE00 | ΔE00 mean over the source's most colorful tenth of pixels: the 10% with the highest CIELAB chroma among those at least L* 15, whose chroma isn't mostly noise (from 1.0.16) | lower |
+| S-CIELAB ΔE00 | ΔE00 mean between painting and source as the eye sees them from 40 cm (`bench_metrics.SCIELAB_VIEWING_MM`), at the page's print scale: S-CIELAB (Zhang & Wandell) blurs both in an opponent space, lightness by a sum of three Gaussians and the red-green and blue-yellow channels by two each, much wider, then takes CIEDE2000. The matrix and the filters are the original MATLAB code's (`cmatrix.m`, `separableFilters.m`); the Gaussians are the continuous ones at the page's own pixels, reaching about a degree, with reflected borders, where the original upsamples to 224 samples per degree. Scored on the page at its own size, as the subject is. `case.json` also has it inside the subject's outline, as `subject_scielab_de00_mean` (from 1.0.16) | informational |
 | labeled area | share of the area to paint (the regions: the page less what it prints, but for the thin ink paint goes over from 0.1.30) inside regions that carry a number | higher |
 | unlabeled | regions without a number | lower (0) |
 | slivers | share of the page a round brush as wide as the page's own (3 mm until 0.1.48) can't paint without crossing into another region, but for the points of corners down to 20° (from 0.1.50); `case.json` also records the share of the page in those points, as `corner_tip_fraction` | lower |
@@ -385,6 +387,9 @@ whether a brush can paint the bands a gradient breaks into:
 | color margin | the page's color margin, which the palette min is held to (10 ΔE00 where a version sets none) | informational |
 | palette min ΔE00 | smallest CIEDE2000 color difference between two colors on the legend | higher (≥ the color margin) |
 | close color pairs | pairs of legend colors that differ by less than the page's color margin ("color pairs < 10 ΔE00" until 0.1.51) | lower (0) |
+| printed min ΔE00 | smallest difference between two legend colors as printed: CIEDE2000 after black point compensation to a paper black of L* 25 (`bench_metrics.PAPER_BLACK_LSTAR`, the same for every version and setting), divided by the share two grays at L* 50 and 54 keep, and never more than the CIEDE2000 on screen (from 1.0.16) | higher (≥ the color margin, on pages made for paper: not `-Screen` presets or Max) |
+| printed close pairs | pairs of legend colors closer than the page's color margin as printed (from 1.0.16) | lower (0) |
+| colors < L* 25, colors > L* 90 | legend colors near black and near white (`dark_legend_colors`, `light_legend_colors`; from 1.0.16) | informational |
 | ink line F1 | how well drawn lines, and the centerlines of the ink the page prints, run down the middle of the artwork's ink lines, within 0.5 mm; `case.json` also records `ink_line_precision` and `ink_line_recall` | higher |
 | ink printed recall / precision | on line art, how much of the artwork's ink lines the page prints, and how much of what it prints is the artwork's ink, each pixel within 0.5 mm (from 0.1.28); `case.json` also records `ink_print_f1` | higher |
 | tubes | regions at least half made of the artwork's ink lines | lower (0) |
@@ -903,6 +908,7 @@ below). The preview tolerances were measured on 1100 px pages.
 | ΔE00 mean | resembles | 6.9% of the value | 7.3% of the value | – |
 | ΔE00 p95 | resembles | 7.3% of the value | 12% of the value | – |
 | SSIM | resembles | 0.0066 | 0.0070 | – |
+| vivid ΔE00 | resembles | 5.2% of the value | (5.2% of the value) | – |
 | face ΔE00 | resembles | 7.8% of the value | 8.2% of the value | – |
 | face SSIM | resembles | 0.016 | 0.038 | – |
 | features lost | resembles | 0.35 | 0.29 | 0 |
@@ -935,10 +941,14 @@ below). The preview tolerances were measured on 1100 px pages.
 | labels on text | clean drawing | 1.3 | 2.7 | 0 |
 | palette min ΔE00 | palette | 1.3 | 0.93 | ≥ color margin |
 | close color pairs | palette | 3.2 | 3.1 | – |
+| printed min ΔE00 | palette | 0.87 | (0.87) | ≥ color margin, on pages made for paper |
+| printed close pairs | palette | 1 | (1) | – |
 | flat colors ΔE00 | palette | 1.2 | 0.81 | ≤ flat colors ΔE00 best + 2.5 on exact colors |
 
-Colors, color margin, regions, bands, background regions, face regions, subject detail, ink, text CER source and flat
-colors ΔE00 best only inform. The per-case tables add the
+Colors, color margin, regions, bands, background regions, face regions, subject detail, ink, text CER source, flat
+colors ΔE00 best, S-CIELAB ΔE00, subject S-CIELAB ΔE00 and the legend's colors under L* 25 and over L* 90 only inform.
+The tolerances of vivid ΔE00 and the printed metrics (from 1.0.16) were measured on 1.0.16 at 1099-1101 px only
+(`T1-sizes`, 132 pairs); an export is judged with them too, shown in parentheses. The per-case tables add the
 number of targets each case misses.
 
 The printed-ink metrics' tolerances come from 48 pairs at each size, the four line-art
@@ -1090,6 +1100,11 @@ by 0.038 rather than 0.016, labels on features by 3.6 rather than 1.6.
   - On the pages rendered 1 px apart, no mean of any metric crossed that line.
 - **Cases to look at:** single cases worse by more than 3 σ. They aren't
   regressions: 7 of the 48 cases rendered 1 px apart had one.
+- **The palette's trade** (from 1.0.16; `bench_report.traded`): moving colors out of a large dark area, whose
+  near-blacks paper prints alike, raises that area's error, so ΔE00 mean, ΔE00 p95 and SSIM may get worse on a case
+  whose printed close pairs fell, as long as its ΔE00 mean rose by at most 1.0 and 10%, its ΔE00 p95 by at most 10%
+  and its SSIM fell by at most 0.02, its vivid ΔE00 or subject ΔE00 improved by more than its tolerance, no face metric is worse alone by more than 3 σ and no face feature is lost. Such a case is left out of
+  those three metrics' regressions, and the verdict lists it.
 - **Direction:** lines per boundary are judged by their distance from 1.
   Undersized regions have σ = 0, so their mean may not rise at all.
 

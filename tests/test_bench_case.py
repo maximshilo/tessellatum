@@ -437,6 +437,8 @@ def test_case_runner_scores_the_subject_its_manifest_outlines(tmp_path):
     painted = np.asarray(Image.open(out / "painted.png").convert("RGB"))[:, :, ::-1]
     source = bm.reference_resize(cv2.imread(str(image)), 400)
     fidelity = bm.subject_fidelity(source, np.ascontiguousarray(painted), subject)
+    seen = bm.scielab_map(source, np.ascontiguousarray(painted), bm.px_per_degree(scale.px_per_mm))
+    fidelity["subject_scielab_de00_mean"] = float(seen[subject].mean())
     for key in bench_case.SUBJECT_KEYS:
         assert quality[key] == pytest.approx({**detail, **fidelity}[key], rel=1e-12), key
     assert quality["subject_density_ratio"] > 1  # the disk is busier than the ground, and it is the subject
@@ -632,3 +634,9 @@ def test_case_runner_paints_the_lettering_in_the_tone_the_page_prints_it(tmp_pat
     )
     np.testing.assert_array_equal(painted, expected)
     assert (painted[partly][:, 0] > analysis.ink_gray).all()
+
+
+def test_a_preset_colored_on_a_screen_has_no_paper_black_and_a_margin_of_at_most_2_5():
+    screen = bench_case.preset_params(difficulty, "Medium-Screen")
+    assert (screen.paper_black_lstar, screen.palette_margin_de00) == (0.0, 2.5)
+    assert screen == difficulty.for_medium(difficulty.params_for_preset("Medium"), "Screen")

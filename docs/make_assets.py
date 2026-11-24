@@ -38,6 +38,7 @@ GALLERY = ROOT / "docs" / "gallery"
 GALLERY_ITEMS = [
     ("photo-lion", "l-photo-lion.jpg", "Medium"),
     ("painting-portrait", "l-painting-face-girl-with-a-pearl-earring.jpg", "Medium"),
+    ("painting-dark-portrait", "l-painting-face-juan-de-pareja.jpg", "Medium"),
     ("cartoon-line-art", "m-cartoon-bold-lines-girl.png", "Medium"),
     ("comic-text", "m-comics-upside-downs-writing-pig.jpg", "Medium"),
     ("photo-castle", "l-photo-switzerland-castle.jpg", "Medium"),

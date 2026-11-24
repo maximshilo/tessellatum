@@ -26,6 +26,10 @@ domain ([sources](https://github.com/maximshilo/tessellatum/blob/main/tests/samp
 **A portrait.** Face detection keeps the eyes, nose and mouth, and the skin settles into a few large tones.
 ![Portrait](https://raw.githubusercontent.com/maximshilo/tessellatum/main/docs/gallery/painting-portrait.jpg)
 
+**A dark portrait.** Most of the picture is near-black, which paper prints as one black, so the legend keeps only the
+darks paper tells apart and spends its colors on the face and the collar, whose shading the face detection keeps.
+![Dark portrait](https://raw.githubusercontent.com/maximshilo/tessellatum/main/docs/gallery/painting-dark-portrait.jpg)
+
 ## Line art
 
 **A bold-line cartoon.** The ink is printed in black and the palette is the artist's own fill colors.

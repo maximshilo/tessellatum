@@ -82,6 +82,53 @@ def ciede2000(lab1: np.ndarray, lab2: np.ndarray) -> np.ndarray:
     return np.sqrt((dl / s_l) ** 2 + (dc / s_c) ** 2 + (d_big_h / s_h) ** 2 + r_t * (dc / s_c) * (d_big_h / s_h))
 
 
+def _lab_to_relative_xyz(lab: np.ndarray) -> np.ndarray:
+    """CIE Lab -> XYZ relative to the white point (white is 1, 1, 1): the inverse of ``bgr_to_lab``'s last step."""
+    fy = (lab[..., 0] + 16) / 116
+    f = np.stack([fy + lab[..., 1] / 500, fy, fy - lab[..., 2] / 200], axis=-1)
+    return np.where(f > 6 / 29, f**3, 3 * (6 / 29) ** 2 * (f - 4 / 29))
+
+
+def _relative_xyz_to_lab(xyz: np.ndarray) -> np.ndarray:
+    f = np.where(xyz > (6 / 29) ** 3, np.cbrt(xyz), xyz * (29 / 6) ** 2 / 3 + 4 / 29)
+    return np.stack([116 * f[..., 1] - 16, 500 * (f[..., 0] - f[..., 1]), 200 * (f[..., 1] - f[..., 2])], axis=-1)
+
+
+def printed_lab(lab: np.ndarray, paper_black_lstar: float) -> np.ndarray:
+    """Lab colors as paper shows them when its darkest black is L* ``paper_black_lstar``.
+
+    Paper and paint have a floor: plain paper prints no darker than about L* 25-30, and pencils and mixed paints don't
+    go much darker on it. Print workflows model that with black point compensation, ``XYZ' = Yb + (1 - Yb) XYZ`` (white
+    1, ``Yb`` the black's luminance): black goes to the paper's black, white stays white, and the darks are squeezed
+    together and toward neutral the most. A black of L* 0 leaves every color as it is.
+    """
+    lab = np.asarray(lab, dtype=np.float64)
+    if paper_black_lstar <= 0:
+        return lab
+    black = float(_lab_to_relative_xyz(np.array([paper_black_lstar, 0.0, 0.0]))[1])
+    return _relative_xyz_to_lab(black + (1 - black) * _lab_to_relative_xyz(lab))
+
+
+# Printed distances are on the mid-tones' scale: divided by the share of their CIEDE2000 these two grays keep printed.
+_PRINTED_REFERENCE_PAIR = np.array([[50.0, 0.0, 0.0], [54.0, 0.0, 0.0]])
+
+
+def printed_de00(lab1: np.ndarray, lab2: np.ndarray, paper_black_lstar: float) -> np.ndarray:
+    """How far apart colors are on paper whose darkest black is L* ``paper_black_lstar``, in CIEDE2000.
+
+    CIEDE2000 between the colors as printed (``printed_lab``), divided by the share a mid-tone difference keeps there,
+    so mid-tones keep their distance and near-blacks lose theirs; never more than the plain CIEDE2000, since printing
+    can't set two colors farther apart than the screen shows them. A black of L* 0 gives the plain CIEDE2000.
+    """
+    on_screen = ciede2000(lab1, lab2)
+    if paper_black_lstar <= 0:
+        return on_screen
+    first, second = (printed_lab(_PRINTED_REFERENCE_PAIR[i], paper_black_lstar) for i in (0, 1))
+    shrink = ciede2000(first, second) / ciede2000(_PRINTED_REFERENCE_PAIR[0], _PRINTED_REFERENCE_PAIR[1])
+    on_paper = ciede2000(printed_lab(lab1, paper_black_lstar), printed_lab(lab2, paper_black_lstar)) / shrink
+    return np.minimum(on_screen, on_paper)
+
+
 def pairwise_de00(colors_bgr: np.ndarray) -> np.ndarray:
     """CIEDE2000 between every two of ``colors_bgr`` (Kx3 uint8, BGR), with infinity down the diagonal.
 

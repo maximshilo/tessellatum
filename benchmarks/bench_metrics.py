@@ -75,6 +75,36 @@ _TIP_APART_RADII = 2.0
 PAINTABLE_WIDTH_MM = 3.0
 LABEL_MIN_PT = 6.0
 PALETTE_MIN_DE00 = 10.0
+# The legend as paper shows it (from 1.0.16): paper and paint can't go darker than this black, so every color is judged
+# as printed with black point compensation to it (``printed_de00``). L* 25 is a little darker than plain office paper's
+# black (density 1.2-1.4, L* 27-30), so it errs toward keeping colors. Every page is judged on it, whatever its own
+# setting, so versions and settings compare; the target is held only by pages made for paper (see
+# `bench_case.made_for_paper`), and colors a page keeps for its faces and subject may miss it by design.
+PAPER_BLACK_LSTAR = 25.0
+# The printed distance is on the mid-tones' scale: divided by the share of their CIEDE2000 two neutral grays this light
+# keep as printed.
+PRINTED_REFERENCE_PAIR = (50.0, 54.0)
+# Legend colors counted as near black and as near white.
+DARK_LEGEND_LSTAR = 25.0
+LIGHT_LEGEND_LSTAR = 90.0
+# The image's most colorful pixels: this share of those at least VIVID_MIN_LSTAR light, by CIELAB chroma.
+VIVID_SHARE = 0.10
+VIVID_MIN_LSTAR = 15.0
+# S-CIELAB (``scielab_lab``): the page seen from this far, in mm. XYZ (2°) to its opponent channels, and each channel's
+# filter as (half-width in degrees, weight) Gaussians: the original MATLAB code's (Zhang & Wandell; cmatrix.m and
+# separableFilters.m), whose weights sum to 1.
+SCIELAB_VIEWING_MM = 400.0
+SCIELAB_XYZ_TO_OPPONENT = (
+    np.array(
+        [[278.7336, 721.8031, -106.5520], [-448.7736, 289.8056, 77.1569], [85.9513, -589.9859, 501.1089]]
+    )
+    / 1000
+)
+SCIELAB_FILTERS = (
+    ((0.05, 1.00327), (0.225, 0.114416), (7.0, -0.117686)),
+    ((0.0685, 0.616725), (0.826, 0.383275)),
+    ((0.0920, 0.567885), (0.6451, 0.432115)),
+)
 # Bands, as a gradient breaks into. A region is one where no brush BAND_WIDTH_BRUSHES times the page's own fits
 # anywhere in it (6 mm at the 3 mm brush), and it is at least BAND_MIN_ELONGATION times as long as it is wide.
 BAND_WIDTH_BRUSHES = 2.0
@@ -1019,6 +1049,142 @@ def palette_separation(palette_bgr: np.ndarray, min_de00: float = PALETTE_MIN_DE
     first, second = np.triu_indices(len(lab), k=1)
     differences = ciede2000(lab[first], lab[second])
     return {"palette_min_de00": float(differences.min()), "palette_close_pairs": int((differences < min_de00).sum())}
+
+
+def lab_to_xyz(lab: np.ndarray) -> np.ndarray:
+    """CIE Lab (...x3) -> XYZ relative to the white point, so white is (1, 1, 1): the inverse of ``bgr_to_lab_exact``'s."""
+    lab = np.asarray(lab, dtype=np.float64)
+    fy = (lab[..., 0] + 16) / 116
+    f = np.stack([fy + lab[..., 1] / 500, fy, fy - lab[..., 2] / 200], axis=-1)
+    return np.where(f > 6 / 29, f**3, 3 * (6 / 29) ** 2 * (f - 4 / 29))
+
+
+def xyz_to_lab(xyz: np.ndarray) -> np.ndarray:
+    """XYZ relative to the white point (...x3) -> CIE Lab."""
+    xyz = np.asarray(xyz, dtype=np.float64)
+    f = np.where(xyz > (6 / 29) ** 3, np.cbrt(xyz), xyz * (29 / 6) ** 2 / 3 + 4 / 29)
+    return np.stack([116 * f[..., 1] - 16, 500 * (f[..., 0] - f[..., 1]), 200 * (f[..., 1] - f[..., 2])], axis=-1)
+
+
+def printed_lab(lab: np.ndarray, paper_black_lstar: float = PAPER_BLACK_LSTAR) -> np.ndarray:
+    """Lab colors as paper shows them, its darkest black at L* ``paper_black_lstar``: black point compensation.
+
+    Every color is moved toward the paper's black in XYZ, ``XYZ' = Yb + (1 - Yb) XYZ`` with white at 1 and ``Yb`` the
+    black's luminance: black goes to the paper's black, white stays white, and the darks are squeezed together and
+    toward neutral the most. A black of L* 0 leaves every color as it is.
+    """
+    if paper_black_lstar <= 0:
+        return np.asarray(lab, dtype=np.float64)
+    black = lab_to_xyz(np.array([paper_black_lstar, 0.0, 0.0]))[1]
+    return xyz_to_lab(black + (1 - black) * lab_to_xyz(lab))
+
+
+def printed_shrink(paper_black_lstar: float = PAPER_BLACK_LSTAR) -> float:
+    """How much of a mid-tone difference survives on paper: two neutral grays at ``PRINTED_REFERENCE_PAIR``, as printed."""
+    pair = np.array([[value, 0.0, 0.0] for value in PRINTED_REFERENCE_PAIR])
+    return float(ciede2000(printed_lab(pair[0], paper_black_lstar), printed_lab(pair[1], paper_black_lstar)) / ciede2000(pair[0], pair[1]))
+
+
+def printed_de00(lab1: np.ndarray, lab2: np.ndarray, paper_black_lstar: float = PAPER_BLACK_LSTAR) -> np.ndarray:
+    """How far apart two colors are on paper, in CIEDE2000 on the mid-tones' scale.
+
+    CIEDE2000 between the colors as printed (``printed_lab``), divided by the share a mid-tone difference keeps
+    (``printed_shrink``), so a mid-tone pair keeps its distance and the darks lose theirs. Never more than today's
+    CIEDE2000: printing a pair can't set it farther apart than the screen shows it.
+    """
+    on_screen = ciede2000(lab1, lab2)
+    if paper_black_lstar <= 0:
+        return on_screen
+    on_paper = ciede2000(printed_lab(lab1, paper_black_lstar), printed_lab(lab2, paper_black_lstar))
+    return np.minimum(on_screen, on_paper / printed_shrink(paper_black_lstar))
+
+
+def printed_separation(
+    palette_bgr: np.ndarray, min_de00: float = PALETTE_MIN_DE00, paper_black_lstar: float = PAPER_BLACK_LSTAR
+) -> dict[str, float | int | None]:
+    """How clearly the legend's colors differ on paper, and how many of them are near black or near white.
+
+    ``printed_min_de00`` is the smallest ``printed_de00`` between two legend colors (None for fewer than two),
+    ``printed_close_pairs`` the pairs under ``min_de00`` by it, ``dark_legend_colors`` the colors darker than
+    ``DARK_LEGEND_LSTAR`` and ``light_legend_colors`` those lighter than ``LIGHT_LEGEND_LSTAR``.
+    """
+    colors = np.asarray(palette_bgr, dtype=np.uint8).reshape(-1, 3)
+    lab = bgr_to_lab_exact(colors)
+    scores: dict[str, float | int | None] = {
+        "printed_min_de00": None,
+        "printed_close_pairs": 0,
+        "dark_legend_colors": int((lab[:, 0] < DARK_LEGEND_LSTAR).sum()),
+        "light_legend_colors": int((lab[:, 0] > LIGHT_LEGEND_LSTAR).sum()),
+    }
+    if len(colors) >= 2:
+        first, second = np.triu_indices(len(lab), k=1)
+        differences = printed_de00(lab[first], lab[second], paper_black_lstar)
+        scores["printed_min_de00"] = float(differences.min())
+        scores["printed_close_pairs"] = int((differences < min_de00).sum())
+    return scores
+
+
+def vivid_fidelity(source_bgr: np.ndarray, painted_bgr: np.ndarray) -> dict[str, float | None]:
+    """The painting's color error on the image's most colorful pixels: ``vivid_de00_mean``.
+
+    The pixels are the ``VIVID_SHARE`` with the highest CIELAB chroma among those at least ``VIVID_MIN_LSTAR`` light:
+    a darker pixel's chroma is mostly noise. These are the colors a palette spent on a large dull area leaves out.
+    Exactly that share, ties taken in pixel order, so a gray picture's are a tenth of it too. None for an image
+    without such pixels.
+    """
+    source = bgr_to_lab(source_bgr)
+    eligible = np.flatnonzero(source[..., 0] >= VIVID_MIN_LSTAR)
+    if not eligible.size:
+        return {"vivid_de00_mean": None}
+    chroma = np.hypot(source[..., 1], source[..., 2]).reshape(-1)[eligible]
+    count = max(1, math.ceil(VIVID_SHARE * eligible.size))
+    vivid = eligible[np.argsort(-chroma, kind="stable")[:count]]
+    de = ciede2000(source.reshape(-1, 3)[vivid], bgr_to_lab(painted_bgr).reshape(-1, 3)[vivid])
+    return {"vivid_de00_mean": float(de.mean())}
+
+
+def px_per_degree(px_per_mm: float, viewing_mm: float = SCIELAB_VIEWING_MM) -> float:
+    """Pixels per degree of visual angle, for a page printed at ``px_per_mm`` and seen from ``viewing_mm`` away."""
+    return px_per_mm * 2 * viewing_mm * math.tan(math.radians(0.5))
+
+
+def scielab_lab(image_bgr: np.ndarray, pixels_per_degree: float) -> np.ndarray:
+    """``image_bgr`` as the eye sees it from where ``pixels_per_degree`` puts it, in CIE Lab: S-CIELAB's filtering.
+
+    S-CIELAB (Zhang & Wandell 1996) blurs an image the way the eye does before color differences are taken: in an
+    opponent space (light-dark, red-green, blue-yellow), each channel by a sum of Gaussians, the color channels far
+    more than lightness. The matrix and the filters are the original code's (``SCIELAB_XYZ_TO_OPPONENT``,
+    ``SCIELAB_FILTERS``), with three differences, none of which changes a uniform area:
+    - each Gaussian is the continuous one, exp(-x²/s²) with s its half-width over 2√ln2, at the page's own pixels,
+      where the original upsamples to 224 samples per degree first;
+    - the borders are reflected;
+    - the image is sRGB, white D65.
+    As in the original, each Gaussian reaches about one degree (an odd width, ``ceil(ppd / 2) * 2 - 1`` pixels) and is
+    normalized to sum 1, and each channel's weights sum to 1, so a uniform area keeps its color.
+    """
+    rgb = np.asarray(image_bgr, dtype=np.float32)[..., ::-1] / 255
+    linear = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    xyz = linear @ _SRGB_TO_XYZ.T.astype(np.float32)  # absolute XYZ, white Y = 1, as the opponent matrix takes it
+    opponent = xyz @ SCIELAB_XYZ_TO_OPPONENT.T.astype(np.float32)
+    width = max(1, math.ceil(pixels_per_degree / 2) * 2 - 1)
+    x = np.arange(width, dtype=np.float64) - width // 2
+    filtered = np.empty_like(opponent)
+    for channel, gaussians in enumerate(SCIELAB_FILTERS):
+        plane = np.ascontiguousarray(opponent[..., channel])
+        total = np.zeros_like(plane)
+        for half_width_deg, weight in gaussians:
+            spread = half_width_deg * pixels_per_degree / (2 * math.sqrt(math.log(2)))
+            kernel = np.exp(-((x / spread) ** 2)) if spread > 0 else (x == 0).astype(np.float64)
+            kernel = (kernel / kernel.sum()).astype(np.float32)
+            total += np.float32(weight) * cv2.sepFilter2D(plane, -1, kernel, kernel, borderType=cv2.BORDER_REFLECT)
+        filtered[..., channel] = total
+    back = filtered @ np.linalg.inv(SCIELAB_XYZ_TO_OPPONENT).T.astype(np.float32)
+    return xyz_to_lab(back.astype(np.float64) / _SRGB_TO_XYZ.sum(axis=1))  # relative to the white point, D65
+
+
+def scielab_map(source_bgr: np.ndarray, painted_bgr: np.ndarray, pixels_per_degree: float) -> np.ndarray:
+    """Per-pixel CIEDE2000 between the source and the painting, both as the eye sees them (``scielab_lab``)."""
+    return ciede2000(scielab_lab(source_bgr, pixels_per_degree), scielab_lab(painted_bgr, pixels_per_degree))
 
 
 def source_ink(

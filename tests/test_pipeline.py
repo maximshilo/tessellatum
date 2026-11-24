@@ -998,3 +998,34 @@ def test_a_triangle_s_point_is_rounded_unless_corners_are_asked_to_keep_their_po
         reach[name] = int(np.nonzero((ids == ids[212, 300]).any(axis=0))[0].max())
     pipeline.clear_cache()
     assert reach == {"default": 515, "20 degrees": 520}  # rounded to the brush 5 px short of its point, or to it
+
+
+def test_a_page_keeps_its_colors_apart_as_paper_shows_them_and_its_subject_s_as_the_screen_does(monkeypatch):
+    # Near-blacks a screen shows 5.5 ΔE00 apart, which paper with a black of L* 25 shows 2.6 and 3.7 apart, above a
+    # colorful band (see test_quantize).
+    image = np.zeros((300, 450, 3), dtype=np.uint8)
+    for index, gray in enumerate((8, 30, 48)):
+        image[:225, index * 150 : (index + 1) * 150] = gray
+    hue = np.linspace(0, 170, 450).astype(np.uint8)
+    band = np.stack([np.broadcast_to(hue, (75, 450)), np.full((75, 450), 200, np.uint8), np.full((75, 450), 220, np.uint8)], -1)
+    image[225:] = cv2.cvtColor(band, cv2.COLOR_HSV2BGR)
+    params = difficulty.DifficultyParams(num_colors=8, min_region_area_mm2=10.0, blur_sigma=0.0, palette_margin_de00=4.0)
+    no_subject = lambda _image, resized: np.zeros(resized.shape[:2], dtype=bool)  # noqa: E731
+    monkeypatch.setattr(pipeline, "detect_subject", no_subject)
+
+    def darks(paper_black: float) -> int:
+        pipeline.clear_cache()
+        page = generate(image.copy(), dataclasses.replace(params, paper_black_lstar=paper_black), 450, collect_analysis=True)
+        lightness = color_lightness(page.analysis.palette_bgr)
+        return int((lightness < 25).sum())
+
+    assert darks(0.0) == 3
+    assert darks(25.0) < 3
+    monkeypatch.setattr(pipeline, "detect_subject", lambda _image, resized: np.ones(resized.shape[:2], dtype=bool))
+    assert darks(25.0) == 3  # all of it is the subject
+
+
+def color_lightness(palette_bgr: np.ndarray) -> np.ndarray:
+    from tessellatum.core.color import bgr_to_lab
+
+    return bgr_to_lab(np.asarray(palette_bgr, dtype=np.uint8))[:, 0]

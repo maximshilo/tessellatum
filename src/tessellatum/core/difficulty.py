@@ -16,7 +16,7 @@ pixels: see ``pipeline.working_long_edge``.)
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from tessellatum.core.color import MIN_PALETTE_DE00
 from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM
@@ -25,6 +25,10 @@ from tessellatum.core.regions import CORNER_CONTRAST_DE00, SHARPEST_CORNER_DEG
 
 # How many times smaller a region may be in the faces and the subject found, by default (see ``DifficultyParams``).
 DETAIL_WEIGHT = 2
+# The levels' paper black, in L* (see ``DifficultyParams.paper_black_lstar``): a little darker than plain office paper
+# prints (black density 1.2-1.4, L* 27-30), so it errs toward keeping colors there, and a little lighter than a good
+# laser or pigment inkjet and soft pencils reach (about 20, as the setting's tooltip says).
+PAPER_BLACK_LSTAR = 25.0
 
 
 @dataclass(frozen=True)
@@ -65,6 +69,10 @@ class DifficultyParams:
         sharpest_corner_deg: the sharpest corner, in degrees, whose point the
             brush rule keeps rather than rounding it to the brush; 180, the
             default, rounds every corner (see ``regions.CornerRule``).
+        paper_black_lstar: the darkest black paper and paint show, in L*. Two
+            colors darker than about that print alike, so they are held to the
+            margin as printed too, except in the faces and the subject found
+            (see ``quantize``); 0 holds them to it as the screen shows them.
         corner_contrast_de00: how much closer to its own color than to its
             neighbor's (CIEDE2000) a corner's point must be in the picture, on
             average, to be kept: the points of a picture's shapes stand apart,
@@ -82,6 +90,7 @@ class DifficultyParams:
     detail_weight: int = DETAIL_WEIGHT
     sharpest_corner_deg: float = SHARPEST_CORNER_DEG
     corner_contrast_de00: float = CORNER_CONTRAST_DE00
+    paper_black_lstar: float = 0.0
 
 
 def _level(num_colors: int, min_region_area_mm2: float, min_width_mm: float, blur_sigma: float) -> DifficultyParams:
@@ -97,11 +106,12 @@ def _level(num_colors: int, min_region_area_mm2: float, min_width_mm: float, blu
         detail_weight=4,
         sharpest_corner_deg=180.0,
         corner_contrast_de00=0.0,
+        paper_black_lstar=PAPER_BLACK_LSTAR,
     )
 
 
 # From Beginner to Realistic, more colors, smaller regions, a finer brush and less smoothing; every level keeps
-# colors 4 ΔE00 apart, settles the edges a long way while holding them to the picture's, gives faces and the subject
+# colors 4 ΔE00 apart, as the screen shows them and as paper with a black of L* 25 does, settles the edges a long way while holding them to the picture's, gives faces and the subject
 # a quarter of the smallest region, and rounds corners to the brush.
 PRESETS: dict[str, DifficultyParams] = {
     "Beginner": _level(16, 10.0, 1.0, 1.2),
@@ -137,6 +147,7 @@ CUSTOM_RANGES: dict[str, tuple[float, float]] = {
     "detail_weight": (1, 4),
     "sharpest_corner_deg": (5.0, 180.0),
     "corner_contrast_de00": (0.0, 60.0),
+    "paper_black_lstar": (0.0, 40.0),
 }
 # The fields that take whole numbers.
 _INTEGER_FIELDS = frozenset({"num_colors", "detail_weight"})
@@ -145,6 +156,24 @@ CUSTOM_MIN_REGION_AREA_MM2_RANGE = CUSTOM_RANGES["min_region_area_mm2"]
 CUSTOM_BLUR_RANGE = CUSTOM_RANGES["blur_sigma"]
 
 DEFAULT_PRESET = "Medium"
+
+# What the page is colored with. Paper and paint have a darkest black and are told apart by eye, so a level keeps its
+# colors apart as printed (``paper_black_lstar``) and by its margin. On a screen, a color is picked by its value with
+# an eyedropper or a fill: there is no paper black, and the margin only needs to keep two neighboring regions apart,
+# a little over the smallest difference an eye sees side by side, at most SCREEN_MARGIN_DE00.
+PAPER_MEDIUM = "Paper and paint"
+SCREEN_MEDIUM = "Screen"
+MEDIA = (PAPER_MEDIUM, SCREEN_MEDIUM)
+DEFAULT_MEDIUM = PAPER_MEDIUM
+SCREEN_MARGIN_DE00 = 2.5
+
+
+def for_medium(params: DifficultyParams, medium: str) -> DifficultyParams:
+    """``params`` for a page colored on ``medium`` (one of ``MEDIA``): on a screen, no paper black, and the margin at
+    most ``SCREEN_MARGIN_DE00``; on paper, as they are."""
+    if medium != SCREEN_MEDIUM:
+        return params
+    return replace(params, paper_black_lstar=0.0, palette_margin_de00=min(params.palette_margin_de00, SCREEN_MARGIN_DE00))
 
 
 def preset_names() -> list[str]:
