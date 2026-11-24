@@ -22,7 +22,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tessellatum.core import pipeline  # noqa: E402
 from tessellatum.core.painting import Version  # noqa: E402
-from tessellatum.gui import main_window  # noqa: E402
+from tessellatum.gui import main_window, theme  # noqa: E402
 
 PICTURE = ROOT / "tests" / "sample_images" / "l-photo-lion.jpg"
 SHOWN = Version.PAGE
@@ -31,6 +31,7 @@ SIZE = (1440, 900)
 
 def main() -> None:
     app = QApplication.instance() or QApplication([])
+    theme.install(app).set_mode(theme.LIGHT_MODE)  # as the app looks, in its light theme whatever the system's
     window = main_window.MainWindow()  # no store: the user's saved settings are neither read nor changed
     window.setAttribute(Qt.WA_DontShowOnScreen)
     window.resize(*SIZE)

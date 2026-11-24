@@ -38,6 +38,20 @@ def picture() -> np.ndarray:
     return np.clip(image, 0, 255).astype(np.uint8)
 
 
+def check_interface_assets() -> None:
+    """Raise if the build lacks the interface's font or icons, or their licenses: a window would open without them,
+    in the platform's font and with blank buttons, so only a check shows them missing."""
+    from tessellatum.gui import theme
+    from tessellatum.gui.theme import icons, tokens
+
+    lacking = [name for name in (*tokens.FONT_FILES, "OFL.txt") if not (theme.FONTS_DIR / name).is_file()]
+    lacking += [f"{name}.svg" for name in icons.missing()]
+    if not (icons.ICONS_DIR / "LICENSE").is_file():
+        lacking.append("icons/LICENSE")
+    if lacking:
+        raise RuntimeError(f"the interface's assets are missing: {', '.join(lacking)}")
+
+
 def run(out_dir: Path) -> int:
     """Make a page and export it into ``out_dir``; 0 if every file was written, else 1 (see the module)."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -61,6 +75,7 @@ def run(out_dir: Path) -> int:
         missing = [p.name for p in written if not p.is_file() or p.stat().st_size == 0]
         if missing:
             raise RuntimeError(f"not written: {', '.join(missing)}")
+        check_interface_assets()
         print(
             f"Tessellatum {__version__} self-test passed in {time.perf_counter() - started:.1f} s: "
             f"{page.num_regions} regions, {page.num_colors_used} colors; wrote {', '.join(p.name for p in written)}"

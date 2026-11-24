@@ -44,6 +44,7 @@ class MainWindow(QMainWindow):
 
         self.controls = ControlsPanel(store=store)
         self.preview = PreviewWidget()
+        self.preview.setObjectName("canvas")  # the theme's canvas surface; the page keeps its own pixels
         # Every version of a page is drawn with it, so the bar switches between them at once.
         self.version_bar = VersionBar()
         self.version_bar.setEnabled(False)
@@ -59,6 +60,7 @@ class MainWindow(QMainWindow):
 
         # The panel scrolls rather than holding the window taller than a small screen.
         controls_scroll = QScrollArea()
+        controls_scroll.setObjectName("sidebarScroll")
         controls_scroll.setWidget(self.controls)
         controls_scroll.setWidgetResizable(True)
         controls_scroll.setFrameShape(QFrame.NoFrame)

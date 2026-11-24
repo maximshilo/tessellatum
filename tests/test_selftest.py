@@ -36,3 +36,11 @@ def test_the_app_runs_the_self_test_from_its_command_line(tmp_path):
     )  # fmt: skip
     assert done.returncode == 0, done.stderr
     assert "self-test passed" in done.stdout
+
+
+def test_the_self_test_fails_a_build_without_the_interface_assets(tmp_path, monkeypatch):
+    from tessellatum.gui.theme import icons
+
+    monkeypatch.setattr(icons, "ICONS_DIR", tmp_path / "nowhere")
+    assert selftest.run(tmp_path) == 1
+    assert "interface's assets are missing" in (tmp_path / selftest.ERROR_FILE).read_text(encoding="utf-8")

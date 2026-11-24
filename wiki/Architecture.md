@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart TB
-    GUI["Presentation: MainWindow · ControlsPanel · PreviewWidget (PySide6)"]
+    GUI["Presentation: MainWindow · ControlsPanel · PreviewWidget · theme (PySide6)"]
     W["Concurrency: PipelineWorker (QThread) · warm-up thread · thread pool"]
     O["Orchestration: pipeline.py · settings.py · difficulty.py · print_size.py"]
     AN["Picture analysis: ink · faces · subject · text"]
@@ -26,8 +26,9 @@ thread.
 src/tessellatum/
   main.py          entry point
   core/            the pipeline: 29 modules
-  gui/             the Qt interface: 5 modules
-  resources/       the four bundled models and their licenses (MODELS.md)
+  gui/             the Qt interface: 5 modules, and theme/ (tokens, style, icons, motion)
+  resources/       the four bundled models and their licenses (MODELS.md); fonts/ (Inter, OFL) and icons/
+                   (Lucide, ISC)
 tests/             pytest suite and the benchmark images (CC0 / public domain)
 benchmarks/        speed and quality harness, quality spec and report
 packaging/         PyInstaller spec and build scripts
@@ -74,8 +75,29 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
   palettes, so changing only a later setting skips straight to the region stages.
 - **Progress.** Each stage reports its measured share of the work, so the progress bar is real.
 
+## Theme
+
+`gui/theme/` gives the interface its look, separately from what it shows:
+
+- **Tokens** (`tokens.py`): every color, size and duration, as a light and a dark set of the same names (surfaces,
+  text, borders, the Viridian accent, states, status colors), plus the type scale, spacing, radii, icon sizes and
+  motion durations. `CONTRAST_PAIRS` lists every text/surface and boundary/surface pairing the interface draws, and
+  a test checks each against WCAG AA (4.5:1 for text, 3:1 for boundaries) in both schemes.
+- **Style** (`style.py`): a `QPalette` and one application stylesheet built from the tokens, on Qt's Fusion style
+  on every platform; native file and color dialogs and window frames stay the system's. Widgets carry object names
+  and roles (`sectionHeader`, `role="hint"`, `primary`), never colors: a widget's own stylesheet would freeze its
+  colors through a theme switch.
+- **ThemeManager** (`__init__.py`): follows `QStyleHints.colorScheme` live, or the user's Light/Dark choice (kept in
+  `QSettings` under `appearance/theme`), and re-applies the palette and stylesheet on every change. It also reads
+  the system's reduced-motion setting (Windows, macOS, GNOME), with an override, so animations can be skipped.
+- **Icons** (`icons.py`): Lucide SVGs recolored from `currentColor` to a token's color per state (normal, selected,
+  disabled), cached per size and pixel ratio; stylesheet arrows are recolored copies in a temporary folder.
+
+The page, its versions and its legend are never themed: the canvas shows their own pixels.
+
 ## Packaging
 
 `pyproject.toml` declares the package and its dependencies (PySide6, OpenCV, NumPy, Pillow, Numba, ONNX Runtime).
-PyInstaller builds a standalone "onedir" app from `packaging/tessellatum.spec`, bundling the models. The release
+PyInstaller builds a standalone "onedir" app from `packaging/tessellatum.spec`, bundling the models, the font and
+the icons (the self-test checks the last two are there). The release
 workflow builds it on GitHub Actions for every version tag (see [Development](Development)).

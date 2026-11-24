@@ -4,6 +4,27 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.0] - 2026-11-24
+
+### Added
+
+- **A new look, light and dark.** The window has a design of its own: calm neutral surfaces, the page on a slightly
+  darker canvas so it reads first, and one accent color, **Viridian**, for what's selected, focused or primary
+  (Generate Preview). Every text and control color meets WCAG AA contrast in both themes. The theme follows the
+  system's light or dark setting live, as it changes, with no restart.
+- The interface uses the **Inter** typeface (SIL Open Font License) and carries a set of **Lucide** icons (ISC
+  license) drawn in the theme's colors, both bundled with the app with their licenses.
+- The progress percentage sits beside a slim progress bar, rather than on it.
+- The build self-test also checks that the app carries its font and icons.
+
+### Fixed
+
+- After the system switched from dark to light while the app was open, the panel's section titles were white on the
+  light panel and could hardly be read. Every color now comes from the theme and changes with it.
+- Three hard-coded grays (the thumbnail's frame, the Screen hint and the PNG size readout) ignored the theme; the
+  readouts were too faint in dark mode.
+- Without a saved settings file, the two mixing settings started enabled although colors came from the picture.
+
 ## [1.0.21] - 2026-11-24
 
 ### Added

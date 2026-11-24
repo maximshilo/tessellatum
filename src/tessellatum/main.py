@@ -9,6 +9,7 @@ from PySide6.QtCore import QSettings
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from tessellatum.gui import theme
 from tessellatum.gui.main_window import MainWindow
 
 RESOURCES_DIR = Path(__file__).resolve().parent / "resources"
@@ -25,7 +26,9 @@ def main() -> None:
     app.setOrganizationName("Tessellatum")
     app.setWindowIcon(QIcon(str(RESOURCES_DIR / "icon.png")))
 
-    # The panel's settings are kept between runs, under the organization and application names above.
+    # The panel's settings and the theme picked are kept between runs, under the organization and application names
+    # above.
+    theme.install(app, QSettings())
     window = MainWindow(store=QSettings())
     window.show()
 
