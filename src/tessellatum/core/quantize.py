@@ -847,13 +847,27 @@ def _take_mixes(
     candidates = np.flatnonzero(hopeful)
     if len(candidates) == 0:
         return []
-    paint_count = len(paint_lab)
-    joint_lab = np.concatenate([paint_lab, mix_lab[candidates]])
-    joint_distance = np.concatenate([distance, mix_distance[:, candidates]], axis=1)
-    clash = _clashes(joint_lab, joint_distance, coarse, kept, min_de00, paper_black_lstar)
-    apart = ~clash[paint_count:, :paint_count].any(axis=1)  # within the margin of no paint at all
+    # The margin as ``_clashes`` keeps it, worked out only where it is needed: each mix against every paint, and a mix
+    # taken against the other mixes.
+    mostly_kept = None
+    if min_de00 > 0 and paper_black_lstar > 0 and kept is not None:
+        joint_distance = np.concatenate([distance, mix_distance[:, candidates]], axis=1)
+        mostly_kept = _kept_share(coarse, kept, joint_distance) > _KEPT_SHARE
+    paint_kept = None if mostly_kept is None else mostly_kept[: len(paint_lab)]
+    mix_kept = None if mostly_kept is None else mostly_kept[len(paint_lab) :]
+    to_paints = _clash_rows(mix_lab[candidates], paint_lab, mix_kept, paint_kept, min_de00, paper_black_lstar)
+    apart = ~to_paints.any(axis=1)  # within the margin of no paint at all
     candidates = candidates[apart]
-    clash = clash[paint_count:, paint_count:][apart][:, apart]
+    mix_kept = None if mix_kept is None else mix_kept[apart]
+    candidate_lab = mix_lab[candidates]
+    rows: dict[int, np.ndarray] = {}
+
+    def clash(t: int) -> np.ndarray:
+        if t not in rows:
+            own = None if mix_kept is None else mix_kept[t : t + 1]
+            rows[t] = _clash_rows(candidate_lab[t : t + 1], candidate_lab, own, mix_kept, min_de00, paper_black_lstar)[0]
+        return rows[t]
+
     columns = mix_distance[:, candidates]  # bins x candidates
 
     banned = np.zeros(len(candidates), dtype=bool)
@@ -863,7 +877,7 @@ def _take_mixes(
         allowed = ~banned
         for t in taken:
             now = np.minimum(now, columns[:, t])
-            allowed &= ~clash[t]
+            allowed &= ~clash(t)
             allowed[t] = False
         while len(taken) < room and allowed.any():
             live = np.flatnonzero(allowed)
@@ -874,7 +888,7 @@ def _take_mixes(
                 break
             best = int(live[np.flatnonzero(ok)[np.argmax(saving[ok])]])
             taken.append(best)
-            allowed &= ~clash[best]
+            allowed &= ~clash(best)
             allowed[best] = False
             now = np.minimum(now, columns[:, best])
         dropped = False
@@ -899,6 +913,28 @@ def _take_mixes(
         if not dropped:
             break
     return [int(candidates[t]) for t in taken]
+
+
+def _clash_rows(
+    lab_a: np.ndarray,
+    lab_b: np.ndarray,
+    kept_a: np.ndarray | None,
+    kept_b: np.ndarray | None,
+    min_de00: float,
+    paper_black_lstar: float,
+) -> np.ndarray:
+    """Which of the colors ``lab_a`` (n) is closer than ``min_de00`` to which of ``lab_b`` (m), n x m, as ``_clashes``
+    judges it: on screen and, with ``paper_black_lstar``, as printed, unless either is mostly used where the picture
+    is looked at (``kept_a``, ``kept_b``)."""
+    if min_de00 <= 0:
+        return np.zeros((len(lab_a), len(lab_b)), dtype=bool)
+    apart = ciede2000(lab_a[:, None, :], lab_b[None, :, :])
+    if paper_black_lstar > 0:
+        printed = printed_de00(lab_a[:, None, :], lab_b[None, :, :], paper_black_lstar)
+        if kept_a is not None and kept_b is not None:
+            printed = np.where(kept_a[:, None] | kept_b[None, :], apart, printed)
+        apart = np.minimum(apart, printed)
+    return apart < min_de00
 
 
 def _distances_within(lab: np.ndarray, colors_lab: np.ndarray, reach: np.ndarray) -> np.ndarray:
