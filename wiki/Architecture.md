@@ -25,7 +25,7 @@ thread.
 ```
 src/tessellatum/
   main.py          entry point
-  core/            the pipeline: 27 modules
+  core/            the pipeline: 29 modules
   gui/             the Qt interface: 5 modules
   resources/       the four bundled models and their licenses (MODELS.md)
 tests/             pytest suite and the benchmark images (CC0 / public domain)
