@@ -387,7 +387,7 @@ whether a brush can paint the bands a gradient breaks into:
 | color margin | the page's color margin, which the palette min is held to (10 ΔE00 where a version sets none) | informational |
 | palette min ΔE00 | smallest CIEDE2000 color difference between two colors on the legend | higher (≥ the color margin) |
 | close color pairs | pairs of legend colors that differ by less than the page's color margin ("color pairs < 10 ΔE00" until 0.1.51) | lower (0) |
-| printed min ΔE00 | smallest difference between two legend colors as printed: CIEDE2000 after black point compensation to a paper black of L* 25 (`bench_metrics.PAPER_BLACK_LSTAR`, the same for every version and setting), divided by the share two grays at L* 50 and 54 keep, and never more than the CIEDE2000 on screen (from 1.0.16) | higher (≥ the color margin) |
+| printed min ΔE00 | smallest difference between two legend colors as printed: CIEDE2000 after black point compensation to a paper black of L* 25 (`bench_metrics.PAPER_BLACK_LSTAR`, the same for every version and setting), divided by the share two grays at L* 50 and 54 keep, and never more than the CIEDE2000 on screen (from 1.0.16) | higher (≥ the color margin, on pages made for paper: not `-Screen` presets or Max) |
 | printed close pairs | pairs of legend colors closer than the page's color margin as printed (from 1.0.16) | lower (0) |
 | colors < L* 25, colors > L* 90 | legend colors near black and near white (`dark_legend_colors`, `light_legend_colors`; from 1.0.16) | informational |
 | ink line F1 | how well drawn lines, and the centerlines of the ink the page prints, run down the middle of the artwork's ink lines, within 0.5 mm; `case.json` also records `ink_line_precision` and `ink_line_recall` | higher |
@@ -941,7 +941,7 @@ below). The preview tolerances were measured on 1100 px pages.
 | labels on text | clean drawing | 1.3 | 2.7 | 0 |
 | palette min ΔE00 | palette | 1.3 | 0.93 | ≥ color margin |
 | close color pairs | palette | 3.2 | 3.1 | – |
-| printed min ΔE00 | palette | 0.87 | (0.87) | ≥ color margin |
+| printed min ΔE00 | palette | 0.87 | (0.87) | ≥ color margin, on pages made for paper |
 | printed close pairs | palette | 1 | (1) | – |
 | flat colors ΔE00 | palette | 1.2 | 0.81 | ≤ flat colors ΔE00 best + 2.5 on exact colors |
 
@@ -1102,8 +1102,8 @@ by 0.038 rather than 0.016, labels on features by 3.6 rather than 1.6.
   regressions: 7 of the 48 cases rendered 1 px apart had one.
 - **The palette's trade** (from 1.0.16; `bench_report.traded`): moving colors out of a large dark area, whose
   near-blacks paper prints alike, raises that area's error, so ΔE00 mean, ΔE00 p95 and SSIM may get worse on a case
-  whose printed close pairs fell, as long as its ΔE00 mean rose by at most 1.0 and 10%, its vivid ΔE00 or subject ΔE00
-  improved, no face metric is worse alone by more than 3 σ and no face feature is lost. Such a case is left out of
+  whose printed close pairs fell, as long as its ΔE00 mean rose by at most 1.0 and 10%, its ΔE00 p95 by at most 10%
+  and its SSIM fell by at most 0.02, its vivid ΔE00 or subject ΔE00 improved by more than its tolerance, no face metric is worse alone by more than 3 σ and no face feature is lost. Such a case is left out of
   those three metrics' regressions, and the verdict lists it.
 - **Direction:** lines per boundary are judged by their distance from 1.
   Undersized regions have σ = 0, so their mean may not rise at all.
