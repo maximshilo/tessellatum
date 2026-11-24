@@ -30,6 +30,22 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tessellatum.app.snapshot import (  # noqa: F401 - the panel's names for them, kept for its callers
+    COLORS_FROM,
+    CUSTOM,
+    CUSTOM_TONE,
+    DEFAULT_DPI,
+    DEFAULT_PAPER,
+    DPI,
+    MY_PAINTS,
+    PALETTE,
+    PDF,
+    PICTURE_COLORS,
+    PIXELS,
+    PNG,
+    DocumentSettings,
+    ExportOptions,
+)
 from tessellatum.core import difficulty, export, settings, swatches
 from tessellatum.core.legend import DEFAULT_LEGEND_DETAIL, LEGEND_DETAILS, NAME, NAME_HEX_RGB, NAME_RECIPE, NUMBER_ONLY
 from tessellatum.core.paints import distinct, paints_text, parse_paints
@@ -54,7 +70,6 @@ TONE_TOOLTIPS = {
     "their regions in a lighter gray of their own, with their leaders.",
     "Dark": "Darker lines, numbers and leaders, easier to follow on paper.",
 }
-CUSTOM_TONE = "Custom"
 CUSTOM_TONE_TOOLTIP = "Set the three grays yourself. Moving any of them picks Custom, starting from the tone."
 
 PAPER_TOOLTIP = (
@@ -62,17 +77,12 @@ PAPER_TOOLTIP = (
     "applies on it. A larger sheet prints the picture larger, so it makes a finer page, with more and smaller regions, "
     "and takes longer; the PDF's sheets are this size."
 )
-DEFAULT_PAPER = "A4"
-
 LEGEND_TOOLTIPS = {
     NUMBER_ONLY: "Each color's swatch with its number in it, and nothing beside it.",
     NAME: "Each color's everyday name beside its swatch (\"dusty rose\", \"olive green\"): the nearest of about 800 names, every color a different one.",
     NAME_HEX_RGB: "Its name, and under it its hex code and RGB values (\"#C0737A  RGB 192 115 122\"), exactly the color the page is painted with: to find it in a painting app, or match a paint or pencil to it.",
     NAME_RECIPE: "Its name, and how to mix it from the paints you list (Paints…): \"3 Titanium white\", \"1 Ultramarine\", parts of one to three of them, mixed as real paint mixes (blue and yellow make green). A model of paint, not of your own tubes: a place to start. A color no mix comes within 5 ΔE00 of says how far off its closest is. With no paints listed, as Name, hex and RGB.",
 }
-PICTURE_COLORS = "The picture"
-MY_PAINTS = "My paints"
-COLORS_FROM = (PICTURE_COLORS, MY_PAINTS)
 COLORS_FROM_TOOLTIP = (
     "Where the page's colors come from. The picture: the colors it finds in it. My paints: the paints or pencils you "
     "list (Paints…), at most as many as Colors asks for, the ones that paint the picture best, each called by its own "
@@ -88,7 +98,6 @@ MIX_TOOLTIP = (
     "model: your own paints may mix a little differently."
 )
 MIX_FIELDS = ("mix_gain_de00", "mix_min_share_pct")
-PALETTE = "Palette"
 PALETTE_TOOLTIP = (
     "The legend's colors as a palette file, for coloring the page in a painting app with exactly its colors, each "
     "named by its number and its name on the legend (\"7 dusty rose\"). Procreate: a .swatches file of 30 colors at "
@@ -113,11 +122,9 @@ MEDIUM_TOOLTIP = "What the page will be colored with. " + " ".join(
 )
 
 # The PNG's resolution (T3c): in dots per inch on its paper, or in pixels along its long edge.
-DPI, PIXELS = "dpi", "px"
 DPI_PRESETS = (150, 300, 600)
-# 600 dpi: the benchmark's slowest A4 export, the complex cartoon at Realistic, lays its preview out in 7.2 s and draws
-# it at 600 dpi in 3.1 s more, at 1.1 GB, within the 15 s and 2 GB a default may take (D-012).
-DEFAULT_DPI = 600
+# DEFAULT_DPI, 600 dpi: the benchmark's slowest A4 export, the complex cartoon at Realistic, lays its preview out in
+# 7.2 s and draws it at 600 dpi in 3.1 s more, at 1.1 GB, within the 15 s and 2 GB a default may take (D-012).
 MIN_DPI = 72
 MIN_PIXELS = 500
 RESOLUTION_TOOLTIP = (
@@ -255,6 +262,9 @@ class ControlsPanel(QWidget):
     # What the legend writes beside each swatch was changed: it applies to the page shown, which isn't made again.
     legend_detail_changed = Signal(str)
     paints_changed = Signal()  # the paints listed, which the legend's recipes are mixed from
+    # Any setting changed: the settings as they are now, a ``DocumentSettings`` (see ``snapshot``). Not while the
+    # panel is loading or resetting, which ends with one.
+    settings_changed = Signal(object)
 
     def __init__(self, parent: QWidget | None = None, store: QSettings | None = None):
         """``store``, if given, is where the panel keeps its settings between runs: read now, written on each change."""
@@ -263,6 +273,7 @@ class ControlsPanel(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._store = store
         self._loading = False
+        self._announced: DocumentSettings | None = None  # the settings last sent with settings_changed
 
         self.open_button = QPushButton("Open Image…")
         self.thumbnail_label = QLabel("No image loaded")
@@ -274,7 +285,7 @@ class ControlsPanel(QWidget):
         self.preset_combo.addItems(difficulty.preset_names())
         for index, name in enumerate(difficulty.PRESETS):
             self.preset_combo.setItemData(index, difficulty.describe(difficulty.params_for_preset(name)), Qt.ToolTipRole)
-        self.preset_combo.setItemData(self.preset_combo.findText("Custom"), CUSTOM_TOOLTIP, Qt.ToolTipRole)
+        self.preset_combo.setItemData(self.preset_combo.findText(CUSTOM), CUSTOM_TOOLTIP, Qt.ToolTipRole)
         self.preset_combo.setCurrentText(difficulty.DEFAULT_PRESET)
         self.reset_button = QPushButton("Reset")
         self.reset_button.setToolTip("Put every setting back to its default, and the difficulty to Medium.")
@@ -502,8 +513,9 @@ class ControlsPanel(QWidget):
         self.paints_button.clicked.connect(self.edit_paints)
         self.resolution_unit.currentIndexChanged.connect(lambda _index: self._on_unit_changed())
         self.resolution_spin.valueChanged.connect(lambda _value: self._on_resolution_edited())
-        self.png_radio.toggled.connect(lambda _checked: self._show_resolution())
-        self.palette_radio.toggled.connect(lambda _checked: self._show_resolution())
+        for radio in (self.png_radio, self.pdf_radio, self.palette_radio):
+            radio.toggled.connect(lambda checked: checked and self._on_format_changed())
+        self.version_combo.currentIndexChanged.connect(lambda _index: self._save())
         self.palette_combo.currentIndexChanged.connect(lambda _index: self._save())
         for check in self._switches.values():
             check.toggled.connect(lambda _checked: self._save())
@@ -512,6 +524,7 @@ class ControlsPanel(QWidget):
         self._show_resolution()
         self._show_paints()  # the mixing settings stand aside until the colors come from the paints
         self._load()
+        self._announced = self.snapshot()
 
     # -- Settings --------------------------------------------------------
     def _difficulty_controls(self) -> dict[str, SettingSlider]:
@@ -524,7 +537,7 @@ class ControlsPanel(QWidget):
             control.set_value(getattr(params, field))
 
     def _on_preset_changed(self, name: str) -> None:
-        if name != "Custom":
+        if name != CUSTOM:
             self._show_preset(name)
         self._save()
 
@@ -541,9 +554,9 @@ class ControlsPanel(QWidget):
     def _on_setting_edited(self, name: str) -> None:
         # A difficulty setting moved off its preset is a Custom difficulty, starting from the preset's other values;
         # a gray moved off its tone, a Custom tone, likewise.
-        if self.controls[name].setting.owner == settings.DIFFICULTY and self.preset_combo.currentText() != "Custom":
+        if self.controls[name].setting.owner == settings.DIFFICULTY and self.preset_combo.currentText() != CUSTOM:
             self.preset_combo.blockSignals(True)
-            self.preset_combo.setCurrentText("Custom")
+            self.preset_combo.setCurrentText(CUSTOM)
             self.preset_combo.blockSignals(False)
         if name in TONE_FIELDS and self.tone_combo.currentText() != CUSTOM_TONE:
             self.tone_combo.blockSignals(True)
@@ -578,8 +591,19 @@ class ControlsPanel(QWidget):
             self._loading = False
         self._save()
 
+    def _on_format_changed(self) -> None:
+        self._show_resolution()
+        self._save()
+
     def _save(self) -> None:
-        if self._store is None or self._loading:
+        """Announce the settings if they changed, and keep them in the store."""
+        if self._loading:
+            return
+        snapshot = self.snapshot()
+        if snapshot != self._announced:
+            self._announced = snapshot
+            self.settings_changed.emit(snapshot)
+        if self._store is None:
             return
         self._store.setValue(_PRESET_KEY, self.preset_combo.currentText())
         self._store.setValue(_TONE_KEY, self.tone_combo.currentText())
@@ -639,7 +663,7 @@ class ControlsPanel(QWidget):
                 except (TypeError, ValueError):
                     continue
                 # A preset's difficulty is the preset's, and a tone's grays the tone's, whatever was kept beside them.
-                if control.setting.owner == settings.DIFFICULTY and preset != "Custom":
+                if control.setting.owner == settings.DIFFICULTY and preset != CUSTOM:
                     continue
                 if name in TONE_FIELDS and tone != CUSTOM_TONE:
                     continue
@@ -673,37 +697,84 @@ class ControlsPanel(QWidget):
         )
         self.thumbnail_label.setPixmap(scaled)
 
-    # -- What the pipeline is asked for -------------------------------------
-    def _chosen(self, owner: str) -> dict[str, float]:
-        return {name: c.value() for name, c in self.controls.items() if c.setting.owner == owner}
+    # -- The settings as one value -----------------------------------------
+    def snapshot(self) -> DocumentSettings:
+        """The settings as the panel shows them: what the document keeps, and what every ``get_`` below reads."""
+        return DocumentSettings(
+            preset=self.preset_combo.currentText(),
+            values={name: control.value() for name, control in self.controls.items()},
+            tone=self.tone_combo.currentText(),
+            paper=self.paper_combo.currentText(),
+            medium=self.medium_combo.currentText(),
+            legend=self.legend_combo.currentText(),
+            colors_from=self.colors_from_combo.currentText(),
+            paints=self._paints,
+            mix=self.mix_check.isChecked(),
+            **{name: check.isChecked() for name, check in self._switches.items()},
+            export=ExportOptions(
+                version=self.version_combo.currentData(),
+                format=PALETTE if self.palette_radio.isChecked() else PDF if self.pdf_radio.isChecked() else PNG,
+                palette_format=self.palette_combo.currentData(),
+                unit=self._unit(),
+                dpi=self._dpi,
+                pixels=self._pixels,
+            ),
+        )
 
+    def show_settings(self, snapshot: DocumentSettings) -> None:
+        """Show ``snapshot``: every control set to it, then one ``settings_changed`` if that changed anything. The
+        sliders show a value to their own step, so the panel's snapshot after may differ from it by that much."""
+        self._loading = True
+        try:
+            self.preset_combo.setCurrentText(snapshot.preset)
+            self.tone_combo.setCurrentText(snapshot.tone)
+            for name, control in self.controls.items():
+                control.set_value(snapshot.values[name])
+            if snapshot.preset != CUSTOM:
+                self._show_preset(snapshot.preset)
+            if snapshot.tone != CUSTOM_TONE:
+                self._show_tone(snapshot.tone)
+            self.paper_combo.setCurrentText(snapshot.paper)
+            self.medium_combo.setCurrentText(snapshot.medium)
+            self.legend_combo.setCurrentText(snapshot.legend)
+            self._paints = distinct(snapshot.paints)
+            self.colors_from_combo.setCurrentText(snapshot.colors_from)
+            self.mix_check.setChecked(snapshot.mix)
+            self._show_paints()
+            for name, check in self._switches.items():
+                check.setChecked(getattr(snapshot, name))
+            options = snapshot.export
+            self.version_combo.setCurrentIndex(self.version_combo.findData(options.version))
+            radio = {PNG: self.png_radio, PDF: self.pdf_radio, PALETTE: self.palette_radio}[options.format]
+            radio.setChecked(True)
+            self.palette_combo.setCurrentIndex(self.palette_combo.findData(options.palette_format))
+            self._dpi, self._pixels = options.dpi, options.pixels
+            self.resolution_unit.setCurrentIndex(self.resolution_unit.findData(options.unit))
+            self._show_resolution()
+        finally:
+            self._loading = False
+        self._save()
+        self.paints_changed.emit()
+        self.legend_detail_changed.emit(self.legend_combo.currentText())
+
+    # -- What the pipeline is asked for -------------------------------------
     def get_difficulty_params(self) -> difficulty.DifficultyParams:
-        preset = self.preset_combo.currentText()
-        if preset != "Custom":
-            params = difficulty.params_for_preset(preset)
-        else:
-            params = difficulty.custom_params(**self._chosen(settings.DIFFICULTY))
-        return difficulty.for_medium(params, self.medium_combo.currentText())
+        return self.snapshot().difficulty_params()
 
     def get_page_style(self) -> PageStyle:
         # The grays on their sliders, the tone's unless Custom.
-        return PageStyle(
-            **self._chosen(settings.STYLE), paper=self.paper_combo.currentText(), legend_detail=self.get_legend_detail()
-        )
+        return self.snapshot().page_style()
 
     def get_legend_detail(self) -> str:
         """What the legend writes beside each swatch (one of ``legend.LEGEND_DETAILS``)."""
         return self.legend_combo.currentText()
 
     def get_handling(self) -> Handling:
-        switches = {name: check.isChecked() for name, check in self._switches.items()}
-        paints = self.get_paints()
-        mix = bool(paints) and self.mix_check.isChecked()
-        return Handling(**switches, **self._chosen(settings.HANDLING), paints=paints, mix_paints=mix)
+        return self.snapshot().handling()
 
     def get_paints(self) -> tuple:
         """The painter's paints the page is to take its colors from: none unless Colors from is My paints."""
-        return self._paints if self.colors_from_combo.currentText() == MY_PAINTS else ()
+        return self.snapshot().paints_used()
 
     def set_paints(self, paints: tuple) -> None:
         """The paints listed (name, RGB each), kept whether or not the page takes its colors from them."""
@@ -755,9 +826,7 @@ class ControlsPanel(QWidget):
 
     def get_output_format(self) -> str:
         """"PNG", "PDF", or "Palette": the legend's colors as a palette file (see ``get_palette_format``)."""
-        if self.palette_radio.isChecked():
-            return PALETTE
-        return "PDF" if self.pdf_radio.isChecked() else "PNG"
+        return self.snapshot().export.format
 
     def get_palette_format(self) -> str:
         """The palette file's suffix: one of ``swatches.FORMATS``."""

@@ -7,7 +7,7 @@ from typing import Mapping
 
 from PIL import Image
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut, QTransform, QWheelEvent
+from PySide6.QtGui import QImage, QPalette, QPixmap, QTransform, QWheelEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QGraphicsPixmapItem,
@@ -79,16 +79,9 @@ class PreviewWidget(QGraphicsView):
         self._sharpen_timer.setSingleShot(True)
         self._sharpen_timer.setInterval(SHARPEN_DELAY_MS)
         self._sharpen_timer.timeout.connect(self._sharpen)
+        # Its zoom's keys are the window's View actions (see ``gui.actions``), and the menu's.
         self._placeholder = self._scene.addText("Open an image and click \"Generate Preview\"")
-        for keys, action in (
-            ((QKeySequence.ZoomIn, "Ctrl+="), self.zoom_in),
-            ((QKeySequence.ZoomOut,), self.zoom_out),
-            (("Ctrl+0",), self.fit_to_window),
-        ):
-            for key in keys:
-                shortcut = QShortcut(QKeySequence(key), self)
-                shortcut.setContext(Qt.WindowShortcut)
-                shortcut.activated.connect(action)
+        self._placeholder.setDefaultTextColor(self.palette().color(QPalette.WindowText))
 
     def show_page(
         self,
@@ -127,7 +120,8 @@ class PreviewWidget(QGraphicsView):
         self._paper = paper
         self._shown = {}
         if self._page_item is None:
-            self._scene.clear()
+            self._scene.clear()  # the placeholder with it
+            self._placeholder = None
             self._page_item = self._scene.addPixmap(QPixmap())
             self._legend_item = self._scene.addPixmap(QPixmap())
             for item in (self._page_item, self._legend_item):
@@ -259,6 +253,12 @@ class PreviewWidget(QGraphicsView):
             self.zoom_by(1 + event.value(), event.position())
             return True
         return super().viewportEvent(event)
+
+    def changeEvent(self, event: QEvent) -> None:
+        # The scene's text isn't a widget: it takes the theme's colors here, when they change.
+        if event.type() == QEvent.PaletteChange and self._placeholder is not None:
+            self._placeholder.setDefaultTextColor(self.palette().color(QPalette.WindowText))
+        super().changeEvent(event)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

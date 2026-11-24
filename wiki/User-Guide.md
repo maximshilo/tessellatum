@@ -19,6 +19,24 @@ Every preview is drawn in three versions, and the bar above it switches between 
 - **Tinted**: the page under a faint wash of its colors, each 40% of the way from white, with the lines, numbers and
   ink showing through as through a translucent paint: a guide to paint from.
 
+## Menus and shortcuts
+
+Every command is in the menu bar, and the most used have a shortcut (Cmd in place of Ctrl on macOS):
+
+| Command | Shortcut |
+|---|---|
+| File > Open Image | Ctrl+O |
+| File > Export | Ctrl+E |
+| Generate > Generate Preview | Ctrl+Enter, F5 |
+| Generate > Cancel | Esc |
+| View > Page, Completed, Tinted | Ctrl+1, Ctrl+2, Ctrl+3 |
+| View > Zoom In, Zoom Out | Ctrl+plus, Ctrl+minus |
+| View > Fit Page, 100% | Ctrl+0, Ctrl+Alt+0 |
+
+**View > Appearance** picks System (the window follows the system's light or dark setting as it changes), Light or
+Dark, and the choice is kept. **Edit > Reset All Settings** is the panel's Reset; **Help > About Tessellatum** shows
+the version and the licenses.
+
 ## Zoom
 
 The preview zooms about the point under the cursor, with the mouse wheel, Ctrl+wheel, a touchpad's pinch, Ctrl+plus

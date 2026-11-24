@@ -122,6 +122,7 @@ TEXT, NON_TEXT = 4.5, 3.0
 CONTRAST_PAIRS = (
     *((fg, bg, TEXT) for fg in ("text", "text_secondary", "text_hint")
       for bg in ("window", "chrome", "sidebar", "raised", "field")),
+    ("text", "canvas", TEXT),  # the empty canvas's placeholder
     ("text", "hover", TEXT),
     ("text", "pressed", TEXT),
     ("text", "selected", TEXT),

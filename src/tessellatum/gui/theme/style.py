@@ -53,7 +53,15 @@ def build_stylesheet(c: Colors) -> str:
 QToolTip {{ color: {c.tooltip_text}; background: {c.tooltip}; border: none; padding: 4px 6px; }}
 QStatusBar {{ background: {c.chrome}; color: {c.text_secondary}; border-top: 1px solid {c.border}; }}
 QStatusBar QLabel {{ color: {c.text_secondary}; }}
-QMenuBar {{ background: {c.chrome}; }}
+QMenuBar {{ background: {c.chrome}; color: {c.text}; }}
+QMenuBar::item {{ background: transparent; padding: 4px 8px; border-radius: {rs}px; }}
+QMenuBar::item:selected {{ background: {c.hover}; }}
+QMenuBar::item:pressed {{ background: {c.pressed}; }}
+QMenu {{ background: {c.raised}; color: {c.text}; border: 1px solid {c.border}; padding: 4px; }}
+QMenu::item {{ padding: 5px 24px 5px 8px; border-radius: {rs}px; }}
+QMenu::item:selected {{ background: {c.selected}; }}
+QMenu::item:disabled {{ color: {c.text_disabled}; }}
+QMenu::separator {{ height: 1px; background: {c.border}; margin: 4px 6px; }}
 QSplitter::handle {{ background: {c.border}; }}
 QSplitter::handle:horizontal {{ width: 1px; }}
 QSplitter::handle:vertical {{ height: 1px; }}

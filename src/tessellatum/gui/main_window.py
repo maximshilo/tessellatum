@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QSettings, Qt, QThread
+from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -21,11 +21,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tessellatum import __version__
+from tessellatum.app.document import Document
+from tessellatum.app.snapshot import DocumentSettings
 from tessellatum.core import export, mixing, pipeline, swatches
 from tessellatum.core.legend import NAME_RECIPE, render_legend
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import GeneratedPage
 from tessellatum.core.print_size import MM_PER_INCH, print_scale
+from tessellatum.gui import theme
+from tessellatum.gui.actions import THEME_ACTIONS, VERSION_ACTIONS, ZOOM_ACTIONS, Actions
 from tessellatum.gui.controls_panel import DPI, PALETTE, ControlsPanel
 from tessellatum.gui.preview_widget import PreviewWidget, VersionBar, ZoomBar
 from tessellatum.gui.worker import PipelineWorker, TaskWorker
@@ -80,8 +85,6 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Open an image to get started.")
 
-        self.current_image_bgr: np.ndarray | None = None
-        self.current_page: GeneratedPage | None = None
         self._previewed_image: np.ndarray | None = None  # the picture current_page is of
         self._worker: PipelineWorker | None = None
         self._pending_export_path: Path | None = None
@@ -100,15 +103,18 @@ class MainWindow(QMainWindow):
         self._print_worker: PipelineWorker | None = None
         self._retired: list[QThread] = []  # workers stopped but maybe not finished yet: kept until they are
 
-        self.controls.open_image_requested.connect(self.open_image)
-        self.controls.generate_requested.connect(self.generate_preview)
-        self.controls.export_requested.connect(self.export_page)
-        self.controls.abort_requested.connect(self.abort_generation)
         self.controls.legend_detail_changed.connect(self._show_legend)
         self.controls.paints_changed.connect(self._show_legend)
         self._recipes_for: tuple | None = None  # what the recipes kept were mixed for, and them (see _recipes)
         self.version_bar.version_changed.connect(self.preview.show_version)
         self.preview.detail_wanted.connect(self._draw_print_page)
+
+        # The document: the picture, its settings and the page made of them. The panel writes its edits into it.
+        self.document = Document(self.controls.snapshot(), self)
+        self.controls.settings_changed.connect(self.document.set_settings)
+        self._made_with: DocumentSettings | None = None  # the settings the page being made is made with
+
+        self._build_commands()
 
         self.resize(1280, 840)
 
@@ -117,6 +123,96 @@ class MainWindow(QMainWindow):
         # so the first preview is as fast as later ones.
         threading.Thread(target=_warm_up_pipeline, name="pipeline-warm-up", daemon=True).start()
 
+    # -- The document's picture and page ---------------------------------------
+    @property
+    def current_image_bgr(self) -> np.ndarray | None:
+        """The picture (BGR) the document holds, or None."""
+        source = self.document.source()
+        return None if source is None else source.image
+
+    @current_image_bgr.setter
+    def current_image_bgr(self, image: np.ndarray | None) -> None:
+        self.document.set_source(image)
+
+    @property
+    def current_page(self) -> GeneratedPage | None:
+        """The page last made of the picture (the preview), or None."""
+        return self.document.result()
+
+    @current_page.setter
+    def current_page(self, page: GeneratedPage | None) -> None:
+        self.document.set_result(page)
+
+    # -- Commands: the menu bar, the keyboard and the buttons -------------------
+    def _build_commands(self) -> None:
+        """Every command as one action (see ``gui.actions``): in the menu bar, on its shortcut, and behind its button,
+        enabled as its button is."""
+        self.commands = Actions(self)
+        self.commands.build_menus(self.menuBar())
+        c, commands = self.controls, self.commands
+        for command_id, method, button in (
+            ("open", self.open_image, c.open_button),
+            ("generate", self.generate_preview, c.generate_button),
+            ("export", self.export_page, c.export_button),
+        ):
+            commands[command_id].triggered.connect(method)
+            button.setToolTip(commands[command_id].toolTip())
+        # The panel's buttons ask for the commands, so that each one works one way, from wherever it is asked.
+        c.open_image_requested.connect(commands["open"].trigger)
+        c.generate_requested.connect(commands["generate"].trigger)
+        c.export_requested.connect(commands["export"].trigger)
+        c.abort_requested.connect(commands["cancel"].trigger)
+        commands["cancel"].triggered.connect(self.abort_generation)
+        c.abort_button.setToolTip(commands["cancel"].toolTip())
+        commands["reset"].triggered.connect(c.reset)
+        commands["quit"].triggered.connect(self.close)
+        commands["about"].triggered.connect(self.show_about)
+        for version, command_id in VERSION_ACTIONS.items():
+            commands[command_id].triggered.connect(lambda _checked=False, v=version: self.version_bar.buttons[v].click())
+        self.version_bar.version_changed.connect(lambda v: commands[VERSION_ACTIONS[v]].setChecked(True))
+        for command_id, method in zip(ZOOM_ACTIONS, (
+            self.preview.zoom_in, self.preview.zoom_out, self.preview.fit_to_window,
+            self.preview.zoom_to_printed_pixels, self.preview.zoom_to_print_size,
+        )):
+            commands[command_id].triggered.connect(method)
+        manager = theme.current()
+        for mode, command_id in THEME_ACTIONS.items():
+            action = commands[command_id]
+            action.setEnabled(manager is not None)
+            if manager is not None:
+                action.triggered.connect(lambda _checked=False, m=mode: self._set_theme_mode(m))
+        if manager is not None:
+            commands[THEME_ACTIONS[manager.mode()]].setChecked(True)
+            manager.mode_changed.connect(self._show_theme_mode)  # a method: it stops with the window
+        # Enabled as the buttons are: whatever turns one on or off turns its command with it.
+        self._enablement = _Watcher(self._sync_commands, self)
+        for widget in (c.open_button, c.generate_button, c.export_button, c.abort_button, c.progress_row,
+                       self.version_bar, self.zoom_bar):
+            widget.installEventFilter(self._enablement)
+        self._sync_commands()
+
+    def _sync_commands(self) -> None:
+        c, commands = self.controls, self.commands
+        commands["open"].setEnabled(c.open_button.isEnabled())
+        commands["generate"].setEnabled(c.generate_button.isEnabled())
+        commands["export"].setEnabled(c.export_button.isEnabled())
+        commands["cancel"].setEnabled(not c.progress_row.isHidden() and c.abort_button.isEnabled())
+        for command_id in VERSION_ACTIONS.values():
+            commands[command_id].setEnabled(self.version_bar.isEnabled())
+        for command_id in ZOOM_ACTIONS:
+            commands[command_id].setEnabled(self.zoom_bar.isEnabled())
+
+    def _show_theme_mode(self, mode: str) -> None:
+        self.commands[THEME_ACTIONS[mode]].setChecked(True)
+
+    def _set_theme_mode(self, mode: str) -> None:
+        manager = theme.current()
+        if manager is not None:
+            manager.set_mode(mode)  # its mode_changed checks the mode's command
+
+    def show_about(self) -> None:
+        QMessageBox.about(self, "About Tessellatum", about_text())
+
     # -- Open -----------------------------------------------------------
     def open_image(self) -> None:
         path_str, _ = QFileDialog.getOpenFileName(self, "Open Image", "", OPEN_IMAGE_FILTER)
@@ -124,15 +220,15 @@ class MainWindow(QMainWindow):
             return
         path = Path(path_str)
         try:
-            self.current_image_bgr = pipeline.load_image_bgr(path)
+            image = pipeline.load_image_bgr(path)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Could not open image", str(exc))
             return
+        self.document.set_source(image, path)  # drops the last picture's page
 
         self.controls.set_thumbnail(_bgr_to_pixmap(self.current_image_bgr))
         height, width = self.current_image_bgr.shape[:2]
         self.controls.set_picture_size((width, height))
-        self.current_page = None
         self._drop_print_page()
         self.controls.set_export_enabled(False)
         self.version_bar.setEnabled(False)  # the preview left showing is the last picture's, until the next one
@@ -149,6 +245,8 @@ class MainWindow(QMainWindow):
             return
 
         self._drop_print_page()  # the zoom asks for the new page's
+        self.document.set_settings(self.controls.snapshot())  # as the panel shows them, to the last edit
+        self._made_with = self.document.settings()
         self._making = True
         self.controls.set_busy(True)
         self.statusBar().showMessage("Generating preview…")
@@ -166,6 +264,8 @@ class MainWindow(QMainWindow):
         # An export of the preview's page waits for it to be drawn at print size.
         worker = self._print_worker if self._pending_export_drawn else self._worker
         if worker is not None and worker.isRunning():
+            # It stops at the pipeline's next stage: the button stays off meanwhile, against a second press.
+            self.controls.abort_button.setEnabled(False)
             worker.requestInterruption()
             self.statusBar().showMessage("Cancelling…")
 
@@ -180,7 +280,7 @@ class MainWindow(QMainWindow):
         # A new page of the picture shown is shown as far in and in the same place, to compare the two.
         same_picture = self.current_page is not None and self._previewed_image is self.current_image_bgr
         self._drop_print_page()  # any drawn of the last page, for a zoom while this one was made
-        self.current_page = page
+        self.document.set_result(page, self._made_with)
         self._previewed_image = self.current_image_bgr
         self.controls.set_busy(False)
         self.controls.set_export_enabled(True)
@@ -509,6 +609,34 @@ class MainWindow(QMainWindow):
                 worker.requestInterruption()
                 worker.wait()
         super().closeEvent(event)
+
+
+class _Watcher(QObject):
+    """Calls ``changed`` whenever a widget it watches is turned on or off, shown or hidden."""
+
+    EVENTS = (QEvent.EnabledChange, QEvent.ShowToParent, QEvent.HideToParent)
+
+    def __init__(self, changed, parent: QObject | None = None):
+        super().__init__(parent)
+        self._changed = changed
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() in self.EVENTS:
+            self._changed()
+        return False
+
+
+def about_text() -> str:
+    """The About box: the version, what the app is, and the licenses of what it bundles."""
+    return (
+        f"<h3>Tessellatum {__version__}</h3>"
+        "<p>Turns a picture into a paint-by-numbers page: regions to paint, numbered, with a legend of their "
+        "colors.</p>"
+        "<p>Apache License 2.0.</p>"
+        "<p>It bundles the Inter typeface (SIL Open Font License 1.1), the Lucide icons (ISC license), Qt through "
+        "PySide6 (LGPL 3), and its detection models (MIT or Apache 2.0); their license texts are in its "
+        "<i>resources</i> folder.</p>"
+    )
 
 
 def _warm_up_pipeline() -> None:

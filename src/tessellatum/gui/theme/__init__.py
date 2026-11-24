@@ -41,6 +41,7 @@ class ThemeManager(QObject):
     """The scheme in use and the user's choice of it; applies it to the application, and again whenever it changes."""
 
     changed = Signal(str)  # the scheme now in use, LIGHT or DARK
+    mode_changed = Signal(str)  # the choice: System, Light or Dark
 
     def __init__(self, app: QApplication, store: QSettings | None = None):
         super().__init__(app)
@@ -72,6 +73,8 @@ class ThemeManager(QObject):
         if mode == SYSTEM and was != SYSTEM:
             self._app.styleHints().setColorScheme(Qt.ColorScheme.Unknown)  # back to the system's own
         self.apply()
+        if mode != was:
+            self.mode_changed.emit(mode)
 
     def scheme(self) -> str:
         """The scheme in use: the one picked, or the system's (light where it says neither)."""
