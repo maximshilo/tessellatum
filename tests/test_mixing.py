@@ -13,6 +13,7 @@ from tessellatum.core.legend import (
     SWATCH_GAP_MM,
     SWATCH_MM,
     TEXT_COLUMN_MM,
+    _cap_height,
     swatch_texts,
     text_width_mm,
 )
@@ -112,9 +113,9 @@ def test_the_legend_writes_each_recipe_under_its_name_and_it_fits_the_cell():
     assert [t.text for t in texts[0]][0] == "violet" and len(texts[0]) == 5
     detail_mm = DETAIL_PT * MM_PER_PT
     assert texts[0][2].text.endswith("...") and text_width_mm(texts[0][2].text, detail_mm) <= TEXT_COLUMN_MM
-    top = texts[0][0].baseline_mm - texts[0][0].size_mm
+    top = texts[0][0].baseline_mm - _cap_height() * texts[0][0].size_mm  # the capitals of the first line
     assert top > -SWATCH_GAP_MM / 2 and texts[0][-1].baseline_mm < SWATCH_MM + SWATCH_GAP_MM / 2
-    # With no recipes, the codes instead.
+    # Five lines run a little over the swatch, into the gap between rows. With no recipes, the codes instead.
     assert swatch_texts(palette, NAME_RECIPE, names=["violet", "ochre"]) == swatch_texts(
         palette, NAME_HEX_RGB, names=["violet", "ochre"]
     )

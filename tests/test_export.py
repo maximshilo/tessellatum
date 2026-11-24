@@ -17,6 +17,7 @@ from tessellatum.core.legend import (
     LABEL_FONT_RATIO,
     LEGEND_DETAILS,
     NAME,
+    NAME_RECIPE,
     NAME_HEX_RGB,
     NUMBER_ONLY,
     SWATCH_BORDER_MM,
@@ -365,7 +366,8 @@ def test_the_legend_is_vector_swatches_in_their_exact_colors_numbered_on_its_own
     if detail == NUMBER_ONLY:
         assert beside == []
     else:
-        expected = [[name] + ([detail_line(rgb)] if detail == NAME_HEX_RGB else []) for name, rgb in zip(names, palette)]
+        coded = detail in (NAME_HEX_RGB, NAME_RECIPE)  # with no recipes given, the codes instead
+        expected = [[name] + ([detail_line(rgb)] if coded else []) for name, rgb in zip(names, palette)]
         assert " ".join(beside) == " ".join(" ".join(lines) for lines in expected)  # a name may wrap onto two lines
     if detail == NAME_HEX_RGB:
         assert "#FAFAFA  RGB 250 250 250" in beside and "#050505  RGB 5 5 5" in beside
