@@ -9,6 +9,9 @@ are flat colors the artist chose, so the page should offer those colors rather
 than the means k-means lands on, and the margin should be kept while the colors
 are picked rather than by merging afterwards, which spends colors and leaves
 shades the artwork does not have.
+
+With the painter's own paints given, the palette is chosen from them instead
+(``paint_palette``): the ones that paint the picture best.
 """
 
 from __future__ import annotations
@@ -46,6 +49,13 @@ _KEPT_SHARE = 0.5
 # the 26 around it -- a neighborhood of one bin, about 2 to 4 CIEDE2000.
 _BIN = 4.0
 _BINS_PER_AXIS = 64  # 256 / _BIN
+# The painter's own paints are chosen over the picture's colors in bins this wide, about 3-6 CIEDE2000: a few thousand
+# colors to weigh every paint against rather than tens of thousands, for a choice made in a tenth of a second.
+_PAINT_BIN = 8.0
+# How many times a pixel in the faces or the subject counts when the paints are chosen, as their details count more.
+_KEPT_WEIGHT = 2.0
+# The most swaps of a paint taken for one left over, after the greedy choice.
+_SWAP_ROUNDS = 8
 # Two colors farther apart than this many times the margin in plain Lab distance
 # clear it without CIEDE2000 being computed: it is never that much larger.
 _SURELY_APART = 3.0
@@ -79,6 +89,7 @@ def quantize(
     halo_px: float = 0.0,
     paper_black_lstar: float = 0.0,
     keep: np.ndarray | None = None,
+    paints_bgr: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Reduce ``image_bgr`` to at most ``num_colors`` flat, clearly different colors.
 
@@ -123,6 +134,9 @@ def quantize(
             keeps the margin as the screen shows the colors.
         keep: HxW bool, where the colors keep the screen's margin whatever
             the paper's black, or None.
+        paints_bgr: Mx3 uint8, the painter's own paints, or None. Given, the
+            colors are chosen from them (``paint_palette``), on line art as on
+            any other picture, and are exactly theirs.
 
     Returns:
         (label_map, palette_bgr):
@@ -141,6 +155,20 @@ def quantize(
         if not fitted.any():  # nothing but ink and its edge: fit what there is off the ink
             fitted = ~ink
     samples = lab.reshape(-1, 3).astype(np.float32)
+    if paints_bgr is not None and len(paints_bgr) > 0:
+        paints_bgr = np.asarray(paints_bgr, dtype=np.uint8).reshape(-1, 3)
+        chosen_from = slice(None) if fitted is None else fitted.reshape(-1)
+        kept = None if keep is None else np.asarray(keep, dtype=bool).reshape(-1)[chosen_from]
+        labels, chosen = paint_palette(
+            np.ascontiguousarray(samples[chosen_from]), paints_bgr, num_colors, min_de00, paper_black_lstar, kept
+        )
+        palette_bgr = paints_bgr[chosen]
+        if fitted is None:
+            return labels.reshape(lab.shape[:2]), palette_bgr
+        label_map = np.full(lab.shape[:2], len(palette_bgr), dtype=np.int32)
+        label_map[fitted] = labels
+        label_map[~fitted & ~ink] = _nearest_fitted(label_map, fitted)[~fitted & ~ink]
+        return label_map, palette_bgr
     if fitted is None:
         kept = None if keep is None else np.asarray(keep, dtype=bool).reshape(-1)
         labels, palette_bgr = _kmeans_colors(samples, num_colors, seed, min_de00, paper_black_lstar, kept)
@@ -574,3 +602,146 @@ def _sparse_bilateral(image_bgr: np.ndarray, sigma_color: float, sigma_space: fl
 
     parallel.for_each_stripe(filter_rows, h)
     return out
+
+
+def paint_palette(
+    samples_lab: np.ndarray,
+    paints_bgr: np.ndarray,
+    num_colors: int,
+    min_de00: float,
+    paper_black_lstar: float = 0.0,
+    kept: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """The painter's own paints that paint ``samples_lab`` best: each sample's paint, and the paints taken.
+
+    Rather than colors found in the picture, colors chosen from a fixed set: up to ``num_colors`` of ``paints_bgr``
+    (the paints' colors), each sample then painted in the nearest of them by CIEDE2000. Which ones is a facility
+    location problem: the set whose nearest paint is closest to the picture's pixels, by CIEDE2000 summed over them,
+    the pixels in ``kept`` (the faces and the subject) counted ``_KEPT_WEIGHT`` times. It is solved greedily -- the
+    paint that lowers that sum the most, over and over, while one still lowers it, which is within 1 - 1/e of the best
+    there is -- and then improved by the best swap of a paint taken for one left over, while a swap helps
+    (``_SWAP_ROUNDS`` at most).
+
+    Every two paints taken keep the margin, ``min_de00``, as the screen shows them and, with ``paper_black_lstar``, as
+    paper does, unless one of them is mostly used in ``kept``, as the picture's own colors do (see
+    ``_merge_close_colors``): a legend has no two colors a painter can't tell apart, even if they own both.
+
+    The paints are chosen over the picture's colors counted into bins ``_PAINT_BIN`` units across, and each sample
+    then takes the paint nearest its ``_BIN``-wide bin's color, so the work goes by the picture's colors, not its
+    pixels. Nothing is random.
+
+    Args:
+        samples_lab: Nx3 float32, the pixels in OpenCV's 8-bit Lab.
+        paints_bgr: Mx3 uint8, the paints' colors, BGR.
+        num_colors: how many paints to take at most.
+        min_de00: the margin between any two taken, in CIEDE2000; 0 or less lets any two be taken together.
+        paper_black_lstar: the paper's darkest black, in L*; 0 keeps the screen's distances.
+        kept: N bool, the samples that count more and keep the screen's margin, or None.
+
+    Returns:
+        (labels, chosen): each sample's index into ``chosen``, and ``chosen``, the indices into ``paints_bgr`` of the
+        paints taken, darkest first.
+    """
+    paints_bgr = np.asarray(paints_bgr, dtype=np.uint8).reshape(-1, 3)
+    if len(paints_bgr) == 0:
+        raise ValueError("no paints to choose from")
+    paint_lab = bgr_to_lab(paints_bgr)
+    coarse, coarse_lab, weight = _binned(samples_lab, kept, _PAINT_BIN)
+    distance = ciede2000(coarse_lab[:, None, :], paint_lab[None, :, :]).astype(np.float32)  # bins x paints
+
+    clash = np.zeros((len(paints_bgr), len(paints_bgr)), dtype=bool)
+    if min_de00 > 0:
+        apart = ciede2000(paint_lab[:, None, :], paint_lab[None, :, :])
+        if paper_black_lstar > 0:
+            printed = printed_de00(paint_lab[:, None, :], paint_lab[None, :, :], paper_black_lstar)
+            if kept is not None:
+                mostly_kept = _kept_share(coarse, kept, distance) > _KEPT_SHARE
+                printed = np.where(mostly_kept[:, None] | mostly_kept[None, :], apart, printed)
+            apart = np.minimum(apart, printed)
+        clash = apart < min_de00
+        np.fill_diagonal(clash, False)
+
+    taken: list[int] = []
+    allowed = np.ones(len(paints_bgr), dtype=bool)
+    nearest = np.zeros(len(coarse_lab), dtype=np.float32)
+    while len(taken) < min(num_colors, len(paints_bgr)):
+        # What each paint would save: how much nearer it brings each bin than its nearest paint so far, weighted.
+        if taken:
+            gain = weight @ np.maximum(nearest[:, None] - distance, 0)
+        else:
+            gain = -(weight @ distance)
+        gain = np.where(allowed, gain, -np.inf)
+        best = int(np.argmax(gain))
+        if not np.isfinite(gain[best]) or (taken and gain[best] <= 0):
+            break
+        taken.append(best)
+        allowed &= ~clash[best]
+        allowed[best] = False
+        nearest = distance[:, best] if len(taken) == 1 else np.minimum(nearest, distance[:, best])
+
+    taken = _swap_paints(taken, distance, weight, clash)
+    chosen = np.array(sorted(taken, key=lambda p: (paint_lab[p, 0], p)), dtype=np.int64)
+    fine, fine_lab, _ = _binned(samples_lab, None, _BIN)
+    bin_paint = np.argmin(ciede2000(fine_lab[:, None, :], paint_lab[chosen][None, :, :]), axis=1).astype(np.int32)
+    return bin_paint[fine], chosen
+
+
+def _swap_paints(taken: list[int], distance: np.ndarray, weight: np.ndarray, clash: np.ndarray) -> list[int]:
+    """``taken`` improved by the best swap of one paint taken for one left over, over and over, while one helps."""
+    taken = list(taken)
+    if not taken or len(taken) == distance.shape[1]:
+        return taken
+    for _ in range(_SWAP_ROUNDS):
+        columns = distance[:, taken]
+        order = np.argsort(columns, axis=1, kind="stable")
+        first = np.take_along_axis(columns, order[:, :1], axis=1)[:, 0]
+        if len(taken) > 1:
+            second = np.take_along_axis(columns, order[:, 1:2], axis=1)[:, 0]
+        else:
+            second = np.full_like(first, np.inf)
+        cost = float(weight @ first)
+        best_saving, best_slot, best_paint = 1e-6 * cost, -1, -1
+        for slot in range(len(taken)):
+            without = np.where(order[:, 0] == slot, second, first)  # each bin's nearest among the others
+            others = taken[:slot] + taken[slot + 1 :]
+            candidates = ~clash[others].any(axis=0) if others else np.ones(distance.shape[1], dtype=bool)
+            candidates[taken] = False
+            if not candidates.any():
+                continue
+            columns_left = np.flatnonzero(candidates)
+            if len(taken) == 1:
+                costs = weight @ distance[:, columns_left]
+            else:
+                costs = weight @ np.minimum(without[:, None], distance[:, columns_left])
+            pick = int(np.argmin(costs))
+            if cost - float(costs[pick]) > best_saving:
+                best_saving, best_slot, best_paint = cost - float(costs[pick]), slot, int(columns_left[pick])
+        if best_slot < 0:
+            break
+        taken[best_slot] = best_paint
+    return taken
+
+
+def _binned(samples_lab: np.ndarray, kept: np.ndarray | None, size: float) -> tuple[np.ndarray, ...]:
+    """The samples counted into bins ``size`` units of OpenCV's 8-bit Lab across: each sample's bin, each bin's mean
+    color as CIE Lab, and its weight, a sample in ``kept`` counting ``_KEPT_WEIGHT`` times."""
+    per_axis = int(round(256 / size))
+    bins = np.clip((samples_lab / size).astype(np.int32), 0, per_axis - 1)
+    flat = (bins[:, 0] * per_axis + bins[:, 1]) * per_axis + bins[:, 2]
+    live, index = np.unique(flat, return_inverse=True)
+    index = index.reshape(-1).astype(np.int32)
+    counts = np.bincount(index, minlength=len(live)).astype(np.float64)
+    mean = np.stack([np.bincount(index, samples_lab[:, c], len(live)) for c in range(3)], -1) / counts[:, None]
+    lab = np.stack([mean[:, 0] / _OPENCV_LIGHTNESS_SCALE, mean[:, 1] - 128, mean[:, 2] - 128], -1)
+    weight = counts
+    if kept is not None:
+        weight = weight + (_KEPT_WEIGHT - 1) * np.bincount(index, np.asarray(kept, dtype=np.float64), len(live))
+    return index, lab, weight.astype(np.float32)
+
+
+def _kept_share(index: np.ndarray, kept: np.ndarray, distance: np.ndarray) -> np.ndarray:
+    """For each paint, the share in ``kept`` of the samples whose nearest paint of all it is."""
+    nearest = np.argmin(distance, axis=1)[index]
+    total = np.bincount(nearest, minlength=distance.shape[1]).astype(np.float64)
+    inside = np.bincount(nearest, np.asarray(kept, dtype=np.float64), distance.shape[1])
+    return inside / np.maximum(total, 1)

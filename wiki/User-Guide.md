@@ -49,6 +49,24 @@ tall and the legend on a portrait sheet of its own, and a PNG records the resolu
   there is no darkest black, and the color margin is at most 2.5 ΔE00, a little over what an eye tells apart side by
   side, so more of the picture's own shades stay on the legend.
 
+## Colors from
+
+**Colors from** (under Regions) says where the page's colors come from.
+- **The picture**, the default: the colors found in it.
+- **My paints**: the paints or pencils you own. The page takes at most as many of them as **Colors** asks for, the
+  ones that paint the picture best: each pixel is painted in the nearest of them, and the ones chosen bring the
+  picture's pixels nearest, by CIEDE2000, the faces' and the subject's counting twice. Two closer than the color
+  margin are never both used (on paper, as printed), so a box of 24 pencils gives at most 24 colors, and often fewer.
+  Every legend color is exactly one of your paints, called by its own name; a paint with no name gets the everyday
+  name of its color.
+
+**Paints…** lists them, one a line: a hex code (`#5A6B2F`, `5A6B2F`, `#fff`) or three numbers from 0 to 255
+(`90 107 47`, `90, 107, 47`), the rest of the line its name, either side of the color. Lines starting with `#` and
+text or `//` are comments; a line with no color is pointed out, not guessed at. **Load palette file…** adds the colors
+of a GIMP (`.gpl`), Adobe Swatch Exchange (`.ase`) or Procreate (`.swatches`) palette, or a text file in the same
+form, so a palette exported from the app reads back. Up to 256 paints; the list is kept for next time, and switching
+back to The picture keeps it. Choosing My paints with none listed opens the list.
+
 ## Difficulty
 
 Beginner, Easy, Medium (the default), Hard and Realistic fill in the settings below them; moving any of them picks

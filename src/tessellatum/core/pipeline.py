@@ -17,6 +17,7 @@ from PIL import Image
 from tessellatum.core import faces, ink, kernels, marks, redraw, subject, text, tones
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.labels import text_box_size
+from tessellatum.core.color_names import legend_names
 from tessellatum.core.legend import render_legend
 from tessellatum.core.painting import Painting, Version, render_version
 from tessellatum.core.print_size import A4, MM_PER_INCH, PaperFormat, long_edge_at_dpi, print_scale
@@ -175,6 +176,8 @@ class Handling:
     ``text_max_height_mm`` is lettering big enough to paint, and is not printed (see ``text.find_text``).
 
     And how finely: a page is made with ``brush_px`` pixels across its brush on paper (see ``working_long_edge``).
+
+    And with what: ``paints``, the painter's own, or none.
     """
 
     line_art: bool = True
@@ -187,6 +190,9 @@ class Handling:
     face_tone_step_de00: float = tones.MIN_STEP_DE00
     text_max_height_mm: float = MAX_TEXT_HEIGHT_MM
     brush_px: float = BRUSH_PX
+    # The painter's own paints, (name, RGB) each: given, the palette is chosen from them (see ``quantize``) and the
+    # legend calls them by their names. Empty, the colors are the picture's own.
+    paints: tuple[tuple[str, tuple[int, int, int]], ...] = ()
 
 
 @dataclass
@@ -220,6 +226,7 @@ class GeneratedPage:
     num_colors_used: int
     num_regions: int
     analysis: PageAnalysis | None = None  # only with generate(..., collect_analysis=True)
+    color_names: list[str] = field(default_factory=list)  # each legend color's name, as the legend writes it
     drawing: PageDrawing | None = None  # what ``page`` was drawn from, to draw it again off the pixel grid (see ``export``)
     painting: Painting | None = None  # what ``page`` is painted with, for its painted versions (see ``painting``)
     model: PageModel | None = None  # what ``page`` is made of, to draw it again larger (see ``draw_page``)
@@ -283,6 +290,13 @@ _cache = _StageCache(max_entries=16)
 def clear_cache() -> None:
     """Forget cached intermediate results (see ``_StageCache``)."""
     _cache.clear()
+
+
+def _paints_bgr(paints: tuple[tuple[str, tuple[int, int, int]], ...]) -> np.ndarray | None:
+    """The painter's paints' colors as Mx3 uint8 BGR, or None for none."""
+    if not paints:
+        return None
+    return np.array([rgb for _name, rgb in paints], dtype=np.uint8).reshape(-1, 3)[:, ::-1].copy()
 
 
 def _paintable_limits(params: DifficultyParams, size: tuple[int, int], paper: PaperFormat = A4) -> tuple[int, float]:
@@ -615,9 +629,10 @@ def draw_page(
         )
     if rendered.printed_ink is not None:
         printed_ink = rendered.printed_ink  # less the hatching cleared behind numbers
+    names = legend_names(model.palette_rgb[: model.legend_size], handling.paints)
     legend = render_legend(
         model.palette_bgr[: model.legend_size], width=w, px_per_mm=print_scale((w, h), paper).px_per_mm,
-        detail=style.legend_detail,
+        detail=style.legend_detail, names=names,
     )
     painting = Painting(
         region_id_map=region_id_map,
@@ -663,6 +678,7 @@ def draw_page(
         page=rendered.image,
         legend=legend,
         palette_rgb=model.palette_rgb[: model.legend_size],
+        color_names=names,
         num_colors_used=model.legend_size,
         num_regions=len(regions),
         analysis=analysis,
@@ -801,10 +817,12 @@ def _make_page(
         image_bgr,
         # Line art's colors are taken around its ink, unless line art is turned off (see ``Handling``).
         ("quantize", long_edge, params.num_colors, params.blur_sigma, params.palette_margin_de00,
-         handling.ink_gap_mm if ink_mask is not None else None, params.paper_black_lstar, detail is not None),
+         handling.ink_gap_mm if ink_mask is not None else None, params.paper_black_lstar, detail is not None,
+         tuple(rgb for _name, rgb in handling.paints)),
         lambda: quantize(
             resized, params.num_colors, params.blur_sigma, min_de00=params.palette_margin_de00, ink=ink_mask,
             halo_px=halo_px, paper_black_lstar=params.paper_black_lstar, keep=detail,
+            paints_bgr=_paints_bgr(handling.paints),
         ),
     )
     report("quantize")
@@ -939,8 +957,10 @@ def _make_page(
     if rendered.printed_ink is not None:
         printed_ink = rendered.printed_ink  # less the hatching cleared behind numbers
     used_palette_bgr = palette_bgr[used_color_indices]
+    names = legend_names([(int(b[2]), int(b[1]), int(b[0])) for b in used_palette_bgr], handling.paints)
     legend = render_legend(
-        used_palette_bgr, width=w, px_per_mm=print_scale((w, h), paper).px_per_mm, detail=style.legend_detail
+        used_palette_bgr, width=w, px_per_mm=print_scale((w, h), paper).px_per_mm, detail=style.legend_detail,
+        names=names,
     )
     report("render")
 
@@ -993,6 +1013,7 @@ def _make_page(
         page=rendered.image,
         legend=legend,
         palette_rgb=palette_rgb,
+        color_names=names,
         num_colors_used=len(used_color_indices),
         num_regions=len(regions),
         analysis=analysis,

@@ -45,6 +45,13 @@ flowchart TD
    the slots the merge frees are asked of k-means again, up to twice, so the legend keeps its count and spends it on
    the picture's other colors. A picture without such darks gets the same palette as before; coloring on a screen
    turns this off.
+
+   With **Colors from: My paints**, the palette is chosen from the painter's own paints instead of found by k-means:
+   which of them paint the picture best is a facility-location problem (the set whose nearest paint is closest to
+   every pixel, by CIEDE2000, the faces' and the subject's counting twice), solved greedily, within 1 − 1/e of the
+   best, and improved by swapping a paint taken for one left over while that helps. It works on the picture's colors
+   counted into bins rather than its pixels, so it takes a fraction of a second. The same margins hold: a paint is
+   never taken within the color margin of one already taken, on screen or as printed.
 2. **Regionize.** Same-color pixels are grouped into connected regions; regions smaller than the difficulty's
    threshold merge into the neighbor they share the most boundary with, and neighbors left sharing a color by that
    merge become one region, so the page never draws a line between two areas the painter fills alike.

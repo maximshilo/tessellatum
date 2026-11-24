@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from tessellatum.core import difficulty, export, settings, swatches
 from tessellatum.core.legend import DEFAULT_LEGEND_DETAIL, LEGEND_DETAILS, NAME, NAME_HEX_RGB, NUMBER_ONLY
+from tessellatum.core.paints import distinct, paints_text, parse_paints
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import Handling
 from tessellatum.core.print_size import MM_PER_INCH, PAPERS, print_scale
@@ -68,6 +69,15 @@ LEGEND_TOOLTIPS = {
     NAME: "Each color's everyday name beside its swatch (\"dusty rose\", \"olive green\"): the nearest of about 800 names, every color a different one.",
     NAME_HEX_RGB: "Its name, and under it its hex code and RGB values (\"#C0737A  RGB 192 115 122\"), exactly the color the page is painted with: to find it in a painting app, or match a paint or pencil to it.",
 }
+PICTURE_COLORS = "The picture"
+MY_PAINTS = "My paints"
+COLORS_FROM = (PICTURE_COLORS, MY_PAINTS)
+COLORS_FROM_TOOLTIP = (
+    "Where the page's colors come from. The picture: the colors it finds in it. My paints: the paints or pencils you "
+    "list (Paints…), at most as many as Colors asks for, the ones that paint the picture best, each called by its own "
+    "name on the legend. Every color on the legend is then one you have; two closer than the color margin are never "
+    "both used."
+)
 PALETTE = "Palette"
 PALETTE_TOOLTIP = (
     "The legend's colors as a palette file, for coloring the page in a painting app with exactly its colors, each "
@@ -118,6 +128,8 @@ _PAPER_KEY = "style/paper"
 _MEDIUM_KEY = "difficulty/medium"
 _LEGEND_KEY = "style/legend"
 _PALETTE_FORMAT_KEY = "export/palette"
+_COLORS_FROM_KEY = "difficulty/colors_from"
+_PAINTS_KEY = "difficulty/paints"
 _UNIT_KEY = "export/unit"
 _DPI_KEY = "export/dpi"
 _PIXELS_KEY = "export/pixels"
@@ -297,6 +309,19 @@ class ControlsPanel(QWidget):
         self.medium_combo.setToolTip(MEDIUM_TOOLTIP)
         self.sections[settings.REGIONS].form.insertRow(1, "Coloring on", self.medium_combo)
         self.sections[settings.REGIONS].form.labelForField(self.medium_combo).setToolTip(MEDIUM_TOOLTIP)
+        self._paints: tuple = ()
+        self.colors_from_combo = QComboBox()
+        self.colors_from_combo.addItems(list(COLORS_FROM))
+        self.colors_from_combo.setToolTip(COLORS_FROM_TOOLTIP)
+        self.paints_button = QPushButton("Paints…")
+        self.paints_button.setToolTip("List the paints or pencils you have, or load them from a palette file.")
+        colors_from_row = QWidget()
+        colors_from_layout = QHBoxLayout(colors_from_row)
+        colors_from_layout.setContentsMargins(0, 0, 0, 0)
+        colors_from_layout.addWidget(self.colors_from_combo, 1)
+        colors_from_layout.addWidget(self.paints_button)
+        self.sections[settings.REGIONS].form.insertRow(2, "Colors from", colors_from_row)
+        self.sections[settings.REGIONS].form.labelForField(colors_from_row).setToolTip(COLORS_FROM_TOOLTIP)
         # Every section's labels as wide as the widest, so that the sliders line up from one section to the next.
         labels = [
             section.form.labelForField(section.form.itemAt(row, QFormLayout.FieldRole).widget())
@@ -448,6 +473,8 @@ class ControlsPanel(QWidget):
         self.paper_combo.currentTextChanged.connect(lambda _name: self._on_print_changed())
         self.medium_combo.currentTextChanged.connect(lambda _name: self._on_medium_changed())
         self.legend_combo.currentTextChanged.connect(self._on_legend_changed)
+        self.colors_from_combo.currentTextChanged.connect(lambda _name: self._on_colors_from_changed())
+        self.paints_button.clicked.connect(self.edit_paints)
         self.resolution_unit.currentIndexChanged.connect(lambda _index: self._on_unit_changed())
         self.resolution_spin.valueChanged.connect(lambda _value: self._on_resolution_edited())
         self.png_radio.toggled.connect(lambda _checked: self._show_resolution())
@@ -513,6 +540,8 @@ class ControlsPanel(QWidget):
             self.medium_combo.setCurrentText(difficulty.DEFAULT_MEDIUM)
             self.legend_combo.setCurrentText(DEFAULT_LEGEND_DETAIL)
             self.palette_combo.setCurrentIndex(0)
+            self.colors_from_combo.setCurrentText(PICTURE_COLORS)  # the paints listed are kept, for next time
+            self._show_paints()
             for check in self._switches.values():
                 check.setChecked(True)
             self._dpi, self._pixels = DEFAULT_DPI, None
@@ -531,6 +560,8 @@ class ControlsPanel(QWidget):
         self._store.setValue(_MEDIUM_KEY, self.medium_combo.currentText())
         self._store.setValue(_LEGEND_KEY, self.legend_combo.currentText())
         self._store.setValue(_PALETTE_FORMAT_KEY, self.palette_combo.currentData())
+        self._store.setValue(_COLORS_FROM_KEY, self.colors_from_combo.currentText())
+        self._store.setValue(_PAINTS_KEY, paints_text(self._paints))
         for name, control in self.controls.items():
             self._store.setValue(_SETTING_KEY.format(name), control.value())
         for name, check in self._switches.items():
@@ -562,6 +593,13 @@ class ControlsPanel(QWidget):
             legend = self._store.value(_LEGEND_KEY)
             if legend in LEGEND_DETAILS:
                 self.legend_combo.setCurrentText(legend)
+            kept_paints = self._store.value(_PAINTS_KEY)
+            if isinstance(kept_paints, str):
+                self._paints = distinct(parse_paints(kept_paints).paints)
+            colors_from = self._store.value(_COLORS_FROM_KEY)
+            if colors_from in COLORS_FROM:
+                self.colors_from_combo.setCurrentText(colors_from)
+            self._show_paints()
             palette_format = self._store.value(_PALETTE_FORMAT_KEY)
             if palette_format in swatches.FORMATS:
                 self.palette_combo.setCurrentIndex(self.palette_combo.findData(palette_format))
@@ -630,7 +668,41 @@ class ControlsPanel(QWidget):
 
     def get_handling(self) -> Handling:
         switches = {name: check.isChecked() for name, check in self._switches.items()}
-        return Handling(**switches, **self._chosen(settings.HANDLING))
+        return Handling(**switches, **self._chosen(settings.HANDLING), paints=self.get_paints())
+
+    def get_paints(self) -> tuple:
+        """The painter's paints the page is to take its colors from: none unless Colors from is My paints."""
+        return self._paints if self.colors_from_combo.currentText() == MY_PAINTS else ()
+
+    def set_paints(self, paints: tuple) -> None:
+        """The paints listed (name, RGB each), kept whether or not the page takes its colors from them."""
+        self._paints = distinct(paints)
+        if self._paints and self.colors_from_combo.currentText() != MY_PAINTS:
+            self.colors_from_combo.setCurrentText(MY_PAINTS)  # listing paints is asking for them
+        self._show_paints()
+        self._save()
+
+    def edit_paints(self) -> None:
+        """Ask for the paints in their dialog."""
+        from tessellatum.gui.paints_dialog import PaintsDialog
+
+        dialog = PaintsDialog(self._paints, self)
+        if dialog.exec():
+            self.set_paints(dialog.paints())
+
+    def _on_colors_from_changed(self) -> None:
+        if self.colors_from_combo.currentText() == MY_PAINTS and not self._paints and not self._loading:
+            self.edit_paints()
+        self._show_paints()
+        self._save()
+
+    def _show_paints(self) -> None:
+        count = len(self._paints)
+        self.paints_button.setText(f"Paints ({count})…" if count else "Paints…")
+        if self.colors_from_combo.currentText() == MY_PAINTS and not self._paints:
+            self.colors_from_combo.setToolTip("No paints listed: the colors come from the picture. " + COLORS_FROM_TOOLTIP)
+        else:
+            self.colors_from_combo.setToolTip(COLORS_FROM_TOOLTIP)
 
     def get_output_format(self) -> str:
         """"PNG", "PDF", or "Palette": the legend's colors as a palette file (see ``get_palette_format``)."""

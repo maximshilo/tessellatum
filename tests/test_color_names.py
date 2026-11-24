@@ -96,4 +96,4 @@ def test_every_name_fits_its_lines_and_the_longest_values_line_fits_its_column()
 
 def test_a_long_name_wraps_between_words_never_inside_one():
     assert _wrap("british racing green", NAME_PT * MM_PER_PT, 20.0, 2) == ["british racing", "green"]
-    assert _wrap("british racing green", NAME_PT * MM_PER_PT, 5.0, 2) == ["british", "racing green"]
+    assert _wrap("british racing green", NAME_PT * MM_PER_PT, 5.0, 2) == ["british", "racing ..."]  # cut, marked

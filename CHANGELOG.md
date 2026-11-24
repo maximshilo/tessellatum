@@ -4,6 +4,19 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.19] - 2026-11-24
+
+### Added
+
+- **Colors from your own paints.** A new setting, **Colors from** (under Regions): **The picture**, as before, or
+  **My paints**: the page's colors are chosen from the paints or pencils you list, at most as many as Colors asks for,
+  the ones that paint the picture best (the faces and the subject counting twice), and the legend calls each by its
+  own name. Every color on the page is then one you own, exactly. Two paints closer than the color margin are never
+  both used, on screen or as printed. **Paints…** lists them: one a line, a hex code (`#5A6B2F`) or three RGB numbers,
+  the rest of the line its name; or **Load palette file…** reads a GIMP (`.gpl`), Adobe (`.ase`) or Procreate
+  (`.swatches`) palette, or a text file. The list is kept for next time.
+- The benchmark makes pages from synthetic paint sets (`Medium-Paints24`: 24 paints spread over the gamut).
+
 ## [1.0.18] - 2026-11-24
 
 ### Added

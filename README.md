@@ -62,6 +62,8 @@ tinted painting guide; export a PNG at the resolution you choose (600 dpi by def
 **Image analysis**
 - Edge-preserving bilateral filtering and perceptual color science (CIELAB, CIEDE2000, black point compensation for
   how the palette prints).
+- Combinatorial optimization: a palette chosen from the painter's own paints as a facility-location problem (greedy
+  selection with swap refinement).
 - Mathematical morphology to detect ink lines, fine facial features and text backgrounds.
 - Euclidean distance transforms and Voronoi partitioning to remove every region a brush can't paint.
 - Connected-component labeling, contour tracing and polygon simplification.

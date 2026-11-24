@@ -13,6 +13,7 @@ import dataclasses
 import hashlib
 import inspect
 import json
+import re
 import statistics
 import sys
 import time
@@ -283,6 +284,40 @@ SCREEN_SUFFIX = "-Screen"  # not a slash: the preset is part of the case directo
 SCREEN_MARGIN_DE00 = 2.5
 
 
+# A preset's page made from a painter's own paints (from 1.0.19): "Medium-Paints24" is Medium with its colors chosen
+# from a set of 24, ``synthetic_paints(24)``, as the app's "Colors from: My paints" does.
+PAINTS_SUFFIX = re.compile(r"-Paints(\d+)$")
+
+
+def synthetic_paints(count: int) -> tuple[tuple[str, tuple[int, int, int]], ...]:
+    """A box of ``count`` paints spread over the sRGB gamut, as evenly as can be: from black, each next the color of a
+    9-level sRGB grid farthest in CIELAB from every one taken (farthest-point sampling). Synthetic and the same every
+    time, so a page made from it can be compared across versions."""
+    import numpy as np
+
+    from tessellatum.core.color import bgr_to_lab
+
+    levels = np.linspace(0, 255, 9).round().astype(np.uint8)
+    grid = np.stack(np.meshgrid(levels, levels, levels, indexing="ij"), -1).reshape(-1, 3)
+    lab = bgr_to_lab(grid[:, ::-1])
+    taken = [0]  # black
+    nearest = ((lab - lab[0]) ** 2).sum(axis=1)
+    while len(taken) < min(count, len(grid)):
+        best = int(np.argmax(nearest))
+        taken.append(best)
+        nearest = np.minimum(nearest, ((lab - lab[best]) ** 2).sum(axis=1))
+    return tuple((f"Paint {i + 1}", tuple(int(v) for v in grid[t])) for i, t in enumerate(taken))
+
+
+def paints_of(preset: str) -> tuple[str, int | None]:
+    """The preset a name's page is made at, and how many synthetic paints it is made from (None: the picture's own
+    colors)."""
+    found = PAINTS_SUFFIX.search(preset)
+    if found is None:
+        return preset, None
+    return preset[: found.start()], int(found.group(1))
+
+
 def made_for_paper(preset: str) -> bool:
     """Whether a preset's page is meant to keep its colors apart as printed: not one colored on a screen, nor Max,
     which every version is compared at as it was."""
@@ -291,6 +326,7 @@ def made_for_paper(preset: str) -> bool:
 
 def preset_params(difficulty, name: str):
     """The difficulty parameters of preset ``name`` in the version whose ``difficulty`` module is given."""
+    name, _paints = paints_of(name)
     if name.endswith(SCREEN_SUFFIX):
         params = preset_params(difficulty, name[: -len(SCREEN_SUFFIX)])
         screen = {}
@@ -403,6 +439,14 @@ def main() -> int:
             return 2
         page_options["style"] = PageStyle(paper=args.paper)
     paper = bm.print_size.PAPERS[args.paper]
+    _preset, paint_count = paints_of(args.preset)
+    if paint_count is not None:
+        from tessellatum.core.pipeline import Handling
+
+        if "paints" not in {field.name for field in dataclasses.fields(Handling)}:
+            print("this version makes pages from the picture's own colors only", file=sys.stderr)
+            return 2
+        page_options["handling"] = Handling(paints=synthetic_paints(paint_count))
 
     def run_once(collect_analysis: bool = False):
         probe.reset()

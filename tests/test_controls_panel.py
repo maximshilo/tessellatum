@@ -458,3 +458,19 @@ def test_the_palette_export_has_its_format_kept_and_is_suggested_coloring_on_a_s
     again = ControlsPanel(store=_store(tmp_path))
     again.reset()
     assert again.get_palette_format() == ".swatches"
+
+
+def test_the_paints_listed_are_kept_and_the_page_takes_its_colors_from_them_when_asked(tmp_path):
+    first = ControlsPanel(store=_store(tmp_path))
+    assert first.colors_from_combo.currentText() == "The picture" and first.get_handling().paints == ()
+    paints = (("Ultramarine", (32, 0, 177)), ("Sap green", (90, 107, 47)))
+    first.set_paints(paints)  # listing paints asks for them
+    assert first.colors_from_combo.currentText() == "My paints" and first.get_handling().paints == paints
+    assert first.paints_button.text() == "Paints (2)…"
+    again = ControlsPanel(store=_store(tmp_path))
+    assert again.get_handling().paints == paints
+    again.colors_from_combo.setCurrentText("The picture")
+    assert again.get_handling().paints == () and again.paints_button.text() == "Paints (2)…"  # kept, not used
+    again.reset()
+    assert again.colors_from_combo.currentText() == "The picture"
+    assert ControlsPanel(store=_store(tmp_path)).get_paints() == ()
