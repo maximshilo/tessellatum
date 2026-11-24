@@ -368,3 +368,11 @@ def test_a_refill_never_gives_more_colors_than_the_screen_s_margin_keeps():
             on_screen = len(palette)
         assert len(palette) <= on_screen
         assert pairwise_de00(palette).min() >= 4.0
+
+
+def test_colors_fit_on_every_few_pixels_each_have_pixels_of_their_own():
+    # Three flat colors asked for more: fit on every 4th pixel, k-means puts several centers on one color, and every
+    # pixel then takes the first of them, leaving the others nearest to no pixel at all, not colors of the picture.
+    samples = np.repeat(np.array([[40, 128, 128], [120, 150, 110], [200, 120, 140]], dtype=np.float32), 4000, axis=0)
+    labels, centers, _group, _on_screen = quantize_module._fit_colors(samples, 8, 0, 0.0, 0.0, None, stride=4)
+    assert (np.bincount(labels, minlength=len(centers)) > 0).all()

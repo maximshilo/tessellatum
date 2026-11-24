@@ -228,6 +228,10 @@ def _fit_colors(
     )
     if fitted is not samples:
         labels = _nearest_center(samples, centers_lab)
+        used = np.bincount(labels, minlength=len(centers_lab)) > 0
+        if not used.all():  # a center no sample is nearest: not a color of the picture, so not one of the page's
+            labels = (np.cumsum(used) - 1).astype(np.int32)[labels]
+            centers_lab = np.ascontiguousarray(centers_lab[used])
     if stretch != 1.0:
         centers_lab[:, 0] /= stretch
 
