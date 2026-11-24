@@ -113,6 +113,14 @@ only the images in those categories (see the image manifest below); `--paper A3`
 `A2` makes every page for that sheet and measures its millimeters and points there
 (from 1.0.9; the preview size follows the sheet, `2400` stays 2400 px).
 
+A preset named with `-PaintsN` (from 1.0.19), say `Medium-Paints24`, is that
+preset with its colors chosen from N synthetic paints, as the app's Colors from:
+My paints does: `bench_case.synthetic_paints(N)`, spread over the sRGB gamut by
+farthest-point sampling in CIELAB over a 9-level grid, from black, the same set
+every time. Versions before 1.0.19 can't make such a page: the case fails, saying so.
+Its ΔE00 measures how well that set covers the picture, so compare it with the
+same set's on another version, not with the preset's own palette.
+
 `Max` is the setting the version's own `difficulty.finest_params()` gives:
 from 0.1.26, 40 colors, regions of at least 30 mm² on paper, no smoothing,
 the 3 mm brush and 10 ΔE00 (from 0.1.52 spelled out; before, every other
