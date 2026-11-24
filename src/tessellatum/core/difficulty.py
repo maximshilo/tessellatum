@@ -26,8 +26,8 @@ from tessellatum.core.regions import CORNER_CONTRAST_DE00, SHARPEST_CORNER_DEG
 # How many times smaller a region may be in the faces and the subject found, by default (see ``DifficultyParams``).
 DETAIL_WEIGHT = 2
 # The levels' paper black, in L* (see ``DifficultyParams.paper_black_lstar``): a little darker than plain office paper
-# prints (black density 1.2-1.4, L* 27-30) and about what soft pencils and a good laser or pigment inkjet reach, so it
-# errs toward keeping colors.
+# prints (black density 1.2-1.4, L* 27-30), so it errs toward keeping colors there, and a little lighter than a good
+# laser or pigment inkjet and soft pencils reach (about 20, as the setting's tooltip says).
 PAPER_BLACK_LSTAR = 25.0
 
 

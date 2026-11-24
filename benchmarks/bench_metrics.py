@@ -77,7 +77,9 @@ LABEL_MIN_PT = 6.0
 PALETTE_MIN_DE00 = 10.0
 # The legend as paper shows it (from 1.0.16): paper and paint can't go darker than this black, so every color is judged
 # as printed with black point compensation to it (``printed_de00``). L* 25 is a little darker than plain office paper's
-# black (density 1.2-1.4, L* 27-30), so it errs toward keeping colors; a page that sets its own is held to that.
+# black (density 1.2-1.4, L* 27-30), so it errs toward keeping colors. Every page is judged on it, whatever its own
+# setting, so versions and settings compare; the target is held only by pages made for paper (see
+# `bench_case.made_for_paper`), and colors a page keeps for its faces and subject may miss it by design.
 PAPER_BLACK_LSTAR = 25.0
 # The printed distance is on the mid-tones' scale: divided by the share of their CIEDE2000 two neutral grays this light
 # keep as printed.
@@ -1127,15 +1129,17 @@ def vivid_fidelity(source_bgr: np.ndarray, painted_bgr: np.ndarray) -> dict[str,
 
     The pixels are the ``VIVID_SHARE`` with the highest CIELAB chroma among those at least ``VIVID_MIN_LSTAR`` light:
     a darker pixel's chroma is mostly noise. These are the colors a palette spent on a large dull area leaves out.
-    None for an image without such pixels.
+    Exactly that share, ties taken in pixel order, so a gray picture's are a tenth of it too. None for an image
+    without such pixels.
     """
     source = bgr_to_lab(source_bgr)
-    eligible = source[..., 0] >= VIVID_MIN_LSTAR
-    if not eligible.any():
+    eligible = np.flatnonzero(source[..., 0] >= VIVID_MIN_LSTAR)
+    if not eligible.size:
         return {"vivid_de00_mean": None}
-    chroma = np.hypot(source[..., 1], source[..., 2])
-    vivid = eligible & (chroma >= np.percentile(chroma[eligible], 100 * (1 - VIVID_SHARE)))
-    de = ciede2000(source[vivid], bgr_to_lab(painted_bgr)[vivid])
+    chroma = np.hypot(source[..., 1], source[..., 2]).reshape(-1)[eligible]
+    count = max(1, math.ceil(VIVID_SHARE * eligible.size))
+    vivid = eligible[np.argsort(-chroma, kind="stable")[:count]]
+    de = ciede2000(source.reshape(-1, 3)[vivid], bgr_to_lab(painted_bgr).reshape(-1, 3)[vivid])
     return {"vivid_de00_mean": float(de.mean())}
 
 

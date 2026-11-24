@@ -690,6 +690,13 @@ def test_vivid_fidelity_scores_the_most_colorful_tenth_of_the_pixels():
     painted[0] = (0, 0, 150)
     assert bm.vivid_fidelity(source, painted)["vivid_de00_mean"] > 5
     assert bm.vivid_fidelity(np.zeros((4, 4, 3), np.uint8), painted[:4, :4])["vivid_de00_mean"] is None
+    # A gray picture's chroma ties everywhere: still a tenth of its pixels, not all of them.
+    gray = np.full((10, 10, 3), 128, dtype=np.uint8)
+    wrong = gray.copy()
+    wrong[:9] = 100  # all but the first tenth, in pixel order, painted wrong
+    assert bm.vivid_fidelity(gray, wrong)["vivid_de00_mean"] > 5
+    wrong[:9], wrong[9:] = 128, 100
+    assert bm.vivid_fidelity(gray, wrong)["vivid_de00_mean"] == pytest.approx(0, abs=1e-6)
 
 
 def _grating(first, second, size=120):

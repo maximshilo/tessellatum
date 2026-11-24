@@ -401,11 +401,16 @@ def test_the_coloring_medium_drops_the_paper_black_and_caps_the_margin_on_a_scre
     assert (screen.paper_black_lstar, screen.palette_margin_de00) == (0.0, 2.5)
     assert screen.num_colors == difficulty.params_for_preset("Medium").num_colors
     assert not first.controls["paper_black_lstar"].isEnabled()
+    # The margin's and the levels' tooltips say what the page keeps on a screen.
+    assert "at most 2.5" in first.controls["palette_margin_de00"].toolTip()
+    medium = first.preset_combo.findText("Medium")
+    assert first.preset_combo.itemData(medium, Qt.ToolTipRole) == difficulty.describe(screen)
     again = ControlsPanel(store=_store(tmp_path))
     assert again.medium_combo.currentText() == "Screen"
     again.reset()
     assert again.medium_combo.currentText() == "Paper and paint"
     assert again.controls["paper_black_lstar"].isEnabled()
+    assert "at most 2.5" not in again.controls["palette_margin_de00"].toolTip()
     store = _store(tmp_path)
     store.remove("difficulty/medium")  # kept by a version without the medium: paper and paint
     assert ControlsPanel(store=store).medium_combo.currentText() == "Paper and paint"

@@ -283,11 +283,19 @@ SCREEN_SUFFIX = "-Screen"  # not a slash: the preset is part of the case directo
 SCREEN_MARGIN_DE00 = 2.5
 
 
+def made_for_paper(preset: str) -> bool:
+    """Whether a preset's page is meant to keep its colors apart as printed: not one colored on a screen, nor Max,
+    which every version is compared at as it was."""
+    return not preset.endswith(SCREEN_SUFFIX) and preset != "Max"
+
+
 def preset_params(difficulty, name: str):
     """The difficulty parameters of preset ``name`` in the version whose ``difficulty`` module is given."""
     if name.endswith(SCREEN_SUFFIX):
         params = preset_params(difficulty, name[: -len(SCREEN_SUFFIX)])
-        screen = {"palette_margin_de00": min(params.palette_margin_de00, SCREEN_MARGIN_DE00)}
+        screen = {}
+        if hasattr(params, "palette_margin_de00"):  # from 0.1.49
+            screen["palette_margin_de00"] = min(params.palette_margin_de00, SCREEN_MARGIN_DE00)
         if hasattr(params, "paper_black_lstar"):
             screen["paper_black_lstar"] = 0.0
         return dataclasses.replace(params, **screen)
@@ -515,6 +523,7 @@ def main() -> int:
             # Judged on one paper for every version and setting, bench_metrics.PAPER_BLACK_LSTAR (from 1.0.16).
             bm.printed_separation(page_data.legend_bgr, limits["palette_margin_de00"])
         )
+        quality["made_for_paper"] = made_for_paper(args.preset)
         # Line art is scored against the image's manifest entry: its flat colors, and its ink lines if it has ink colors.
         flat_colors, ink_colors = (
             np.array(getattr(image_info, name, ()), dtype=np.uint8).reshape(-1, 3)[:, ::-1]  # the manifest's are RGB

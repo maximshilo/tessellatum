@@ -40,7 +40,9 @@ STANDARD_ERRORS = 3.0
 # better, by at most this much ΔE00 mean and this share of it, while its colorful pixels or its subject get closer.
 TRADE_METRICS = ("de00_mean", "de00_p95", "ssim")
 TRADE_MAX_RISE = 1.0
-TRADE_MAX_RISE_SHARE = 0.10
+TRADE_MAX_RISE_SHARE = 0.10  # of ΔE00 mean's value, and of ΔE00 p95's
+TRADE_MAX_SSIM_FALL = 0.02  # about 3 of SSIM's tolerances at preview size
+TRADE_GAINS = ("vivid_de00_mean", "subject_de00_mean")
 TRADE_FACE_METRICS = ("face_de00_mean", "face_ssim", "features_lost")
 # A case whose page is at least this share of its image's own long edge is judged with `sigma_export`.
 EXPORT_SIGMA_MIN_PAGE_SHARE = 0.99
@@ -242,7 +244,13 @@ METRICS = (
         "palette",
         "higher",
         sigma=PRINTED_MIN_SIGMA,
-        target=Target(0.0, relative_to="palette_margin_de00", fallback=bm.PALETTE_MIN_DE00),
+        target=Target(
+            0.0,
+            relative_to="palette_margin_de00",
+            fallback=bm.PALETTE_MIN_DE00,
+            where="made_for_paper",
+            where_text="pages made for paper",
+        ),
     ),
     Metric("printed_close_pairs", "printed close pairs ↓", "{:d}", "palette", "lower", sigma=PRINTED_PAIRS_SIGMA),
     Metric("dark_legend_colors", f"colors < L* {bm.DARK_LEGEND_LSTAR:g}", "{:d}"),
@@ -475,8 +483,9 @@ def traded(before: dict, after: dict, size: str, tol: Tolerances) -> bool:
     colorful parts or its subject raises the error of that area: ``TRADE_METRICS`` get worse on exactly the pictures the
     move is for. The trade is accepted on a case where all of these hold:
     - ``printed close pairs`` fell;
-    - ``ΔE00 mean`` rose by at most ``TRADE_MAX_RISE`` and at most ``TRADE_MAX_RISE_SHARE`` of its value;
-    - ``vivid ΔE00`` or ``subject ΔE00`` improved;
+    - ``ΔE00 mean`` rose by at most ``TRADE_MAX_RISE`` and at most ``TRADE_MAX_RISE_SHARE`` of its value, ``ΔE00 p95``
+      by at most that share of its own, and ``SSIM`` fell by at most ``TRADE_MAX_SSIM_FALL``;
+    - ``vivid ΔE00`` or ``subject ΔE00`` improved by more than its tolerance;
     - no face metric is worse alone by more than ``STANDARD_ERRORS`` tolerances, and no face feature is lost.
     """
     pairs_before, pairs_after = before.get("printed_close_pairs"), after.get("printed_close_pairs")
@@ -486,15 +495,27 @@ def traded(before: dict, after: dict, size: str, tol: Tolerances) -> bool:
     rise = error_after - error_before
     if rise > TRADE_MAX_RISE or rise > TRADE_MAX_RISE_SHARE * error_before:
         return False
-    gained = any(
-        before.get(key) is not None and after.get(key) is not None and after[key] < before[key]
-        for key in ("vivid_de00_mean", "subject_de00_mean")
-    )
+    tail_before, tail_after = before.get("de00_p95"), after.get("de00_p95")
+    if tail_before is not None and tail_after is not None and tail_after - tail_before > TRADE_MAX_RISE_SHARE * tail_before:
+        return False
+    ssim_before, ssim_after = before.get("ssim"), after.get("ssim")
+    if ssim_before is not None and ssim_after is not None and ssim_before - ssim_after > TRADE_MAX_SSIM_FALL:
+        return False
+    gained = any(_improved_beyond_tolerance(METRICS_BY_KEY[key], before, after, size, tol) for key in TRADE_GAINS)
     lost_before, lost_after = before.get("features_lost"), after.get("features_lost")
     if lost_before is not None and lost_after is not None and lost_after > lost_before:  # never a feature for colors
         return False
     faces = [METRICS_BY_KEY[key] for key in TRADE_FACE_METRICS]
     return gained and not regressions(faces, [(before, after, size)], "", tol)
+
+
+def _improved_beyond_tolerance(metric: Metric, before: dict, after: dict, size: str, tol: Tolerances) -> bool:
+    """Whether a lower-is-better ``metric`` of one case got better by more than one of its tolerances."""
+    old, new, sigma = before.get(metric.key), after.get(metric.key), tol.sigma_of(metric, size)
+    if old is None or new is None or sigma is None:
+        return False
+    gain = old - new
+    return gain > (sigma * old if metric.relative else sigma)
 
 
 def judged_regressions(pairs, group: str, tol: Tolerances) -> list[Regression]:

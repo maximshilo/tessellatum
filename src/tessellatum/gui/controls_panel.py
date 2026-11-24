@@ -634,8 +634,20 @@ class ControlsPanel(QWidget):
         self._save()
 
     def _on_medium_changed(self) -> None:
-        # On a screen there is no darkest black on paper: its slider stands aside.
-        self.controls["paper_black_lstar"].setEnabled(self.medium_combo.currentText() != difficulty.SCREEN_MEDIUM)
+        # On a screen there is no darkest black on paper: its slider stands aside. The color margin is capped there,
+        # which the margin's and the levels' tooltips say.
+        medium = self.medium_combo.currentText()
+        screen = medium == difficulty.SCREEN_MEDIUM
+        self.controls["paper_black_lstar"].setEnabled(not screen)
+        margin = self.controls["palette_margin_de00"]
+        cap = (
+            f" Coloring on a screen, the page keeps its colors at most {difficulty.SCREEN_MARGIN_DE00:g} ΔE00 apart, "
+            "whatever this says."
+        )
+        margin.setToolTip(margin.setting.tooltip + (cap if screen else ""))
+        for index, name in enumerate(difficulty.PRESETS):
+            params = difficulty.for_medium(difficulty.params_for_preset(name), medium)
+            self.preset_combo.setItemData(index, difficulty.describe(params), Qt.ToolTipRole)
         self._save()
 
     def _on_print_changed(self) -> None:

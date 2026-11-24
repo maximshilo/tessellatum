@@ -217,7 +217,7 @@ def test_scorecard_scores_each_job_per_category_and_over_all_cases(tmp_path):
     palette = _section(scorecard, "#### palette")
     assert (
         "| category | cases | palette min ΔE00 ↑ (≥ color margin) | close color pairs ↓ "
-        "| printed min ΔE00 ↑ (≥ color margin) | printed close pairs ↓ "
+        "| printed min ΔE00 ↑ (≥ color margin on pages made for paper) | printed close pairs ↓ "
         "| flat colors ΔE00 ↓ (≤ flat colors ΔE00 best + 2.5 on exact colors) | targets met |"
     ) in palette
 
@@ -542,6 +542,13 @@ def test_a_palette_may_trade_some_color_error_for_printed_colors_told_apart():
     )
     with_face = ({**before, "features_lost": 0}, {**after, "features_lost": 1})
     assert not bench_report.traded(*with_face, "preview", tol)
+    # Nor when the gain is within the tolerance (vivid's is 5.2% of its value), ΔE00 p95 rose over 10% or SSIM fell
+    # over 0.02.
+    assert not bench_report.traded(before, {**after, "vivid_de00_mean": 7.7}, "preview", tol)
+    tails = ({**before, "de00_p95": 15.0, "ssim": 0.70}, {**after, "de00_p95": 16.0, "ssim": 0.69})
+    assert bench_report.traded(*tails, "preview", tol)
+    assert not bench_report.traded(tails[0], {**tails[1], "de00_p95": 16.6}, "preview", tol)
+    assert not bench_report.traded(tails[0], {**tails[1], "ssim": 0.67}, "preview", tol)
 
     # The traded case is left out of ΔE00 mean's regression, not out of the others'.
     pairs = [(before, after, "preview")] * 16  # enough cases for an 8% rise to be a regression
