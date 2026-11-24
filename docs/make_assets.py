@@ -31,6 +31,9 @@ from tessellatum.core import difficulty, pipeline  # noqa: E402
 from tessellatum.core.painting import Version  # noqa: E402
 
 SAMPLES = ROOT / "tests" / "sample_images"
+RESOURCES = ROOT / "src" / "tessellatum" / "resources"
+LOGO = RESOURCES / "app-icon" / "512.png"  # rendered from logo.svg by packaging/icons/make_icons.py
+FONTS = RESOURCES / "fonts"
 ASSETS = ROOT / "docs" / "assets"
 GALLERY = ROOT / "docs" / "gallery"
 
@@ -52,7 +55,7 @@ GALLERY_ITEMS = [
 PAPER = (255, 255, 255)
 BACKDROP = (246, 245, 241)
 INK = (27, 27, 26)
-ACCENT = (31, 78, 121)
+ACCENT = (13, 116, 104)  # Viridian, the app's accent (gui/theme/tokens.py)
 MUTED = (98, 97, 92)
 PANEL_HEIGHT = 560
 GAP = 14
@@ -60,8 +63,9 @@ LABEL_BAR = 46
 
 
 def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Segoe UI where it exists (Windows), else Pillow's own scalable font."""
-    for name in (("segoeuib.ttf", "arialbd.ttf") if bold else ("segoeui.ttf", "arial.ttf")):
+    """Inter, the app's typeface (bundled with it), else Segoe UI or Arial, else Pillow's own scalable font."""
+    inter = FONTS / ("Inter-SemiBold.ttf" if bold else "Inter-Regular.ttf")
+    for name in (str(inter), *(("segoeuib.ttf", "arialbd.ttf") if bold else ("segoeui.ttf", "arial.ttf"))):
         try:
             return ImageFont.truetype(name, size)
         except OSError:
@@ -142,7 +146,18 @@ def banner(width: int, height: int, art: Callable[[tuple[int, int]], Image.Image
     draw = ImageDraw.Draw(out)
     left = round(width * 0.05)
     y = round(height * 0.24)
-    draw.text((left, y), "Tessellatum", fill=INK, font=font(title_size, bold=True))
+    # The logo before the name, as tall as its capitals and descenders; the two smaller if they'd reach the picture.
+    room = (width - art_width) - left
+    while True:
+        logo_size = round(title_size * 1.15)
+        title_font = font(title_size, bold=True)
+        if left + round(logo_size * 1.22) + title_font.getlength("Tessellatum") <= room or title_size <= 24:
+            break
+        title_size -= 2
+    logo = Image.open(LOGO).convert("RGBA").resize((logo_size, logo_size), Image.LANCZOS)
+    top, bottom = title_font.getbbox("Tessellatum")[1::2]
+    out.paste(logo, (left, y + (top + bottom) // 2 - logo_size // 2), logo)
+    draw.text((left + round(logo_size * 1.22), y), "Tessellatum", fill=INK, font=title_font)
     y += round(title_size * 1.3)
     for line in ("Any picture into a printable", "paint-by-numbers page"):
         draw.text((left, y), line, fill=ACCENT, font=font(subtitle_size))

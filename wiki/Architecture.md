@@ -33,7 +33,8 @@ src/tessellatum/
   app/             the document and its settings snapshot (QtCore only)
   gui/             the Qt interface: 6 modules, and theme/ (tokens, style, icons, motion)
   resources/       the four bundled models and their licenses (MODELS.md); fonts/ (Inter, OFL) and icons/
-                   (Lucide, ISC)
+                   (Lucide, ISC); the logo (logo.svg, logo-small.svg) and the app's icons rendered from it
+                   (app-icon/ 16-512 px, icon.ico, icon.icns, icon.png)
 tests/             pytest suite and the benchmark images (CC0 / public domain)
 benchmarks/        speed and quality harness, quality spec and report
 packaging/         PyInstaller spec and build scripts
@@ -124,5 +125,9 @@ The page, its versions and its legend are never themed: the canvas shows their o
 
 `pyproject.toml` declares the package and its dependencies (PySide6, OpenCV, NumPy, Pillow, Numba, ONNX Runtime).
 PyInstaller builds a standalone "onedir" app from `packaging/tessellatum.spec`, bundling the models, the font and
-the icons (the self-test checks the last two are there). The release
+the icons (the self-test checks the last two are there, and the app's icons). The app's icons are rendered from the
+logo's two SVG masters by `packaging/icons/make_icons.py` (the masters themselves by `make_logo.py`, from the
+geometry and colors in it): the 16 to 24 px sizes from the simplified master, the larger from the full one, each size
+drawn for itself in the Windows `.ico`, the macOS `.icns` and the window icon. A test checks the committed icons are
+what the masters render. The release
 workflow builds it on GitHub Actions for every version tag (see [Development](Development)).
