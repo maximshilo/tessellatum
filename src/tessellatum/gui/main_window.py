@@ -21,8 +21,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tessellatum.core import export, pipeline, swatches
-from tessellatum.core.legend import render_legend
+from tessellatum.core import export, mixing, pipeline, swatches
+from tessellatum.core.legend import NAME_RECIPE, render_legend
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import GeneratedPage
 from tessellatum.core.print_size import MM_PER_INCH, print_scale
@@ -103,6 +103,8 @@ class MainWindow(QMainWindow):
         self.controls.export_requested.connect(self.export_page)
         self.controls.abort_requested.connect(self.abort_generation)
         self.controls.legend_detail_changed.connect(self._show_legend)
+        self.controls.paints_changed.connect(self._show_legend)
+        self._recipes_for: tuple | None = None  # what the recipes kept were mixed for, and them (see _recipes)
         self.version_bar.version_changed.connect(self.preview.show_version)
         self.preview.detail_wanted.connect(self._draw_print_page)
 
@@ -204,9 +206,21 @@ class MainWindow(QMainWindow):
         palette_bgr = np.asarray(page.palette_rgb, dtype=np.uint8).reshape(-1, 3)[:, ::-1]
         legend = render_legend(
             palette_bgr, round(page.page.width * legend_scale), page_px_per_mm * legend_scale,
-            self.controls.get_legend_detail(), names=page.color_names or None,
+            self.controls.get_legend_detail(), names=page.color_names or None, recipes=self._recipes(page),
         )
         return legend, legend_scale
+
+    def _recipes(self, page: GeneratedPage) -> list[list[str]] | None:
+        """How to mix each of ``page``'s legend colors from the paints listed, as the legend writes it, if the legend
+        shows recipes; the last ones found are kept, as the legend is drawn again and again."""
+        paints = self.controls.listed_paints()
+        if self.controls.get_legend_detail() != NAME_RECIPE or not paints:
+            return None
+        key = (tuple(page.palette_rgb), paints)
+        if self._recipes_for is None or self._recipes_for[0] != key:
+            found = mixing.recipes(page.palette_rgb, [rgb for _name, rgb in paints])
+            self._recipes_for = (key, [mixing.recipe_lines(recipe, paints) for recipe in found])
+        return self._recipes_for[1]
 
     def _show_legend(self, _detail: str = "") -> None:
         """Show the page's legend as the panel now asks for it: the page itself is the same."""
@@ -299,7 +313,7 @@ class MainWindow(QMainWindow):
             try:
                 export.save_pdf(
                     page.drawing, page.palette_rgb, path, version=version, painting=page.painting,
-                    names=page.color_names or None,
+                    names=page.color_names or None, recipes=self._recipes(page),
                 )
             except Exception as exc:  # noqa: BLE001
                 self._on_export_failed(str(exc))
@@ -314,9 +328,11 @@ class MainWindow(QMainWindow):
         dpi = value if unit == DPI else value * MM_PER_INCH / printed_long_mm
         self.controls.set_busy(True, cancellable=False)
         self.statusBar().showMessage(f"Drawing the PNG at {dpi:.0f} dpi…")
+        recipes = self._recipes(page)
         worker = TaskWorker(
             lambda: export.export_png(
-                page.drawing, page.palette_rgb, path, dpi, version, page.painting, names=page.color_names or None
+                page.drawing, page.palette_rgb, path, dpi, version, page.painting, names=page.color_names or None,
+                recipes=recipes,
             )
         )
         worker.succeeded.connect(lambda size: self._on_export_saved(page, path, size))

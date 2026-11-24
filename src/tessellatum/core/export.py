@@ -74,13 +74,18 @@ def export_png(
     version: Version = Version.PAGE,
     painting: Painting | None = None,
     names: Sequence[str] | None = None,
+    recipes: Sequence[Sequence[str]] | None = None,
 ) -> tuple[int, int]:
     """Save ``version`` of the page laid out in ``drawing`` as a PNG at ``dpi`` on its paper: the page drawn there
     (see ``rasterize``) above its legend of ``palette_rgb`` drawn at the same resolution, the file recording it,
-    the colors called ``names`` (see ``legend.swatch_texts``). Returns the page's pixels (width, height)."""
+    the colors called ``names`` and mixed as ``recipes`` say (see ``legend.swatch_texts``). Returns the page's
+    pixels (width, height)."""
     page = rasterize(drawing, dpi, version, painting)
     palette_bgr = np.asarray(palette_rgb, dtype=np.uint8).reshape(-1, 3)[:, ::-1]
-    legend = render_legend(palette_bgr, width=page.width, px_per_mm=dpi / MM_PER_INCH, detail=drawing.style.legend_detail, names=names)
+    legend = render_legend(
+        palette_bgr, width=page.width, px_per_mm=dpi / MM_PER_INCH, detail=drawing.style.legend_detail, names=names,
+        recipes=recipes,
+    )
     save_png(page, legend, path, drawing.style.paper_format)
     return page.size
 
@@ -108,6 +113,7 @@ def save_pdf(
     version: Version = Version.PAGE,
     painting: Painting | None = None,
     names: Sequence[str] | None = None,
+    recipes: Sequence[Sequence[str]] | None = None,
 ) -> None:
     """Save as two sheets of vector art, of the paper the page was made for (``drawing.style.paper``): the coloring
     page, then its legend.
@@ -149,13 +155,15 @@ def save_pdf(
     from the top margin: its swatches, ``legend.SWATCH_MM`` squares in their
     exact colors, numbered as the page is, and beside each what the style's
     ``legend_detail`` asks for (its name, hex code and RGB values), as text,
-    the colors called ``names`` (see ``legend.swatch_texts``).
+    the colors called ``names`` and mixed as ``recipes`` say (see ``legend.swatch_texts``).
     The file carries no date, so the same page always gives the same bytes.
     """
     document = _Document()
     numbers = document.font(_number_font())
     _page_sheet(document, drawing, numbers, version, painting)
-    _legend_sheet(document, palette_rgb, numbers, drawing.style.paper_format, drawing.style.legend_detail, names)
+    _legend_sheet(
+        document, palette_rgb, numbers, drawing.style.paper_format, drawing.style.legend_detail, names, recipes
+    )
     Path(path).write_bytes(document.to_bytes())
 
 
@@ -599,9 +607,10 @@ def _legend_sheet(
     paper: PaperFormat = A4,
     detail: str = DEFAULT_LEGEND_DETAIL,
     names: Sequence[str] | None = None,
+    recipes: Sequence[Sequence[str]] | None = None,
 ) -> None:
     """The legend's portrait sheet of ``paper``, drawn in millimeters from the top-left margin, y down, with ``detail``
-    beside each swatch, the colors called ``names``."""
+    beside each swatch, the colors called ``names``, mixed as ``recipes`` say."""
     area_w, area_h = paper.printable_mm()
     cell = SWATCH_MM + SWATCH_GAP_MM
     columns = max(1, int(area_w // cell_mm(detail)))
@@ -609,7 +618,7 @@ def _legend_sheet(
     # A legend never runs past the sheet: 40 colors take a quarter of an A4 sheet numbered only, and 64 with their
     # details 243 mm of its 277.
     fit = min(1.0, area_h / (rows * cell + SWATCH_GAP_MM))
-    texts = swatch_texts(palette_rgb, detail, names)
+    texts = swatch_texts(palette_rgb, detail, names, recipes)
     scale = _PT_PER_MM * fit
     em = SWATCH_MM * LABEL_FONT_RATIO
     ops = [
