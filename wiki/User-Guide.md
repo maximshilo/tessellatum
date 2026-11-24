@@ -132,6 +132,13 @@ smaller ones.
   or match a paint or pencil against. **Name** gives the name alone, **Number only** the numbered swatches as before.
   The name is the nearest by CIEDE2000 of about 800 names from the xkcd color survey (CC0), every color on a legend a
   different one. With the details, four colors fit across a portrait A4 sheet, so 64 colors take 243 mm of its 277.
+  **Name and recipe** gives the name and under it how to mix the color from the paints you list (**Paints…**, under
+  Regions; see **Colors from**): "3 Titanium white", "1 Ultramarine", one to three paints in whole parts adding up to
+  10 at most, the mix nearest the color by CIEDE2000, a second or third paint only when it brings the mix at least 1
+  ΔE00 nearer. A color no mix comes within 5 ΔE00 of says "closest mix, 7 dE00 off". The page keeps its own colors
+  (with Colors from: The picture), so this is how to get a picture's colors from a small box of paints; with My paints
+  every recipe is a single paint. Mixing is modeled, not measured: your own tubes of the same colors mix a little
+  differently, so a recipe is where to start. With no paints listed it shows hex and RGB instead.
   Changing it redraws the preview's legend at once and applies to the next export, without making the page again.
 - **Leader width**: 0.1 mm by default, half the default line, so a leader doesn't read as a boundary. Numbers keep as
   clear of a leader as of a line however thin it is drawn.

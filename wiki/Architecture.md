@@ -44,6 +44,7 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 | `core/print_size.py` | The print model: A4, A3 and A2 geometry, pixels per millimetre, unit conversions |
 | `core/quantize.py`, `core/color.py` | Bilateral filter, k-means palette, CIEDE2000 merge, a palette from the painter's paints; exact color conversion |
 | `core/paints.py` | The painter's paints: read from text and from palette files |
+| `core/mixing.py`, `spectral_data.py` | Mixing recipes by Kubelka-Munk theory over reflectance curves; spectral.js's data (MIT) |
 | `core/ink.py`, `faces.py`, `subject.py`, `text.py` | Line-art decision and ink; the three detectors; lettering |
 | `core/regions.py`, `texture.py`, `tones.py`, `marks.py` | Regions, brush rule, line-art regions; edge vote; face tones and marks |
 | `core/boundaries.py`, `labels.py`, `render.py` | One line per boundary; number placement; page rendering |
