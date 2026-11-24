@@ -809,3 +809,21 @@ def test_the_palette_is_exported_from_the_preview_s_legend_without_drawing_the_p
     swatches.save_palette(expected, window.current_page.palette_rgb, title="colors")
     assert path.read_bytes() == expected.read_bytes()
     assert drive.dialogs[-1] == ("information", "Export complete", f"Saved to:\n{path}")
+
+
+def test_a_page_made_from_the_paints_listed_is_painted_in_them_and_its_legend_calls_them_by_name(drive):
+    window = drive.window
+    window.current_image_bgr = _blocks((4000, 2000))
+    paints = (
+        ("Ultramarine", (40, 40, 200)), ("Sap green", (40, 170, 40)), ("Cadmium red", (200, 40, 40)),
+        ("Lemon", (60, 210, 210)), ("Titanium white", (255, 255, 255)), ("Ivory black", (20, 20, 22)),
+    )
+    window.controls.set_paints(paints)
+    window.generate_preview()
+    drive.wait()
+    _args, kwargs = drive.calls[-1]
+    assert kwargs["handling"].paints == paints
+    page = window.current_page
+    owned = {rgb: name for name, rgb in paints}
+    assert sorted(page.color_names) == ["Cadmium red", "Lemon", "Sap green", "Ultramarine"]
+    assert page.color_names == [owned[rgb] for rgb in page.palette_rgb]
