@@ -18,8 +18,8 @@ page's pixels. The benchmark runs on A4; `--paper A3` or `A2` makes and measures
 
 ## The benchmark harness
 
-`benchmarks/bench.py` runs any git ref, or the working tree, over the 12 benchmark images (six photographs, a painting,
-two digital cartoons, two scanned drawings and a synthetic scene) at every difficulty and at two sizes:
+`benchmarks/bench.py` runs any git ref, or the working tree, over the 13 benchmark images (six photographs, two
+paintings, two digital cartoons, two scanned drawings and a synthetic scene) at every difficulty and at two sizes:
 
 - each case runs in a fresh Python process with that version's code, so versions never share imports, caches or
   compiled kernels; timings are the median of three runs after a warm-up;
@@ -50,7 +50,7 @@ photographs and numbers without room on the densest pages.
 
 ## Speed
 
-Median preview time and region count over the 12 benchmark images, at each level's working size:
+Median preview time and region count over 12 benchmark images (before the dark portrait was added), at each level's working size:
 
 | Level | Median preview | Slowest | Median regions | Most regions |
 |---|---|---|---|---|
