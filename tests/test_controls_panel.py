@@ -438,3 +438,23 @@ def test_what_the_legend_writes_is_kept_and_says_so_when_changed(tmp_path):
     assert ControlsPanel(store=store).get_legend_detail() == "Name, hex and RGB"
     store.setValue("style/legend", "Everything")  # not a choice the app offers
     assert ControlsPanel(store=store).get_legend_detail() == "Name, hex and RGB"
+
+
+def test_the_palette_export_has_its_format_kept_and_is_suggested_coloring_on_a_screen(tmp_path):
+    first = ControlsPanel(store=_store(tmp_path))
+    assert first.get_output_format() == "PNG" and not first.palette_combo.isEnabled()
+    first.palette_radio.setChecked(True)
+    assert first.get_output_format() == "Palette" and first.palette_combo.isEnabled()
+    assert not first.version_combo.isEnabled() and not first.resolution_spin.isEnabled()
+    assert first.get_palette_format() == ".swatches"  # Procreate first
+    first.palette_combo.setCurrentIndex(first.palette_combo.findData(".gpl"))
+    assert ControlsPanel(store=_store(tmp_path)).get_palette_format() == ".gpl"
+    # Coloring on a screen, the panel says the palette is there to take.
+    assert first.screen_hint.isHidden()
+    first.medium_combo.setCurrentText("Screen")
+    assert not first.screen_hint.isHidden()
+    first.medium_combo.setCurrentText("Paper and paint")
+    assert first.screen_hint.isHidden()
+    again = ControlsPanel(store=_store(tmp_path))
+    again.reset()
+    assert again.get_palette_format() == ".swatches"

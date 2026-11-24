@@ -25,7 +25,7 @@ thread.
 ```
 src/tessellatum/
   main.py          entry point
-  core/            the pipeline: 25 modules
+  core/            the pipeline: 26 modules
   gui/             the Qt interface: 4 modules
   resources/       the four bundled models and their licenses (MODELS.md)
 tests/             pytest suite and the benchmark images (CC0 / public domain)
@@ -46,7 +46,7 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 | `core/ink.py`, `faces.py`, `subject.py`, `text.py` | Line-art decision and ink; the three detectors; lettering |
 | `core/regions.py`, `texture.py`, `tones.py`, `marks.py` | Regions, brush rule, line-art regions; edge vote; face tones and marks |
 | `core/boundaries.py`, `labels.py`, `render.py` | One line per boundary; number placement; page rendering |
-| `core/painting.py`, `legend.py`, `redraw.py`, `export.py` | Painted versions; legend; print-size redraw; PNG and PDF |
+| `core/painting.py`, `legend.py`, `color_names.py`, `redraw.py`, `export.py`, `swatches.py` | Painted versions; legend and its color names; print-size redraw; PNG and PDF; palette files |
 | `core/kernels.py`, `parallel.py` | Numba-compiled pixel loops; the shared thread pool |
 | `gui/main_window.py`, `controls_panel.py`, `preview_widget.py`, `worker.py` | Window, settings panel, zoomable preview, background worker |
 

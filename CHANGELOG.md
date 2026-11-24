@@ -4,6 +4,16 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.0.18] - 2026-11-24
+
+### Added
+
+- **Palette export** for coloring on a screen: Export > Format > **Palette** saves the legend's colors as a
+  Procreate palette (`.swatches`), an Adobe Swatch Exchange file (`.ase`: Photoshop, Illustrator, Affinity and others)
+  or a GIMP palette (`.gpl`: GIMP, Krita, Inkscape and others), each color named by its number and its name on the
+  legend. A Procreate palette holds 30 colors, so a larger legend is saved as several. The panel suggests it when
+  Coloring on is Screen.
+
 ## [1.0.17] - 2026-11-24
 
 ### Added

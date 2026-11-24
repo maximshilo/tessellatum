@@ -162,6 +162,19 @@ are both drawn from that layout, so they number the page the same way, each numb
   search and copy.
 - **PNG**: the page above its legend in one image: the PDF's page drawn in pixels, at the **Resolution** asked
   for, which the file records, so it prints as large as the PDF's page.
+- **Palette**: the legend's colors as a palette file, for coloring the page in a painting app with exactly its
+  colors; the panel suggests it when **Coloring on** is Screen. Each color is named by its number and its name on the
+  legend ("7 dusty rose"), in the legend's order. **Palette** picks the format:
+  - **Procreate** (`.swatches`): a zip holding `Swatches.json`, the colors in HSB, as the MIT-licensed
+    procreate-swatches library writes them (Procreate publishes no spec). Procreate keeps the colors but not their
+    names, and a palette holds 30 at most, so a larger legend is saved as several files of 30, named for the colors
+    each holds ("page 1-30.swatches", "page 31-60.swatches"). Drop them on Procreate's Palettes tab.
+  - **Adobe Swatch Exchange** (`.ase`): read by Photoshop, Illustrator, InDesign, Affinity's apps, Procreate and
+    others; the colors in RGB, in a group named after the file.
+  - **GIMP palette** (`.gpl`): read by GIMP, Krita, Inkscape, Aseprite and others.
+
+  The palette is the preview's legend, saved at once; if the settings changed since the preview, the page is made
+  again with them first, as for the other formats.
 
 **Resolution** is the PNG's: in **dpi** on its paper (the buttons set 150, 300 or 600; any other can be typed) or in
 **px** along the page's long edge, the other worked out from the paper and the picture's shape and shown below it
