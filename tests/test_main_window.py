@@ -297,6 +297,24 @@ def test_a_running_generation_can_be_cancelled(drive, monkeypatch):
     assert drive.dialogs == []
 
 
+def test_the_x_beside_the_progress_bar_cancels_the_generation(drive, monkeypatch):
+    def until_cancelled(*args, should_cancel, **kwargs):
+        deadline = time.monotonic() + TIMEOUT_S
+        while not should_cancel():
+            assert time.monotonic() < deadline
+            time.sleep(0.005)
+        raise PipelineCancelled()
+
+    monkeypatch.setattr(pipeline, "generate", until_cancelled)
+    drive.window.current_image_bgr = _blocks((300, 200))
+    drive.window.generate_preview()
+    assert drive.window.jobs.is_running(PREVIEW) and drive.window.controls.abort_button.isEnabled()
+    drive.window.controls.abort_button.click()
+    assert drive.status() == "Cancelling…" and not drive.window.controls.abort_button.isEnabled()
+    drive.wait()
+    assert drive.status() == "Cancelled." and drive.window.current_page is None
+
+
 def test_a_failure_is_reported_and_the_window_is_ready_again(drive, monkeypatch):
     def failing(*args, **kwargs):
         raise ValueError("no luck")

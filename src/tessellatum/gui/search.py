@@ -77,9 +77,9 @@ def search(text: str, entries: Sequence | None = None) -> list[Match]:
 
 
 def where(entry) -> str:
-    """Where ``entry`` is: its page, and its section or the page's Advanced group."""
+    """Where ``entry`` is: its page, and its section, or the page's Advanced group and its part of it."""
     if entry.level == settings.ADVANCED:
-        return f"{entry.category} · Advanced"
+        return f"{entry.category} · Advanced · {entry.section.replace('Advanced · ', '')}"
     return f"{entry.category} · {entry.section}"
 
 

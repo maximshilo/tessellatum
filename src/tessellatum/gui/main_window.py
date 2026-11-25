@@ -79,6 +79,9 @@ def mix_recipes(palette_rgb, paints) -> list[list[str]]:
     found = mixing.recipes(palette_rgb, [rgb for _name, rgb in paints])
     return [mixing.recipe_lines(recipe, paints) for recipe in found]
 
+FOCUS_HINT = "Focus mode: the panels are hidden. Press Esc, or Exit Focus Mode above the page, to bring them back."
+STALE_NAMED = 3  # how many changed settings the out-of-date status names
+
 
 class MainWindow(QMainWindow):
     def __init__(self, store: QSettings | None = None, presets: PresetStore | None = None):
@@ -112,6 +115,11 @@ class MainWindow(QMainWindow):
         gap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.canvas_bar.addWidget(gap)
         self.canvas_bar.addWidget(self.zoom_bar)
+        # In focus mode the toolbar and its Focus Mode button are hidden: this is the way back, on the canvas's own bar.
+        self.exit_focus_action = self.canvas_bar.addAction("Exit Focus Mode")
+        self.exit_focus_action.setToolTip("Show the panels again (Esc)")
+        self.exit_focus_action.setVisible(False)
+        self.exit_focus_action.triggered.connect(lambda: self.set_focus_mode(False))
         canvas_pane = QWidget()
         canvas_layout = QVBoxLayout(canvas_pane)
         canvas_layout.setContentsMargins(0, 0, 0, 0)
@@ -169,6 +177,7 @@ class MainWindow(QMainWindow):
         self._pending_export_drawn = False  # whether the export waits for the preview's page drawn at print size
         self._last_export: tuple | None = None  # the last export's file and options, for Retry
         self._ready_message = ""  # the status of the preview shown
+        self._stale = False  # whether the status bar says the preview is out of date
         # The preview's page drawn at print size: what the zoom shows past the preview's own pixels, and what the
         # export saves. Drawn in the background when either first asks for it, and dropped with the preview.
         self._print_page: GeneratedPage | None = None
@@ -189,6 +198,7 @@ class MainWindow(QMainWindow):
         self._record_scheduled = False
         self._restoring = False
         self.controls.settings_changed.connect(self._on_settings_edited)
+        self.controls.settings_changed.connect(lambda _settings: self._show_freshness())
         self.controls.edit_started.connect(self.history.begin_merge)
         # After the drag's last edit is recorded, which waits for the event loop too.
         self.controls.edit_finished.connect(lambda: QTimer.singleShot(0, self.history.end_merge))
@@ -406,12 +416,16 @@ class MainWindow(QMainWindow):
             self._focus = {"shown": [not panel.isHidden() for panel in panels], "sizes": self.splitter.sizes()}
             for panel in panels:
                 panel.hide()
+            self.notify(INFO, FOCUS_HINT)
         else:
             focus, self._focus = self._focus, None
             for panel, shown in zip(panels, focus["shown"]):
                 panel.setVisible(shown)
             self.splitter.setSizes(focus["sizes"])
             self._reflow()
+            if self.notification.isVisible() and self.notification.text.text() == FOCUS_HINT:
+                self.notification.dismiss()
+        self.exit_focus_action.setVisible(on)
         self._show_panel_state()
 
     def keyPressEvent(self, event) -> None:
@@ -684,9 +698,25 @@ class MainWindow(QMainWindow):
             self._restoring = False
         self.controls.edit_label = None
         self._recorded = self.controls.snapshot()
+        self._show_freshness()
+
+    def _show_freshness(self) -> None:
+        """Say in the status bar when the preview shown isn't made with the settings as they are, naming what
+        changed, and that it is ready again once they are back. Not while a page is being made, which says so."""
         made_with = self.document.result_settings()
-        if self.current_page is not None and made_with is not None and self._recorded.changes_from(made_with):
-            self._say("The preview is out of date: Generate Preview to see the settings restored.")
+        if self._making() or self.current_page is None or made_with is None:
+            return
+        changed = self.controls.snapshot().changes_from(made_with)
+        if changed:
+            names = ", ".join(changed[:STALE_NAMED])
+            if len(changed) > STALE_NAMED:
+                names += f" and {len(changed) - STALE_NAMED} more"
+            self._stale = True
+            self._say(f"The preview is out of date ({names} changed): Generate Preview to see the page with "
+                      f"{'them' if len(changed) > 1 else 'it'}.")
+        elif self._stale:
+            self._stale = False
+            self._say(self._ready_message, DONE)
 
     def _restore_source(self, source: tuple | None) -> None:
         image, path = source if source is not None else (None, None)
@@ -802,6 +832,7 @@ class MainWindow(QMainWindow):
             self.controls.set_picture_reading(page.model.line_art.is_line_art)
         # Its colors, regions and size are in the status bar's own fields (see _show_page_status).
         self._ready_message = "Preview ready."
+        self._stale = False
         self._say(self._ready_message, DONE)
         versions = {version: page.image(version) for version in Version}
         long_edge = self._print_long_edge()

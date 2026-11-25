@@ -154,7 +154,10 @@ QToolButton#sectionHeader {{ background: transparent; border: 1px solid transpar
 QToolButton#sectionHeader:hover {{ background: {c.hover}; }}
 QToolButton#sectionHeader:focus {{ border: 1px solid {c.accent}; }}
 QToolButton#sectionReset {{ color: {c.accent}; padding: 1px 6px; }}
-QLabel#subsectionTitle {{ color: {c.text_secondary}; font-weight: 600; padding-top: 6px; }}
+QToolButton#subsectionHeader {{ background: transparent; border: 1px solid transparent; color: {c.text_secondary};
+    font-weight: 600; padding: 2px 2px; }}
+QToolButton#subsectionHeader:hover {{ background: {c.hover}; color: {c.text}; }}
+QToolButton#subsectionHeader:focus {{ border: 1px solid {c.accent}; }}
 QRadioButton::indicator {{
     width: 12px; height: 12px; border-radius: 7px; border: 1px solid {c.border_strong}; background: {c.field};
 }}

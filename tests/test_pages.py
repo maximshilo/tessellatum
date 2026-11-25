@@ -23,7 +23,7 @@ from tessellatum.core import difficulty, export, legend, pipeline, settings  # n
 from tessellatum.core.legend import NAME_HEX_RGB, NAME_RECIPE, RECIPES_HEADING, legend_sections, render_legend  # noqa: E402
 from tessellatum.core.print_size import PAPERS  # noqa: E402
 from tessellatum.gui import controls_panel, main_window  # noqa: E402
-from tessellatum.gui.controls_panel import ADVANCED, ControlsPanel, advanced_key  # noqa: E402
+from tessellatum.gui.controls_panel import advanced_subsection_key, ADVANCED, ControlsPanel, advanced_key  # noqa: E402
 from tessellatum.gui.main_window import MainWindow  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
@@ -50,10 +50,19 @@ def test_each_page_has_its_advanced_settings_in_one_folded_group_at_its_foot():
         for s in settings.SETTINGS:
             if s.category == category and s.level != settings.ADVANCED:
                 assert not group.isAncestorOf(panel.controls[s.name]), s.name
-    # The advanced group's subheadings name the registry's sections, without "Advanced ·".
-    headings = [label.text() for label in panel.sections[advanced_key(settings.GENERATION)].findChildren(QLabel)
-                if label.objectName() == "subsectionTitle"]
-    assert headings == ["Faces and subject", "Line art", "Text", "Edges", "Corners", "Resolution"]
+    # The advanced group's subsections name the registry's sections, without "Advanced ·": each folds on its own,
+    # folded at first, inside the group.
+    group = panel.sections[advanced_key(settings.GENERATION)]
+    subs = {key: s for key, s in panel.sections.items() if key.startswith(advanced_key(settings.GENERATION) + " · ")}
+    assert [s.title for s in subs.values()] == ["Faces and subject", "Line art", "Text", "Edges", "Corners",
+                                               "Resolution"]
+    for key, sub in subs.items():
+        assert sub.nested and group.body.isAncestorOf(sub) and not sub.is_expanded(), key
+    edges = subs[advanced_subsection_key(settings.GENERATION, "Advanced · Edges")]
+    for s in settings.SETTINGS:
+        if s.category == settings.GENERATION and s.section == "Advanced · Edges":
+            assert edges.body.isAncestorOf(panel.controls[s.name]), s.name
+            assert panel.section_of(panel.controls[s.name]) is edges  # the innermost
 
 
 def test_the_difficulty_says_what_it_makes_and_how_far_it_was_moved():
@@ -232,3 +241,21 @@ def test_open_pick_a_difficulty_generate_and_export_without_an_advanced_setting(
 def test_the_panel_module_names_its_levels():
     assert controls_panel.ADVANCED == "Advanced"
     assert set(controls_panel.ADVANCED_SECTIONS) <= set(controls_panel.PAGE_SECTIONS)
+
+
+def test_an_advanced_subsection_resets_on_its_own_and_the_group_resets_all():
+    panel = ControlsPanel()
+    edges = advanced_subsection_key(settings.GENERATION, "Advanced · Edges")
+    corners = advanced_subsection_key(settings.GENERATION, "Advanced · Corners")
+    edge = next(s.name for s in settings.SETTINGS if s.section == "Advanced · Edges" and s.category == settings.GENERATION)
+    corner = next(s.name for s in settings.SETTINGS
+                  if s.section == "Advanced · Corners" and s.category == settings.GENERATION)
+    panel.controls[edge].step(-1)  # both start at their most
+    panel.controls[corner].step(-1)
+    assert not panel.sections[edges].reset_button.isHidden() and not panel.sections[corners].reset_button.isHidden()
+    group = panel.sections[advanced_key(settings.GENERATION)]
+    assert not group.reset_button.isHidden()
+    panel.sections[edges].reset_button.click()
+    assert panel.changed_settings() == [corner] and not group.reset_button.isHidden()
+    group.reset_button.click()
+    assert panel.changed_settings() == [] and group.reset_button.isHidden()

@@ -265,3 +265,35 @@ def test_a_history_torn_down_with_changes_in_it_raises_nothing(monkeypatch):
 
     QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
     assert raised == []
+
+
+def test_an_edit_says_the_preview_is_out_of_date_and_putting_it_back_says_it_is_ready(window):
+    window.current_image_bgr = np.full((300, 400, 3), 128, np.uint8)
+    window.generate_preview()
+    deadline = time.monotonic() + 60
+    while not window.jobs.is_idle() or window.current_page is None:
+        _app.processEvents()
+        assert time.monotonic() < deadline
+        time.sleep(0.005)
+    assert window.status.text() == "Preview ready."
+    window.controls.controls["line_width_mm"].step(2)
+    _settle()
+    assert window.status.text() == ("The preview is out of date (Line width changed): Generate Preview to see the "
+                                    "page with it.")
+    window.controls.controls["min_label_pt"].step(1)
+    _settle()
+    assert "(Line width, Smallest number changed)" in window.status.text() and "with them" in window.status.text()
+    # A difficulty setting moved makes the difficulty Custom: named as the difficulty.
+    window.controls.controls["min_width_mm"].step(2)
+    _settle()
+    assert "(Difficulty, Line width, Smallest number changed)" in window.status.text()
+    window.undo()
+    window.undo()
+    window.undo()
+    _settle()
+    assert window.status.text() == "Preview ready."
+    # The legend's detail doesn't make the page again: the preview isn't out of date for it.
+    window.controls.legend_combo.setCurrentIndex((window.controls.legend_combo.currentIndex() + 1)
+                                                 % window.controls.legend_combo.count())
+    _settle()
+    assert window.status.text() == "Preview ready."

@@ -86,6 +86,8 @@ def test_choosing_a_result_opens_its_page_unfolds_it_and_focuses_the_control(mon
     _app.processEvents()
     field = panel.controls["leader_reach_mm"]
     assert panel.category() == settings.DOCUMENT and group.is_expanded() and not group.body.isHidden()
+    assert panel.section_of(field).is_expanded() and panel.section_of(field).title == "Numbers"
+    assert "Document · Advanced · Numbers" in search.where(settings.setting("leader_reach_mm"))
     assert QApplication.focusWidget() in (field.slider, field.entry)
     assert field.property("found") is True and panel.search.field.text() == ""
     # It is scrolled into sight.
