@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QSettings  # noqa: E402
-from PySide6.QtGui import QPalette  # noqa: E402
+from PySide6.QtGui import QKeySequence, QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tessellatum.core import pipeline  # noqa: E402
@@ -133,7 +133,8 @@ def test_the_dialog_applies_each_change_at_once(window):
     # The shortcuts listed: every command with keys.
     table = dialog.shortcuts
     rows = {table.item(r, 0).text(): table.item(r, 1).text() for r in range(table.rowCount())}
-    assert "Ctrl+F" in rows["Find Setting"] and "Preferences" in rows
+    # In the platform's own words: Ctrl+F on Windows and Linux, ⌘F on macOS.
+    assert QKeySequence("Ctrl+F").toString(QKeySequence.NativeText) in rows["Find Setting"] and "Preferences" in rows
     dialog.close()
 
 
