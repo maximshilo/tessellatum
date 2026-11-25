@@ -1,6 +1,13 @@
 import numpy as np
 import pytest
 
+try:  # numbers shown and typed in the fields follow the locale: the tests' is US English, whatever the machine's
+    from PySide6.QtCore import QLocale
+
+    QLocale.setDefault(QLocale(QLocale.English, QLocale.UnitedStates))
+except ImportError:
+    pass
+
 
 @pytest.fixture
 def sample_image_bgr() -> np.ndarray:

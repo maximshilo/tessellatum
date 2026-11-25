@@ -95,6 +95,18 @@ QFrame#notification[level="success"] {{ border-left-color: {c.success}; }}
 QFrame#notification[level="warning"] {{ border-left-color: {c.warning}; }}
 QFrame#notification[level="error"] {{ border-left-color: {c.error}; }}
 QLabel#notificationText {{ color: {c.text}; }}
+QLineEdit#fieldEntry[invalid="true"] {{ border: 2px solid {c.error}; padding: 1px 5px; }}
+QLabel#fieldMessage[role="error"] {{ color: {c.error}; }}
+QLabel#fieldMessage[role="reason"], QLabel#fieldMessage[role="reason"]:disabled {{ color: {c.text_hint}; }}
+QToolButton#changedMarker {{ color: {c.accent}; border: 1px solid transparent; padding: 0px 2px; font-size: 9px; }}
+QToolButton#changedMarker:hover {{ background: {c.hover}; }}
+QPushButton#segment {{ border-radius: 0px; padding: 3px 8px; margin-left: -1px; }}
+QPushButton#segment[position="first"] {{ border-top-left-radius: {r}px; border-bottom-left-radius: {r}px;
+    margin-left: 0px; }}
+QPushButton#segment[position="last"] {{ border-top-right-radius: {r}px; border-bottom-right-radius: {r}px; }}
+QPushButton#segment[position="only"] {{ border-radius: {r}px; margin-left: 0px; }}
+QPushButton#segment:checked {{ background: {c.selected}; border-color: {c.accent}; }}
+QPushButton#segment:focus {{ border: 2px solid {c.accent}; padding: 2px 7px; }}
 QWidget#diagnostics {{ background: {c.sidebar}; border-top: 1px solid {c.border}; }}
 QListWidget#diagnosticsList, QPlainTextEdit#diagnosticsDetails {{ background: {c.field}; color: {c.text};
     border: none; border-top: 1px solid {c.border}; }}

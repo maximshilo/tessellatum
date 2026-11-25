@@ -64,7 +64,7 @@ def test_every_setting_has_a_slider_in_its_section_with_its_tooltip_and_unit(pan
         reason = s.disabled_reason(panel.snapshot().chosen())
         assert control.setting is s and control.isEnabled() == (reason is None)
         assert control.toolTip() == (s.tooltip if reason is None else f"{reason} {s.tooltip}")
-        assert control.value_label.text() == s.text(control.value())
+        assert control.text() == s.text(control.value())
         # On its category's page, in its section (W1).
         assert panel.sections[s.section].body.isAncestorOf(control) and panel.pages[s.category].isAncestorOf(control)
     for name, widget in panel.choice_widgets.items():
@@ -134,7 +134,7 @@ def test_moving_a_difficulty_setting_picks_custom_and_keeps_the_preset_s_others(
     assert (params.num_colors, params.min_region_area_mm2, params.blur_sigma) == (
         hard.num_colors, hard.min_region_area_mm2, hard.blur_sigma
     )
-    assert panel.controls["min_width_mm"].value_label.text() == "1.5 mm"
+    assert panel.controls["min_width_mm"].text() == "1.5 mm"
     # Picking a preset again shows the preset's values.
     panel.preset_combo.setCurrentText("Easy")
     assert panel.get_difficulty_params() == difficulty.params_for_preset("Easy")
@@ -176,7 +176,7 @@ def test_the_pixels_across_the_brush_sit_by_the_brush_and_leave_the_preset_alone
     assert first.preset_combo.currentText() == "Realistic"
     assert first.get_difficulty_params() == difficulty.params_for_preset("Realistic")
     assert first.get_handling() == Handling(brush_px=6.0)
-    assert first.controls["brush_px"].value_label.text() == "6.0 px"
+    assert first.controls["brush_px"].text() == "6.0 px"
     first.deleteLater()
     _app.processEvents()
 
@@ -192,7 +192,7 @@ def test_line_widths_from_0_1_to_1_mm(panel):
     slider = panel.controls["line_width_mm"].slider
     widths = [controls_panel.slider_value(settings.setting("line_width_mm"), p) for p in range(slider.maximum() + 1)]
     assert widths[0] == 0.1 and widths[-1] == 1.0 and 0.2 in widths and len(widths) == 19
-    assert panel.controls["line_width_mm"].value_label.text() == "0.20 mm"
+    assert panel.controls["line_width_mm"].text() == "0.20 mm"
 
 
 def test_a_tone_sets_all_three_grays(panel):
@@ -210,13 +210,13 @@ def test_a_tone_sets_all_three_grays(panel):
 
 def test_medium_shows_its_grays_as_34_34_and_70_fresh_or_kept_between_runs(panel, tmp_path):
     fields = ("line_gray", "label_gray", "leader_gray")
-    assert [panel.controls[field].value_label.text() for field in fields] == ["34 L*", "34 L*", "70 L*"]
+    assert [panel.controls[field].text() for field in fields] == ["34 L*", "34 L*", "70 L*"]
     store = _store(tmp_path)
     store.setValue("style/tone", "Medium")
     store.setValue("settings/label_gray", 0x81)  # kept by an older version, as Medium was: the tone's grays win
     kept = ControlsPanel(store=store)
     assert kept.tone_combo.currentText() == "Medium"
-    assert [kept.controls[field].value_label.text() for field in fields] == ["34 L*", "34 L*", "70 L*"]
+    assert [kept.controls[field].text() for field in fields] == ["34 L*", "34 L*", "70 L*"]
 
 
 def test_moving_a_gray_picks_a_custom_tone_starting_from_the_tone(panel):
