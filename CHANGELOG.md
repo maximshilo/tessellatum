@@ -4,6 +4,14 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.20] - 2026-11-25
+
+### Fixed
+
+- An export of the preview that was waiting for its page to be laid out to print, when another picture took its place
+  (an undo of Open can do that while it runs), waited for ever: the busy bar stayed and Generate Preview did nothing.
+  It now stops, and says so.
+
 ## [1.1.19] - 2026-11-25
 
 ### Fixed

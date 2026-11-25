@@ -970,3 +970,29 @@ def test_closing_the_window_while_a_page_is_made_returns_at_once(monkeypatch):
     release.set()
     assert jobs.wait_for_all(TIMEOUT_S)
     _until(lambda: jobs.live_threads() == 0)
+
+
+def test_an_export_waiting_for_its_page_is_stopped_when_the_picture_is_replaced(drive, monkeypatch, tmp_path):
+    # An export of the preview waits for its page laid out to print; replaced by another picture (an undo of an Open
+    # can do it while the export runs), that layout is of the old picture and is dropped. The export must end with it,
+    # said, rather than wait for ever with Generate silently refused.
+    window = drive.window
+    window.current_image_bgr = _blocks((300, 200))
+    window.generate_preview()
+    drive.wait()
+    release, started = threading.Event(), threading.Event()
+    monkeypatch.setattr(pipeline, "draw_page", _held_back(pipeline.draw_page, release, started=started))
+    drive.save_path = str(tmp_path / "page.png")
+    window.export_page(previewed=True)
+    assert started.wait(TIMEOUT_S) and window._pending_export_drawn
+    window._show_source(_blocks((200, 300)), None)
+    release.set()
+    drive.wait()
+
+    assert not window._exporting() and window.controls.progress_row.isHidden()
+    assert drive.dialogs[-1] == ("warning", "The export was stopped: another picture was opened before its page "
+                                            "was ready. Export again to write the new picture's page.")
+    assert not (tmp_path / "page.png").exists()
+    window.generate_preview()
+    drive.wait()
+    assert window.current_page is not None and window.document.result_is_current()
