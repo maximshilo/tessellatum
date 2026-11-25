@@ -4,6 +4,14 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.19] - 2026-11-25
+
+### Fixed
+
+- The pipeline's warm-up as the app starts could throw away the stages kept for a picture opened and previewed while
+  it ran, so the next preview or redraw built them all again (a redraw of the lion at Medium took 1.7 s rather than
+  1.0 s). The warm-up no longer touches what is kept.
+
 ## [1.1.18] - 2026-11-25
 
 ### Added
