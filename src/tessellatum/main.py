@@ -9,6 +9,7 @@ from PySide6.QtCore import QSettings, QSize
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from tessellatum.app import jobs
 from tessellatum.gui import theme
 from tessellatum.gui.main_window import MainWindow
 
@@ -44,6 +45,8 @@ def main() -> None:
     theme.install(app, QSettings())
     window = MainWindow(store=QSettings())
     window.show()
+    # Closing the window stops its jobs without waiting for them; quitting waits for them, bounded (see ``app.jobs``).
+    app.aboutToQuit.connect(lambda: jobs.wait_for_all())
 
     sys.exit(app.exec())
 

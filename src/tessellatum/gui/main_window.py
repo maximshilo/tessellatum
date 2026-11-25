@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import threading
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread
+from PySide6.QtCore import QEvent, QObject, QSettings, Qt
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from tessellatum import __version__
 from tessellatum.app.document import Document
+from tessellatum.app.jobs import EXPORT, PREVIEW, PRINT_LAYOUT, RECIPES, SAVE, Job, JobManager, page_task
 from tessellatum.app.snapshot import DocumentSettings
 from tessellatum.core import export, mixing, pipeline, swatches
 from tessellatum.core.legend import NAME_RECIPE, render_legend
@@ -33,12 +35,21 @@ from tessellatum.gui import theme
 from tessellatum.gui.actions import THEME_ACTIONS, VERSION_ACTIONS, ZOOM_ACTIONS, Actions
 from tessellatum.gui.controls_panel import DPI, PALETTE, ControlsPanel
 from tessellatum.gui.preview_widget import PreviewWidget, VersionBar, ZoomBar
-from tessellatum.gui.worker import PipelineWorker, TaskWorker
 
 OPEN_IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.gif)"
 # The preview's legend is drawn at least this many pixels a millimeter on paper (300 dpi), finer than a preview's
 # page, so that its names and codes stay sharp zoomed in.
 PREVIEW_LEGEND_PX_PER_MM = 300 / MM_PER_INCH
+_NOT_MIXED = object()  # recipes asked for but not mixed yet (see MainWindow._recipes)
+
+log = logging.getLogger(__name__)
+
+
+def mix_recipes(palette_rgb, paints) -> list[list[str]]:
+    """How to mix each of the colors ``palette_rgb`` from ``paints`` ((name, RGB) each), as the legend writes it: up to
+    a second with many paints, so run off the GUI thread."""
+    found = mixing.recipes(palette_rgb, [rgb for _name, rgb in paints])
+    return [mixing.recipe_lines(recipe, paints) for recipe in found]
 
 
 class MainWindow(QMainWindow):
@@ -86,22 +97,15 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Open an image to get started.")
 
         self._previewed_image: np.ndarray | None = None  # the picture current_page is of
-        self._worker: PipelineWorker | None = None
         self._pending_export_path: Path | None = None
         self._pending_export_format: str | None = None
         self._pending_export_version: Version | None = None
         self._pending_export_resolution: tuple[str, int] | None = None  # the PNG's, as the panel asked for it
-        self._raster_worker: TaskWorker | None = None  # drawing the PNG in pixels
         self._pending_export_drawn = False  # whether the export waits for the preview's page drawn at print size
         self._ready_message = ""  # the status of the preview shown
-        # Whether _worker is making a page whose end the window hasn't handled yet. (Its last signal can come while Qt
-        # still reports it running.)
-        self._making = False
         # The preview's page drawn at print size: what the zoom shows past the preview's own pixels, and what the
         # export saves. Drawn in the background when either first asks for it, and dropped with the preview.
         self._print_page: GeneratedPage | None = None
-        self._print_worker: PipelineWorker | None = None
-        self._retired: list[QThread] = []  # workers stopped but maybe not finished yet: kept until they are
 
         self.controls.legend_detail_changed.connect(self._show_legend)
         self.controls.paints_changed.connect(self._show_legend)
@@ -112,7 +116,15 @@ class MainWindow(QMainWindow):
         # The document: the picture, its settings and the page made of them. The panel writes its edits into it.
         self.document = Document(self.controls.snapshot(), self)
         self.controls.settings_changed.connect(self.document.set_settings)
-        self._made_with: DocumentSettings | None = None  # the settings the page being made is made with
+
+        # Everything slow runs as a job (see ``app.jobs``): one of each kind at a time, its result delivered only if
+        # still wanted.
+        self.jobs = JobManager(self.document, self)
+        self.jobs.succeeded.connect(self._on_job_succeeded)
+        self.jobs.failed.connect(self._on_job_failed)
+        self.jobs.cancelled.connect(self._on_job_cancelled)
+        self.jobs.dropped.connect(self._on_job_dropped)
+        self.jobs.progress.connect(self._on_job_progress)
 
         self._build_commands()
 
@@ -235,52 +247,96 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Loaded {path.name}. Click \"Generate Preview\".")
 
     # -- Preview ----------------------------------------------------------
+    def _making(self) -> bool:
+        """Whether a page is being made: a preview, or a page to export made afresh."""
+        return self.jobs.is_running(PREVIEW) or self.jobs.is_running(EXPORT)
+
+    def _exporting(self) -> bool:
+        """Whether an export is under way: waiting for its page, or writing its file."""
+        return self._pending_export_path is not None or self.jobs.is_running(SAVE)
+
     def generate_preview(self) -> None:
         if self.current_image_bgr is None:
             QMessageBox.warning(self, "No image", "Open an image first.")
             return
-        if (self._worker is not None and self._worker.isRunning()) or self._pending_export_path is not None:
-            return
-        if self._raster_worker is not None:
+        if self._making() or self._exporting():
             return
 
         self._drop_print_page()  # the zoom asks for the new page's
         self.document.set_settings(self.controls.snapshot())  # as the panel shows them, to the last edit
-        self._made_with = self.document.settings()
-        self._making = True
+        settings = self.document.settings()
         self.controls.set_busy(True)
         self.statusBar().showMessage("Generating preview…")
 
         # The page at its working size, where its level's brush is a few pixels across: what an export draws larger.
-        long_edge = pipeline.working_long_edge(
-            self.current_image_bgr, self.controls.get_difficulty_params(), self.controls.get_handling(),
-            self.controls.get_page_style().paper_format,
+        image = self.current_image_bgr
+        params, style, handling = settings.difficulty_params(), settings.page_style(), settings.handling()
+        long_edge = pipeline.working_long_edge(image, params, handling, style.paper_format)
+        self.jobs.start(
+            PREVIEW, page_task(image, params, long_edge, style, handling, versions=tuple(Version)),
+            label=f"Preview at {long_edge} px",
         )
-        self._worker = self._make_worker(long_edge, versions=tuple(Version))
-        self._worker.succeeded.connect(self._on_preview_ready)
-        self._worker.start()
 
     def abort_generation(self) -> None:
         # An export of the preview's page waits for it to be drawn at print size.
-        worker = self._print_worker if self._pending_export_drawn else self._worker
-        if worker is not None and worker.isRunning():
+        kind = PRINT_LAYOUT if self._pending_export_drawn else EXPORT if self.jobs.is_running(EXPORT) else PREVIEW
+        job = self.jobs.current(kind)
+        if job is not None and job.cancellable and self.jobs.cancel(kind):
             # It stops at the pipeline's next stage: the button stays off meanwhile, against a second press.
             self.controls.abort_button.setEnabled(False)
-            worker.requestInterruption()
             self.statusBar().showMessage("Cancelling…")
 
+    # -- What the jobs come to ------------------------------------------------
+    def _on_job_succeeded(self, job: Job, result) -> None:
+        if job.kind == PREVIEW:
+            self._on_preview_ready(result, job.settings)
+        elif job.kind == EXPORT:
+            self._on_export_ready(result)
+        elif job.kind == PRINT_LAYOUT:
+            self._on_print_page_ready(result)
+        elif job.kind == SAVE:
+            job.context(result)  # what the file written reports
+        elif job.kind == RECIPES:
+            self._recipes_for = (job.context, result)
+            self._show_legend()
+
+    def _on_job_failed(self, job: Job, message: str) -> None:
+        if job.kind in (PREVIEW, EXPORT):
+            self._on_worker_failed(message)
+        elif job.kind == PRINT_LAYOUT:
+            self._on_print_page_failed(message)
+        elif job.kind == SAVE:
+            self._on_export_failed(message)
+        # Recipes that couldn't be mixed: the legend stays without them (the job's details are logged).
+
+    def _on_job_cancelled(self, job: Job) -> None:
+        if job.kind in (PREVIEW, EXPORT):
+            self._on_worker_cancelled()
+        elif job.kind == PRINT_LAYOUT:
+            self._on_print_page_cancelled()
+
+    def _on_job_dropped(self, job: Job) -> None:
+        # Superseded, or made of a picture since replaced: whatever waited for it alone is over.
+        if job.kind == EXPORT:
+            self._clear_pending_export()
+        if job.kind in (PREVIEW, EXPORT) and not self._making() and not self._exporting():
+            self.controls.set_busy(False)
+
+    def _on_job_progress(self, job: Job, percent: int) -> None:
+        # The zoom's drawing tells nothing, unless an export waits for it.
+        if job.kind in (PREVIEW, EXPORT) or (job.kind == PRINT_LAYOUT and self._pending_export_drawn):
+            self.controls.set_progress(percent)
+
     def _on_worker_cancelled(self) -> None:
-        self._making = False
         self.controls.set_busy(False)
         self._clear_pending_export()
         self.statusBar().showMessage("Cancelled.")
 
-    def _on_preview_ready(self, page: GeneratedPage) -> None:
-        self._making = False
+    def _on_preview_ready(self, page: GeneratedPage, made_with: DocumentSettings) -> None:
         # A new page of the picture shown is shown as far in and in the same place, to compare the two.
         same_picture = self.current_page is not None and self._previewed_image is self.current_image_bgr
         self._drop_print_page()  # any drawn of the last page, for a zoom while this one was made
-        self.document.set_result(page, self._made_with)
+        self.document.set_result(page, made_with)
         self._previewed_image = self.current_image_bgr
         self.controls.set_busy(False)
         self.controls.set_export_enabled(True)
@@ -301,29 +357,43 @@ class MainWindow(QMainWindow):
 
     def _preview_legend(self, page: GeneratedPage):
         """The legend of ``page`` as the panel asks for it now, drawn finer than the page, and how many of its pixels go
-        to one of the page's (see ``PreviewWidget.show_page``)."""
+        to one of the page's (see ``PreviewWidget.show_page``). Recipes not mixed yet are mixed in the background, and
+        the legend drawn again with them."""
         paper = page.drawing.style.paper_format
         page_px_per_mm = print_scale(page.page.size, paper).px_per_mm
         legend_scale = max(1.0, PREVIEW_LEGEND_PX_PER_MM / page_px_per_mm)
         palette_bgr = np.asarray(page.palette_rgb, dtype=np.uint8).reshape(-1, 3)[:, ::-1]
+        key, recipes = self._recipes(page)
+        if recipes is _NOT_MIXED:
+            recipes = None
+            self._mix_recipes(key)
         legend = render_legend(
             palette_bgr, round(page.page.width * legend_scale), page_px_per_mm * legend_scale,
-            self.controls.get_legend_detail(), names=page.color_names or None, recipes=self._recipes(page),
+            self.controls.get_legend_detail(), names=page.color_names or None, recipes=recipes,
             mixes=page.mixes or None,
         )
         return legend, legend_scale
 
-    def _recipes(self, page: GeneratedPage) -> list[list[str]] | None:
-        """How to mix each of ``page``'s legend colors from the paints listed, as the legend writes it, if the legend
-        shows recipes; the last ones found are kept, as the legend is drawn again and again."""
+    def _recipes(self, page: GeneratedPage):
+        """What ``page``'s legend recipes are mixed for, and them: (None, None) if the legend shows none; the mixed
+        ones kept, as the legend is drawn again and again; or ``_NOT_MIXED`` if they aren't yet."""
         paints = self.controls.listed_paints()
         if self.controls.get_legend_detail() != NAME_RECIPE or not paints:
-            return None
+            return None, None
         key = (tuple(page.palette_rgb), paints)
-        if self._recipes_for is None or self._recipes_for[0] != key:
-            found = mixing.recipes(page.palette_rgb, [rgb for _name, rgb in paints])
-            self._recipes_for = (key, [mixing.recipe_lines(recipe, paints) for recipe in found])
-        return self._recipes_for[1]
+        if self._recipes_for is not None and self._recipes_for[0] == key:
+            return key, self._recipes_for[1]
+        return key, _NOT_MIXED
+
+    def _mix_recipes(self, key: tuple) -> None:
+        """Mix the recipes for ``key`` (the palette and the paints) in the background: up to a second with many
+        paints."""
+        job = self.jobs.current(RECIPES)
+        if job is not None and job.context == key:
+            return
+        palette, paints = key
+        self.jobs.start(RECIPES, lambda _progress, _should_cancel: mix_recipes(palette, paints), context=key,
+                        label=f"Recipes from {len(paints)} paints")
 
     def _show_legend(self, _detail: str = "") -> None:
         """Show the page's legend as the panel now asks for it: the page itself is the same."""
@@ -331,7 +401,6 @@ class MainWindow(QMainWindow):
             self.preview.set_legend(*self._preview_legend(self.current_page))
 
     def _on_worker_failed(self, message: str) -> None:
-        self._making = False
         self.controls.set_busy(False)
         self._clear_pending_export()
         QMessageBox.critical(self, "Generation failed", message)
@@ -342,7 +411,7 @@ class MainWindow(QMainWindow):
         if self.current_image_bgr is None:
             QMessageBox.warning(self, "No image", "Open an image first.")
             return
-        if (self._worker is not None and self._worker.isRunning()) or self._raster_worker is not None:
+        if self._making() or self.jobs.is_running(SAVE):
             return
 
         fmt = self.controls.get_output_format()
@@ -385,73 +454,77 @@ class MainWindow(QMainWindow):
                 self._pending_export_drawn = True
                 self._draw_print_page()  # saved once drawn (see _on_print_page_ready)
             return
-        self._making = True
-        self._worker = self._make_worker(long_edge, vector=True)
-        self._worker.succeeded.connect(self._on_export_ready)
-        self._worker.start()
+        settings = self.controls.snapshot()
+        self.jobs.start(
+            EXPORT, page_task(
+                self.current_image_bgr, settings.difficulty_params(), long_edge, settings.page_style(),
+                settings.handling(), vector=True,
+            ),
+            label=f"Page to export at {long_edge} px",
+        )
 
     def _on_export_ready(self, page: GeneratedPage) -> None:
-        self._making = False
-        self.controls.set_busy(False)
         path = self._pending_export_path
         fmt = self._pending_export_format
         version = self._pending_export_version
         resolution = self._pending_export_resolution
         self._clear_pending_export()
         if path is None or fmt is None or version is None:
+            self.controls.set_busy(False)
             return
         # The legend as the panel asks for it now: changing it doesn't make the page again (see _preview_to_draw).
         drawing = page.drawing
         style = dataclasses.replace(drawing.style, legend_detail=self.controls.get_legend_detail())
         page = dataclasses.replace(page, drawing=dataclasses.replace(drawing, style=style))
+        # Its recipes, as kept, or mixed as the file is written, off the GUI thread.
+        key, recipes = self._recipes(page)
+
+        def legend_recipes():
+            return mix_recipes(*key) if recipes is _NOT_MIXED else recipes
+
+        # Written in the background, and not stopped once started: at 600 dpi on A2 the PNG takes seconds.
+        self.controls.set_busy(True, cancellable=False)
         if fmt == PALETTE:
-            try:
-                written = swatches.save_palette(path, page.palette_rgb, names=_palette_names(page))
-            except Exception as exc:  # noqa: BLE001
-                self._on_export_failed(str(exc))
-                return
-            self._on_palette_saved(written)
+            names = _palette_names(page)
+            self.statusBar().showMessage("Writing the palette…")
+            self.jobs.start(
+                SAVE, lambda _p, _c: swatches.save_palette(path, page.palette_rgb, names=names),
+                cancellable=False, context=self._on_palette_saved, label=f"Palette {path.name}",
+            )
             return
         if fmt == "PDF":
-            try:
+            self.statusBar().showMessage("Writing the PDF…")
+
+            def save_pdf(_progress, _should_cancel):
                 export.save_pdf(
                     page.drawing, page.palette_rgb, path, version=version, painting=page.painting,
-                    names=page.color_names or None, recipes=self._recipes(page), mixes=page.mixes or None,
+                    names=page.color_names or None, recipes=legend_recipes(), mixes=page.mixes or None,
                 )
-            except Exception as exc:  # noqa: BLE001
-                self._on_export_failed(str(exc))
-                return
-            self._on_export_saved(page, path, page.page.size)
+                return page.page.size
+
+            self.jobs.start(
+                SAVE, save_pdf, cancellable=False, label=f"PDF {path.name}",
+                context=lambda size: self._on_export_saved(page, path, size),
+            )
             return
 
         # The vector page drawn in pixels, as the PDF prints it (see ``export.rasterize``), at the resolution asked
-        # for: in the background, since at 600 dpi on A2 it takes seconds. It can't be stopped once started.
+        # for.
         unit, value = resolution
         printed_long_mm = max(print_scale(page.page.size, page.drawing.style.paper_format).printed_size_mm)
         dpi = value if unit == DPI else value * MM_PER_INCH / printed_long_mm
-        self.controls.set_busy(True, cancellable=False)
         self.statusBar().showMessage(f"Drawing the PNG at {dpi:.0f} dpi…")
-        recipes = self._recipes(page)
-        worker = TaskWorker(
-            lambda: export.export_png(
+        self.jobs.start(
+            SAVE,
+            lambda _p, _c: export.export_png(
                 page.drawing, page.palette_rgb, path, dpi, version, page.painting, names=page.color_names or None,
-                recipes=recipes, mixes=page.mixes or None,
-            )
+                recipes=legend_recipes(), mixes=page.mixes or None,
+            ),
+            cancellable=False, label=f"PNG {path.name} at {dpi:.0f} dpi",
+            context=lambda size: self._on_export_saved(page, path, size),
         )
-        worker.succeeded.connect(lambda size: self._on_export_saved(page, path, size))
-        worker.failed.connect(self._on_export_failed)
-        self._raster_worker = worker
-        worker.start()
-
-    def _retire_raster_worker(self) -> None:
-        # Its signal can come before its thread ends: kept until it has, so it isn't destroyed while running.
-        worker, self._raster_worker = self._raster_worker, None
-        self._retired = [retired for retired in self._retired if not retired.isFinished()]
-        if worker is not None and not worker.isFinished():
-            self._retired.append(worker)
 
     def _on_export_saved(self, page: GeneratedPage, path: Path, size: tuple[int, int]) -> None:
-        self._retire_raster_worker()
         self.controls.set_busy(False)
         if self.preview.wants_detail():
             self._draw_print_page()  # asked for by a zoom while the export was made
@@ -472,7 +545,6 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Export complete", f"Saved to:\n{files}" + (f"\n\n{note}" if note else ""))
 
     def _on_export_failed(self, message: str) -> None:
-        self._retire_raster_worker()
         self.controls.set_busy(False)
         QMessageBox.critical(self, "Export failed", message)
         self.statusBar().showMessage("Export failed.")
@@ -496,31 +568,6 @@ class MainWindow(QMainWindow):
         current = (self.controls.get_difficulty_params(), style, self.controls.get_handling())
         return page if (model.params, model.style, model.handling) == current else None
 
-    def _make_worker(
-        self,
-        long_edge: int,
-        versions: tuple[Version, ...] = (),
-        drawn_from: GeneratedPage | None = None,
-        vector: bool = False,
-    ) -> PipelineWorker:
-        """A worker generating the current image at ``long_edge`` with the panel's settings, wired to its progress, and
-        drawing ``versions`` of the page too: drawing ``drawn_from`` there, the preview made with those settings, if
-        given; with ``vector``, laid out to print (see ``PipelineWorker``)."""
-        worker = PipelineWorker(
-            self.current_image_bgr,
-            self.controls.get_difficulty_params(),
-            long_edge,
-            style=self.controls.get_page_style(),
-            handling=self.controls.get_handling(),
-            versions=versions,
-            drawn_from=drawn_from,
-            vector=vector,
-        )
-        worker.failed.connect(self._on_worker_failed)
-        worker.cancelled.connect(self._on_worker_cancelled)
-        worker.progress.connect(self.controls.set_progress)
-        return worker
-
     # -- The preview's page at print size -------------------------------------
     def _print_long_edge(self) -> int | None:
         """The long edge the preview's page is laid out at to print (see ``pipeline.export_long_edge``); None if there
@@ -535,50 +582,28 @@ class MainWindow(QMainWindow):
         which shows it past the preview's own pixels, and for the export, which draws it. Not while a page is being
         made: a preview, which will replace this one, or an export with other settings."""
         long_edge = self._print_long_edge()
-        running = self._print_worker is not None and self._print_worker.isRunning()
-        if long_edge is None or self._print_page is not None or running or self._making:
+        if long_edge is None or self._print_page is not None or self.jobs.is_running(PRINT_LAYOUT) or self._making():
             return
         page = self.current_page
         model = page.model
-        worker = PipelineWorker(
-            self._previewed_image,
-            model.params,
-            long_edge,
-            style=model.style,
-            handling=model.handling,
-            versions=tuple(Version),
-            drawn_from=page,
-            vector=True,
+        self.jobs.start(
+            PRINT_LAYOUT,
+            page_task(self._previewed_image, model.params, long_edge, model.style, model.handling,
+                      versions=tuple(Version), drawn_from=page, vector=True),
+            accept=lambda _job, page=page: self.current_page is page,  # not of a preview since replaced
+            label=f"Print layout at {long_edge} px",
         )
-        worker.succeeded.connect(self._on_print_page_ready)
-        worker.failed.connect(self._on_print_page_failed)
-        worker.cancelled.connect(self._on_print_page_cancelled)
-        worker.progress.connect(self._on_print_page_progress)
-        self._print_worker = worker
         if self._pending_export_path is None:
             self.statusBar().showMessage("Drawing the page as it prints, for the zoom…")
-        worker.start()
 
     def _drop_print_page(self) -> None:
         """Forget the preview's page at print size, and stop drawing it: the preview is about to change."""
         self._print_page = None
-        worker = self._print_worker
-        self._print_worker = None
-        self._retired = [retired for retired in self._retired if not retired.isFinished()]
-        if worker is not None and not worker.isFinished():
-            worker.requestInterruption()
-            self._retired.append(worker)
+        self.jobs.drop(PRINT_LAYOUT)
 
     # Each of these is the export's, if it waits for the page; else the zoom's alone, telling nothing over an export
     # with other settings that may be under way.
-    def _on_print_page_progress(self, percent: int) -> None:
-        if self.sender() is self._print_worker and self._pending_export_drawn:
-            self.controls.set_progress(percent)
-
     def _on_print_page_ready(self, drawn: GeneratedPage) -> None:
-        page = self.current_page
-        if self.sender() is not self._print_worker or page is None or drawn.model is not page.model:
-            return  # drawn from a preview since replaced
         self._print_page = drawn
         self.preview.show_detail({version: drawn.image(version) for version in Version})
         if self._pending_export_drawn:
@@ -587,27 +612,21 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(self._ready_message)
 
     def _on_print_page_failed(self, message: str) -> None:
-        if self.sender() is not self._print_worker:
-            return
         if self._pending_export_drawn:
             self._on_worker_failed(message)
         elif self._pending_export_path is None:
             self.statusBar().showMessage(f"The page could not be drawn as it prints: {message}")
 
     def _on_print_page_cancelled(self) -> None:
-        if self.sender() is not self._print_worker:
-            return
         if self._pending_export_drawn:
             self._on_worker_cancelled()
         elif self._pending_export_path is None:
             self.statusBar().showMessage(self._ready_message)
 
     def closeEvent(self, event) -> None:
-        # Stop what is still running, rather than leave a thread to be destroyed with the window.
-        for worker in (self._worker, self._print_worker, self._raster_worker, *self._retired):
-            if worker is not None and worker.isRunning():
-                worker.requestInterruption()
-                worker.wait()
+        # Stop what is still running, without waiting for it: the threads outlive the window, and the application
+        # waits for them, bounded, when it quits (see ``app.jobs.wait_for_all``).
+        self.jobs.shutdown()
         super().closeEvent(event)
 
 
@@ -643,7 +662,7 @@ def _warm_up_pipeline() -> None:
     try:
         pipeline.warm_up()
     except Exception:  # noqa: BLE001 - best effort; a real failure resurfaces on Generate
-        pass
+        log.warning("warming up the pipeline failed", exc_info=True)
 
 
 def _bgr_to_pixmap(image_bgr: np.ndarray) -> QPixmap:

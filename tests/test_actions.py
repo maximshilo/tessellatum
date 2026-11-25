@@ -49,7 +49,7 @@ def _menu_actions(menu: QMenu) -> list:
 
 def _wait(window: MainWindow, timeout: float = 120.0) -> None:
     deadline = time.monotonic() + timeout
-    while window._making or (window._worker is not None and window._worker.isRunning()):
+    while not window.jobs.is_idle():
         _app.processEvents()
         assert time.monotonic() < deadline
         time.sleep(0.005)
