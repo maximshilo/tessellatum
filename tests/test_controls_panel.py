@@ -65,28 +65,36 @@ def test_every_setting_has_a_slider_in_its_section_with_its_tooltip_and_unit(pan
         assert control.setting is s and control.isEnabled() == (reason is None)
         assert control.toolTip() == (s.tooltip if reason is None else f"{reason} {s.tooltip}")
         assert control.text() == s.text(control.value())
-        # On its category's page, in its section (W1).
-        assert panel.sections[s.section].body.isAncestorOf(control) and panel.pages[s.category].isAncestorOf(control)
+        # On its category's page, in its section, or in the page's Advanced group if it is advanced (W1, W4).
+        section = panel.sections[panel.section_key(s)]
+        assert section.body.isAncestorOf(control) and panel.pages[s.category].isAncestorOf(control)
+        assert (s.level == settings.ADVANCED) == (section.title == controls_panel.ADVANCED), s.name
     for name, widget in panel.choice_widgets.items():
         choice = settings.choice(name)
-        assert panel.sections[choice.section].body.isAncestorOf(widget), name
+        assert panel.sections[panel.section_key(choice)].body.isAncestorOf(widget), name
         assert panel.pages[choice.category].isAncestorOf(widget), name
-    # The tone heads its grays; a section of advanced settings only starts folded away.
+    # The tone on top, its grays in Advanced; the Advanced groups only start folded away.
     assert panel.sections["Tone"].body.isAncestorOf(panel.tone_combo)
     folded = {name for name, section in panel.sections.items() if not section.is_expanded()}
-    assert folded == {
-        "Line art", "Text", "Advanced · Edges", "Advanced · Corners", "Advanced · Resolution", "Advanced · Lines",
-        "Advanced · Numbers",
-    }
-    panel.sections["Text"].toggle.click()
-    assert panel.sections["Text"].is_expanded() and not panel.sections["Text"].body.isHidden()
+    assert folded == {controls_panel.advanced_key(c) for c in (settings.GENERATION, settings.COLORS, settings.DOCUMENT)}
+    group = panel.sections[controls_panel.advanced_key(settings.GENERATION)]
+    group.toggle.click()
+    assert group.is_expanded() and not group.body.isHidden()
 
 
 def test_every_section_of_the_registry_has_its_place_on_its_category_s_page():
     for entry in settings.entries():
-        assert entry.section in controls_panel.PAGE_SECTIONS[entry.category], entry.name
+        if entry.level == settings.ADVANCED:
+            assert entry.section in controls_panel.ADVANCED_SECTIONS[entry.category], entry.name
+        else:
+            assert entry.section in controls_panel.PAGE_SECTIONS[entry.category], entry.name
     named = [name for names in controls_panel.PAGE_SECTIONS.values() for name in names]
     assert len(named) == len(set(named))
+    # No section on top that is empty, nor one in Advanced.
+    for category, names in controls_panel.ADVANCED_SECTIONS.items():
+        for name in names:
+            assert any(e.category == category and e.section == name and e.level == settings.ADVANCED
+                       for e in settings.entries()), name
 
 
 def test_the_sidebar_shows_one_category_s_page_at_a_time(panel):
@@ -337,7 +345,7 @@ def test_at_its_narrowest_every_slider_has_room_and_the_sliders_line_up(panel):
             control = panel.controls[s.name]
             assert control.slider.width() >= controls_panel.MIN_SLIDER_WIDTH, s.name
             # A setting's label explains it too, and names it to a screen reader (its buddy).
-            label = panel.sections[s.section].form.labelForField(control)
+            label = panel.sections[panel.section_key(s)].form.labelForField(control)
             assert label.toolTip() == s.tooltip and label.buddy() is control.slider
         # A page's labels are as wide as its widest, so its sliders start in one column.
         lefts = {panel.controls[s.name].slider.mapTo(panel, panel.controls[s.name].slider.rect().topLeft()).x()

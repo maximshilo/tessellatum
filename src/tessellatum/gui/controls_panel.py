@@ -90,13 +90,27 @@ THUMBNAIL_SIZE = 160
 PICTURE, EXPORT = "Picture", "Export"
 PAGE_SECTIONS = {
     settings.SOURCE: (PICTURE, "Picture handling"),
-    settings.GENERATION: (
-        "Difficulty", "Detail", "Faces and subject", "Line art", "Text", "Advanced · Edges", "Advanced · Corners",
-        "Advanced · Resolution",
-    ),
+    settings.GENERATION: ("Difficulty", "Detail", "Faces and subject"),
     settings.COLORS: ("Medium", "Source of colors", "Palette", "Mixing"),
-    settings.DOCUMENT: ("Page", "Lines and numbers", "Tone", "Legend", "Advanced · Lines", "Advanced · Numbers", EXPORT),
+    settings.DOCUMENT: ("Page", "Lines and numbers", "Tone", "Legend", EXPORT),
 }
+# Each page's advanced settings, by their registry sections, under one Advanced group folded at the foot of the page:
+# three levels of detail on every page (its intent on top, the precise settings shown, the advanced ones a click
+# away), rather than one switch for the whole app.
+ADVANCED = "Advanced"
+ADVANCED_PREFIX = "Advanced · "
+ADVANCED_SECTIONS = {
+    settings.GENERATION: (
+        "Faces and subject", "Line art", "Text", "Advanced · Edges", "Advanced · Corners", "Advanced · Resolution",
+    ),
+    settings.COLORS: ("Mixing",),
+    settings.DOCUMENT: ("Tone", "Advanced · Lines", "Advanced · Numbers"),
+}
+
+
+def advanced_key(category: str) -> str:
+    """The Advanced group of ``category``'s page, as ``ControlsPanel.sections`` names it."""
+    return f"{category} · {ADVANCED}"
 
 PALETTE_TOOLTIP = (
     "The legend's colors as a palette file, for coloring the page in a painting app with exactly its colors, each "
@@ -148,20 +162,40 @@ SettingSlider = SettingField  # its name before the fields had an exact value (W
 class Section(QWidget):
     """A titled part of the panel that folds away: a button with its title, and the controls under it."""
 
+    reset_requested = Signal()
+
     def __init__(self, title: str, expanded: bool = True, parent: QWidget | None = None):
         super().__init__(parent)
+        self.title = title
         self.toggle = QToolButton()
         self.toggle.setObjectName("sectionHeader")  # styled by the theme (see ``theme.style``)
         self.toggle.setText(title)
         self.toggle.setCheckable(True)
         self.toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        # Shown while something in the section differs from its preset or default: it puts the section back.
+        self.reset_button = QToolButton()
+        self.reset_button.setObjectName("sectionReset")
+        self.reset_button.setText("Reset")
+        self.reset_button.setAutoRaise(True)
+        self.reset_button.setToolTip(f"Put the settings under {title} back to their preset or default")
+        self.reset_button.setAccessibleName(f"Reset {title}")
+        policy = self.reset_button.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        self.reset_button.setSizePolicy(policy)
+        self.reset_button.hide()
+        self.reset_button.clicked.connect(self.reset_requested)
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.addWidget(self.toggle)
+        header.addStretch(1)
+        header.addWidget(self.reset_button)
         self.body = QWidget()
         self.form = QFormLayout(self.body)
         self.form.setContentsMargins(12, 0, 0, 4)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
-        layout.addWidget(self.toggle)
+        layout.addLayout(header)
         layout.addWidget(self.body)
         self.toggle.toggled.connect(self.set_expanded)
         self.toggle.setChecked(expanded)
@@ -173,6 +207,10 @@ class Section(QWidget):
 
     def is_expanded(self) -> bool:
         return self.toggle.isChecked()
+
+    def show_changed(self, changed: bool) -> None:
+        """Offer the reset while something under it is changed."""
+        self.reset_button.setVisible(changed)
 
 
 class ControlsPanel(QWidget):
@@ -204,6 +242,16 @@ class ControlsPanel(QWidget):
         self.picture_label = QLabel()
         self.picture_label.setProperty("role", "secondary")
         self.picture_label.setWordWrap(True)
+        self.picture_print_label = QLabel()  # how large it prints, and how finely
+        self.picture_print_label.setProperty("role", "secondary")
+        self.picture_print_label.setWordWrap(True)
+        self.picture_reading_label = QLabel()  # how the last preview read it
+        self.picture_reading_label.setProperty("role", "secondary")
+        self.picture_reading_label.setWordWrap(True)
+        self._picture_reading: bool | None = None
+        self.preset_description = QLabel()
+        self.preset_description.setProperty("role", "hint")
+        self.preset_description.setWordWrap(True)
 
         self.preset_combo = QComboBox()
         self.preset_combo.addItems(difficulty.preset_names())
@@ -404,15 +452,18 @@ class ControlsPanel(QWidget):
         self._show_resolution()
         self._show_paints()  # the mixing settings stand aside until the colors come from the paints
         self._load()
+        self._show_references()  # the markers, the sections' resets and the difficulty's description, from the start
         self._announced = self.snapshot()
 
     # -- Layout ----------------------------------------------------------
     def _lay_out(self, preset_row: QWidget, colors_from_row: QWidget, export_box: QWidget) -> None:
-        """Every control into its page and section (``PAGE_SECTIONS``), the pages into a stack of scroll areas, and
-        the footer under them."""
+        """Every control into its page (``PAGE_SECTIONS``) at its level of detail: the intent and precise settings in
+        their sections, the advanced ones under one folded Advanced group (``ADVANCED_SECTIONS``, each under a
+        subheading); the pages into a stack of scroll areas, and the footer under them."""
         row_widgets: dict[str, QWidget] = {**self.choice_widgets, "preset": preset_row, "colors_from": colors_from_row}
         del row_widgets["paints"]  # its button sits in the Colors from row
         self.sections: dict[str, Section] = {}
+        self._section_entries: dict[str, list] = {}  # what each section's reset puts back
         self.pages: dict[str, QWidget] = {}
         self.scrolls: dict[str, QScrollArea] = {}
         self.stack = QStackedWidget()
@@ -423,32 +474,58 @@ class ControlsPanel(QWidget):
             page_layout.setContentsMargins(8, 4, 8, 8)
             page_layout.setSpacing(6)
             labels: list[QLabel] = []
-            for name in names:
-                entries = [e for e in settings.entries() if e.category == category and e.section == name]
-                # A section of advanced settings only starts folded.
-                section = Section(name, expanded=not entries or any(e.level != settings.ADVANCED for e in entries))
-                self.sections[name] = section
-                page_layout.addWidget(section)
+
+            def place(section: Section, entries, heading_title: str = "") -> None:
+                """``entries`` into ``section``: the choices before the sliders, under ``heading_title`` if given."""
+                if heading_title:
+                    heading = QLabel(heading_title)
+                    heading.setObjectName("subsectionTitle")
+                    section.form.addRow(heading)
                 choices = [e for e in entries if isinstance(e, settings.Choice) and e.name in row_widgets]
                 for entry in choices + [e for e in entries if isinstance(e, Setting)]:
                     widget = self.controls[entry.name] if isinstance(entry, Setting) else row_widgets[entry.name]
                     if isinstance(widget, QCheckBox):
                         section.form.addRow(widget)
                         continue
-                    if entry.label == name:  # the section's title names it already: "Tone" under Tone
+                    if entry.label == section.title and not heading_title:  # "Tone" under Tone: named already
                         target = self.preset_combo if entry.name == "preset" else widget
                         target.setAccessibleName(entry.label)
                         section.form.addRow(widget)
+                        if entry.name == "preset":
+                            section.form.addRow(self.preset_description)
                         continue
                     label = QLabel(entry.label)
                     label.setToolTip(entry.tooltip)
-                    label.setBuddy(widget.slider if isinstance(widget, SettingSlider) else widget)
+                    label.setBuddy(widget.slider if isinstance(widget, SettingField) else widget)
                     section.form.addRow(label, widget)
                     labels.append(label)
+
+            for name in names:
+                entries = [e for e in settings.entries()
+                           if e.category == category and e.section == name and e.level != settings.ADVANCED]
+                section = Section(name)
+                self.sections[name] = section
+                self._section_entries[name] = entries
+                page_layout.addWidget(section)
+                place(section, entries)
+            advanced = ADVANCED_SECTIONS.get(category, ())
+            if advanced:
+                key = advanced_key(category)
+                group = Section(ADVANCED, expanded=False)
+                group.setObjectName("advancedGroup")
+                self.sections[key] = group
+                self._section_entries[key] = []
+                page_layout.addWidget(group)
+                for name in advanced:
+                    entries = [e for e in settings.entries()
+                               if e.category == category and e.section == name and e.level == settings.ADVANCED]
+                    self._section_entries[key] += entries
+                    place(group, entries, heading_title=name.replace(ADVANCED_PREFIX, ""))
             if category == settings.SOURCE:
-                self.sections[PICTURE].form.addRow(self.open_button)
-                self.sections[PICTURE].form.addRow(self.thumbnail_label)
-                self.sections[PICTURE].form.addRow(self.picture_label)
+                picture = self.sections[PICTURE].form
+                for widget in (self.open_button, self.thumbnail_label, self.picture_label, self.picture_print_label,
+                               self.picture_reading_label):
+                    picture.addRow(widget)
             if category == settings.DOCUMENT:
                 self.sections[EXPORT].form.addRow(export_box)
             page_layout.addStretch(1)
@@ -468,6 +545,8 @@ class ControlsPanel(QWidget):
             self.pages[category] = page
             self.scrolls[category] = scroll
             self.stack.addWidget(scroll)
+        for key, section in self.sections.items():
+            section.reset_requested.connect(lambda key=key: self.reset_section(key))
 
         self.title = QLabel()
         self.title.setObjectName("sidebarTitle")
@@ -494,6 +573,11 @@ class ControlsPanel(QWidget):
     def category(self) -> str:
         """The category whose page is shown."""
         return next(c for c, scroll in self.scrolls.items() if scroll is self.stack.currentWidget())
+
+    @staticmethod
+    def section_key(entry) -> str:
+        """The section an entry of the registry is shown in: its own, or its page's Advanced group."""
+        return advanced_key(entry.category) if entry.level == settings.ADVANCED else entry.section
 
     def section_of(self, widget: QWidget) -> Section | None:
         """The section holding ``widget``, if any."""
@@ -563,6 +647,49 @@ class ControlsPanel(QWidget):
                 control.set_reference(grays[name], f"the {self._base_tone} tone")
             else:
                 control.set_reference(control.setting.default, "the default")
+        if hasattr(self, "sections"):
+            for key, section in self.sections.items():
+                section.show_changed(bool(self._changes_in(key)))
+        if self.preset_combo.currentText() in difficulty.PRESETS:
+            self.preset_description.setText(difficulty.describe(params))
+        else:
+            changed = sum(c.is_changed() for c in self._difficulty_controls().values())
+            self.preset_description.setText(
+                f"Custom, from {self._base_preset}: {changed} setting{'s' if changed != 1 else ''} changed."
+            )
+
+    # The choices a section's reset puts back, and how to read and set each; the difficulty has its own Reset, and the
+    # paints listed are kept.
+    def _choice_widget_value(self, name: str):
+        widget = self.choice_widgets[name]
+        return widget.isChecked() if isinstance(widget, QCheckBox) else widget.currentText()
+
+    def _set_choice(self, name: str, value) -> None:
+        widget = self.choice_widgets[name]
+        if isinstance(widget, QCheckBox):
+            widget.setChecked(bool(value))
+        else:
+            widget.setCurrentText(value)
+
+    def _changes_in(self, key: str) -> list[str]:
+        """What differs under the section ``key`` from its preset, tone or default, by name."""
+        changed = []
+        for entry in self._section_entries.get(key, ()):
+            if isinstance(entry, Setting):
+                if self.controls[entry.name].is_changed():
+                    changed.append(entry.name)
+            elif entry.name not in ("preset", "paints") and self._choice_widget_value(entry.name) != entry.default:
+                changed.append(entry.name)
+        return changed
+
+    def reset_section(self, key: str) -> None:
+        """Put what is under the section ``key`` back: each slider to its preset, tone or default, each choice to its
+        default."""
+        for name in self._changes_in(key):
+            if name in self.controls:
+                self.controls[name].reset_to_reference()
+            else:
+                self._set_choice(name, settings.choice(name).default)
 
     def changed_settings(self) -> list[str]:
         """The settings changed from their references (see ``_show_references``), by name."""
@@ -856,7 +983,7 @@ class ControlsPanel(QWidget):
                     "apart, whatever this says."
                 )
             reason = control.setting.disabled_reason(chosen)
-            where = (control.setting.category, control.setting.section, reason)
+            where = (control.setting.category, self.section_key(control.setting), reason)
             control.set_disabled_reason(reason, say=where not in said)  # said under it, not only in its tooltip
             said.add(where)
             control.setToolTip(tip if reason is None else f"{reason} {tip}")
@@ -892,7 +1019,36 @@ class ControlsPanel(QWidget):
         file's, shown with it on the Source page."""
         self._picture_size = size
         self.picture_label.setText("" if size is None else f"{name + ': ' if name else ''}{size[0]:,} × {size[1]:,} px")
+        if size is None:
+            self.thumbnail_label.setPixmap(QPixmap())
+            self.thumbnail_label.setText("No picture open")
+        self.set_picture_reading(None)
+        self._show_picture_print()
         self._show_resolution()
+
+    def set_picture_reading(self, line_art: bool | None) -> None:
+        """What the last preview made of the picture: line art (True), a picture of colors (False), or not made yet."""
+        self._picture_reading = line_art
+        if line_art is None:
+            text = "" if self._picture_size is None else "Generate a preview to see how the picture is read."
+        elif line_art:
+            text = "Read as line art: its own ink is printed, and its areas are painted between the lines."
+        else:
+            text = "Read as a picture of colors: its regions are drawn from the colors."
+        self.picture_reading_label.setText(text)
+
+    def _show_picture_print(self) -> None:
+        """How large the picture prints on the paper chosen, and at how many of its pixels an inch."""
+        size = self._picture_size
+        if size is None:
+            self.picture_print_label.setText("")
+            return
+        paper = self.paper_combo.currentText()
+        scale = print_scale(size, PAPERS[paper])
+        width_mm, height_mm = scale.printed_size_mm
+        self.picture_print_label.setText(
+            f"Prints {width_mm:.0f} × {height_mm:.0f} mm on {paper}, at {scale.dpi:.0f} of its pixels an inch."
+        )
 
     def set_export_dpi(self, dpi: float) -> None:
         """Draw the PNG at ``dpi``, shown in dots per inch."""
@@ -964,6 +1120,7 @@ class ControlsPanel(QWidget):
             self.legend_detail_changed.emit(detail)
 
     def _on_print_changed(self) -> None:
+        self._show_picture_print()
         self._show_resolution()
         self._save()
 

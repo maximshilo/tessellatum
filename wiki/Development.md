@@ -14,7 +14,7 @@
 .venv\Scripts\python -m pytest tests/
 ```
 
-The suite (1,500+ tests) covers every pipeline stage, the guarantees a page makes (each boundary drawn once, every
+The suite (1,600+ tests) covers every pipeline stage, the guarantees a page makes (each boundary drawn once, every
 region enclosed and numbered, no number on ink), the vector PDF against the raster page, the GUI (driven headless on
 Qt's offscreen platform) and the benchmark harness itself. The region and rendering stages are checked for
 pixel-identical output against the original implementations kept in `tests/reference_impl.py` and

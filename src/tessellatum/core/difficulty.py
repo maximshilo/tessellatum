@@ -242,5 +242,5 @@ def describe(params: DifficultyParams) -> str:
         f"Up to {params.num_colors} colors, at least {params.palette_margin_de00:g} ΔE00 apart. "
         f"Regions of at least {params.min_region_area_mm2:.0f} mm² "
         f"(about {side_mm:.0f} × {side_mm:.0f} mm; {detail} on a photograph's or painting's subject and faces) "
-        f"and {params.min_width_mm:g} mm wide on the printed A4 page, {corners}."
+        f"and {params.min_width_mm:g} mm wide on the printed page, {corners}."
     )

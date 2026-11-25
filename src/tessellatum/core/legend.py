@@ -40,6 +40,9 @@ LEGEND_DETAILS = (NUMBER_ONLY, NAME, NAME_HEX_RGB, NAME_RECIPE)
 # heading in 9 pt, on a line 5 mm high: the paints, then the mixed colors.
 PAINTS_HEADING = "Your paints"
 MIXED_HEADING = "Mixed colors: mix each from your paints, in the parts given"
+# Over recipes from the paints listed when the page's colors aren't the paints (Colors from: The picture): they are a
+# guide to mixing the picture's colors, not colors the page was made of.
+RECIPES_HEADING = "Recipes from your paints list: mix each in the parts given"
 HEADING_PT = 9.0
 HEADING_MM = 5.0
 HEADING_BASELINE_MM = 4.5
@@ -197,13 +200,14 @@ def legend_sections(
     mixes: Sequence[Sequence[str] | None] | None = None,
 ) -> list[tuple[str, int, int, str, list[list[LegendText]]]]:
     """A legend's sections: (heading, first color, past the last, the detail its cells have, each swatch's text) each.
-    Without mixes, one section with no heading. With them, the paints under ``PAINTS_HEADING`` with ``detail``, and the
-    mixed colors under ``MIXED_HEADING``, each with its name and its recipe from ``mixes``, whatever ``detail`` is
-    (a mixed color can't be painted without it)."""
+    Without mixes, one section: with no heading, or under ``RECIPES_HEADING`` if it writes ``recipes``. With mixes, the
+    paints under ``PAINTS_HEADING`` with ``detail``, and the mixed colors under ``MIXED_HEADING``, each with its name
+    and its recipe from ``mixes``, whatever ``detail`` is (a mixed color can't be painted without it)."""
     names = list(name_colors(palette_rgb) if names is None else names)
     start = mixed_from(mixes)
     if start is None:
-        return [("", 0, len(palette_rgb), detail, swatch_texts(palette_rgb, detail, names, recipes))]
+        heading = RECIPES_HEADING if detail == NAME_RECIPE and recipes else ""
+        return [(heading, 0, len(palette_rgb), detail, swatch_texts(palette_rgb, detail, names, recipes))]
     sections = []
     if start > 0:
         paint_recipes = list(recipes[:start]) if recipes else None
@@ -229,12 +233,13 @@ def render_legend(
     (see ``swatch_texts``). With ``mixes`` (each color's recipe as mixed colors are written, None for a paint), in
     two sections with headings (see ``legend_sections``): the paints, then the colors mixed from them."""
     palette_bgr = np.asarray(palette_bgr, dtype=np.uint8).reshape(-1, 3)
-    if mixed_from(mixes) is None:
+    if mixed_from(mixes) is None and not (detail == NAME_RECIPE and recipes):
         return _swatch_grid(palette_bgr, width, px_per_mm, detail, names, recipes)
     palette_rgb = [(int(bgr[2]), int(bgr[1]), int(bgr[0])) for bgr in palette_bgr]
     parts = []
     for heading, start, stop, cell_detail, texts in legend_sections(palette_rgb, detail, names, recipes, mixes):
-        parts.append(_heading_strip(heading, width, px_per_mm))
+        if heading:
+            parts.append(_heading_strip(heading, width, px_per_mm))
         parts.append(_swatch_grid(palette_bgr[start:stop], width, px_per_mm, cell_detail, texts=texts, first=start + 1))
     legend = Image.new("RGB", (width, sum(part.height for part in parts)), "white")
     y = 0

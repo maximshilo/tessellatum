@@ -61,6 +61,7 @@ PREVIEW_LEGEND_PX_PER_MM = 300 / MM_PER_INCH
 INSPECTOR_MIN_WINDOW = 1100
 SIDEBAR_MIN_WINDOW = 760
 MIN_WINDOW = QSize(720, 480)  # nothing clips at this size: the canvas's toolbar folds what doesn't fit into a menu
+SCROLL_RESTORE_MS = 1000  # how long a kept scroll position waits for its page's layout
 DEFAULT_SPLIT = (340, 700, 240)  # the sidebar, the canvas, the inspector
 DEFAULT_ACTIVITY = registry.GENERATION
 _NOT_MIXED = object()  # recipes asked for but not mixed yet (see MainWindow._recipes)
@@ -142,6 +143,7 @@ class MainWindow(QMainWindow):
         self._focus: dict | None = None  # in focus mode: what showed before it, to put back exactly
         self._auto_hidden: set[str] = set()  # the panels folded away by a narrow window, not by the user
         self._scroll_restored = False
+        self._scroll_pending: dict[str, int] = {}  # pages whose kept scroll position waits for their layout
 
         self.status = StatusBar()
         self.setStatusBar(self.status)
@@ -446,8 +448,32 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._restore_scroll)
 
     def _restore_scroll(self) -> None:
+        """Each page's scroll position as kept. A page whose layout hasn't reached its full height yet (its rows'
+        heights depend on its width, settled over more than one pass) gets its position as its range grows to it, for
+        up to ``SCROLL_RESTORE_MS``, so that a section unfolded later never moves it."""
+        self._scroll_pending = {}
         for category, scroll in self.controls.scrolls.items():
-            scroll.verticalScrollBar().setValue(self._layout.get_int(f"scroll/{category}", 0))
+            bar = scroll.verticalScrollBar()
+            wanted = self._layout.get_int(f"scroll/{category}", 0)
+            bar.setValue(wanted)
+            if bar.value() != wanted:
+                self._scroll_pending[category] = wanted
+                bar.rangeChanged.connect(self._on_scroll_range)
+        if self._scroll_pending:
+            QTimer.singleShot(SCROLL_RESTORE_MS, self._end_scroll_restore)
+
+    def _on_scroll_range(self, _minimum: int, _maximum: int) -> None:
+        for category, wanted in list(self._scroll_pending.items()):
+            bar = self.controls.scrolls[category].verticalScrollBar()
+            bar.setValue(wanted)
+            if bar.value() == wanted:
+                del self._scroll_pending[category]
+                bar.rangeChanged.disconnect(self._on_scroll_range)
+
+    def _end_scroll_restore(self) -> None:
+        for category in self._scroll_pending:
+            self.controls.scrolls[category].verticalScrollBar().rangeChanged.disconnect(self._on_scroll_range)
+        self._scroll_pending = {}
 
     def save_layout(self) -> None:
         """Keep the arrangement for the next run."""
@@ -469,6 +495,7 @@ class MainWindow(QMainWindow):
             self.set_focus_mode(False)
         self._layout.clear()
         self._auto_hidden.clear()
+        self._end_scroll_restore()
         self.controls.show()
         self.inspector.show()
         self.splitter.setSizes(list(DEFAULT_SPLIT))
@@ -646,6 +673,8 @@ class MainWindow(QMainWindow):
         self._previewed_image = self.current_image_bgr
         self.controls.set_busy(False)
         self.controls.set_export_enabled(True)
+        if page.model is not None:
+            self.controls.set_picture_reading(page.model.line_art.is_line_art)
         # Its colors, regions and size are in the status bar's own fields (see _show_page_status).
         self._ready_message = "Preview ready."
         self._say(self._ready_message, DONE)

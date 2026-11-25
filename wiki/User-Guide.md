@@ -14,15 +14,18 @@ The window follows your system's light or dark appearance, and changes with it w
 - **Toolbar** (top): Open Image, Generate Preview (it turns into Cancel while a page is made) and Export; at its right
   end, the buttons that show or hide the sidebar and the inspector, and Focus Mode.
 - **Activity bar** (left edge): picks the settings shown in the sidebar:
-  - **Source**: the picture, small, with its file name and size, and how it is read (line art, faces and subject,
-    text);
+  - **Source**: the picture, small, with its file name and size, how large it prints on the paper chosen and at how
+    many of its pixels an inch, and, after a preview, whether it was read as line art; then the switches for how it is
+    read (line art, faces and subject, text);
   - **Generation**: the difficulty and the settings that shape the regions;
   - **Colors**: what the page is colored with, where its colors come from, the palette and mixing;
   - **Document**: the paper, lines and numbers, their tone, the legend, and the export's options.
 
   Clicking the page already shown folds the sidebar away; clicking any page brings it back.
-- **Sidebar**: the category's settings in sections; click a section's title to fold or unfold it (sections of
-  advanced settings start folded). Generate Preview and Export stay at its foot on every page.
+- **Sidebar**: the category's settings in sections, the everyday ones on top and the rest in one folded
+  **Advanced** group at the foot of the page (see [Levels of detail](#levels-of-detail)); click a section's title to
+  fold or unfold it, and its **Reset**, shown while something in it is changed, to put just that section back.
+  Generate Preview and Export stay at its foot on every page.
 - **Canvas** (middle): the page, with its own toolbar above it: the version shown and the zoom. On a narrow window,
   what doesn't fit goes into the toolbar's » menu.
 - **Inspector** (right): the page's colors, numbered as on its legend, with their names; hover one for its hex and
@@ -162,7 +165,9 @@ differently, and the painted versions of the page show the predicted colors.
 ## Difficulty
 
 Beginner, Easy, Medium (the default), Hard and Realistic fill in the settings below them; moving any of them picks
-**Custom**. The five levels differ in four settings:
+**Custom**. Under the choice, a line says what the level makes (how many colors, how large and how wide its regions,
+its corners), or, for Custom, which level it was moved from and how many settings differ. The five levels differ in
+four settings:
 
 | Level | Colors | Smallest region | Brush | Smoothing |
 |---|---|---|---|---|
@@ -182,6 +187,23 @@ smaller ones.
 
 The sidebar shows them by category (see [The workspace](#the-workspace)); below they are described by what they
 shape.
+
+### Levels of detail
+
+Each page shows its settings at three levels. On top, the choices most pages need (the difficulty, the paper, where
+the colors come from), then the settings worth a look (the detail, the palette, the lines and numbers); last, folded
+away, one **Advanced** group with the rest, under small headings:
+
+| Page | In Advanced |
+|---|---|
+| Generation | Faces and subject (dark marks, face tones), Line art, Text, Edges, Corners, Resolution |
+| Colors | Mixing |
+| Document | Tone (the three grays), Lines (line smoothing), Numbers (leaders, gap beside text, necks) |
+
+Open a picture, pick a difficulty, generate and export: none of it takes an Advanced setting. Every section, the
+Advanced groups included, shows **Reset** in its header while something under it is changed: it puts the sliders
+back to their preset (the grays to the tone, the rest to their default) and the choices to their defaults, and leaves
+the other sections alone. The paints you list stay listed. The folded and unfolded sections are kept between runs.
 
 **Editing a setting.** Drag its slider, or type an exact value in the box beside it and press Enter: "1.2", "1.2 mm",
 or "1,2" where a comma is the decimal mark. A value out of range is refused, with the range said under the box; Esc
@@ -247,7 +269,9 @@ preset again. A setting that does nothing with the other choices as they are is 
   (with Colors from: The picture), so this is how to get a picture's colors from a small box of paints; with My paints
   every recipe is a single paint, and the colors mixed from them (Mix colors from my paints) are listed in a section
   of their own with theirs. Mixing is modeled, not measured: your own tubes of the same colors mix a little
-  differently, so a recipe is where to start. With no paints listed it shows hex and RGB instead.
+  differently, so a recipe is where to start. With no paints listed it shows hex and RGB instead. Recipes for the
+  picture's own colors are headed "Recipes from your paints list: mix each in the parts given", so they don't read as
+  the paints the page was made of.
   Changing it redraws the preview's legend at once and applies to the next export, without making the page again.
 - **Leader width**: 0.1 mm by default, half the default line, so a leader doesn't read as a boundary. Numbers keep as
   clear of a leader as of a line however thin it is drawn.
