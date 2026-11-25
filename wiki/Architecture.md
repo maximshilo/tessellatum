@@ -58,6 +58,7 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 | `core/painting.py`, `legend.py`, `color_names.py`, `redraw.py`, `export.py`, `swatches.py` | Painted versions; legend and its color names; print-size redraw; PNG and PDF; palette files |
 | `core/kernels.py`, `parallel.py` | Numba-compiled pixel loops; the shared thread pool |
 | `app/snapshot.py`, `app/document.py` | `DocumentSettings`, every setting as one immutable value; `Document`, the picture, its settings and the page made of them |
+| `app/history.py` | `History`: undo and redo on a `QUndoStack`, each change keeping the settings (or the picture) before and after it whole; the edits made in one go and a slider's drag are one step; the clean state for saving |
 | `app/jobs.py` | `JobManager` and `Job`: every background step, its identity, and the checks on its result |
 | `gui/actions.py` | Every command as one `QAction`: text, icon, shortcut, menu |
 | `gui/main_window.py`, `workspace.py` | The window: toolbar, activity bar, sidebar, canvas and inspector in a splitter; focus mode, reflow, the layout kept between runs |

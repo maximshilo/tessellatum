@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from tessellatum import __version__
 from tessellatum.app.document import Document
+from tessellatum.app.history import History
 from tessellatum.app.jobs import EXPORT, PREVIEW, PRINT_LAYOUT, RECIPES, SAVE, Job, JobManager, page_task
 from tessellatum.app.snapshot import DocumentSettings
 from tessellatum.core import export, mixing, pipeline, swatches
@@ -179,6 +180,16 @@ class MainWindow(QMainWindow):
         # The document: the picture, its settings and the page made of them. The panel writes its edits into it.
         self.document = Document(self.controls.snapshot(), self)
         self.controls.settings_changed.connect(self.document.set_settings)
+        # Undo and redo (see ``app.history``): each change to the settings or the picture, its states kept whole. The
+        # edits made in one go (a preset, a reset) are one change; a slider dragged is one from press to release.
+        self.history = History(self._restore_settings, self._restore_source, self)
+        self._recorded = self.controls.snapshot()  # the settings as the history last saw them
+        self._record_scheduled = False
+        self._restoring = False
+        self.controls.settings_changed.connect(self._on_settings_edited)
+        self.controls.edit_started.connect(self.history.begin_merge)
+        # After the drag's last edit is recorded, which waits for the event loop too.
+        self.controls.edit_finished.connect(lambda: QTimer.singleShot(0, self.history.end_merge))
 
         # Everything slow runs as a job (see ``app.jobs``): one of each kind at a time, its result delivered only if
         # still wanted.
@@ -250,6 +261,10 @@ class MainWindow(QMainWindow):
         commands["cancel"].triggered.connect(self.abort_generation)
         c.abort_button.setToolTip(commands["cancel"].toolTip())
         commands["reset"].triggered.connect(c.reset)
+        commands["undo"].triggered.connect(self.undo)
+        commands["redo"].triggered.connect(self.redo)
+        self.history.changed.connect(self._show_history)
+        self._show_history()
         commands["quit"].triggered.connect(self.close)
         commands["about"].triggered.connect(self.show_about)
         for version, command_id in VERSION_ACTIONS.items():
@@ -575,15 +590,79 @@ class MainWindow(QMainWindow):
             self._say(text, FAILED)
             self.notify(ERROR, text)
             return
-        self.document.set_source(image, path)  # drops the last picture's page
+        old = self.document.source()
+        self._show_source(image, path)
+        if old is not None:  # a picture replaced in an open document: undoable
+            self.history.record_source((old.image, old.path), (image, path), f"Open {path.name}")
 
-        self.controls.set_thumbnail(_bgr_to_pixmap(self.current_image_bgr))
-        height, width = self.current_image_bgr.shape[:2]
-        self.controls.set_picture_size((width, height), path.name)
+    def _show_source(self, image: np.ndarray | None, path: Path | None) -> None:
+        """Work on ``image``, read from ``path``, or on no picture: the last picture's page dropped."""
+        self.document.set_source(image, path)  # drops the last picture's page
         self._drop_print_page()
         self.controls.set_export_enabled(False)
         self.version_bar.setEnabled(False)  # the preview left showing is the last picture's, until the next one
-        self._say(f"Loaded {path.name}. Click \"Generate Preview\".")
+        if image is None:
+            self.controls.set_picture_size(None)
+            self._say("No picture open.")
+            return
+        self.controls.set_thumbnail(_bgr_to_pixmap(image))
+        height, width = image.shape[:2]
+        name = path.name if path is not None else "the picture"
+        self.controls.set_picture_size((width, height), path.name if path is not None else "")
+        self._say(f"Loaded {name}. Click \"Generate Preview\".")
+
+    # -- Undo and redo ------------------------------------------------------
+    def _on_settings_edited(self, _settings: DocumentSettings) -> None:
+        # Recorded once the edits made in one go are all in: a preset sets many settings, each announced.
+        if self._restoring or self._record_scheduled:
+            return
+        self._record_scheduled = True
+        QTimer.singleShot(0, self._record_settings)
+
+    def _record_settings(self) -> None:
+        self._record_scheduled = False
+        label, self.controls.edit_label = self.controls.edit_label, None
+        if self._restoring:
+            return
+        before, after = self._recorded, self.controls.snapshot()
+        if after == before:
+            return
+        self._recorded = after
+        self.history.record_settings(before, after, label or after.change_text(before))
+
+    def undo(self) -> None:
+        if self._record_scheduled:
+            self._record_settings()  # an edit not recorded yet is the one to undo
+        self.history.undo()
+
+    def redo(self) -> None:
+        if self._record_scheduled:
+            self._record_settings()
+        self.history.redo()
+
+    def _restore_settings(self, settings: DocumentSettings) -> None:
+        self._restoring = True
+        try:
+            self.controls.show_settings(settings)
+        finally:
+            self._restoring = False
+        self.controls.edit_label = None
+        self._recorded = self.controls.snapshot()
+        made_with = self.document.result_settings()
+        if self.current_page is not None and made_with is not None and self._recorded.changes_from(made_with):
+            self._say("The preview is out of date: Generate Preview to see the settings restored.")
+
+    def _restore_source(self, source: tuple | None) -> None:
+        image, path = source if source is not None else (None, None)
+        self._show_source(image, path)
+
+    def _show_history(self) -> None:
+        """Edit > Undo and Redo, named for what they would do ("Undo Brush width"), on when there is something."""
+        history, commands = self.history, self.commands
+        commands["undo"].setEnabled(history.can_undo())
+        commands["redo"].setEnabled(history.can_redo())
+        commands["undo"].setText(f"&Undo {history.undo_text()}" if history.can_undo() else "&Undo")
+        commands["redo"].setText(f"&Redo {history.redo_text()}" if history.can_redo() else "&Redo")
 
     # -- Preview ----------------------------------------------------------
     def _making(self) -> bool:

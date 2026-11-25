@@ -40,6 +40,8 @@ COMMANDS = (
     Command("open", "&Open Image…", FILE, "Open a picture to make a page of", "open", (QKeySequence.Open,)),
     Command("export", "&Export…", FILE, "Save the page as a PNG, a PDF or a palette file", "export", ("Ctrl+E",)),
     Command("quit", "&Quit", FILE, "Close Tessellatum", "quit", (QKeySequence.Quit,), role=QAction.QuitRole),
+    Command("undo", "&Undo", EDIT, "Undo the last change to the settings or the picture", "undo", (QKeySequence.Undo,)),
+    Command("redo", "&Redo", EDIT, "Redo what was undone", "redo", (QKeySequence.Redo, "Ctrl+Shift+Z")),
     Command("reset", "&Reset All Settings", EDIT, "Put every setting back to its default, and the difficulty to Medium",
             "reset"),
     Command("generate", "&Generate Preview", GENERATE, "Make the page with the settings as they are", "generate",
@@ -90,7 +92,13 @@ class Actions(QObject):
             tip = command.tip or command.text.replace("&", "").rstrip("…")
             action.setStatusTip(command.tip)
             if command.keys:
-                action.setShortcuts([QKeySequence(key) for key in command.keys])
+                # Each once: a platform's standard key may be one also named (Redo is Ctrl+Shift+Z on Linux and macOS).
+                sequences = []
+                for key in command.keys:
+                    sequence = QKeySequence(key)
+                    if sequence not in sequences:
+                        sequences.append(sequence)
+                action.setShortcuts(sequences)
                 tip += f" ({action.shortcut().toString(QKeySequence.NativeText)})"
             action.setToolTip(tip)
             action.setCheckable(command.checkable)
@@ -146,7 +154,8 @@ class Actions(QObject):
                         appearance = menu.addMenu("&Appearance")
                     appearance.addAction(action)
                     continue
-                if command.id in ("quit", "zoom_in", "cancel", ACTIVITY_ACTIONS[settings.SOURCE], "toggle_sidebar") \
+                if command.id in ("quit", "reset", "zoom_in", "cancel", ACTIVITY_ACTIONS[settings.SOURCE],
+                                  "toggle_sidebar") \
                         and not menu.isEmpty():
                     menu.addSeparator()
                 menu.addAction(action)

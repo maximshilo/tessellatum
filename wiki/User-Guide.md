@@ -64,6 +64,7 @@ Every command is in the menu bar, and the most used have a shortcut (Cmd in plac
 |---|---|
 | File > Open Image | Ctrl+O |
 | File > Export | Ctrl+E |
+| Edit > Undo, Redo | Ctrl+Z; Ctrl+Y or Ctrl+Shift+Z |
 | Generate > Generate Preview | Ctrl+Enter, F5 |
 | Generate > Cancel | Esc |
 | View > Page, Completed, Tinted | Ctrl+1, Ctrl+2, Ctrl+3 |
@@ -75,7 +76,12 @@ Every command is in the menu bar, and the most used have a shortcut (Cmd in plac
 | View > Diagnostics | Ctrl+Shift+D |
 
 **View > Appearance** picks System (the window follows the system's light or dark setting as it changes), Light or
-Dark, and the choice is kept. **Edit > Reset All Settings** is the Difficulty section's Reset; **Help > About Tessellatum** shows
+Dark, and the choice is kept. **Edit > Undo** takes back the last change to the settings or the picture, named
+for what it did ("Undo Brush width", "Undo Difficulty: Hard", "Undo Reset Detail"), and **Redo** puts it back: a slider
+dragged is one step, a preset or a reset is one step however many settings it moves, and opening another picture is
+one. The zoom, the panels and the version shown are never undone. A change made after an undo drops what could have
+been redone. Undo restores the settings, not the preview: if the preview was made with other settings, the status
+bar says so, and Generate Preview shows them. **Edit > Reset All Settings** is the Difficulty section's Reset; **Help > About Tessellatum** shows
 the version and the licenses.
 
 ## Zoom
