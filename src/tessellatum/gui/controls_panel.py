@@ -87,12 +87,12 @@ THUMBNAIL_SIZE = 160
 # The sections of each page, in order: the registry's sections of that category (``Setting.section``,
 # ``Choice.section``), and the two the panel adds, the picture itself and the export's options (W5 moves those to the
 # export dialog).
-PICTURE, EXPORT = "Picture", "Export"
+PICTURE = "Picture"
 PAGE_SECTIONS = {
     settings.SOURCE: (PICTURE, "Picture handling"),
     settings.GENERATION: ("Difficulty", "Detail", "Faces and subject"),
     settings.COLORS: ("Medium", "Source of colors", "Palette", "Mixing"),
-    settings.DOCUMENT: ("Page", "Lines and numbers", "Tone", "Legend", EXPORT),
+    settings.DOCUMENT: ("Page", "Lines and numbers", "Tone", "Legend"),
 }
 # Each page's advanced settings, by their registry sections, under one Advanced group folded at the foot of the page:
 # three levels of detail on every page (its intent on top, the precise settings shown, the advanced ones a click
@@ -217,6 +217,7 @@ class ControlsPanel(QWidget):
     open_image_requested = Signal()
     generate_requested = Signal()
     export_requested = Signal()
+    export_options_changed = Signal()  # an export option, or what it depends on (the paper, the picture), changed
     abort_requested = Signal()
     # What the legend writes beside each swatch was changed: it applies to the page shown, which isn't made again.
     legend_detail_changed = Signal(str)
@@ -386,7 +387,13 @@ class ControlsPanel(QWidget):
         export_form.labelForField(resolution_row).setToolTip(RESOLUTION_TOOLTIP)
         export_form.setContentsMargins(0, 0, 0, 0)
         export_box = QWidget()
+        export_box.setObjectName("exportOptions")
         export_box.setLayout(export_form)
+        self.export_options = export_box  # shown in the export dialog (see ``gui.export_dialog``)
+        self.medium_hint = QLabel(SCREEN_HINT)  # on the Colors page too, where Screen is chosen
+        self.medium_hint.setWordWrap(True)
+        self.medium_hint.setProperty("role", "hint")
+        self.medium_hint.setVisible(False)
 
         self.generate_button = QPushButton("Generate Preview")
         self.generate_button.setProperty("primary", True)  # the one primary action
@@ -422,7 +429,7 @@ class ControlsPanel(QWidget):
             "colors_from": self.colors_from_combo, "paints": self.paints_button, "mix_paints": self.mix_check,
             "tone": self.tone_combo, "legend_detail": self.legend_combo, **self._switches,
         }
-        self._lay_out(preset_row, colors_from_row, export_box)
+        self._lay_out(preset_row, colors_from_row)
 
         self.open_button.clicked.connect(self.open_image_requested)
         self.generate_button.clicked.connect(self.generate_requested)
@@ -456,7 +463,7 @@ class ControlsPanel(QWidget):
         self._announced = self.snapshot()
 
     # -- Layout ----------------------------------------------------------
-    def _lay_out(self, preset_row: QWidget, colors_from_row: QWidget, export_box: QWidget) -> None:
+    def _lay_out(self, preset_row: QWidget, colors_from_row: QWidget) -> None:
         """Every control into its page (``PAGE_SECTIONS``) at its level of detail: the intent and precise settings in
         their sections, the advanced ones under one folded Advanced group (``ADVANCED_SECTIONS``, each under a
         subheading); the pages into a stack of scroll areas, and the footer under them."""
@@ -526,8 +533,9 @@ class ControlsPanel(QWidget):
                 for widget in (self.open_button, self.thumbnail_label, self.picture_label, self.picture_print_label,
                                self.picture_reading_label):
                     picture.addRow(widget)
-            if category == settings.DOCUMENT:
-                self.sections[EXPORT].form.addRow(export_box)
+            if category == settings.COLORS:
+                medium = self.sections["Medium"].form
+                medium.addRow(self.medium_hint)
             page_layout.addStretch(1)
             # A page's labels as wide as its widest, so that its sliders line up from one section to the next.
             if labels:
@@ -740,6 +748,7 @@ class ControlsPanel(QWidget):
         if snapshot != self._announced:
             self._announced = snapshot
             self.settings_changed.emit(snapshot)
+            self.export_options_changed.emit()
         if self._store is None:
             return
         self._store.setValue(_PRESET_KEY, self.preset_combo.currentText())
@@ -1082,6 +1091,13 @@ class ControlsPanel(QWidget):
             return max(paper.printable_mm())
         return max(print_scale(self._picture_size, paper).printed_size_mm)
 
+    def resolution_capped(self) -> bool:
+        """Whether the resolution asked for is more than a PNG takes on this page, and held to the most it does."""
+        most_dpi = int((export.MAX_RASTER_LONG_EDGE - 0.5) * MM_PER_INCH / self._printed_long_mm())
+        if self._unit() == DPI:
+            return self._dpi > most_dpi
+        return self.resolution_spin.value() == export.MAX_RASTER_LONG_EDGE
+
     def _on_unit_changed(self) -> None:
         # The other mode starts at what the shown one asked for; loaded, at what it was kept at.
         long_mm = self._printed_long_mm()
@@ -1109,6 +1125,7 @@ class ControlsPanel(QWidget):
         screen = medium == difficulty.SCREEN_MEDIUM
         self._show_enablement()  # the darkest black off, the margin's tooltip saying its cap
         self.screen_hint.setVisible(screen)
+        self.medium_hint.setVisible(screen)
         for index, name in enumerate(difficulty.PRESETS):
             params = difficulty.for_medium(difficulty.params_for_preset(name), medium)
             self.preset_combo.setItemData(index, difficulty.describe(params), Qt.ToolTipRole)
@@ -1125,6 +1142,10 @@ class ControlsPanel(QWidget):
         self._save()
 
     def _show_resolution(self) -> None:
+        self._show_resolution_box()
+        self.export_options_changed.emit()  # what the export writes, as it depends on the paper and the picture too
+
+    def _show_resolution_box(self) -> None:
         """The resolution's box in its mode, within what a PNG takes on this page (see ``export.MAX_RASTER_LONG_EDGE``),
         and what it comes to: the file's pixels and the dpi."""
         long_mm = self._printed_long_mm()
@@ -1163,7 +1184,7 @@ class ControlsPanel(QWidget):
             printed = print_scale(self._picture_size, PAPERS[paper]).printed_size_mm
             width, height = (max(1, round(mm * dpi / MM_PER_INCH)) for mm in printed)
             text = f"{width:,} × {height:,} px ({width * height / 1e6:.0f} Mpx) at {dpi:.0f} dpi on {paper}."
-        capped = self._dpi > most_dpi if self._unit() == DPI else spin.value() == export.MAX_RASTER_LONG_EDGE
+        capped = self.resolution_capped()
         if capped:
             text += f" The most a PNG takes: {export.MAX_RASTER_LONG_EDGE:,} px along a side."
         self.resolution_readout.setText(text)

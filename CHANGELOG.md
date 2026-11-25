@@ -4,6 +4,25 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.10] - 2026-11-25
+
+### Changed
+
+- **Export opens a dialog first.** It shows the export's options (the version, the format, the PNG's resolution, the
+  palette's format) beside a thumbnail of what will be written and a line on it: "A PNG of the page: 6,543 × 4,363 px
+  at 600 dpi, printing 277 × 185 mm on A4, with its legend under it." The options have moved there from the Document
+  page, and are kept between runs as before.
+- **Warnings that don't stop you:** a PNG under 150 dpi, a Procreate palette of more than 30 colors written as
+  several files, numbers under 3 pt on a page for paper. Only an export with nothing to write is refused.
+- **No more silent re-making.** When the settings changed since the preview, the dialog says which, and asks which
+  page to write: the page made again with the settings as they are now (the default, as before), or the page as
+  previewed.
+- Exports are named for the picture and suggested beside it ("harbor_page.png", "harbor_palette.swatches"). A
+  Procreate palette written as several files asks before replacing any of them that exist.
+- A failed export offers **Retry**, which writes the same file with the same options again.
+- With Coloring on: Screen, the Colors page now also points to exporting the palette.
+- Radio buttons have a clear outline in the dark theme.
+
 ## [1.1.9] - 2026-11-25
 
 ### Changed

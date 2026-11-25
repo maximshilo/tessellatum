@@ -119,13 +119,22 @@ def save_palette(
         path.write_bytes(procreate_bytes(title, colors))
         return [path]
     written = []
-    for start in range(0, len(colors), PROCREATE_MAX_SWATCHES):
+    for start, target in zip(range(0, len(colors), PROCREATE_MAX_SWATCHES), palette_files(path, len(colors))):
         part = colors[start : start + PROCREATE_MAX_SWATCHES]
         span = f"{start + 1}-{start + len(part)}"
-        target = path.with_name(f"{path.stem} {span}{path.suffix}")
         target.write_bytes(procreate_bytes(f"{title} {span}", part))
         written.append(target)
     return written
+
+
+def palette_files(path: Path, colors: int) -> list[Path]:
+    """The files ``save_palette`` writes for a palette of ``colors`` colors at ``path``: ``path`` itself, or for a
+    Procreate palette of more than 30 colors one for each 30, named for the colors it holds ("page 1-30.swatches")."""
+    path = Path(path)
+    if path.suffix.lower() != PROCREATE or colors <= PROCREATE_MAX_SWATCHES:
+        return [path]
+    spans = [(start + 1, min(start + PROCREATE_MAX_SWATCHES, colors)) for start in range(0, colors, PROCREATE_MAX_SWATCHES)]
+    return [path.with_name(f"{path.stem} {first}-{last}{path.suffix}") for first, last in spans]
 
 
 def _ase_block(kind: int, data: bytes) -> bytes:

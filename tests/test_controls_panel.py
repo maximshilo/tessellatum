@@ -102,7 +102,8 @@ def test_the_sidebar_shows_one_category_s_page_at_a_time(panel):
     panel.show_category(settings.COLORS)
     assert panel.category() == settings.COLORS and panel.stack.currentWidget() is panel.scrolls[settings.COLORS]
     assert panel.pages[settings.SOURCE].isAncestorOf(panel.open_button)
-    assert panel.pages[settings.DOCUMENT].isAncestorOf(panel.png_radio)  # the export's options, until W5
+    # The export's options are in the export dialog, on no page (W5).
+    assert not any(page.isAncestorOf(panel.png_radio) for page in panel.pages.values())
     # The primary action stays in the footer, whatever page shows.
     assert not any(page.isAncestorOf(panel.generate_button) for page in panel.pages.values())
 
