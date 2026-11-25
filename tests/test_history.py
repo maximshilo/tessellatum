@@ -278,15 +278,16 @@ def test_an_edit_says_the_preview_is_out_of_date_and_putting_it_back_says_it_is_
     assert window.status.text() == "Preview ready."
     window.controls.controls["line_width_mm"].step(2)
     _settle()
-    assert window.status.text() == ("The preview is out of date (Line width changed): Generate Preview to see the "
-                                    "page with it.")
+    # The lines and numbers only draw the page again: that is done by itself, a moment after the last change.
+    assert window.status.text() == "The preview is out of date (Line width changed): it is drawn again in a moment."
     window.controls.controls["min_label_pt"].step(1)
     _settle()
-    assert "(Line width, Smallest number changed)" in window.status.text() and "with them" in window.status.text()
-    # A difficulty setting moved makes the difficulty Custom: named as the difficulty.
+    assert "(Line width, Smallest number changed): it is drawn again" in window.status.text()
+    # A difficulty setting moved makes the difficulty Custom: named as the difficulty. It waits for Generate.
     window.controls.controls["min_width_mm"].step(2)
     _settle()
-    assert "(Difficulty, Line width, Smallest number changed)" in window.status.text()
+    assert window.status.text() == ("The preview is out of date (Difficulty, Line width, Smallest number changed): "
+                                    "Generate Preview to see the page with them.")
     window.undo()
     window.undo()
     window.undo()

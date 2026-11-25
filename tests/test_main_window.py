@@ -945,7 +945,8 @@ def test_a_preview_made_while_a_setting_changed_is_shown_as_made_with_the_settin
     window.generate_preview()
     assert started.wait(TIMEOUT_S)
     made_with = window.document.settings()
-    window.controls.tone_combo.setCurrentText("Dark")
+    # A change that makes the page again, and so waits for Generate (the tone would draw it again by itself, G2).
+    window.controls.controls["num_colors"].step(-1)
     release.set()
     drive.wait()
 

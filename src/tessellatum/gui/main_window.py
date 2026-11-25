@@ -41,7 +41,7 @@ from tessellatum.core.legend import NAME_RECIPE, render_legend
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import GeneratedPage
 from tessellatum.core.print_size import MM_PER_INCH, print_scale
-from tessellatum.gui import preferences, theme
+from tessellatum.gui import freshness, preferences, theme
 from tessellatum.core import settings as registry
 from tessellatum.gui.actions import ACTIVITY_ACTIONS, THEME_ACTIONS, VERSION_ACTIONS, ZOOM_ACTIONS, Actions
 from tessellatum.app.presets import PresetStore
@@ -111,6 +111,9 @@ class MainWindow(QMainWindow):
         self.canvas_bar.setObjectName("canvasToolbar")
         self.canvas_bar.setMovable(False)
         self.canvas_bar.addWidget(self.version_bar)
+        # Whether the page shown is what the settings make (see ``gui.freshness``).
+        self.freshness = freshness.FreshnessBadge()
+        self.canvas_bar.addWidget(self.freshness)
         gap = QWidget()
         gap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.canvas_bar.addWidget(gap)
@@ -178,6 +181,12 @@ class MainWindow(QMainWindow):
         self._last_export: tuple | None = None  # the last export's file and options, for Retry
         self._ready_message = ""  # the status of the preview shown
         self._stale = False  # whether the status bar says the preview is out of date
+        # How the last preview asked for ended, if it was cancelled or failed and nothing has changed since.
+        self._outcome: str | None = None
+        # A change to the lines, numbers or tone draws the preview again by itself, this long after the last one.
+        self._redraw_timer = QTimer(self)
+        self._redraw_timer.setSingleShot(True)
+        self._redraw_timer.timeout.connect(self._redraw)
         # The preview's page drawn at print size: what the zoom shows past the preview's own pixels, and what the
         # export saves. Drawn in the background when either first asks for it, and dropped with the preview.
         self._print_page: GeneratedPage | None = None
@@ -198,7 +207,7 @@ class MainWindow(QMainWindow):
         self._record_scheduled = False
         self._restoring = False
         self.controls.settings_changed.connect(self._on_settings_edited)
-        self.controls.settings_changed.connect(lambda _settings: self._show_freshness())
+        self.controls.settings_changed.connect(self._on_settings_changed_for_preview)
         self.controls.edit_started.connect(self.history.begin_merge)
         # After the drag's last edit is recorded, which waits for the event loop too.
         self.controls.edit_finished.connect(lambda: QTimer.singleShot(0, self.history.end_merge))
@@ -211,6 +220,8 @@ class MainWindow(QMainWindow):
         self.jobs.cancelled.connect(self._on_job_cancelled)
         self.jobs.dropped.connect(self._on_job_dropped)
         self.jobs.progress.connect(self._on_job_progress)
+        # A redraw that waited for an export goes ahead once it is done.
+        self.jobs.finished.connect(lambda job: job.kind in (EXPORT, SAVE) and self._schedule_redraw())
         # Each job, and the app's own warnings and errors, in the diagnostics; the status bar counts them.
         self.diagnostics.watch(self.jobs)
         self._log_handler = install_log_handler(self.diagnostics)
@@ -224,6 +235,8 @@ class MainWindow(QMainWindow):
         self.resize(1280, 840)
         self.document.result_changed.connect(lambda: self.inspector.show_page(self.current_page))
         self.document.result_changed.connect(self._show_page_status)
+        self.document.result_changed.connect(self._show_freshness)
+        self.document.source_changed.connect(self._on_source_changed_for_preview)
         self._restore_layout()
 
         # Get one-time costs (loading/compiling the compiled kernels, first
@@ -563,6 +576,9 @@ class MainWindow(QMainWindow):
             preferences.apply_canvas(self.preview, prefs.canvas_color())
         if key in (None, preferences.CACHE_KEY):
             pipeline.set_cache_pages(prefs.cache_pages())
+        if key == preferences.REDRAW_KEY:
+            self._schedule_redraw()
+            self._show_freshness()
 
     def open_preferences(self) -> None:
         """The Preferences dialog, made the first time."""
@@ -698,22 +714,87 @@ class MainWindow(QMainWindow):
             self._restoring = False
         self.controls.edit_label = None
         self._recorded = self.controls.snapshot()
+        self._on_settings_changed_for_preview()
+
+    # -- Whether the preview is the page the settings make (see ``gui.freshness``) ------------
+    def _on_settings_changed_for_preview(self, _settings=None) -> None:
+        self._outcome = None  # a cancelled or failed preview's label holds until something changes
+        self._schedule_redraw()
         self._show_freshness()
 
-    def _show_freshness(self) -> None:
-        """Say in the status bar when the preview shown isn't made with the settings as they are, naming what
-        changed, and that it is ready again once they are back. Not while a page is being made, which says so."""
-        made_with = self.document.result_settings()
-        if self._making() or self.current_page is None or made_with is None:
+    def _on_source_changed_for_preview(self) -> None:
+        # Another picture, however it came: no redraw of the last one's page, and no label of its outcome.
+        self._redraw_timer.stop()
+        self._outcome = None
+        self._show_freshness()
+
+    def _preview_basis(self) -> DocumentSettings | None:
+        """The settings of the page the preview shows or is about to: the one being made, else the one shown; None
+        with neither."""
+        job = self.jobs.current(PREVIEW)
+        if job is not None:
+            return job.settings
+        return self.document.result_settings() if self.current_page is not None else None
+
+    def _redraw_pending(self) -> bool:
+        """Whether the settings changed since the preview's page only in ways that draw it again (the lines, the
+        numbers, the tone), and the preferences have that done by itself: it then is, in a moment."""
+        delay = self.preferences.redraw_after_ms() if hasattr(self, "preferences") else None
+        basis = self._preview_basis()
+        if delay is None or basis is None or self.current_image_bgr is None:
+            return False
+        changed = self.controls.snapshot().changed_entries(basis)
+        return bool(changed) and registry.update_policy(changed) == registry.DEBOUNCED
+
+    def _schedule_redraw(self) -> None:
+        """Draw the preview again a moment after the last change, if it only draws it again (see
+        ``_redraw_pending``); otherwise forget any redraw waiting: Generate Preview makes the page."""
+        if self._redraw_pending():
+            self._redraw_timer.start(self.preferences.redraw_after_ms())
+        else:
+            self._redraw_timer.stop()
+
+    def _redraw(self) -> None:
+        """The redraw due: the preview made again with the settings as they are, the stage cache keeping its regions
+        (see ``pipeline``). It supersedes a preview being made; it waits for an export to finish."""
+        if not self._redraw_pending() or self._exporting() or self.jobs.is_running(EXPORT):
             return
-        changed = self.controls.snapshot().changes_from(made_with)
+        self._start_preview(redraw=True)
+
+    def _show_freshness(self) -> None:
+        """Show the preview's state on the canvas's bar (see ``gui.freshness``), and say in the status bar when the
+        preview shown isn't made with the settings as they are, naming what changed, and that it is ready again once
+        they are back. The status bar is left alone while a page is being made, or after one was cancelled or failed,
+        which it says."""
+        made_with = self.document.result_settings()
+        has_page = self.current_page is not None and made_with is not None
+        now = self.controls.snapshot()
+        changed = now.changes_from(made_with) if has_page else ()
+        state = freshness.preview_state(has_page, self.jobs.is_running(PREVIEW), changed, self._outcome)
+        redraw = self._redraw_pending()
+        names = ", ".join(changed[:STALE_NAMED])
+        if len(changed) > STALE_NAMED:
+            names += f" and {len(changed) - STALE_NAMED} more"
+        then = "It is drawn again in a moment." if redraw else "Generate Preview (F5) makes it again."
+        detail = {
+            freshness.NO_PREVIEW: "No page made yet: Generate Preview (F5) makes one of the picture."
+            if self.current_image_bgr is not None else "Open a picture to make a page of it.",
+            freshness.CURRENT: "The page shown is the one the settings make.",
+            freshness.MODIFIED: f"Changed since the page shown was made: {names}. {then}",
+            freshness.PROCESSING: "A page is being made; the one shown stays until it is ready.",
+            freshness.CANCELLED: "The last preview was cancelled; the page shown is the one made before it."
+            if has_page else "The last preview was cancelled.",
+            freshness.FAILED: "The last preview failed (see View > Diagnostics); the page shown is the one made before "
+            "it." if has_page else "The last preview failed (see View > Diagnostics).",
+        }[state]
+        self.freshness.set_state(state, detail, has_page)
+        if self._making() or state not in (freshness.MODIFIED, freshness.CURRENT):
+            return
         if changed:
-            names = ", ".join(changed[:STALE_NAMED])
-            if len(changed) > STALE_NAMED:
-                names += f" and {len(changed) - STALE_NAMED} more"
             self._stale = True
-            self._say(f"The preview is out of date ({names} changed): Generate Preview to see the page with "
-                      f"{'them' if len(changed) > 1 else 'it'}.")
+            then = ("it is drawn again in a moment" if redraw
+                    else f"Generate Preview to see the page with {'them' if len(changed) > 1 else 'it'}")
+            self._say(f"The preview is out of date ({names} changed): {then}.")
         elif self._stale:
             self._stale = False
             self._say(self._ready_message, DONE)
@@ -748,12 +829,18 @@ class MainWindow(QMainWindow):
             return
         if self._making() or self._exporting():
             return
+        self._start_preview()
 
+    def _start_preview(self, redraw: bool = False) -> None:
+        """Make the preview with the settings as the panel shows them: asked for (Generate Preview), or, with
+        ``redraw``, by itself after a change that only draws the page again, superseding a preview being made."""
+        self._redraw_timer.stop()
+        self._outcome = None
         self._drop_print_page()  # the zoom asks for the new page's
         self.document.set_settings(self.controls.snapshot())  # as the panel shows them, to the last edit
         settings = self.document.settings()
         self.controls.set_busy(True)
-        self._say("Generating preview…", BUSY)
+        self._say("Drawing the preview again…" if redraw else "Generating preview…", BUSY)
 
         # The page at its working size, where its level's brush is a few pixels across: what an export draws larger.
         image = self.current_image_bgr
@@ -761,8 +848,9 @@ class MainWindow(QMainWindow):
         long_edge = pipeline.working_long_edge(image, params, handling, style.paper_format)
         self.jobs.start(
             PREVIEW, page_task(image, params, long_edge, style, handling, versions=tuple(Version)),
-            label=f"Preview at {long_edge} px",
+            label=f"{'Redraw' if redraw else 'Preview'} at {long_edge} px",
         )
+        self._show_freshness()
 
     def abort_generation(self) -> None:
         # An export of the preview's page waits for it to be drawn at print size.
@@ -788,6 +876,8 @@ class MainWindow(QMainWindow):
             self._show_legend()
 
     def _on_job_failed(self, job: Job, message: str) -> None:
+        if job.kind == PREVIEW:
+            self._outcome = freshness.FAILED
         if job.kind in (PREVIEW, EXPORT):
             self._on_worker_failed(message)
         elif job.kind == PRINT_LAYOUT:
@@ -797,8 +887,12 @@ class MainWindow(QMainWindow):
         # Recipes that couldn't be mixed: the legend stays without them (the job's details are logged).
 
     def _on_job_cancelled(self, job: Job) -> None:
+        if job.kind == PREVIEW:
+            self._outcome = freshness.CANCELLED
         if job.kind in (PREVIEW, EXPORT):
             self._on_worker_cancelled()
+        if job.kind == PREVIEW:
+            self._show_freshness()
         elif job.kind == PRINT_LAYOUT:
             self._on_print_page_cancelled()
 
@@ -808,6 +902,8 @@ class MainWindow(QMainWindow):
             self._clear_pending_export()
         if job.kind in (PREVIEW, EXPORT) and not self._making() and not self._exporting():
             self.controls.set_busy(False)
+        if job.kind == PREVIEW:
+            self._show_freshness()
 
     def _on_job_progress(self, job: Job, percent: int) -> None:
         # The zoom's drawing tells nothing, unless an export waits for it.
@@ -833,7 +929,9 @@ class MainWindow(QMainWindow):
         # Its colors, regions and size are in the status bar's own fields (see _show_page_status).
         self._ready_message = "Preview ready."
         self._stale = False
+        self._outcome = None
         self._say(self._ready_message, DONE)
+        self._show_freshness()  # out of date at once if the settings moved on while it was made
         versions = {version: page.image(version) for version in Version}
         long_edge = self._print_long_edge()
         print_scale = 1.0 if long_edge is None else long_edge / max(page.page.size)
@@ -894,6 +992,7 @@ class MainWindow(QMainWindow):
         self._clear_pending_export()
         self._say("Generation failed.", FAILED)
         self.notify(ERROR, f"Generation failed: {message}", [self._details()])
+        self._show_freshness()
 
     # -- Export -----------------------------------------------------------
     def open_export_dialog(self) -> None:

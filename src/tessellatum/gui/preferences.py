@@ -10,7 +10,8 @@ same ``QSettings`` as the window, under ``preferences/``; the theme and motion u
   are kept in millimeters whatever is picked.
 - **Workspace:** the panels put back where they start.
 - **Performance:** how many pages' intermediate results the generator keeps to make the next preview faster, and
-  clearing them.
+  clearing them; and how soon a change to the lines, the numbers or the tone draws the preview again by itself, or
+  whether it waits for Generate Preview as every other change does.
 - **Shortcuts:** every command's keys.
 
 The dialog applies each change at once; Close closes it.
@@ -47,6 +48,7 @@ SCALE_KEY = "preferences/ui_scale"
 CANVAS_KEY = "preferences/canvas"
 UNITS_KEY = "preferences/units"
 CACHE_KEY = "preferences/cache_pages"
+REDRAW_KEY = "preferences/redraw"
 
 AUTOMATIC = "Automatic"
 SCALES = {AUTOMATIC: None, "90%": 0.9, "100%": 1.0, "110%": 1.1, "125%": 1.25, "150%": 1.5, "175%": 1.75, "200%": 2.0}
@@ -54,6 +56,11 @@ THEME_CANVAS = "Theme"
 CANVASES = {THEME_CANVAS: None, "Neutral gray": "#808080", "White": "#FFFFFF", "Black": "#000000"}
 UNITS = {"Millimeters": MM, "Inches": INCH}
 CACHE_PAGES = {AUTOMATIC: pipeline.DEFAULT_CACHE_PAGES, "1 page": 1, "4 pages": 4, "8 pages": 8}
+# How long after the last change to the lines, the numbers or the tone the preview is drawn again by itself, in ms;
+# None: only with Generate Preview. Long enough that a slider dragged draws once, when it stops.
+REDRAW_AFTER_MS = 400
+REDRAW = {"After 0.4 s": REDRAW_AFTER_MS, "After 0.2 s": 200, "After 1 s": 1000, "Only with Generate": None}
+DEFAULT_REDRAW = "After 0.4 s"
 RESTART_NOTE = "The new scale applies when Tessellatum is started again."
 
 
@@ -78,9 +85,10 @@ class Preferences(QObject):
     def __init__(self, store: QSettings | None = None, parent: QObject | None = None):
         super().__init__(parent)
         self._store = store
-        self._values = {SCALE_KEY: AUTOMATIC, CANVAS_KEY: THEME_CANVAS, UNITS_KEY: "Millimeters", CACHE_KEY: AUTOMATIC}
+        self._values = {SCALE_KEY: AUTOMATIC, CANVAS_KEY: THEME_CANVAS, UNITS_KEY: "Millimeters", CACHE_KEY: AUTOMATIC,
+                        REDRAW_KEY: DEFAULT_REDRAW}
         if store is not None:
-            for key, choices in ((SCALE_KEY, SCALES), (CANVAS_KEY, CANVASES), (UNITS_KEY, UNITS), (CACHE_KEY, CACHE_PAGES)):
+            for key, choices in _CHOICES.items():
                 kept = store.value(key)
                 if kept in choices:
                     self._values[key] = kept
@@ -90,7 +98,7 @@ class Preferences(QObject):
         return self._values[key]
 
     def set_value(self, key: str, value: str) -> None:
-        choices = {SCALE_KEY: SCALES, CANVAS_KEY: CANVASES, UNITS_KEY: UNITS, CACHE_KEY: CACHE_PAGES}[key]
+        choices = _CHOICES[key]
         if value not in choices:
             raise ValueError(f"{value!r} is not one of {', '.join(choices)}")
         if value == self._values[key]:
@@ -109,8 +117,16 @@ class Preferences(QObject):
     def cache_pages(self) -> int:
         return CACHE_PAGES[self._values[CACHE_KEY]]
 
+    def redraw_after_ms(self) -> int | None:
+        """How long after the last change to the lines, numbers or tone the preview is drawn again; None: only with
+        Generate Preview."""
+        return REDRAW[self._values[REDRAW_KEY]]
+
     def restart_needed(self) -> bool:
         return self._values[SCALE_KEY] != self.started_scale
+
+
+_CHOICES = {SCALE_KEY: SCALES, CANVAS_KEY: CANVASES, UNITS_KEY: UNITS, CACHE_KEY: CACHE_PAGES, REDRAW_KEY: REDRAW}
 
 
 def apply_canvas(view: QWidget, color: str | None) -> None:
@@ -216,6 +232,16 @@ class PreferencesDialog(QDialog):
         row.addWidget(self.clear_cache_button)
         row.addWidget(self.cache_label, 1)
         form.addRow("", row)
+        self.redraw_combo = self._choice(REDRAW_KEY, REDRAW)
+        self.redraw_combo.setToolTip(
+            "How soon the preview is drawn again by itself after the lines, the numbers or the tone change")
+        redraw_note = QLabel("A change to the lines, the numbers or the tone only draws the page again, in about a "
+                             "second, so the preview does it by itself this long after the last change. Every other "
+                             "change makes the page again and waits for Generate Preview.")
+        redraw_note.setProperty("role", "hint")
+        redraw_note.setWordWrap(True)
+        form.addRow("Redraw lines and numbers", self.redraw_combo)
+        form.addRow("", redraw_note)
 
         # Shortcuts
         self.shortcuts = QTableWidget(0, 2)

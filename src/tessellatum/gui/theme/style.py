@@ -117,6 +117,7 @@ QListWidget#diagnosticsList, QPlainTextEdit#diagnosticsDetails {{ background: {c
 QListWidget#diagnosticsList::item {{ padding: 2px 4px; }}
 QListWidget#diagnosticsList::item:selected {{ background: {c.selected}; color: {c.text}; }}
 QLabel#statusText {{ color: {c.text}; }}
+QLabel#previewStateText {{ color: {c.text_secondary}; }}
 QProgressBar#statusProgress {{ background: {c.field}; border: 1px solid {c.border}; border-radius: {rs}px;
     max-height: 6px; }}
 QProgressBar#statusProgress::chunk {{ background: {c.accent}; border-radius: {rs}px; }}

@@ -345,9 +345,11 @@ SOURCE, GENERATION, COLORS, DOCUMENT = "Source", "Generation", "Colors", "Docume
 CATEGORIES = (SOURCE, GENERATION, COLORS, DOCUMENT)
 INTENT, PRECISE, ADVANCED = "intent", "precise", "advanced"
 LEVELS = (INTENT, PRECISE, ADVANCED)
-# When a change is applied (D10): at once, as it changes nothing but what is drawn over the page; or with Generate.
-IMMEDIATE, EXPLICIT = "immediate", "explicit"
-POLICIES = (IMMEDIATE, EXPLICIT)
+# When a change is applied (D10): at once, as it changes nothing but what is drawn over the page (the legend); a moment
+# after the last of a run of changes, as it only draws the page again from the regions the pipeline keeps (the lines,
+# the numbers, the tone: the page's style, but for its paper); or with Generate, as it makes the page again.
+IMMEDIATE, DEBOUNCED, EXPLICIT = "immediate", "debounced", "explicit"
+POLICIES = (IMMEDIATE, DEBOUNCED, EXPLICIT)
 LENGTH, AREA, COLOR_DIFFERENCE, LIGHTNESS, ANGLE = "length", "area", "color difference", "lightness", "angle"
 PERCENT, RATIO, COUNT, POINTS, PIXELS = "percent", "ratio", "count", "points", "pixels"
 UNIT_KINDS = (LENGTH, AREA, COLOR_DIFFERENCE, LIGHTNESS, ANGLE, PERCENT, RATIO, COUNT, POINTS, PIXELS)
@@ -384,8 +386,8 @@ def _mixing(chosen: Mapping) -> str | None:
     return None
 
 
-# name: (category, section, level, unit kind, aliases, enablement). The policy is EXPLICIT for every slider: each
-# one changes the page made.
+# name: (category, section, level, unit kind, aliases, enablement). The policy follows the owner: the style's sliders
+# only draw the page again (DEBOUNCED), the rest make it again (EXPLICIT).
 _SLIDER_META: dict[str, tuple] = {
     "num_colors": (GENERATION, "Detail", INTENT, COUNT, ("palette size", "number of colors", "how many colors"), None),
     "palette_margin_de00": (COLORS, "Palette", PRECISE, COLOR_DIFFERENCE,
@@ -437,7 +439,10 @@ _SLIDER_META: dict[str, tuple] = {
                            _unless("text", ONLY_WITH_TEXT)),
 }
 SETTINGS = tuple(
-    dataclasses.replace(s, category=m[0], section=m[1], level=m[2], unit_kind=m[3], aliases=m[4], enabled_when=m[5])
+    dataclasses.replace(
+        s, category=m[0], section=m[1], level=m[2], unit_kind=m[3], aliases=m[4], enabled_when=m[5],
+        policy=DEBOUNCED if s.owner == STYLE else EXPLICIT,
+    )
     for s in SETTINGS for m in (_SLIDER_META[s.name],)
 )
 _BY_NAME = {setting.name: setting for setting in SETTINGS}
@@ -555,7 +560,7 @@ CHOICES: tuple[Choice, ...] = (
     Choice("tone", "Tone", ENUM, DEFAULT_TONE, "style/tone", DOCUMENT, "Tone", INTENT,
            "How dark the lines, numbers and leaders print: each tone sets the three grays at once.",
            options=(*TONES, CUSTOM_TONE), option_tips={**TONE_TOOLTIPS, CUSTOM_TONE: CUSTOM_TONE_TOOLTIP},
-           aliases=("line darkness", "light lines")),
+           policy=DEBOUNCED, aliases=("line darkness", "light lines")),
     Choice("legend_detail", "Legend", ENUM, DEFAULT_LEGEND_DETAIL, "style/legend", DOCUMENT, "Legend", INTENT,
            LEGEND_TOOLTIP, options=LEGEND_DETAILS, option_tips=LEGEND_TOOLTIPS, field="PageStyle.legend_detail",
            policy=IMMEDIATE, aliases=("legend", "names", "hex", "recipes")),
@@ -593,6 +598,23 @@ def entry(name: str) -> Setting | Choice:
 def entries() -> tuple[Setting | Choice, ...]:
     """Every entry: the sliders, then the choices."""
     return (*SETTINGS, *CHOICES)
+
+
+def update_policy(names) -> str:
+    """How a change to the entries ``names`` is applied, all together: with Generate (``EXPLICIT``) if any of them
+    makes the page again; else a moment after the last change (``DEBOUNCED``) if any draws it again; else at once
+    (``IMMEDIATE``), as nothing but what is drawn over the page changed, or nothing at all. A name the registry
+    doesn't know waits for Generate."""
+    policies = set()
+    for name in names:
+        try:
+            policies.add(entry(name).policy)
+        except KeyError:
+            return EXPLICIT
+    for policy in (EXPLICIT, DEBOUNCED):
+        if policy in policies:
+            return policy
+    return IMMEDIATE
 
 
 def find(text: str) -> list[Setting | Choice]:
