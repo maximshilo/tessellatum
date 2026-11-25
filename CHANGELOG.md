@@ -4,6 +4,26 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.14] - 2026-11-25
+
+### Added
+
+- **Preferences** (Edit > Preferences, Ctrl+, ; on macOS in the app menu): how the app looks and works on this
+  computer, kept apart from the page's settings, never undone with them and kept between runs:
+  - **Appearance**: the theme and motion (as in View > Appearance), the interface's scale (90% to 200%, applied when
+    the app next starts; the page's zoom stays exact whatever the scale), and the canvas's background behind the page
+    (the theme's, a neutral gray to judge colors against, white or black).
+  - **Units**: lengths and areas shown and typed in millimeters or inches; the page's values are kept in millimeters
+    either way.
+  - **Workspace**: Reset Layout.
+  - **Performance**: how many pages' intermediate results are kept to make the next preview faster, and Clear Now.
+  - **Shortcuts**: every command's keys.
+
+### Fixed
+
+- A command whose standard key the platform doesn't define (Quit on Windows) no longer shows an empty "()" in its
+  tooltip.
+
 ## [1.1.13] - 2026-11-25
 
 ### Added

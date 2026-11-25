@@ -299,15 +299,37 @@ class _StageCache:
             self._image_ref = None
             self._entries.clear()
 
+    @property
+    def max_entries(self) -> int:
+        return self._max_entries
+
+    def set_max_entries(self, max_entries: int) -> None:
+        with self._lock:
+            self._max_entries = max_entries
+            while len(self._entries) > max_entries:
+                self._entries.popitem(last=False)
+
 
 # One page touches 8 entries (two sizes of the picture, the line-art decision, its ink, its colors, its faces, subject
 # and text), so twice that keeps a page's stages while one setting at a time is tried, at a few tens of MB a preview.
-_cache = _StageCache(max_entries=16)
+ENTRIES_PER_PAGE = 8
+DEFAULT_CACHE_PAGES = 2
+_cache = _StageCache(max_entries=ENTRIES_PER_PAGE * DEFAULT_CACHE_PAGES)
 
 
 def clear_cache() -> None:
     """Forget cached intermediate results (see ``_StageCache``)."""
     _cache.clear()
+
+
+def cache_pages() -> int:
+    """How many pages' intermediate results are kept."""
+    return _cache.max_entries // ENTRIES_PER_PAGE
+
+
+def set_cache_pages(pages: int) -> None:
+    """Keep ``pages`` pages' intermediate results (at least one), forgetting the oldest beyond them now."""
+    _cache.set_max_entries(ENTRIES_PER_PAGE * max(1, int(pages)))
 
 
 def _mix_lines(recipe, paints: tuple[tuple[str, tuple[int, int, int]], ...]) -> list[str] | None:

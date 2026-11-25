@@ -5,14 +5,14 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QSize, QStandardPaths
+from PySide6.QtCore import QCoreApplication, QSettings, QSize, QStandardPaths
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from tessellatum.app import jobs
 from tessellatum.app.presets import FILE_NAME as PRESETS_FILE
 from tessellatum.app.presets import PresetStore
-from tessellatum.gui import theme
+from tessellatum.gui import preferences, theme
 from tessellatum.gui.main_window import MainWindow
 
 RESOURCES_DIR = Path(__file__).resolve().parent / "resources"
@@ -37,9 +37,12 @@ def main() -> None:
 
         sys.exit(selftest.run(Path(sys.argv[2])))
 
+    # The names first, so that the preferences can be read before the application exists: the interface's scale
+    # applies only as it starts.
+    QCoreApplication.setApplicationName("Tessellatum")
+    QCoreApplication.setOrganizationName("Tessellatum")
+    preferences.apply_scale_at_start(QSettings())
     app = QApplication(sys.argv)
-    app.setApplicationName("Tessellatum")
-    app.setOrganizationName("Tessellatum")
     app.setWindowIcon(window_icon())
 
     # The panel's settings and the theme picked are kept between runs, under the organization and application names

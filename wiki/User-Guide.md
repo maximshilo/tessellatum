@@ -67,6 +67,7 @@ Every command is in the menu bar, and the most used have a shortcut (Cmd in plac
 | File > Export | Ctrl+E |
 | Edit > Undo, Redo | Ctrl+Z; Ctrl+Y or Ctrl+Shift+Z |
 | Edit > Find Setting | Ctrl+F |
+| Edit > Preferences | Ctrl+, (macOS: in the app menu, Cmd+,) |
 | Generate > Generate Preview | Ctrl+Enter, F5 |
 | Generate > Cancel | Esc |
 | View > Page, Completed, Tinted | Ctrl+1, Ctrl+2, Ctrl+3 |
@@ -169,6 +170,20 @@ everyday name and its recipe: "1 Titanium white", "1 Ivory black", whatever the 
 without it). A palette file names a mix with its recipe too: "12 gray (1 Ivory black + 1 Titanium white)". The mixes'
 colors are predicted, by the same model of paint as the recipes (see Legend): your own paints may mix a little
 differently, and the painted versions of the page show the predicted colors.
+
+## Preferences
+
+**Edit > Preferences** (on macOS, in the Tessellatum menu) holds how the app looks and works on this computer. A
+preference is never part of a page's settings: it isn't undone with Edit > Undo, Reset All Settings leaves it as it is,
+and it is kept between runs. Each change applies at once.
+
+| Page | Preference |
+|---|---|
+| Appearance | **Theme** (System, Light, Dark) and **Motion** (System, Reduced, Full), as in View > Appearance. **Interface scale**, Automatic (the system's) or 90% to 200%: applied when Tessellatum next starts, as the dialog says. The page's zoom is apart from it, so 100% stays a pixel of the page to a pixel of the screen. **Canvas background**: the theme's, a neutral gray to judge the page's colors against, white or black. |
+| Units | **Lengths in** millimeters or inches: how lengths and areas are shown and typed. The page's values are kept in millimeters, so switching never changes them. |
+| Workspace | **Reset Layout**, as in View. |
+| Performance | **Results kept**: how many pages' intermediate results are kept, so that trying one setting after another makes the next preview faster (Automatic keeps two, a few tens of MB each). **Clear Now** frees them. |
+| Shortcuts | Every command's keys. |
 
 ## Difficulty
 

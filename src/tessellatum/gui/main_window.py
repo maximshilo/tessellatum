@@ -41,7 +41,7 @@ from tessellatum.core.legend import NAME_RECIPE, render_legend
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import GeneratedPage
 from tessellatum.core.print_size import MM_PER_INCH, print_scale
-from tessellatum.gui import theme
+from tessellatum.gui import preferences, theme
 from tessellatum.core import settings as registry
 from tessellatum.gui.actions import ACTIVITY_ACTIONS, THEME_ACTIONS, VERSION_ACTIONS, ZOOM_ACTIONS, Actions
 from tessellatum.app.presets import PresetStore
@@ -87,6 +87,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Tessellatum")
 
         self._layout = LayoutStore(store)
+        self._store = store  # the preferences read it too (see ``_build_commands``)
         self.controls = ControlsPanel(store=store, presets=presets)  # the settings sidebar: its pages scroll on a short window
         # The export's options, kept by the panel, shown in the export dialog beside what they will write.
         self.export_dialog = ExportDialog(self.controls.export_options, self)
@@ -295,6 +296,11 @@ class MainWindow(QMainWindow):
         commands["toggle_inspector"].triggered.connect(self.set_inspector_visible)
         commands["focus_mode"].triggered.connect(self.set_focus_mode)
         commands["reset_layout"].triggered.connect(self.reset_layout)
+        commands["preferences"].triggered.connect(self.open_preferences)
+        self.preferences = preferences.Preferences(self._store, self)
+        self.preferences_dialog: preferences.PreferencesDialog | None = None
+        self.preferences.changed.connect(self._apply_preference)
+        self._apply_preference()
         commands["toggle_diagnostics"].triggered.connect(self.set_diagnostics_visible)
         # Enabled as the buttons are: whatever turns one on or off turns its command with it.
         self._enablement = _Watcher(self._sync_commands, self)
@@ -533,6 +539,25 @@ class MainWindow(QMainWindow):
             scroll.verticalScrollBar().setValue(0)
         self.show_activity(DEFAULT_ACTIVITY)
         self._reflow()
+
+    # -- Preferences: how the app looks and works, apart from the page's settings and their undo -------------
+    def _apply_preference(self, key: str | None = None) -> None:
+        prefs = self.preferences
+        if key in (None, preferences.UNITS_KEY):
+            self.controls.set_length_units(prefs.units())
+        if key in (None, preferences.CANVAS_KEY):
+            preferences.apply_canvas(self.preview, prefs.canvas_color())
+        if key in (None, preferences.CACHE_KEY):
+            pipeline.set_cache_pages(prefs.cache_pages())
+
+    def open_preferences(self) -> None:
+        """The Preferences dialog, made the first time."""
+        if self.preferences_dialog is None:
+            self.preferences_dialog = preferences.PreferencesDialog(self.preferences, self.commands, self)
+            self.preferences_dialog.reset_layout_requested.connect(self.reset_layout)
+        self.preferences_dialog.show()
+        self.preferences_dialog.raise_()
+        self.preferences_dialog.activateWindow()
 
     def _show_theme_mode(self, mode: str) -> None:
         self.commands[THEME_ACTIONS[mode]].setChecked(True)
