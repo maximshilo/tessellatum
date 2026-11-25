@@ -315,14 +315,13 @@ def test_on_a_short_window_the_panel_scrolls_and_its_scroll_bar_covers_none_of_i
     window = drive.window
     window.controls.preset_combo.setCurrentText("Custom")
     window.resize(900, 500)
-    splitter = window.centralWidget()
-    splitter.setSizes([1, 899])  # as narrow as it goes without collapsing
+    window.splitter.setSizes([1, 899, 0])  # as narrow as it goes
     window.show()
     _app.processEvents()
-    scroll = splitter.widget(0)
+    scroll = window.controls.scrolls[window.controls.category()]
 
     assert scroll.verticalScrollBar().maximum() > 0  # it scrolls
-    assert scroll.viewport().width() >= window.controls.minimumSizeHint().width()
+    assert scroll.viewport().width() >= window.controls.pages[window.controls.category()].minimumSizeHint().width()
     window.hide()
 
 
