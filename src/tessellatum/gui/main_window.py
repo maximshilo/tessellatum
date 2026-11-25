@@ -262,6 +262,7 @@ class MainWindow(QMainWindow):
         c.abort_button.setToolTip(commands["cancel"].toolTip())
         commands["reset"].triggered.connect(c.reset)
         commands["undo"].triggered.connect(self.undo)
+        commands["find"].triggered.connect(self.find_setting)
         commands["redo"].triggered.connect(self.redo)
         self.history.changed.connect(self._show_history)
         self._show_history()
@@ -610,6 +611,14 @@ class MainWindow(QMainWindow):
         name = path.name if path is not None else "the picture"
         self.controls.set_picture_size((width, height), path.name if path is not None else "")
         self._say(f"Loaded {name}. Click \"Generate Preview\".")
+
+    def find_setting(self) -> None:
+        """The focus in the settings search, the sidebar shown for it (out of focus mode, if in it)."""
+        if self._focus is not None:
+            self.set_focus_mode(False)
+        if not self.sidebar_visible():
+            self.set_sidebar_visible(True)
+        self.controls.search.start()
 
     # -- Undo and redo ------------------------------------------------------
     def _on_settings_edited(self, _settings: DocumentSettings) -> None:

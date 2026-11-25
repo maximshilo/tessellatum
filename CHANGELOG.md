@@ -4,6 +4,16 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.12] - 2026-11-25
+
+### Added
+
+- **Search the settings** (Edit > Find Setting, Ctrl+F): a field at the top of the sidebar finds a setting by its
+  name, by the words it may be called by ("outline" finds Line width, "pupils" Dark mark contrast), by what it does,
+  or by where it is, best match first. Each result says where the setting is and what it is set to. Choosing one
+  (Enter, or a click) opens its page, unfolds its section, the Advanced group too, scrolls to it, puts the focus on it
+  and outlines it for a moment. Up and Down move through the results; Esc clears the search.
+
 ## [1.1.11] - 2026-11-25
 
 ### Added

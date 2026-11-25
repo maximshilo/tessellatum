@@ -14,9 +14,10 @@ alone; Reset puts every setting back to its default.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSettings, Qt, Signal
+from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFormLayout,
@@ -57,6 +58,7 @@ from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import Handling
 from tessellatum.core.print_size import MM_PER_INCH, PAPERS, print_scale
 from tessellatum.core.render import DEFAULT_TONE, TONE_FIELDS, TONES, PageStyle
+from tessellatum.gui.search import SettingsSearch
 from tessellatum.gui.fields import (  # noqa: F401 - the panel's names for them, kept for its callers
     LOG_SLIDER_STEPS,
     MIN_SLIDER_WIDTH,
@@ -88,6 +90,7 @@ THUMBNAIL_SIZE = 160
 # ``Choice.section``), and the two the panel adds, the picture itself and the export's options (W5 moves those to the
 # export dialog).
 PICTURE = "Picture"
+FLASH_MS = 1500  # how long a setting found stays outlined
 PAGE_SECTIONS = {
     settings.SOURCE: (PICTURE, "Picture handling"),
     settings.GENERATION: ("Difficulty", "Detail", "Faces and subject"),
@@ -571,13 +574,70 @@ class ControlsPanel(QWidget):
         footer_layout.addWidget(self.generate_button)
         footer_layout.addWidget(self.progress_row)
         footer_layout.addWidget(self.export_button)
+        # Settings search (see ``gui.search``): any setting, by its name or what it does, shown where it lives.
+        self.search = SettingsSearch(self.value_text)
+        self.search.chosen.connect(self.reveal)
+        self._flashed: QWidget | None = None
+        self._flash_timer = QTimer(self)
+        self._flash_timer.setSingleShot(True)
+        self._flash_timer.timeout.connect(self._unflash)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        layout.addWidget(self.search)
         layout.addWidget(self.title)
         layout.addWidget(self.stack, 1)
         layout.addWidget(footer)
         self.show_category(settings.GENERATION)
+
+    # -- Search --------------------------------------------------------------
+    def entry_widget(self, name: str) -> QWidget:
+        """The control of the registry's entry ``name``, as the panel shows it."""
+        if name in self.controls:
+            return self.controls[name]
+        return {"preset": self.preset_combo, "colors_from": self.colors_from_combo, "paints": self.paints_button}.get(
+            name, self.choice_widgets.get(name)
+        )
+
+    def value_text(self, entry) -> str:
+        """What ``entry`` is set to, as a search result says it."""
+        if isinstance(entry, Setting):
+            return self.controls[entry.name].text()
+        if entry.name == "paints":
+            count = len(self._paints)
+            return f"{count} paint{'s' if count != 1 else ''} listed" if count else "none listed"
+        widget = self.entry_widget(entry.name)
+        if isinstance(widget, QCheckBox):
+            return "on" if widget.isChecked() else "off"
+        return widget.currentText()
+
+    def reveal(self, name: str) -> None:
+        """Show the entry ``name`` where it lives: its page, its section unfolded (the Advanced group too), scrolled
+        into sight, focused, and outlined a moment."""
+        entry = settings.setting(name) if name in self.controls else settings.choice(name)
+        self.show_category(entry.category)
+        self.sections[self.section_key(entry)].toggle.setChecked(True)
+        widget = self.entry_widget(name)
+        target = widget.slider if isinstance(widget, SettingField) else widget
+        scroll = self.scrolls[entry.category]
+        # The section just unfolded laid out, and the page grown to hold it, before scrolling to it.
+        QApplication.sendPostedEvents(None, QEvent.LayoutRequest)
+        scroll.ensureWidgetVisible(widget, 0, 24)
+        target.setFocus(Qt.OtherFocusReason)
+        self._unflash()
+        widget.setAttribute(Qt.WA_StyledBackground, True)
+        widget.setProperty("found", True)
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        self._flashed = widget
+        self._flash_timer.start(FLASH_MS)
+
+    def _unflash(self) -> None:
+        widget, self._flashed = self._flashed, None
+        if widget is not None:
+            widget.setProperty("found", False)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
 
     def show_category(self, category: str) -> None:
         """Show the page of ``category`` (one of ``PAGE_SECTIONS``)."""
