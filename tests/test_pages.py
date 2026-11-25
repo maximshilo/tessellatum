@@ -58,12 +58,17 @@ def test_each_page_has_its_advanced_settings_in_one_folded_group_at_its_foot():
 
 def test_the_difficulty_says_what_it_makes_and_how_far_it_was_moved():
     panel = ControlsPanel()
-    assert panel.preset_description.text() == difficulty.describe(difficulty.params_for_preset("Medium"))
+    medium = difficulty.describe(difficulty.params_for_preset("Medium"))
+    assert panel.preset_description.text() == f"{difficulty.practical('Medium')}\n{medium}"
+    assert "About 450 regions to paint on an A4 page" in panel.preset_description.text()
     panel.preset_combo.setCurrentText("Beginner")
-    assert panel.preset_description.text() == difficulty.describe(difficulty.params_for_preset("Beginner"))
+    assert panel.preset_description.text().endswith(difficulty.describe(difficulty.params_for_preset("Beginner")))
     panel.controls["min_width_mm"].step(2)
     panel.controls["num_colors"].step(-1)
-    assert panel.preset_description.text() == "Custom, from Beginner: 2 settings changed."
+    colors, width = panel.controls["num_colors"].text(), panel.controls["min_width_mm"].text()
+    # The modified indicator, with what was changed: in the settings' order.
+    assert panel.preset_description.text() == (
+        f"Beginner (modified, 2 changes): Colors {colors}, Brush width {width}.")
 
 
 # -- Section resets ----------------------------------------------------------------------------

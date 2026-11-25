@@ -5,7 +5,7 @@ and **Export…** draws that
 same page at print resolution: the regions, colors and legend the preview shows, its lines smoothed as they are
 there, and its numbers placed again, as small as the style lets them print. If a setting changed since the preview,
 the export makes the page with it first. Every setting has a tooltip; sizes are on the printed page, on the sheet
-**Paper** names; the app keeps them between runs, and **Reset** puts them all back.
+**Paper** names; the app keeps them between runs, and **Reset** puts them all back (it asks first).
 
 The window follows your system's light or dark appearance, and changes with it while open.
 
@@ -83,7 +83,7 @@ for what it did ("Undo Brush width", "Undo Difficulty: Hard", "Undo Reset Detail
 dragged is one step, a preset or a reset is one step however many settings it moves, and opening another picture is
 one. The zoom, the panels and the version shown are never undone. A change made after an undo drops what could have
 been redone. Undo restores the settings, not the preview: if the preview was made with other settings, the status
-bar says so, and Generate Preview shows them. **Edit > Reset All Settings** is the Difficulty section's Reset; **Help > About Tessellatum** shows
+bar says so, and Generate Preview shows them. **Edit > Reset All Settings** is the Difficulty section's Reset, and asks first; **Help > About Tessellatum** shows
 the version and the licenses.
 
 ## Zoom
@@ -173,9 +173,11 @@ differently, and the painted versions of the page show the predicted colors.
 ## Difficulty
 
 Beginner, Easy, Medium (the default), Hard and Realistic fill in the settings below them; moving any of them picks
-**Custom**. Under the choice, a line says what the level makes (how many colors, how large and how wide its regions,
-its corners), or, for Custom, which level it was moved from and how many settings differ. The five levels differ in
-four settings:
+**Custom**. Under the choice, a line says what the level makes: about how many regions it gives on the paper chosen
+(measured on the benchmark's pictures on A4, and in proportion to the printable area on A3 and A2; a busy picture
+gives more, a plain one fewer), how many colors, how large and how wide its regions, and its corners. For Custom it
+names the level it was moved from and what was changed, e.g. "Hard (modified, 2 changes): Colors 26, Smoothing 0.9."
+The five levels differ in four settings:
 
 | Level | Colors | Smallest region | Brush | Smoothing |
 |---|---|---|---|---|
@@ -190,6 +192,19 @@ hold at 1 ΔE00, which keeps them closest to the picture's), lets a region in a 
 smallest, and rounds corners to the brush. Region sizes are areas on paper, so a page's regions are the same size on
 paper whatever its pixel count, and a long, narrow picture, which prints smaller, gets fewer regions rather than
 smaller ones.
+
+**Presets of your own.** The **Presets** menu beside the difficulty:
+
+- **Back to Hard** (the level it was changed from): its settings again, as one step to undo.
+- **Save as Preset…**: the difficulty's settings as they are, under a name of your own, listed after the built-in
+  levels from then on. A built-in level's name can't be taken; saving under a name already used asks first.
+- **Rename Preset…** and **Delete Preset…**, for one of your own while it is chosen. Deleting it leaves the settings
+  as they are, as Custom.
+
+A preset, built-in or your own, sets only the difficulty's settings, as one step to undo: the paper, what the page is
+colored on, the paints and the page's style stay as they are. Your presets are kept in `presets.json` in the app's
+preferences folder; a file that can't be read is left out (the log says why) and kept as `presets.json.bak` when a
+preset is next saved. A page set up with a preset since deleted keeps its settings, as Custom.
 
 ## Settings
 

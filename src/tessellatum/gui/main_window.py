@@ -44,6 +44,7 @@ from tessellatum.core.print_size import MM_PER_INCH, print_scale
 from tessellatum.gui import theme
 from tessellatum.core import settings as registry
 from tessellatum.gui.actions import ACTIVITY_ACTIONS, THEME_ACTIONS, VERSION_ACTIONS, ZOOM_ACTIONS, Actions
+from tessellatum.app.presets import PresetStore
 from tessellatum.gui.controls_panel import DPI, PALETTE, ControlsPanel
 from tessellatum.gui.export_dialog import ExportDialog, ExportState, palette_pixmap, pixmap_of, warnings_for
 from tessellatum.gui.notifications import (
@@ -80,13 +81,13 @@ def mix_recipes(palette_rgb, paints) -> list[list[str]]:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, store: QSettings | None = None):
+    def __init__(self, store: QSettings | None = None, presets: PresetStore | None = None):
         """``store``, if given, is where the panel keeps its settings between runs (see ``ControlsPanel``)."""
         super().__init__()
         self.setWindowTitle("Tessellatum")
 
         self._layout = LayoutStore(store)
-        self.controls = ControlsPanel(store=store)  # the settings sidebar: its pages scroll on a short window
+        self.controls = ControlsPanel(store=store, presets=presets)  # the settings sidebar: its pages scroll on a short window
         # The export's options, kept by the panel, shown in the export dialog beside what they will write.
         self.export_dialog = ExportDialog(self.controls.export_options, self)
         self.controls.resolution_readout.hide()  # the dialog's summary says it, and more
@@ -260,7 +261,8 @@ class MainWindow(QMainWindow):
         c.abort_requested.connect(commands["cancel"].trigger)
         commands["cancel"].triggered.connect(self.abort_generation)
         c.abort_button.setToolTip(commands["cancel"].toolTip())
-        commands["reset"].triggered.connect(c.reset)
+        commands["reset"].triggered.connect(c.request_reset)
+        c.confirm_reset = self._confirm_reset
         commands["undo"].triggered.connect(self.undo)
         commands["find"].triggered.connect(self.find_setting)
         commands["redo"].triggered.connect(self.redo)
@@ -931,6 +933,15 @@ class MainWindow(QMainWindow):
             if others and not self._confirm_replace(others):
                 return
         self._start_export(path, fmt, version, self.controls.get_export_resolution(), previewed)
+
+    def _confirm_reset(self) -> bool:
+        answer = QMessageBox.question(
+            self, "Reset All Settings",
+            "Put every setting back to its default, and the difficulty to Medium? The paints listed are kept, and "
+            "Edit > Undo takes it back.",
+            QMessageBox.Reset | QMessageBox.Cancel, QMessageBox.Cancel,
+        )
+        return answer == QMessageBox.Reset
 
     def _confirm_replace(self, paths: list[Path]) -> bool:
         names = "\n".join(path.name for path in paths)

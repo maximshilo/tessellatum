@@ -4,6 +4,26 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.13] - 2026-11-25
+
+### Added
+
+- **Presets of your own**: the Presets menu beside the difficulty saves the difficulty's settings as a preset under a
+  name of your own (Save as Preset), and renames or deletes it. They are listed after the built-in levels, kept in a
+  file of their own in the app's preferences folder, and set only the difficulty's settings: the paper, what the page
+  is colored on and the paints stay as they are. A presets file that can't be read is left out, with a warning in the
+  log, and kept aside rather than overwritten.
+- **What a level makes, in regions**: each built-in level now says how many regions it typically gives on the paper
+  chosen ("About 450 regions to paint on an A4 page (200 to 1,250 on most pictures)" for Medium), measured on the
+  benchmark's pictures.
+- **Back to the level**: a level changed reads "Hard (modified, 2 changes): Colors 26, Smoothing 0.9." under it, and
+  Presets > Back to Hard puts its settings back, as one step to undo.
+
+### Changed
+
+- **Reset** beside the difficulty (and Edit > Reset All Settings) asks before putting every setting back; a section's
+  Reset and a setting's own don't ask, and Undo takes any of them back.
+
 ## [1.1.12] - 2026-11-25
 
 ### Added
