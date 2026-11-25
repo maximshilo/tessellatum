@@ -151,6 +151,20 @@ QToolButton#sectionHeader:hover {{ background: {c.hover}; }}
 QToolButton#sectionHeader:focus {{ border: 1px solid {c.accent}; }}
 QToolButton#sectionReset {{ color: {c.accent}; padding: 1px 6px; }}
 QLabel#subsectionTitle {{ color: {c.text_secondary}; font-weight: 600; padding-top: 6px; }}
+QRadioButton::indicator {{
+    width: 12px; height: 12px; border-radius: 7px; border: 1px solid {c.border_strong}; background: {c.field};
+}}
+QRadioButton::indicator:checked {{
+    background: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5, stop: 0 {c.accent}, stop: 0.5 {c.accent},
+                                stop: 0.6 {c.field}, stop: 1 {c.field});
+    border-color: {c.accent};
+}}
+QRadioButton::indicator:disabled {{ border-color: {c.text_disabled}; }}
+QRadioButton::indicator:checked:disabled {{
+    background: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5, stop: 0 {c.text_disabled},
+                                stop: 0.5 {c.text_disabled}, stop: 0.6 {c.field}, stop: 1 {c.field});
+}}
+QLabel#exportWarnings {{ color: {c.text}; }}
 
 {fields} {{ background: {c.field}; color: {c.text}; border: 1px solid {c.border_strong}; border-radius: {r}px;
     padding: 2px 6px; selection-background-color: {c.accent}; selection-color: {c.on_accent}; }}

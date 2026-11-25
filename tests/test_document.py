@@ -201,3 +201,17 @@ def test_a_document_deleted_while_hashing_leaves_the_thread_quiet():
     finally:
         threading.excepthook = previous
     assert errors == []
+
+
+def test_the_settings_changed_since_a_page_was_made_are_named_if_they_change_the_page():
+    made = DocumentSettings()
+    assert made.changes_from(made) == ()
+    # The legend and the export's options are applied to the page as it is.
+    assert made.replace(legend="Number only").changes_from(made) == ()
+    assert made.replace(export=snapshot.ExportOptions(dpi=150)).changes_from(made) == ()
+    assert made.with_values(line_width_mm=0.4).changes_from(made) == ("Line width",)
+    assert made.replace(paper="A3").changes_from(made) == ("Paper",)
+    # Another difficulty is named as such, not as each setting it moved.
+    hard = made.replace(preset="Hard", values=default_values("Hard"))
+    assert hard.changes_from(made) == ("Difficulty",)
+

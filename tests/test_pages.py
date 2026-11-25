@@ -203,7 +203,9 @@ def test_open_pick_a_difficulty_generate_and_export_without_an_advanced_setting(
             _app.processEvents()
             assert time.monotonic() < deadline
             time.sleep(0.005)
-        window.commands["export"].trigger()
+        window.commands["export"].trigger()  # the export dialog: Export, with its options as they start
+        assert window.export_dialog.isVisible() and not window.export_dialog.stale_shown()
+        window.export_dialog.export_button.click()
         while not window.jobs.is_idle():
             _app.processEvents()
             assert time.monotonic() < deadline

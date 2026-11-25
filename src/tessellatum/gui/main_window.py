@@ -35,6 +35,7 @@ from tessellatum.app.document import Document
 from tessellatum.app.jobs import EXPORT, PREVIEW, PRINT_LAYOUT, RECIPES, SAVE, Job, JobManager, page_task
 from tessellatum.app.snapshot import DocumentSettings
 from tessellatum.core import export, mixing, pipeline, swatches
+from tessellatum.core.difficulty import SCREEN_MEDIUM
 from tessellatum.core.legend import NAME_RECIPE, render_legend
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import GeneratedPage
@@ -43,6 +44,7 @@ from tessellatum.gui import theme
 from tessellatum.core import settings as registry
 from tessellatum.gui.actions import ACTIVITY_ACTIONS, THEME_ACTIONS, VERSION_ACTIONS, ZOOM_ACTIONS, Actions
 from tessellatum.gui.controls_panel import DPI, PALETTE, ControlsPanel
+from tessellatum.gui.export_dialog import ExportDialog, ExportState, palette_pixmap, pixmap_of, warnings_for
 from tessellatum.gui.notifications import (
     ERROR, INFO, SUCCESS, DiagnosticsPanel, NotificationBar, install_log_handler, remove_log_handler, show_in_folder,
 )
@@ -84,6 +86,13 @@ class MainWindow(QMainWindow):
 
         self._layout = LayoutStore(store)
         self.controls = ControlsPanel(store=store)  # the settings sidebar: its pages scroll on a short window
+        # The export's options, kept by the panel, shown in the export dialog beside what they will write.
+        self.export_dialog = ExportDialog(self.controls.export_options, self)
+        self.controls.resolution_readout.hide()  # the dialog's summary says it, and more
+        self.export_dialog.export_requested.connect(self.export_page)
+        self.controls.export_options_changed.connect(
+            lambda: self.export_dialog.isVisible() and self._show_export_state()  # only while it is shown
+        )
         self.preview = PreviewWidget()
         self.preview.setObjectName("canvas")  # the theme's canvas surface; the page keeps its own pixels
         # Every version of a page is drawn with it, so the bar switches between them at once.
@@ -155,6 +164,7 @@ class MainWindow(QMainWindow):
         self._pending_export_version: Version | None = None
         self._pending_export_resolution: tuple[str, int] | None = None  # the PNG's, as the panel asked for it
         self._pending_export_drawn = False  # whether the export waits for the preview's page drawn at print size
+        self._last_export: tuple | None = None  # the last export's file and options, for Retry
         self._ready_message = ""  # the status of the preview shown
         # The preview's page drawn at print size: what the zoom shows past the preview's own pixels, and what the
         # export saves. Drawn in the background when either first asks for it, and dropped with the preview.
@@ -228,7 +238,7 @@ class MainWindow(QMainWindow):
         for command_id, method, button in (
             ("open", self.open_image, c.open_button),
             ("generate", self.generate_preview, c.generate_button),
-            ("export", self.export_page, c.export_button),
+            ("export", self.open_export_dialog, c.export_button),
         ):
             commands[command_id].triggered.connect(method)
             button.setToolTip(commands[command_id].toolTip())
@@ -740,7 +750,65 @@ class MainWindow(QMainWindow):
         self.notify(ERROR, f"Generation failed: {message}", [self._details()])
 
     # -- Export -----------------------------------------------------------
-    def export_page(self) -> None:
+    def open_export_dialog(self) -> None:
+        """The export's options beside what they will write (see ``export_dialog``); Export there asks for the file."""
+        if self.current_image_bgr is None:
+            self._no_picture()
+            return
+        if self._making() or self.jobs.is_running(SAVE):
+            return
+        self._show_export_state()
+        self.export_dialog.open_for_export()
+
+    def _show_export_state(self) -> None:
+        if hasattr(self, "export_dialog"):
+            self.export_dialog.show_state(self.export_state())
+
+    def export_state(self) -> ExportState:
+        """What the export dialog shows for the options as they are: what will be written, its warnings, whether the
+        preview is out of date, and its thumbnail."""
+        page = self.current_page
+        if page is None or self.current_image_bgr is None:
+            return ExportState("Generate a preview first: the export writes the page it shows.",
+                               blocked="Generate a preview first.")
+        now = self.controls.snapshot()
+        fmt = now.export.format
+        version = now.export.version
+        made_with = self.document.result_settings()
+        changed = () if made_with is None else now.changes_from(made_with)
+        height, width = self.current_image_bgr.shape[:2]
+        paper = self.controls.get_page_style().paper_format
+        width_mm, height_mm = print_scale((width, height), paper).printed_size_mm
+        on_paper = f"{width_mm:.0f} × {height_mm:.0f} mm on {paper.name}"
+        dpi = None
+        if fmt == PALETTE:
+            suffix = now.export.palette_format
+            title = swatches.FORMATS[suffix].split(" (")[0]
+            summary = f"The legend's {len(page.palette_rgb)} colors as a {title} palette, named as on the legend."
+            thumbnail = palette_pixmap(page.palette_rgb)
+        else:
+            what = version.value.lower() if version is not Version.PAGE else "page"
+            if fmt == "PNG":
+                dpi = self.controls.get_export_dpi(max(width_mm, height_mm))
+                pixels = tuple(max(1, round(mm * dpi / MM_PER_INCH)) for mm in (width_mm, height_mm))
+                summary = (f"A PNG of the {what}: {pixels[0]:,} × {pixels[1]:,} px at {dpi:.0f} dpi, printing "
+                           f"{on_paper}, with its legend under it.")
+                if self.controls.resolution_capped():
+                    summary += f" The most a PNG takes is {export.MAX_RASTER_LONG_EDGE:,} px along a side."
+
+            else:
+                summary = (f"A PDF of the {what}: vector art printing {on_paper}, sharp at any size, with its legend "
+                           f"on a sheet of its own.")
+            thumbnail = pixmap_of(page.image(version))
+        warnings = warnings_for(
+            fmt, dpi, now.export.palette_format, len(page.palette_rgb), now.values["min_label_pt"],
+            now.medium == SCREEN_MEDIUM,
+        )
+        return ExportState(summary, warnings, changed, thumbnail)
+
+    def export_page(self, previewed: bool = False) -> None:
+        """Ask for the file, and write the page to it with the export's options: the page as previewed if
+        ``previewed``, else made with the settings as they are now (the preview's own page when they are the same)."""
         if self.current_image_bgr is None:
             self._no_picture()
             return
@@ -749,34 +817,67 @@ class MainWindow(QMainWindow):
 
         fmt = self.controls.get_output_format()
         version = self.controls.get_export_version()
+        source = self.document.source()
+        stem = source.path.stem if source is not None and source.path is not None else "coloring_page"
         if fmt == PALETTE:
             suffix = self.controls.get_palette_format()
             file_filter = swatches.FORMATS[suffix]
-            name = "coloring_page_palette"
+            name = f"{stem}_palette"
         else:
             suffix = ".png" if fmt == "PNG" else ".pdf"
             file_filter = "PNG image (*.png)" if fmt == "PNG" else "PDF document (*.pdf)"
-            name = "coloring_page" if version is Version.PAGE else f"coloring_page_{version.value.lower()}"
-        path_str, _ = QFileDialog.getSaveFileName(self, "Export Coloring Page", f"{name}{suffix}", file_filter)
+            name = f"{stem}_page" if version is Version.PAGE else f"{stem}_{version.value.lower()}"
+        start = f"{name}{suffix}"
+        if source is not None and source.path is not None:
+            start = str(source.path.with_name(start))  # beside the picture
+        path_str, _ = QFileDialog.getSaveFileName(self, "Export Coloring Page", start, file_filter)
         if not path_str:
             return
         path = Path(path_str)
         if path.suffix.lower() != suffix:
             path = path.with_suffix(suffix)
+        # A palette written as several files: the save dialog asked about the name chosen, not about them.
+        page = self.current_page
+        if fmt == PALETTE and page is not None:
+            others = [p for p in swatches.palette_files(path, len(page.palette_rgb)) if p != path and p.exists()]
+            if others and not self._confirm_replace(others):
+                return
+        self._start_export(path, fmt, version, self.controls.get_export_resolution(), previewed)
 
+    def _confirm_replace(self, paths: list[Path]) -> bool:
+        names = "\n".join(path.name for path in paths)
+        answer = QMessageBox.question(
+            self, "Replace Files",
+            f"The palette is written as {len(paths) if len(paths) > 1 else 'a'} file{'s' if len(paths) > 1 else ''} "
+            f"that already exist{'' if len(paths) > 1 else 's'}:\n\n{names}\n\nReplace them?",
+            QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel,
+        )
+        return answer == QMessageBox.Yes
+
+    def retry_export(self) -> None:
+        """The last export again, to the same file with the same options."""
+        if self._last_export is not None and not (self._making() or self.jobs.is_running(SAVE)):
+            self._start_export(*self._last_export)
+
+    def _start_export(self, path: Path, fmt: str, version: Version, resolution: tuple[str, int],
+                      previewed: bool) -> None:
+        self._last_export = (path, fmt, version, resolution, previewed)
         self._pending_export_path = path
         self._pending_export_format = fmt
         self._pending_export_version = version
-        self._pending_export_resolution = self.controls.get_export_resolution()
+        self._pending_export_resolution = resolution
         self.controls.set_busy(True)
         self._say(f"Rendering the {fmt} at print resolution…", BUSY)
 
         # Every export is drawn from the page's print layout: the preview's page laid out at 300 dpi on its paper, its
         # numbers placed once, as small as the style asks (see ``pipeline.draw_page``), drawn once for the zoom and
-        # the export alike; made first if the settings changed since. The PDF draws it as vectors, the PNG draws the
-        # same vectors in pixels.
-        long_edge = pipeline.export_long_edge(self.current_image_bgr, self.controls.get_page_style().paper_format)
-        preview = self._preview_to_draw(long_edge)
+        # the export alike; made first if the settings changed since, unless the page as previewed was asked for.
+        # The PDF draws it as vectors, the PNG draws the same vectors in pixels.
+        if previewed and self.current_page is not None and self.current_page.model is not None:
+            preview = self.current_page
+        else:
+            long_edge = pipeline.export_long_edge(self.current_image_bgr, self.controls.get_page_style().paper_format)
+            preview = self._preview_to_draw(long_edge)
         if preview is not None and fmt == PALETTE:
             self._on_export_ready(preview)  # the preview's legend: nothing to draw
             return
@@ -788,6 +889,7 @@ class MainWindow(QMainWindow):
                 self._draw_print_page()  # saved once drawn (see _on_print_page_ready)
             return
         settings = self.controls.snapshot()
+        long_edge = pipeline.export_long_edge(self.current_image_bgr, settings.page_style().paper_format)
         self.jobs.start(
             EXPORT, page_task(
                 self.current_image_bgr, settings.difficulty_params(), long_edge, settings.page_style(),
@@ -881,7 +983,7 @@ class MainWindow(QMainWindow):
     def _on_export_failed(self, message: str) -> None:
         self.controls.set_busy(False)
         self._say("Export failed.", FAILED)
-        self.notify(ERROR, f"Export failed: {message}", [self._details()])
+        self.notify(ERROR, f"Export failed: {message}", [("Retry", self.retry_export), self._details()])
 
     def _clear_pending_export(self) -> None:
         self._pending_export_path = None

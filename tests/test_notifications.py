@@ -99,7 +99,7 @@ def test_a_notification_replaces_the_last_and_its_actions_run_and_close_it():
 
 def test_a_notification_never_takes_the_keyboard_focus_from_a_text_field(window):
     window.show_activity("Document")
-    field = window.controls.resolution_spin  # a text field: typing in it must go on as the banner appears
+    field = window.controls.controls["line_width_mm"].entry  # a text field: typing in it goes on as the banner shows
     window.activateWindow()
     field.setFocus()
     _app.processEvents()
@@ -233,7 +233,10 @@ def test_the_status_bar_says_what_it_does():
 
 
 def test_no_modal_dialog_tells_what_happened():
-    """Message boxes are kept for About: what happened is told in the notifications."""
+    """Message boxes are kept for About and for a decision (replacing files): what happened is told in the
+    notifications."""
     source = open(main_window.__file__, encoding="utf-8").read()
-    assert source.count("QMessageBox.") == 1 and "QMessageBox.about(" in source
+    assert "QMessageBox.about(" in source
+    for telling in ("information(", "warning(", "critical("):
+        assert f"QMessageBox.{telling}" not in source
 

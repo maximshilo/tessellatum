@@ -19,7 +19,7 @@ The window follows your system's light or dark appearance, and changes with it w
     read (line art, faces and subject, text);
   - **Generation**: the difficulty and the settings that shape the regions;
   - **Colors**: what the page is colored with, where its colors come from, the palette and mixing;
-  - **Document**: the paper, lines and numbers, their tone, the legend, and the export's options.
+  - **Document**: the paper, lines and numbers, their tone, and the legend.
 
   Clicking the page already shown folds the sidebar away; clicking any page brings it back.
 - **Sidebar**: the category's settings in sections, the everyday ones on top and the rest in one folded
@@ -309,6 +309,15 @@ own settings while their switch above is off.
 
 ## Export
 
+**Export…** (Ctrl+E) opens the export dialog: the options below, a thumbnail of what will be written, and a line on
+it (a PNG's pixels and dpi, its size on paper). It warns without stopping you: a PNG under 150 dpi prints soft, a
+Procreate palette of more than 30 colors is written as several files, and numbers under 3 pt are hard to read on
+paper. If you changed a setting that shapes the page since the preview, it says which, and asks which page to write:
+**Generate and export** (the default) makes the page again with the settings as they are now; **Export the previewed
+page** writes the page the preview shows, as it was made. The legend's detail and the export's own options never make
+the page again. Press **Export…** (or Enter) to pick the file: it is named for the picture and suggested beside it.
+If writing it fails, the notification's **Retry** writes the same file again. The options are kept between runs.
+
 Every export is the preview's page laid out once to print, at 300 dpi on its paper -- on A4, a long edge of 2,244 to
 3,272 px depending on the picture's shape -- however many pixels the picture has: its regions are the preview's, its
 lines and ink redrawn there, its numbers placed there once, as small as **Smallest number** asks. The PDF and the PNG
@@ -325,7 +334,7 @@ are both drawn from that layout, so they number the page the same way, each numb
 - **PNG**: the page above its legend in one image: the PDF's page drawn in pixels, at the **Resolution** asked
   for, which the file records, so it prints as large as the PDF's page.
 - **Palette**: the legend's colors as a palette file, for coloring the page in a painting app with exactly its
-  colors; the panel suggests it when **Coloring on** is Screen. Each color is named by its number and its name on the
+  colors; the Colors page and the export dialog suggest it when **Coloring on** is Screen. Each color is named by its number and its name on the
   legend ("7 dusty rose"), in the legend's order. **Palette** picks the format:
   - **Procreate** (`.swatches`): a zip holding `Swatches.json`, the colors in HSB, as the MIT-licensed
     procreate-swatches library writes them (Procreate publishes no spec). Procreate keeps the colors but not their
@@ -335,8 +344,8 @@ are both drawn from that layout, so they number the page the same way, each numb
     others; the colors in RGB, in a group named after the file.
   - **GIMP palette** (`.gpl`): read by GIMP, Krita, Inkscape, Aseprite and others.
 
-  The palette is the preview's legend, saved at once; if the settings changed since the preview, the page is made
-  again with them first, as for the other formats.
+  The palette is the preview's legend, saved at once; if the settings changed since the preview, the dialog asks,
+  as for the other formats. A palette written as several files asks before replacing any of them that exist.
 
 **Resolution** is the PNG's: in **dpi** on its paper (the buttons set 150, 300 or 600; any other can be typed) or in
 **px** along the page's long edge, the other worked out from the paper and the picture's shape and shown below it
