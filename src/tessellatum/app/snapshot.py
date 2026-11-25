@@ -162,6 +162,25 @@ class DocumentSettings:
                 labels.append(settings.choice(entry).label)
         return tuple(labels) or ("the settings",)
 
+    def change_text(self, before: DocumentSettings) -> str:
+        """What changed from ``before``, in a few words, as Edit > Undo names it: the one setting moved ("Brush
+        width"), the difficulty or the tone picked ("Difficulty: Hard"), or how many settings changed."""
+        values = [s.label for s in settings.SETTINGS if before.values[s.name] != self.values[s.name]]
+        choices = [
+            settings.choice(entry).label for name, entry in _CHOICE_FIELDS.items()
+            if entry not in ("preset", "tone") and getattr(before, name) != getattr(self, name)
+        ]
+        if len(values) == 1 and not choices:
+            return values[0]
+        if before.preset != self.preset and self.preset != CUSTOM:
+            return f"Difficulty: {self.preset}"
+        if before.tone != self.tone and self.tone != CUSTOM_TONE:
+            return f"Tone: {self.tone}"
+        names = values + choices + (["Export options"] if before.export != self.export else [])
+        if len(names) == 1:
+            return names[0]
+        return f"{len(names)} settings" if names else "Settings"
+
     def generation_key(self) -> tuple:
         """What the page made with these settings depends on: equal keys make the same page. The legend's detail and
         the export options aren't in it, as changing them doesn't make the page again."""

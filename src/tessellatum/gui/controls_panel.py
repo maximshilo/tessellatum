@@ -217,7 +217,10 @@ class ControlsPanel(QWidget):
     open_image_requested = Signal()
     generate_requested = Signal()
     export_requested = Signal()
-    export_options_changed = Signal()  # an export option, or what it depends on (the paper, the picture), changed
+    export_options_changed = Signal()
+    # A slider's drag: the edits from its start to its end are one, for undo.
+    edit_started = Signal()
+    edit_finished = Signal()  # an export option, or what it depends on (the paper, the picture), changed
     abort_requested = Signal()
     # What the legend writes beside each swatch was changed: it applies to the page shown, which isn't made again.
     legend_detail_changed = Signal(str)
@@ -234,6 +237,7 @@ class ControlsPanel(QWidget):
         self._store = store
         self._loading = False
         self._announced: DocumentSettings | None = None  # the settings last sent with settings_changed
+        self.edit_label: str | None = None  # what the edit under way is called, when its changes don't say (a reset)
 
         self.open_button = QPushButton("Open Image…")
         self.thumbnail_label = QLabel("No picture open")
@@ -439,6 +443,8 @@ class ControlsPanel(QWidget):
         self.preset_combo.currentTextChanged.connect(self._on_preset_changed)
         for name, control in self.controls.items():
             control.edited.connect(lambda name=name: self._on_setting_edited(name))
+            control.edit_started.connect(self.edit_started)
+            control.edit_finished.connect(self.edit_finished)
         self.tone_combo.currentTextChanged.connect(self._on_tone_changed)
         self.paper_combo.currentTextChanged.connect(lambda _name: self._on_print_changed())
         self.medium_combo.currentTextChanged.connect(lambda _name: self._on_medium_changed())
@@ -693,7 +699,11 @@ class ControlsPanel(QWidget):
     def reset_section(self, key: str) -> None:
         """Put what is under the section ``key`` back: each slider to its preset, tone or default, each choice to its
         default."""
-        for name in self._changes_in(key):
+        changes = self._changes_in(key)
+        if changes:
+            title = self.sections[key].title
+            self.edit_label = f"Reset {key if title == ADVANCED else title}"  # as Edit > Undo names it
+        for name in changes:
             if name in self.controls:
                 self.controls[name].reset_to_reference()
             else:
@@ -710,6 +720,8 @@ class ControlsPanel(QWidget):
 
     def reset(self) -> None:
         """Every setting back to its default: the default preset, the default style, every switch on."""
+        before = self.snapshot()
+        self.edit_label = "Reset All Settings"
         self._loading = True
         try:
             self.preset_combo.setCurrentText(difficulty.DEFAULT_PRESET)
@@ -733,6 +745,8 @@ class ControlsPanel(QWidget):
             self._show_resolution()
         finally:
             self._loading = False
+        if self.snapshot() == before:
+            self.edit_label = None  # nothing to undo
         self._save()
 
     def _on_format_changed(self) -> None:
@@ -932,6 +946,8 @@ class ControlsPanel(QWidget):
 
     def set_paints(self, paints: tuple) -> None:
         """The paints listed (name, RGB each), kept whether or not the page takes its colors from them."""
+        if distinct(paints) != self._paints:
+            self.edit_label = "Paints"  # with Colors from, which listing them may switch: one edit
         self._paints = distinct(paints)
         if self._paints and self.colors_from_combo.currentText() != MY_PAINTS and not self._wants_recipes():
             self.colors_from_combo.setCurrentText(MY_PAINTS)  # listing paints is asking for them

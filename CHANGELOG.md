@@ -4,6 +4,16 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.11] - 2026-11-25
+
+### Added
+
+- **Undo and Redo** (Edit menu; Ctrl+Z, and Ctrl+Y or Ctrl+Shift+Z). Every change to the settings is a step back,
+  named for what it did: "Undo Brush width", "Undo Difficulty: Hard", "Undo Reset Detail", "Undo Paints". A slider
+  dragged is one step from press to release, and a preset or a reset is one step however many settings it moves.
+  Opening another picture can be undone too. The zoom, the panels and the version shown are never in it. Undoing
+  back to settings the preview wasn't made with says so in the status bar.
+
 ## [1.1.10] - 2026-11-25
 
 ### Changed

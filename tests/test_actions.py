@@ -76,6 +76,14 @@ def test_no_two_commands_share_a_key(window):
     assert not window.findChildren(QShortcut)  # the preview's zoom keys are the View menu's now
 
 
+def test_no_command_has_a_key_twice(window):
+    """A platform's standard key may also be named (Redo: Ctrl+Shift+Z); bound twice, Qt would call it ambiguous."""
+    for action in window.commands:
+        keys = [sequence.toString() for sequence in action.shortcuts()]
+        assert len(keys) == len(set(keys)), action.objectName()
+    assert window.commands["undo"].shortcuts() and len(window.commands["redo"].shortcuts()) >= 1
+
+
 def test_tooltips_name_the_shortcut(window):
     tip = window.commands["generate"].toolTip()
     assert window.commands["generate"].shortcut().toString(QKeySequence.NativeText) in tip
