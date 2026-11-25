@@ -19,7 +19,7 @@ import math
 from dataclasses import dataclass, replace
 
 from tessellatum.core.color import MIN_PALETTE_DE00
-from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM
+from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, PAPERS
 from tessellatum.core.regions import CORNER_CONTRAST_DE00, SHARPEST_CORNER_DEG
 
 
@@ -227,6 +227,35 @@ def finest_params() -> DifficultyParams:
         sharpest_corner_deg=180.0,
         corner_contrast_de00=20.0,
     )
+
+
+# The regions each built-in preset made on an A4 page, measured with the quality benchmark (``benchmarks/``) on its
+# thirteen pictures (photographs, paintings, faces, line art, lettering): the median, and the middle half of them.
+# How many a picture gives depends on how busy it is, which the range says. On a larger sheet they are counted in
+# proportion to its printable area, as the presets' limits are in millimeters: an approximation, not a measurement.
+TYPICAL_REGIONS: dict[str, tuple[int, int, int]] = {
+    "Beginner": (257, 152, 569),
+    "Easy": (339, 197, 836),
+    "Medium": (456, 208, 1258),
+    "Hard": (620, 346, 1588),
+    "Realistic": (931, 602, 2388),
+}
+
+
+def _about(count: int) -> str:
+    return f"{round(count / 50) * 50:,}"
+
+
+def practical(name: str, paper: str = "A4") -> str | None:
+    """What the built-in preset ``name`` gives on a ``paper`` page, in regions to paint; None for any other."""
+    if name not in TYPICAL_REGIONS:
+        return None
+    width, height = PAPERS[paper].printable_mm()
+    a4_width, a4_height = PAPERS["A4"].printable_mm()
+    scale = width * height / (a4_width * a4_height)
+    median, low, high = (count * scale for count in TYPICAL_REGIONS[name])
+    return (f"About {_about(median)} regions to paint on an {paper} page "
+            f"({_about(low)} to {_about(high)} on most pictures).")
 
 
 def describe(params: DifficultyParams) -> str:

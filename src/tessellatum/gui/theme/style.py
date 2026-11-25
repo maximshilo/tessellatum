@@ -77,6 +77,10 @@ QToolButton#runButton:pressed {{ background: {c.accent_pressed}; }}
 QToolButton#runButton:focus {{ border: 2px solid {c.text}; }}
 QToolButton#runButton:disabled {{ background: {c.pressed}; color: {c.text_disabled}; }}
 QToolButton#runButton::menu-indicator {{ image: none; width: 0px; }}
+QToolButton#presetMenu {{ border: 1px solid {c.border_strong}; border-radius: {r}px; background: {c.field}; padding: 3px 18px 3px 8px; }}
+QToolButton#presetMenu:hover {{ background: {c.hover}; }}
+QToolButton#presetMenu:focus {{ border: 1px solid {c.accent}; }}
+QToolButton#presetMenu::menu-indicator {{ subcontrol-origin: padding; subcontrol-position: right center; right: 5px; }}
 QWidget#activityBar {{ background: {c.chrome}; border-right: 1px solid {c.border}; }}
 QToolButton#activityButton {{ padding: 6px; border-radius: {r}px; border-left: 2px solid transparent; }}
 QToolButton#activityButton:checked {{ background: {c.selected}; border-left: 2px solid {c.accent}; }}

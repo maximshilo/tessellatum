@@ -90,6 +90,8 @@ class DocumentSettings:
         if missing:
             raise ValueError(f"no value for {', '.join(sorted(missing))}")
         for name, entry in _CHOICE_FIELDS.items():
+            if name == "preset" and isinstance(self.preset, str) and self.preset.strip():
+                continue  # a built-in preset, Custom, or a preset of one's own (``app.presets``): any name
             reason = settings.choice(entry).check(getattr(self, name))
             if reason is not None:
                 raise ValueError(f"{name}: {reason}")
@@ -126,9 +128,9 @@ class DocumentSettings:
         return {s.name: self.values[s.name] for s in settings.SETTINGS if s.owner == owner}
 
     def difficulty_params(self) -> difficulty.DifficultyParams:
-        if self.preset != CUSTOM:
+        if self.preset in difficulty.PRESETS:
             params = difficulty.params_for_preset(self.preset)
-        else:
+        else:  # Custom, or a preset of one's own (``app.presets``), whose values are the document's
             params = difficulty.custom_params(**self._owned(settings.DIFFICULTY))
         return difficulty.for_medium(params, self.medium)
 

@@ -5,11 +5,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QSize
+from PySide6.QtCore import QSettings, QSize, QStandardPaths
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from tessellatum.app import jobs
+from tessellatum.app.presets import FILE_NAME as PRESETS_FILE
+from tessellatum.app.presets import PresetStore
 from tessellatum.gui import theme
 from tessellatum.gui.main_window import MainWindow
 
@@ -43,7 +45,9 @@ def main() -> None:
     # The panel's settings and the theme picked are kept between runs, under the organization and application names
     # above.
     theme.install(app, QSettings())
-    window = MainWindow(store=QSettings())
+    # Presets of one's own, in a file of their own in the app's preferences folder.
+    config = Path(QStandardPaths.writableLocation(QStandardPaths.AppConfigLocation))
+    window = MainWindow(store=QSettings(), presets=PresetStore(config / PRESETS_FILE))
     window.show()
     # Closing the window stops its jobs without waiting for them; quitting waits for them, bounded (see ``app.jobs``).
     app.aboutToQuit.connect(lambda: jobs.wait_for_all())

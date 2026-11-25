@@ -83,7 +83,7 @@ def test_a_slider_dragged_is_one_step(window):
     assert window.controls.snapshot() == start
 
 
-def test_a_preset_a_reset_and_the_paints_are_each_one_step(window):
+def test_a_preset_a_reset_and_the_paints_are_each_one_step(window, monkeypatch):
     controls = window.controls
     start = controls.snapshot()
     controls.preset_combo.setCurrentText("Hard")
@@ -102,9 +102,12 @@ def test_a_preset_a_reset_and_the_paints_are_each_one_step(window):
     controls.set_paints((("Titanium white", (245, 245, 240)), ("Mars black", (30, 30, 30))))
     _settle()
     assert _undo_text(window) == "Undo Paints"
-    window.commands["reset"].trigger()
+    asked = []
+    monkeypatch.setattr(main_window.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: asked.append(a[1]) or main_window.QMessageBox.Reset))
+    window.commands["reset"].trigger()  # the one reset that asks first
     _settle()
-    assert _undo_text(window) == "Undo Reset All Settings"
+    assert asked == ["Reset All Settings"] and _undo_text(window) == "Undo Reset All Settings"
     for _ in range(window.history.count()):
         window.undo()
     assert controls.snapshot() == start and not window.commands["undo"].isEnabled()

@@ -23,7 +23,11 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QLineEdit,
+    QMenu,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QRadioButton,
@@ -58,6 +62,7 @@ from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import Handling
 from tessellatum.core.print_size import MM_PER_INCH, PAPERS, print_scale
 from tessellatum.core.render import DEFAULT_TONE, TONE_FIELDS, TONES, PageStyle
+from tessellatum.app.presets import PresetStore
 from tessellatum.gui.search import SettingsSearch
 from tessellatum.gui.fields import (  # noqa: F401 - the panel's names for them, kept for its callers
     LOG_SLIDER_STEPS,
@@ -232,9 +237,14 @@ class ControlsPanel(QWidget):
     # panel is loading or resetting, which ends with one.
     settings_changed = Signal(object)
 
-    def __init__(self, parent: QWidget | None = None, store: QSettings | None = None):
-        """``store``, if given, is where the panel keeps its settings between runs: read now, written on each change."""
+    def __init__(self, parent: QWidget | None = None, store: QSettings | None = None,
+                 presets: PresetStore | None = None):
+        """``store``, if given, is where the panel keeps its settings between runs: read now, written on each change.
+        ``presets`` holds the presets of one's own (kept in memory only, if not given)."""
         super().__init__(parent)
+        self.presets = presets if presets is not None else PresetStore()
+        # Asked before Reset puts every setting back (the window asks; a panel on its own doesn't): True to go ahead.
+        self.confirm_reset: Callable[[], bool] | None = None
         self.setObjectName("sidebar")  # the theme's sidebar surface
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._store = store
@@ -262,18 +272,33 @@ class ControlsPanel(QWidget):
         self.preset_description.setWordWrap(True)
 
         self.preset_combo = QComboBox()
-        self.preset_combo.addItems(difficulty.preset_names())
-        for index, name in enumerate(difficulty.PRESETS):
-            self.preset_combo.setItemData(index, difficulty.describe(difficulty.params_for_preset(name)), Qt.ToolTipRole)
-        self.preset_combo.setItemData(self.preset_combo.findText(CUSTOM), CUSTOM_TOOLTIP, Qt.ToolTipRole)
-        self.preset_combo.setCurrentText(difficulty.DEFAULT_PRESET)
+        self.preset_combo.setAccessibleName("Difficulty")
+        self._fill_presets(difficulty.DEFAULT_PRESET)
         self.preset_combo.setToolTip(settings.choice("preset").tooltip)
         self.reset_button = QPushButton("Reset")
-        self.reset_button.setToolTip("Put every setting back to its default, and the difficulty to Medium.")
+        self.reset_button.setToolTip("Put every setting back to its default, and the difficulty to Medium. Asks first.")
+        # The presets' menu: back to the preset, and presets of one's own saved, renamed and deleted.
+        self.preset_menu_button = QToolButton()
+        self.preset_menu_button.setObjectName("presetMenu")
+        self.preset_menu_button.setText("Presets")
+        self.preset_menu_button.setToolTip("Go back to the preset, or save, rename and delete presets of your own")
+        self.preset_menu_button.setPopupMode(QToolButton.InstantPopup)
+        menu = QMenu(self.preset_menu_button)
+        self.revert_preset_action = menu.addAction("Back to Medium")
+        self.revert_preset_action.triggered.connect(self.revert_to_preset)
+        menu.addSeparator()
+        self.save_preset_action = menu.addAction("Save as Preset…")
+        self.save_preset_action.triggered.connect(lambda: self.save_preset())
+        self.rename_preset_action = menu.addAction("Rename Preset…")
+        self.rename_preset_action.triggered.connect(lambda: self.rename_preset())
+        self.delete_preset_action = menu.addAction("Delete Preset…")
+        self.delete_preset_action.triggered.connect(lambda: self.delete_preset())
+        self.preset_menu_button.setMenu(menu)
         preset_row = QWidget()
         preset_layout = QHBoxLayout(preset_row)
         preset_layout.setContentsMargins(0, 0, 0, 0)
         preset_layout.addWidget(self.preset_combo, 1)
+        preset_layout.addWidget(self.preset_menu_button)
         preset_layout.addWidget(self.reset_button)
 
         # One slider per setting, by the field's name; placed in its section by _lay_out.
@@ -442,7 +467,7 @@ class ControlsPanel(QWidget):
         self.generate_button.clicked.connect(self.generate_requested)
         self.export_button.clicked.connect(self.export_requested)
         self.abort_button.clicked.connect(self._on_abort_clicked)
-        self.reset_button.clicked.connect(self.reset)
+        self.reset_button.clicked.connect(self.request_reset)
         self.preset_combo.currentTextChanged.connect(self._on_preset_changed)
         for name, control in self.controls.items():
             control.edited.connect(lambda name=name: self._on_setting_edited(name))
@@ -661,9 +686,135 @@ class ControlsPanel(QWidget):
     def _difficulty_controls(self) -> dict[str, SettingField]:
         return {name: c for name, c in self.controls.items() if c.setting.owner == settings.DIFFICULTY}
 
+    # -- Presets ------------------------------------------------------------
+    def is_preset(self, name: str) -> bool:
+        """Whether ``name`` is a preset: a built-in one, or one of one's own."""
+        return name in difficulty.PRESETS or name in self.presets
+
+    def preset_params(self, name: str) -> difficulty.DifficultyParams:
+        return difficulty.params_for_preset(name) if name in difficulty.PRESETS else self.presets.params(name)
+
+    def _fill_presets(self, current: str) -> None:
+        """The presets in the list: the built-in ones, one's own, then Custom; ``current`` chosen, without counting
+        it as a choice made."""
+        combo = self.preset_combo
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItems([*difficulty.PRESETS, *self.presets.names(), CUSTOM])
+        combo.setItemData(combo.findText(CUSTOM), CUSTOM_TOOLTIP, Qt.ToolTipRole)
+        combo.setCurrentText(current if current == CUSTOM or self.is_preset(current) else CUSTOM)
+        combo.blockSignals(False)
+        self._show_preset_tooltips()
+
+    def _show_preset_tooltips(self) -> None:
+        medium = self.medium_combo.currentText() if hasattr(self, "medium_combo") else difficulty.DEFAULT_MEDIUM
+        for index in range(self.preset_combo.count()):
+            name = self.preset_combo.itemText(index)
+            if self.is_preset(name):
+                params = difficulty.for_medium(self.preset_params(name), medium)
+                paper = self.paper_combo.currentText() if hasattr(self, "paper_combo") else DEFAULT_PAPER
+                text = " ".join(t for t in (difficulty.practical(name, paper), difficulty.describe(params)) if t)
+                self.preset_combo.setItemData(index, text, Qt.ToolTipRole)
+
+    def _own_preset(self) -> str | None:
+        name = self.preset_combo.currentText()
+        return name if name in self.presets else None
+
+    def _difficulty_values(self) -> dict[str, float]:
+        return {name: control.value() for name, control in self._difficulty_controls().items()}
+
+    def ask_name(self, title: str, label: str, text: str = "") -> str | None:
+        """A name typed in a dialog, or None if it was cancelled (tests replace it)."""
+        name, ok = QInputDialog.getText(self, title, label, QLineEdit.Normal, text)
+        return name if ok else None
+
+    def ask_yes(self, title: str, text: str) -> bool:
+        """Yes or no, asked in a dialog (tests replace it)."""
+        return QMessageBox.question(self, title, text, QMessageBox.Yes | QMessageBox.Cancel,
+                                    QMessageBox.Cancel) == QMessageBox.Yes
+
+    def _ask_preset_name(self, title: str, text: str = "") -> str | None:
+        """A name a preset of one's own can take, asked until one is given or the question cancelled."""
+        label = "Name:"
+        while True:
+            name = self.ask_name(title, label, text)
+            if name is None:
+                return None
+            name = name.strip()
+            if not name:
+                label = "A preset needs a name:"
+            elif name.casefold() in {n.casefold() for n in difficulty.preset_names()}:
+                label = f"{name} is a built-in preset's name. Another name:"
+            else:
+                return name
+            text = name
+
+    def save_preset(self, name: str | None = None) -> str | None:
+        """The difficulty's settings as they are, kept as a preset of one's own and chosen; ``name`` asked for if not
+        given. Returns the name it was kept under, or None if it wasn't."""
+        if name is None:
+            suggestion = self._own_preset() or ""
+            name = self._ask_preset_name("Save as Preset", suggestion)
+            if name is None:
+                return None
+            if name in self.presets and not self.ask_yes(
+                    "Replace Preset", f"There is a preset called {name} already. Replace it?"):
+                return None
+        name = self.presets.save(name, self._difficulty_values())
+        self.edit_label = f"Save Preset {name}"
+        self._fill_presets(self.preset_combo.currentText())
+        self.preset_combo.setCurrentText(name)
+        if self.preset_combo.currentText() == name:
+            self._save()  # chosen already (saved over), the description and the menu shown again
+        return name
+
+    def rename_preset(self, new: str | None = None) -> str | None:
+        """The preset of one's own that is chosen, renamed (``new``, or asked for)."""
+        old = self._own_preset()
+        if old is None:
+            return None
+        if new is None:
+            new = self._ask_preset_name("Rename Preset", old)
+            if new is None or new == old:
+                return None
+        if new != old and new in self.presets:
+            if not self.ask_yes("Replace Preset", f"There is a preset called {new} already. Replace it?"):
+                return None
+            self.presets.delete(new)
+        new = self.presets.rename(old, new)
+        self.edit_label = f"Rename Preset {old}"
+        self._base_preset = new
+        self._fill_presets(new)
+        self._save()
+        return new
+
+    def delete_preset(self, confirmed: bool = False) -> bool:
+        """The preset of one's own that is chosen, deleted (asked first): the settings stay as they are, Custom, from
+        the default preset."""
+        name = self._own_preset()
+        if name is None or not (confirmed or self.ask_yes(
+                "Delete Preset", f"Delete the preset {name}? The settings stay as they are.")):
+            return False
+        self.presets.delete(name)
+        self.edit_label = f"Delete Preset {name}"
+        self._base_preset = difficulty.DEFAULT_PRESET
+        self._fill_presets(CUSTOM)
+        self._save()
+        return True
+
+    def revert_to_preset(self) -> None:
+        """The difficulty back to the preset it was changed from (the factory defaults are Reset's)."""
+        if self.preset_combo.currentText() == CUSTOM and self.is_preset(self._base_preset):
+            self.preset_combo.setCurrentText(self._base_preset)
+
+    def request_reset(self) -> None:
+        """Reset, once ``confirm_reset`` (if any) says to: the one reset that asks, as it puts back everything."""
+        if self.confirm_reset is None or self.confirm_reset():
+            self.reset()
+
     def _show_preset(self, name: str) -> None:
         """Set the difficulty's sliders to the preset ``name``'s values."""
-        params = difficulty.params_for_preset(name)
+        params = self.preset_params(name)
         for field, control in self._difficulty_controls().items():
             control.set_value(getattr(params, field))
 
@@ -687,7 +838,7 @@ class ControlsPanel(QWidget):
         # until they are all the preset's again (each put back with its marker, say); a gray moved off its tone, a
         # Custom tone, likewise.
         if self.controls[name].setting.owner == settings.DIFFICULTY:
-            params = difficulty.params_for_preset(self._base_preset)
+            params = self.preset_params(self._base_preset)
             back = all(same_value(c.setting, c.value(), getattr(params, f))
                        for f, c in self._difficulty_controls().items())
             self._show_choice(self.preset_combo, self._base_preset if back else CUSTOM)
@@ -708,11 +859,13 @@ class ControlsPanel(QWidget):
     def _show_references(self) -> None:
         """What each field is compared with for its changed-value marker: the difficulty's settings with their
         preset's (the last named, while it is Custom), the grays with their tone's, the rest with their defaults."""
-        if self.preset_combo.currentText() in difficulty.PRESETS:
+        if self.is_preset(self.preset_combo.currentText()):
             self._base_preset = self.preset_combo.currentText()
+        if not self.is_preset(self._base_preset):
+            self._base_preset = difficulty.DEFAULT_PRESET  # a preset of one's own deleted, or renamed elsewhere
         if self.tone_combo.currentText() in TONES:
             self._base_tone = self.tone_combo.currentText()
-        params = difficulty.params_for_preset(self._base_preset)
+        params = self.preset_params(self._base_preset)
         grays = dict(zip(TONE_FIELDS, TONES[self._base_tone]))
         for name, control in self.controls.items():
             if control.setting.owner == settings.DIFFICULTY:
@@ -724,13 +877,25 @@ class ControlsPanel(QWidget):
         if hasattr(self, "sections"):
             for key, section in self.sections.items():
                 section.show_changed(bool(self._changes_in(key)))
-        if self.preset_combo.currentText() in difficulty.PRESETS:
-            self.preset_description.setText(difficulty.describe(params))
+        base = self._base_preset
+        custom = self.preset_combo.currentText() == CUSTOM
+        if not custom:
+            practical = difficulty.practical(base, self.paper_combo.currentText())
+            self.preset_description.setText(f"{practical}\n{difficulty.describe(params)}" if practical
+                                            else difficulty.describe(params))
         else:
-            changed = sum(c.is_changed() for c in self._difficulty_controls().values())
+            changed = [c for c in self._difficulty_controls().values() if c.is_changed()]
+            listed = ", ".join(f"{c.setting.label} {c.text()}" for c in changed)
             self.preset_description.setText(
-                f"Custom, from {self._base_preset}: {changed} setting{'s' if changed != 1 else ''} changed."
+                f"{base} (modified, {len(changed)} change{'s' if len(changed) != 1 else ''}): {listed}."
+                if changed else f"Custom, the same as {base}."
             )
+        self._show_preset_tooltips()  # for the paper and the medium
+        own = not custom and base in self.presets
+        self.revert_preset_action.setText(f"Back to {base}")
+        self.revert_preset_action.setEnabled(custom)
+        self.rename_preset_action.setEnabled(own)
+        self.delete_preset_action.setEnabled(own)
 
     # The choices a section's reset puts back, and how to read and set each; the difficulty has its own Reset, and the
     # paints listed are kept.
@@ -852,14 +1017,16 @@ class ControlsPanel(QWidget):
         self._loading = True
         try:
             base = self._store.value(_PRESET_BASE_KEY)
-            if base in difficulty.PRESETS:
+            if isinstance(base, str) and self.is_preset(base):
                 self._base_preset = base
             base = self._store.value(_TONE_BASE_KEY)
             if base in TONES:
                 self._base_tone = base
             preset = self._store.value(_PRESET_KEY)
-            if preset in difficulty.preset_names():
+            if preset == CUSTOM or isinstance(preset, str) and self.is_preset(preset):
                 self.preset_combo.setCurrentText(preset)
+            elif isinstance(preset, str) and preset.strip():
+                self.preset_combo.setCurrentText(CUSTOM)  # a preset of one's own, since gone: its values, Custom
             tone = self._store.value(_TONE_KEY)
             if tone in TONES or tone == CUSTOM_TONE:
                 self.tone_combo.setCurrentText(tone)
@@ -891,7 +1058,7 @@ class ControlsPanel(QWidget):
                 except (TypeError, ValueError):
                     continue
                 # A preset's difficulty is the preset's, and a tone's grays the tone's, whatever was kept beside them.
-                if control.setting.owner == settings.DIFFICULTY and preset != CUSTOM:
+                if control.setting.owner == settings.DIFFICULTY and self.preset_combo.currentText() != CUSTOM:
                     continue
                 if name in TONE_FIELDS and tone != CUSTOM_TONE:
                     continue
@@ -954,12 +1121,13 @@ class ControlsPanel(QWidget):
         sliders show a value to their own step, so the panel's snapshot after may differ from it by that much."""
         self._loading = True
         try:
-            self.preset_combo.setCurrentText(snapshot.preset)
+            preset = snapshot.preset if self.is_preset(snapshot.preset) else CUSTOM  # one's own, since deleted: Custom
+            self.preset_combo.setCurrentText(preset)
             self.tone_combo.setCurrentText(snapshot.tone)
             for name, control in self.controls.items():
                 control.set_value(snapshot.values[name])
-            if snapshot.preset != CUSTOM:
-                self._show_preset(snapshot.preset)
+            if preset != CUSTOM:
+                self._show_preset(preset)
             if snapshot.tone != CUSTOM_TONE:
                 self._show_tone(snapshot.tone)
             self.paper_combo.setCurrentText(snapshot.paper)
@@ -1202,9 +1370,7 @@ class ControlsPanel(QWidget):
         self._show_enablement()  # the darkest black off, the margin's tooltip saying its cap
         self.screen_hint.setVisible(screen)
         self.medium_hint.setVisible(screen)
-        for index, name in enumerate(difficulty.PRESETS):
-            params = difficulty.for_medium(difficulty.params_for_preset(name), medium)
-            self.preset_combo.setItemData(index, difficulty.describe(params), Qt.ToolTipRole)
+        self._show_preset_tooltips()
         self._save()
 
     def _on_legend_changed(self, detail: str) -> None:

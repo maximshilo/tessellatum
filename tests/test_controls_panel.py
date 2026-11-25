@@ -127,7 +127,7 @@ def test_a_preset_shows_its_values_and_is_passed_as_it_is(panel):
         if control.setting.owner == settings.DIFFICULTY:
             assert control.value() == getattr(hard, name)  # exactly, wherever the slider's steps fall
     tooltip = panel.preset_combo.itemData(panel.preset_combo.findText("Hard"), Qt.ToolTipRole)
-    assert tooltip == difficulty.describe(hard) and "4 mm²" in tooltip
+    assert tooltip.endswith(difficulty.describe(hard)) and "4 mm²" in tooltip and "regions to paint" in tooltip
     assert panel.preset_combo.itemData(panel.preset_combo.findText("Custom"), Qt.ToolTipRole)
 
 
@@ -443,7 +443,7 @@ def test_the_coloring_medium_drops_the_paper_black_and_caps_the_margin_on_a_scre
     # The margin's and the levels' tooltips say what the page keeps on a screen.
     assert "at most 2.5" in first.controls["palette_margin_de00"].toolTip()
     medium = first.preset_combo.findText("Medium")
-    assert first.preset_combo.itemData(medium, Qt.ToolTipRole) == difficulty.describe(screen)
+    assert first.preset_combo.itemData(medium, Qt.ToolTipRole).endswith(difficulty.describe(screen))
     again = ControlsPanel(store=_store(tmp_path))
     assert again.medium_combo.currentText() == "Screen"
     again.reset()
