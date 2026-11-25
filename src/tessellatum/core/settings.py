@@ -10,8 +10,8 @@ the colors, the smallest region and the smoothing, which have none, the
 default preset's: a page drawn at the defaults is the page the pipeline draws
 at that preset when given nothing else.
 
-Sizes are on the printed A4 page, as everywhere in the pipeline (see
-``print_size``). The defaults are what the quality benchmarks are measured at
+Sizes are on the printed page, on the paper chosen, as everywhere in the
+pipeline (see ``print_size``). The defaults are what the quality benchmarks are measured at
 (``benchmarks/QUALITY_BENCHMARKS.md``); a setting moved past them -- a finer
 brush, closer colors -- can make a page with more detail than those targets
 allow, which is the user's call.
@@ -184,7 +184,7 @@ SETTINGS: tuple[Setting, ...] = (
     ),
     _difficulty(
         "min_region_area_mm2", "Smallest region", "mm²", 1,
-        "The smallest area a region may have on the printed A4 page; smaller ones merge into a neighbor. Never "
+        "The smallest area a region may have on the printed page; smaller ones merge into a neighbor. Never "
         "below the brush's own footprint.",
         log=True,
     ),
@@ -269,7 +269,7 @@ SETTINGS: tuple[Setting, ...] = (
     # -- Lines and numbers --
     Setting(
         "line_width_mm", STYLE, LINES, "Line width", "mm", LINE_WIDTH_MM_RANGE[0], LINE_WIDTH_MM_RANGE[1],
-        LINE_WIDTH_MM_STEP, "How wide the lines print on the A4 page.",
+        LINE_WIDTH_MM_STEP, "How wide the lines print on the page.",
     ),
     _gray("line_gray", "Line gray", "How dark the lines print, as a lightness: 0 is black, 100 white."),
     _gray(
@@ -285,7 +285,7 @@ SETTINGS: tuple[Setting, ...] = (
     ),
     Setting(
         "leader_width_mm", STYLE, LINES, "Leader width", "mm", 0.05, LINE_WIDTH_MM_RANGE[1], 0.05,
-        "How wide the leaders print on the A4 page: the lines pointing a number written outside its region in, its "
+        "How wide the leaders print on the page: the lines pointing a number written outside its region in, its "
         "dot three times as wide. Thinner than the lines, they don't read as boundaries. However thin, the numbers "
         "keep as clear of them as of a line.",
     ),

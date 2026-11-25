@@ -89,11 +89,11 @@ def test_describe_speaks_in_print_units():
     assert difficulty.describe(difficulty.finest_params()) == (
         "Up to 40 colors, at least 10 ΔE00 apart. Regions of at least 30 mm² (about 5 × 5 mm; half that on a "
         "photograph's or painting's subject and faces) "
-        "and 3 mm wide on the printed A4 page, corners rounded to the brush."
+        "and 3 mm wide on the printed page, corners rounded to the brush."
     )
     assert difficulty.describe(difficulty.params_for_preset("Easy")) == (
         "Up to 20 colors, at least 4 ΔE00 apart. Regions of at least 8 mm² (about 3 × 3 mm; 1/4 of that on a "
-        "photograph's or painting's subject and faces) and 0.8 mm wide on the printed A4 page, corners rounded to the "
+        "photograph's or painting's subject and faces) and 0.8 mm wide on the printed page, corners rounded to the "
         "brush."
     )
     fine = difficulty.custom_params(
@@ -101,7 +101,7 @@ def test_describe_speaks_in_print_units():
     )
     assert difficulty.describe(fine) == (
         "Up to 30 colors, at least 6 ΔE00 apart. Regions of at least 16 mm² (about 4 × 4 mm; 1/3 of that on a "
-        "photograph's or painting's subject and faces) and 1.5 mm wide on the printed A4 page, corners down to 20° "
+        "photograph's or painting's subject and faces) and 1.5 mm wide on the printed page, corners down to 20° "
         "kept sharp."
     )
 

@@ -112,7 +112,7 @@ def test_the_layout_is_kept_between_runs(tmp_path):
     window = _window(store, size=(1280, 560))
     window.show_activity(settings.DOCUMENT)
     window.set_inspector_visible(False)
-    window.controls.sections["Advanced · Numbers"].toggle.setChecked(True)
+    window.controls.sections["Document · Advanced"].toggle.setChecked(True)
     window.controls.sections["Tone"].toggle.setChecked(False)
     window.splitter.setSizes([420, 860, 0])
     sizes = window.splitter.sizes()
@@ -126,7 +126,7 @@ def test_the_layout_is_kept_between_runs(tmp_path):
     try:
         assert again.controls.category() == settings.DOCUMENT and again.activity_bar.current() == settings.DOCUMENT
         assert again.sidebar_visible() and not again.inspector_visible()
-        assert again.controls.sections["Advanced · Numbers"].is_expanded()
+        assert again.controls.sections["Document · Advanced"].is_expanded()
         assert not again.controls.sections["Tone"].is_expanded()
         assert again.splitter.sizes()[0] == sizes[0]
         _app.processEvents()  # the scroll positions come back once the pages are laid out

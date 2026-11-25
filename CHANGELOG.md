@@ -4,6 +4,31 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.9] - 2026-11-25
+
+### Changed
+
+- **Each settings page shows what most pages need first.** The everyday settings are on top; the rest wait in one
+  **Advanced** group, folded, at the foot of the page, under small headings (Faces and subject, Line art, Text,
+  Edges, Corners, Resolution on Generation; Mixing on Colors; Tone, Lines, Numbers on Document). Opening a picture,
+  picking a difficulty, generating and exporting never needs one of them.
+- **Reset a section on its own.** A section with something changed in it shows **Reset** in its header, which puts
+  its sliders back to their preset (or tone, or default) and its choices to their defaults, and leaves the rest of the
+  page as it is.
+- **The difficulty says what it makes**, under its choice ("Up to 24 colors, at least 4 ΔE00 apart. Regions of at
+  least 6 mm² ..."), or, once a setting is moved, how far: "Custom, from Medium: 2 settings changed."
+- **The Source page tells you more about the picture:** how large it prints on the paper chosen and at how many of its
+  pixels an inch, and, after a preview, whether it was read as line art or as a picture of colors.
+- **Recipes from your paints list say so.** With Legend: Name and recipe and the colors from the picture, the legend's
+  recipes are now headed "Recipes from your paints list: mix each in the parts given", in the preview, the PNG and the
+  PDF, so they don't read as the paints the page was made of.
+
+### Fixed
+
+- Tooltips no longer say sizes are on "the A4 page" when the paper is A3 or A2.
+- A settings page scrolled down comes back where it was left in full on the next run, not partway, when its layout
+  takes more than one pass to settle.
+
 ## [1.1.8] - 2026-11-25
 
 ### Changed

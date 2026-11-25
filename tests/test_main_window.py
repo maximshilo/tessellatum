@@ -321,6 +321,7 @@ def test_nothing_is_generated_or_exported_without_a_picture(drive):
 def test_on_a_short_window_the_panel_scrolls_and_its_scroll_bar_covers_none_of_it(drive):
     window = drive.window
     window.controls.preset_combo.setCurrentText("Custom")
+    window.controls.sections[controls_panel.advanced_key(window.controls.category())].set_expanded(True)  # its tallest
     window.resize(900, 500)
     window.splitter.setSizes([1, 899, 0])  # as narrow as it goes
     window.show()

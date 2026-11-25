@@ -149,6 +149,8 @@ QToolButton#sectionHeader {{ background: transparent; border: 1px solid transpar
     font-weight: 600; padding: 3px 2px; }}
 QToolButton#sectionHeader:hover {{ background: {c.hover}; }}
 QToolButton#sectionHeader:focus {{ border: 1px solid {c.accent}; }}
+QToolButton#sectionReset {{ color: {c.accent}; padding: 1px 6px; }}
+QLabel#subsectionTitle {{ color: {c.text_secondary}; font-weight: 600; padding-top: 6px; }}
 
 {fields} {{ background: {c.field}; color: {c.text}; border: 1px solid {c.border_strong}; border-radius: {r}px;
     padding: 2px 6px; selection-background-color: {c.accent}; selection-color: {c.on_accent}; }}

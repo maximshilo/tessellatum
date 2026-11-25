@@ -241,9 +241,12 @@ def test_a_field_that_means_nothing_says_why_under_it():
     assert mix.message.property("role") == "reason"
     panel.detail_check.setChecked(False)
     assert panel.controls["detail_weight"].message.text() == settings.ONLY_WITH_DETAIL
-    # Said once in its section: the fields under the first have it in their tooltips.
+    # Said once in its section, and once in the Advanced group: the fields under the first have it in their tooltips.
     marks = panel.controls["mark_contrast"]
-    assert not marks.isEnabled() and marks.message.isHidden() and marks.toolTip().startswith(settings.ONLY_WITH_DETAIL)
+    assert not marks.isEnabled() and marks.message.text() == settings.ONLY_WITH_DETAIL and not marks.message.isHidden()
+    length = panel.controls["mark_length_mm"]
+    assert not length.isEnabled() and length.message.isHidden()
+    assert length.toolTip().startswith(settings.ONLY_WITH_DETAIL)
     assert panel.controls["mix_min_share_pct"].message.isHidden()
     panel.detail_check.setChecked(True)
     detail = panel.controls["detail_weight"]
