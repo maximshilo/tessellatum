@@ -110,7 +110,12 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
   such as "the print layout is of the preview still shown"). A result made while a setting changed is delivered with
   the settings it was made with, so the document knows it is out of date. One job of each kind runs at a time: a new
   one cancels the last and starts when it has stopped, so two jobs never compute the same stage side by side.
-  Failures keep their traceback. Closing the window cancels every job without waiting; the threads aren't children of
+  A task's progress callback (`jobs.Progress`) also takes the pipeline's stages (`progress.stage(event)`, passed to
+  `generate`'s `stage_callback`): the manager passes them on for the current job (the status bar says "Choosing the
+  colors… 42%"), and the job keeps the ones done, with their times and whether they were kept, for the diagnostics.
+  A job asked to stop records when, so the log says how long it took. Failures keep their traceback and exception
+  class; `app/errors.py` says them in words that say what to try (memory: a smaller paper, an easier difficulty, a
+  lower resolution; a file: open elsewhere, a full disk, a missing folder). Closing the window cancels every job without waiting; the threads aren't children of
   the window, and the application waits for them, bounded, when it quits. Tests drive the manager with tasks they
   hold and release (`tests/test_jobs.py`).
 - **Other threads.** A warm-up thread compiles the kernels at start-up (a failure is logged); a shared thread pool

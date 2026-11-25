@@ -289,7 +289,7 @@ def test_a_running_generation_can_be_cancelled(drive, monkeypatch):
     drive.window.generate_preview()
     assert drive.window.jobs.is_running(PREVIEW)
     drive.window.abort_generation()
-    assert drive.status() == "Cancelling…"
+    assert drive.status() == "Cancelling: it stops after the current step…"
     drive.wait()
 
     assert drive.status() == "Cancelled."
@@ -310,7 +310,7 @@ def test_the_x_beside_the_progress_bar_cancels_the_generation(drive, monkeypatch
     drive.window.generate_preview()
     assert drive.window.jobs.is_running(PREVIEW) and drive.window.controls.abort_button.isEnabled()
     drive.window.controls.abort_button.click()
-    assert drive.status() == "Cancelling…" and not drive.window.controls.abort_button.isEnabled()
+    assert drive.status().startswith("Cancelling") and not drive.window.controls.abort_button.isEnabled()
     drive.wait()
     assert drive.status() == "Cancelled." and drive.window.current_page is None
 
@@ -324,7 +324,7 @@ def test_a_failure_is_reported_and_the_window_is_ready_again(drive, monkeypatch)
     drive.window.generate_preview()
     drive.wait()
 
-    assert drive.dialogs == [("error", "Generation failed: no luck")]
+    assert drive.dialogs == [("error", "The page couldn't be made: no luck")]
     assert drive.status() == "Generation failed." and drive.window.controls.generate_button.isEnabled()
 
 

@@ -85,6 +85,11 @@ class StatusBar(QStatusBar):
         if state == BUSY:
             self.set_progress(None)
 
+    def set_text(self, text: str) -> None:
+        """Say ``text`` in the state there is, its progress as it is: what a busy step is doing now."""
+        self.state_label.setText(text)
+        self.state_label.setAccessibleDescription(text)
+
     def text(self) -> str:
         return self.state_label.text()
 

@@ -5,7 +5,9 @@ export, writing the file, mixing the legend's recipes -- is one ``Job``, run by 
 
 - A job records the document's revision, its picture (the source's token) and its settings snapshot when it starts.
 - Its task runs on a thread of its own and never touches a widget: it gets a progress callback and a cancellation
-  flag, and returns its result or raises.
+  flag, and returns its result or raises. The progress callback also takes the pipeline's stages as they start and
+  end (``progress.stage(event)``, see ``pipeline.StageEvent``): the job keeps the ones done, with their times, and
+  the manager passes them on, so the window can say what is being done and the diagnostics how long each part took.
 - Its outcome comes back to the GUI thread through a queued signal and is checked there. A result is delivered only
   if its job is still the newest of its kind, wasn't cancelled, and is of the picture the document still holds, and
   if the job's own ``accept`` check (if any) agrees; otherwise it is dropped. A result made with settings that have
@@ -30,7 +32,7 @@ from typing import Any, Callable
 from PySide6.QtCore import QObject, QThread, Signal
 
 from tessellatum.core import pipeline
-from tessellatum.core.pipeline import PipelineCancelled
+from tessellatum.core.pipeline import PipelineCancelled, StageEvent
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +50,9 @@ QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED, DROPPED = (
 FINISHED = (SUCCEEDED, FAILED, CANCELLED, DROPPED)
 
 Task = Callable[[Callable[[int], None], Callable[[], bool]], Any]
+
+# The last stage of a preview, after the pipeline's: the page painted in, for the canvas's other versions.
+VERSIONS, VERSIONS_LABEL = "versions", "Painting the versions"
 
 _ids = itertools.count(1)
 
@@ -69,9 +74,12 @@ class Job:
     state: str = QUEUED
     error: str = ""  # a failure's message
     details: str = ""  # a failure's traceback
+    error_type: type | None = None  # a failure's exception class
+    stages: list = field(default_factory=list)  # the pipeline's stages it went through, done (``StageEvent``)
     queued_at: float = field(default_factory=time.monotonic)
     started_at: float | None = None
     finished_at: float | None = None
+    cancelled_at: float | None = None  # when it was asked to stop
     _cancel_requested: bool = False
 
     def cancel_requested(self) -> bool:
@@ -83,8 +91,27 @@ class Job:
             return None
         return self.finished_at - self.started_at
 
+    def seconds_to_stop(self) -> float | None:
+        """How long it took to stop once asked to, if it was asked to and has finished."""
+        if self.cancelled_at is None or self.finished_at is None or self.started_at is None:
+            return None
+        return max(0.0, self.finished_at - self.cancelled_at)
+
     def __repr__(self) -> str:
         return f"Job({self.id}, {self.kind!r}, {self.state})"
+
+
+class Progress:
+    """What a task reports how far along it is through: called with a percentage (0-100), and ``stage(event)`` with
+    a stage of the pipeline starting or done (``pipeline.StageEvent``). A task that knows nothing of stages calls it
+    as a plain function."""
+
+    def __init__(self, percent: Callable[[int], None], stage: Callable[[StageEvent], None]):
+        self._percent = percent
+        self.stage = stage
+
+    def __call__(self, percent: int) -> None:
+        self._percent(percent)
 
 
 class _Runner(QThread):
@@ -92,7 +119,8 @@ class _Runner(QThread):
     deleted while it runs never destroys a running thread."""
 
     progressed = Signal(int)
-    done = Signal(str, object)  # SUCCEEDED / FAILED / CANCELLED, and the result or (message, traceback)
+    staged = Signal(object)  # a StageEvent
+    done = Signal(str, object)  # SUCCEEDED / FAILED / CANCELLED, and the result or (message, traceback, class)
 
     def __init__(self, job: Job):
         super().__init__()
@@ -101,12 +129,13 @@ class _Runner(QThread):
     def run(self) -> None:
         job = self.job
         try:
-            result = job.task(self.progressed.emit, self.isInterruptionRequested)
+            result = job.task(Progress(self.progressed.emit, self.staged.emit), self.isInterruptionRequested)
         except PipelineCancelled:
             self.done.emit(CANCELLED, None)
             return
-        except Exception as exc:  # noqa: BLE001 - every failure becomes the job's failed state
-            self.done.emit(FAILED, (str(exc) or type(exc).__name__, traceback.format_exc()))
+        # Every failure becomes the job's failed state, a MemoryError too: it is said in words (see ``app.errors``).
+        except Exception as exc:  # noqa: BLE001
+            self.done.emit(FAILED, (str(exc) or type(exc).__name__, traceback.format_exc(), type(exc)))
             return
         self.done.emit(SUCCEEDED, result)
 
@@ -147,6 +176,7 @@ class JobManager(QObject):
 
     started = Signal(object)  # Job
     progress = Signal(object, int)  # Job, 0-100: the current job of its kind only
+    stage = Signal(object, object)  # Job, StageEvent: a stage starting or done, of the current job of its kind only
     succeeded = Signal(object, object)  # Job, its result
     failed = Signal(object, str)  # Job, its message (the traceback in ``job.details``)
     cancelled = Signal(object)  # Job: cancelled while it was the current one of its kind
@@ -262,6 +292,7 @@ class JobManager(QObject):
     def _run(self, job: Job) -> None:
         runner = _Runner(job)
         runner.progressed.connect(lambda percent, job=job: self._on_progress(job, percent))
+        runner.staged.connect(lambda event, job=job: self._on_stage(job, event))
         runner.done.connect(lambda outcome, payload, runner=runner: self._on_done(runner, outcome, payload))
         runner.finished.connect(lambda runner=runner: _forget(runner))
         _live.add(runner)
@@ -277,6 +308,7 @@ class JobManager(QObject):
         if job.state == RUNNING and not job.cancellable:
             return False  # it runs to its end; superseded, its result is dropped
         job._cancel_requested = True
+        job.cancelled_at = time.monotonic()
         if job.state == QUEUED:
             if self._queued.get(job.kind) is job:
                 del self._queued[job.kind]
@@ -305,6 +337,12 @@ class JobManager(QObject):
         if not self._closed and self._current.get(job.kind) is job and not job._cancel_requested:
             self.progress.emit(job, percent)
 
+    def _on_stage(self, job: Job, event: StageEvent) -> None:
+        if event.done:
+            job.stages.append(event)  # kept whatever becomes of the job, for the diagnostics
+        if not self._closed and self._current.get(job.kind) is job and not job._cancel_requested:
+            self.stage.emit(job, event)
+
     def _on_done(self, runner: _Runner, outcome: str, payload) -> None:
         job = runner.job
         self._runners.pop(job.id, None)
@@ -312,7 +350,7 @@ class JobManager(QObject):
         if current:
             del self._current[job.kind]
         if outcome == FAILED:
-            job.error, job.details = payload
+            job.error, job.details, job.error_type = payload
         if current and job._cancel_requested:
             self._end(job, CANCELLED, announce=True)  # asked to stop: whatever it came to isn't used
         elif current and outcome != CANCELLED and self._wanted_after_done(job):
@@ -376,21 +414,27 @@ def page_task(
     versions = tuple(versions)
 
     def run(progress, should_cancel):
+        stage = getattr(progress, "stage", None)  # a Progress tells the stages too; a plain callable doesn't
         if drawn_from is not None:
             page = pipeline.draw_page(
                 drawn_from, image_bgr, long_edge, progress_callback=progress, should_cancel=should_cancel,
-                vector=vector,
+                vector=vector, stage_callback=stage,
             )
         else:
             kwargs = {k: v for k, v in (("style", style), ("handling", handling)) if v is not None}
             page = pipeline.generate(
                 image_bgr, params, long_edge, progress_callback=progress, should_cancel=should_cancel,
-                vector=vector, **kwargs,
+                vector=vector, stage_callback=stage, **kwargs,
             )
+        if versions and stage is not None:
+            stage(StageEvent(VERSIONS, VERSIONS_LABEL))
+        started = time.perf_counter()
         for version in versions:
             if should_cancel():
                 raise PipelineCancelled()
             page.image(version)
+        if versions and stage is not None:
+            stage(StageEvent(VERSIONS, VERSIONS_LABEL, done=True, seconds=time.perf_counter() - started))
         return page
 
     return run
