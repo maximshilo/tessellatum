@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from tessellatum import __version__
+from tessellatum.app import errors
 from tessellatum.app.document import Document
 from tessellatum.app.history import History
 from tessellatum.app.jobs import EXPORT, PREVIEW, PRINT_LAYOUT, RECIPES, SAVE, Job, JobManager, page_task
@@ -183,6 +184,8 @@ class MainWindow(QMainWindow):
         self._stale = False  # whether the status bar says the preview is out of date
         # How the last preview asked for ended, if it was cancelled or failed and nothing has changed since.
         self._outcome: str | None = None
+        self._step = ""  # what the page being made is doing now: its stage, as the status bar says it
+        self._percent = 0
         # A change to the lines, numbers or tone draws the preview again by itself, this long after the last one.
         self._redraw_timer = QTimer(self)
         self._redraw_timer.setSingleShot(True)
@@ -220,6 +223,8 @@ class MainWindow(QMainWindow):
         self.jobs.cancelled.connect(self._on_job_cancelled)
         self.jobs.dropped.connect(self._on_job_dropped)
         self.jobs.progress.connect(self._on_job_progress)
+        self.jobs.stage.connect(self._on_job_stage)
+        self.jobs.started.connect(self._on_job_started)
         # A redraw that waited for an export goes ahead once it is done.
         self.jobs.finished.connect(lambda job: job.kind in (EXPORT, SAVE) and self._schedule_redraw())
         # Each job, and the app's own warnings and errors, in the diagnostics; the status bar counts them.
@@ -857,9 +862,11 @@ class MainWindow(QMainWindow):
         kind = PRINT_LAYOUT if self._pending_export_drawn else EXPORT if self.jobs.is_running(EXPORT) else PREVIEW
         job = self.jobs.current(kind)
         if job is not None and job.cancellable and self.jobs.cancel(kind):
-            # It stops at the pipeline's next stage: the button stays off meanwhile, against a second press.
+            # It stops at the pipeline's next stage: the button stays off meanwhile, against a second press. Said at
+            # once, in this turn of the event loop, with what it is finishing.
             self.controls.abort_button.setEnabled(False)
-            self._say("Cancelling…", BUSY)
+            step = f" ({self._step.lower()})" if self._step else ""
+            self._say(f"Cancelling: it stops after the current step{step}…", BUSY)
 
     # -- What the jobs come to ------------------------------------------------
     def _on_job_succeeded(self, job: Job, result) -> None:
@@ -875,15 +882,25 @@ class MainWindow(QMainWindow):
             self._recipes_for = (job.context, result)
             self._show_legend()
 
-    def _on_job_failed(self, job: Job, message: str) -> None:
+    def _explain(self, job: Job) -> str:
+        """``job``'s failure in words that say what to try (see ``app.errors``)."""
+        paper = job.settings.paper if job.settings is not None else registry.DEFAULT_PAPER
+        if job.kind == SAVE:
+            path, fmt = (self._last_export[0], self._last_export[1]) if self._last_export else (None, None)
+            return errors.explain(errors.WRITING, job.error_type, job.error, paper, fmt,
+                                  path.name if path is not None else "")
+        return errors.explain(errors.MAKING, job.error_type, job.error, paper)
+
+    def _on_job_failed(self, job: Job, _message: str) -> None:
         if job.kind == PREVIEW:
             self._outcome = freshness.FAILED
+        text = self._explain(job)
         if job.kind in (PREVIEW, EXPORT):
-            self._on_worker_failed(message)
+            self._on_worker_failed(text)
         elif job.kind == PRINT_LAYOUT:
-            self._on_print_page_failed(message)
+            self._on_print_page_failed(text)
         elif job.kind == SAVE:
-            self._on_export_failed(message)
+            self._on_export_failed(text)
         # Recipes that couldn't be mixed: the legend stays without them (the job's details are logged).
 
     def _on_job_cancelled(self, job: Job) -> None:
@@ -905,11 +922,32 @@ class MainWindow(QMainWindow):
         if job.kind == PREVIEW:
             self._show_freshness()
 
-    def _on_job_progress(self, job: Job, percent: int) -> None:
+    def _tells_progress(self, job: Job) -> bool:
         # The zoom's drawing tells nothing, unless an export waits for it.
-        if job.kind in (PREVIEW, EXPORT) or (job.kind == PRINT_LAYOUT and self._pending_export_drawn):
+        return job.kind in (PREVIEW, EXPORT) or (job.kind == PRINT_LAYOUT and self._pending_export_drawn)
+
+    def _on_job_started(self, job: Job) -> None:
+        if self._tells_progress(job):
+            self._step, self._percent = "", 0
+
+    def _on_job_progress(self, job: Job, percent: int) -> None:
+        if self._tells_progress(job):
+            self._percent = percent
             self.controls.set_progress(percent)
             self.status.set_progress(percent)
+            self._say_step()
+
+    def _on_job_stage(self, job: Job, event) -> None:
+        """A stage of the page being made starting: the status bar says what it is doing ("Finding faces and the
+        subject… 42%")."""
+        if self._tells_progress(job) and not event.done:
+            self._step = event.label
+            self.controls.progress_bar.setToolTip(event.label)
+            self._say_step()
+
+    def _say_step(self) -> None:
+        if self._step and self.status.state() == BUSY:
+            self.status.set_text(f"{self._step}… {self._percent}%")
 
     def _on_worker_cancelled(self) -> None:
         self.controls.set_busy(False)
@@ -991,7 +1029,7 @@ class MainWindow(QMainWindow):
         self.controls.set_busy(False)
         self._clear_pending_export()
         self._say("Generation failed.", FAILED)
-        self.notify(ERROR, f"Generation failed: {message}", [self._details()])
+        self.notify(ERROR, message, [self._details()])
         self._show_freshness()
 
     # -- Export -----------------------------------------------------------
@@ -1237,7 +1275,7 @@ class MainWindow(QMainWindow):
     def _on_export_failed(self, message: str) -> None:
         self.controls.set_busy(False)
         self._say("Export failed.", FAILED)
-        self.notify(ERROR, f"Export failed: {message}", [("Retry", self.retry_export), self._details()])
+        self.notify(ERROR, message, [("Retry", self.retry_export), self._details()])
 
     def _clear_pending_export(self) -> None:
         self._pending_export_path = None
@@ -1305,7 +1343,7 @@ class MainWindow(QMainWindow):
         if self._pending_export_drawn:
             self._on_worker_failed(message)
         elif self._pending_export_path is None:
-            self._say(f"The page could not be drawn as it prints: {message}", FAILED)
+            self._say(f"The page could not be drawn as it prints. {message}", FAILED)
 
     def _on_print_page_cancelled(self) -> None:
         if self._pending_export_drawn:

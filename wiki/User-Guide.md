@@ -39,8 +39,13 @@ The window follows your system's light or dark appearance, and changes with it w
   - **everything else** makes the page again, which takes longer, so it waits for **Generate Preview**.
 - **Inspector** (right): the page's colors, numbered as on its legend, with their names; hover one for its hex and
   RGB, and, for a mixed color, its recipe.
-- **Status bar** (bottom): what the app is doing, with a progress bar while it works (the ✕ beside the sidebar's
-  progress bar cancels, as Cancel does), and, once a setting that changes the page moves, that the preview is out of
+- **Status bar** (bottom): what the app is doing, step by step while a page is made ("Choosing the colors… 42%",
+  "Building the regions… 60%"), with a progress bar (one that just moves while a PNG is written, which can't say how
+  far along it is). The ✕ beside the sidebar's progress bar cancels, as Cancel does; cancelling is said at once, with
+  the step it waits for ("Cancelling: it stops after the current step (building the regions)…"), as a page stops
+  between steps. A failure says what to try: a page too large for memory suggests a smaller paper, an easier
+  difficulty or a lower resolution; a file that can't be written, whether it is open elsewhere or the disk is full.
+  And, once a setting that changes the page moves, that the preview is out of
   date and which settings changed (the legend's detail and the export's options don't count; put them back and it is
   ready again); on its right, the page's colors
   and regions, its size in pixels and on paper, the zoom, and the count of warnings and errors in the diagnostics
@@ -49,7 +54,8 @@ The window follows your system's light or dark appearance, and changes with it w
   with **Details**. They never take the keyboard focus: a success goes by itself, a warning or an error stays until
   you close it.
 - **Diagnostics** (View > Diagnostics, Ctrl+Shift+D): a log, under the page, of each step the app ran, how long it took
-  and how it ended, and every warning and error. Select one to see its details; **Copy** puts it on the clipboard,
+  and how it ended (a cancelled one, how long it took to stop), and every warning and error. A page made says how many
+  of its stages were kept from before, and its details give each stage's time. Select one to see its details; **Copy** puts it on the clipboard,
   for a bug report. It never opens by itself.
 
 Drag the borders between the panels to resize them. **View > Sidebar** (Ctrl+B) and **View > Inspector** (Ctrl+Alt+B)

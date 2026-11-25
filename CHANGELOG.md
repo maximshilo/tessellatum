@@ -4,6 +4,23 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.18] - 2026-11-25
+
+### Added
+
+- The status bar says what the page being made is doing, step by step: "Sizing the picture", "Finding faces and the
+  subject", "Choosing the colors", "Building the regions", "Placing the numbers and drawing the page", "Painting the
+  versions", each with how far along it is.
+- The diagnostics give each step's time in a page's details, say how many steps were kept from before (a change to
+  the lines or numbers keeps most), and, for a page cancelled, how long it took to stop.
+
+### Changed
+
+- Cancelling says at once that the page stops after the current step, and which step that is.
+- A failure says what to try: a page too large for memory suggests a smaller paper (A3 rather than A2), an easier
+  difficulty or a lower resolution; a file that can't be written says whether it may be open elsewhere, the disk is
+  full or its folder is gone. The exception and its traceback stay in the diagnostics, behind Details.
+
 ## [1.1.17] - 2026-11-25
 
 ### Added

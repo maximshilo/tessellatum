@@ -279,14 +279,28 @@ class DiagnosticsPanel(QWidget):
     def _on_job_finished(self, job: jobs.Job) -> None:
         seconds = job.seconds()
         took = f" in {seconds:.2f} s" if seconds is not None else ""
+        kept = sum(1 for stage in job.stages if stage.cached)
+        if job.stages and kept:
+            took += f" ({kept} of {len(job.stages)} stages kept from before)"
+        stopped = job.seconds_to_stop()
+        stop = f", {stopped:.2f} s after it was asked to stop" if stopped is not None else ""
+        details = stage_times(job.stages)
         if job.state == jobs.FAILED:
-            self.add(ERROR, f"{job.label}: failed{took}: {job.error}", job.details)
+            self.add(ERROR, f"{job.label}: failed{took}: {job.error}", "\n\n".join(d for d in (details, job.details) if d))
         elif job.state == jobs.SUCCEEDED:
-            self.add(INFO, f"{job.label}: done{took}")
+            self.add(INFO, f"{job.label}: done{took}", details)
         elif job.state == jobs.CANCELLED:
-            self.add(INFO, f"{job.label}: cancelled{took}")
+            self.add(INFO, f"{job.label}: cancelled{took}{stop}", details)
         else:
-            self.add(INFO, f"{job.label}: dropped{took} (superseded, or of a picture since replaced)")
+            self.add(INFO, f"{job.label}: dropped{took}{stop} (superseded, or of a picture since replaced)", details)
+
+
+def stage_times(stages) -> str:
+    """The stages a job went through, one a line, with how long each took and whether it was kept from before (the
+    pipeline's stage cache): its diagnostics' details."""
+    lines = [f"{stage.label}: {stage.seconds:.2f} s" + (" (kept from before)" if stage.cached else "")
+             for stage in stages]
+    return "\n".join(lines)
 
 
 class _Relay(QObject):

@@ -150,7 +150,7 @@ def test_a_failure_is_told_with_its_details_a_click_away(window, monkeypatch):
     window.generate_preview()
     _wait(window)
     assert window.status.state() == status.FAILED
-    assert window.notification.level == ERROR and window.notification.text.text() == "Generation failed: no luck"
+    assert window.notification.level == ERROR and window.notification.text.text() == "The page couldn't be made: no luck"
     # The diagnostics count it, but don't open by themselves.
     assert window.diagnostics.isHidden() and window.diagnostics.counts() == (0, 1)
     assert window.status.diagnostics_button.text() == "1"
