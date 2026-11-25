@@ -4,6 +4,24 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.8] - 2026-11-25
+
+### Changed
+
+- **Type an exact value.** Every slider has its value beside it in a box to type in: "1.2", "1.2 mm", or, in a
+  German or French setup, "1,2". A value out of range is not quietly held to it: the box turns red and says the range
+  under it ("Out of range: from 0.5 to 6.0 mm."), and the setting keeps its value until a good one is typed; Esc puts
+  the box back. Up and Down step the value, Page Up and Page Down ten steps, in the box as on the slider. A gray is
+  typed as its lightness (L*).
+- **What you changed is marked.** A setting moved off its preset (or the tone's grays off the tone, or any other
+  setting off its default) shows a dot after it; its tooltip says what it was ("Changed from Medium: 0.7 mm"), and a
+  click puts it back. Right-click a setting to reset it to its preset or to the factory default. When every
+  difficulty setting is its preset's again, the difficulty shows the preset again instead of Custom.
+- **Why a setting is off is said under it**, once per section ("Only with More detail on faces and subject."), not only
+  in its tooltip.
+- The paper, what the page is colored on, where its colors come from, and the tone are now buttons side by side
+  rather than drop-down lists: every choice in sight, one click away. Left and Right move the choice.
+
 ## [1.1.7] - 2026-11-25
 
 ### Changed

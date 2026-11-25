@@ -61,6 +61,7 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 | `app/jobs.py` | `JobManager` and `Job`: every background step, its identity, and the checks on its result |
 | `gui/actions.py` | Every command as one `QAction`: text, icon, shortcut, menu |
 | `gui/main_window.py`, `workspace.py` | The window: toolbar, activity bar, sidebar, canvas and inspector in a splitter; focus mode, reflow, the layout kept between runs |
+| `gui/fields.py` | The fields a setting is edited in, built from its registry entry: slider and exact entry (locale numbers, inline range errors, keyboard steps), millimetres or inches with the value kept in millimetres, the changed-value marker and its reset, the reason it is off, drag start and end for undo; the segmented control for two to four choices |
 | `gui/status.py`, `notifications.py` | The status bar (state, progress, the page's figures, the zoom); the notifications over the page and the diagnostics log, which records each job as it ends and the app's own warnings and errors from any thread |
 | `gui/controls_panel.py`, `preview_widget.py`, `paints_dialog.py` | The settings sidebar (a page per category, laid out by the registry's sections), the zoomable preview, the paints' list (swatches, a color picker, sample kits) |
 

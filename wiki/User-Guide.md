@@ -183,6 +183,16 @@ smaller ones.
 The sidebar shows them by category (see [The workspace](#the-workspace)); below they are described by what they
 shape.
 
+**Editing a setting.** Drag its slider, or type an exact value in the box beside it and press Enter: "1.2", "1.2 mm",
+or "1,2" where a comma is the decimal mark. A value out of range is refused, with the range said under the box; Esc
+puts the box back. Up and Down step the value, Page Up and Page Down ten steps, in the box as on the slider. The grays
+are typed as their lightness, L* 0 (black) to 100 (white).
+
+**What you changed.** A setting moved off its preset shows a dot after it (the grays: off the tone; the rest: off the
+default). Hover the dot to see what it was, click it to put it back, or right-click the setting to reset it to its
+preset or to the factory default. When every difficulty setting is its preset's again, the difficulty shows that
+preset again. A setting that does nothing with the other choices as they are is turned off, and why is said under it.
+
 **Regions and colors**
 - **Colors**: how many colors to look for. Colors closer than the color margin are merged, so a page can keep fewer.
 - **Color margin**: how different every two palette colors must be (CIEDE2000; about 1 is the smallest difference an

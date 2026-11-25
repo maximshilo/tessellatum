@@ -4,16 +4,15 @@ own scroll area, over a footer with the primary action (Generate), the progress,
 Each page is laid out by the registry's sections (``PAGE_SECTIONS``): every setting sits in its entry's category and
 section, the choices of a section before its sliders. A section of advanced settings only starts folded.
 
-Each setting the app offers (see ``core.settings``) gets a slider, built from
-its entry there: its range, its step, its unit and its tooltip. The difficulty
-presets fill in the difficulty's settings, and moving any of those picks
-Custom; the tones fill in the ink's three grays alike. Reset puts every
-setting back to its default.
+Each setting the app offers (see ``core.settings``) gets a field (``gui.fields.SettingField``), built from its
+entry there: a slider and the exact value, its range, its step, its unit and its tooltip; the choices of two to four
+options (the paper, the medium, the colors' source, the tone) a segmented control. The difficulty presets fill in the
+difficulty's settings, and moving any of those picks Custom, until they are all the preset's again; the tones fill in
+the ink's three grays alike. A field changed from its preset (or tone, or default) is marked, and can be put back
+alone; Reset puts every setting back to its default.
 """
 
 from __future__ import annotations
-
-import math
 
 from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtGui import QPixmap
@@ -28,7 +27,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
-    QSlider,
     QSpinBox,
     QStackedWidget,
     QToolButton,
@@ -59,6 +57,16 @@ from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import Handling
 from tessellatum.core.print_size import MM_PER_INCH, PAPERS, print_scale
 from tessellatum.core.render import DEFAULT_TONE, TONE_FIELDS, TONES, PageStyle
+from tessellatum.gui.fields import (  # noqa: F401 - the panel's names for them, kept for its callers
+    LOG_SLIDER_STEPS,
+    MIN_SLIDER_WIDTH,
+    SegmentedControl,
+    SettingField,
+    same_value,
+    slider_position,
+    slider_steps,
+    slider_value,
+)
 from tessellatum.core.settings import (  # noqa: F401 - the registry's strings, by the panel's names for them
     COLORS_FROM_TOOLTIP,
     CUSTOM_TONE_TOOLTIP,
@@ -89,14 +97,6 @@ PAGE_SECTIONS = {
     settings.COLORS: ("Medium", "Source of colors", "Palette", "Mixing"),
     settings.DOCUMENT: ("Page", "Lines and numbers", "Tone", "Legend", "Advanced · Lines", "Advanced · Numbers", EXPORT),
 }
-
-# A slider over a setting that moves in equal ratios (``Setting.log``) has this many steps: the region size's, from 5
-# to 500 mm², about 4% apart, so that 5 -> 10 mm² is as big a move as 250 -> 500 mm².
-LOG_SLIDER_STEPS = 120
-
-# A slider is never narrower than this, however narrow the panel is dragged: below it a handle has no room to move.
-MIN_SLIDER_WIDTH = 80
-
 
 PALETTE_TOOLTIP = (
     "The legend's colors as a palette file, for coloring the page in a painting app with exactly its colors, each "
@@ -138,75 +138,11 @@ _PALETTE_FORMAT_KEY = "export/palette"
 _UNIT_KEY = "export/unit"
 _DPI_KEY = "export/dpi"
 _PIXELS_KEY = "export/pixels"
+# The preset and the tone the fields are compared with while the difficulty or the tone is Custom: the last named.
+_PRESET_BASE_KEY = "settings/preset_base"
+_TONE_BASE_KEY = "settings/tone_base"
 
-
-def slider_steps(setting: Setting) -> int:
-    """How many steps a slider over ``setting`` has: its range in steps of its own, or ``LOG_SLIDER_STEPS``."""
-    if setting.log:
-        return LOG_SLIDER_STEPS
-    return round((setting.maximum - setting.minimum) / setting.step)
-
-
-def slider_value(setting: Setting, position: int) -> float:
-    """The value at a position of a slider over ``setting``."""
-    if setting.log:
-        value = setting.minimum * (setting.maximum / setting.minimum) ** (position / LOG_SLIDER_STEPS)
-    else:
-        value = round(setting.minimum + position * setting.step, 6)
-    return setting.clamp(value)
-
-
-def slider_position(setting: Setting, value: float) -> int:
-    """The position of a slider over ``setting`` nearest to ``value``."""
-    value = setting.clamp(value)
-    if setting.log:
-        ratio = math.log(value / setting.minimum) / math.log(setting.maximum / setting.minimum)
-        return round(LOG_SLIDER_STEPS * ratio)
-    return round((value - setting.minimum) / setting.step)
-
-
-class SettingSlider(QWidget):
-    """A slider over one setting, its value and unit beside it.
-
-    It holds the value it was set to exactly, though that may fall between two
-    of its steps (a preset's 125 mm², say), until the slider is moved.
-    ``edited`` is emitted only when the user moves it.
-    """
-
-    edited = Signal()
-
-    def __init__(self, setting: Setting, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setting = setting
-        self.slider = QSlider(Qt.Horizontal)
-        self.slider.setRange(0, slider_steps(setting))
-        self.slider.setMinimumWidth(MIN_SLIDER_WIDTH)
-        self.value_label = QLabel()
-        self.value_label.setFixedWidth(72)
-        self.setToolTip(setting.tooltip)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.slider)
-        layout.addWidget(self.value_label)
-        self._value = setting.default
-        self.set_value(setting.default)
-        self.slider.valueChanged.connect(self._on_moved)
-
-    def value(self) -> float:
-        return self._value
-
-    def set_value(self, value: float) -> None:
-        """Show ``value``, held within the setting's range, without counting it as the user's edit."""
-        self._value = self.setting.clamp(value)
-        self.slider.blockSignals(True)
-        self.slider.setValue(slider_position(self.setting, self._value))
-        self.slider.blockSignals(False)
-        self.value_label.setText(self.setting.text(self._value))
-
-    def _on_moved(self, position: int) -> None:
-        self._value = slider_value(self.setting, position)
-        self.value_label.setText(self.setting.text(self._value))
-        self.edited.emit()
+SettingSlider = SettingField  # its name before the fields had an exact value (W3)
 
 
 class Section(QWidget):
@@ -285,9 +221,11 @@ class ControlsPanel(QWidget):
         preset_layout.addWidget(self.reset_button)
 
         # One slider per setting, by the field's name; placed in its section by _lay_out.
-        self.controls: dict[str, SettingSlider] = {s.name: SettingSlider(s) for s in settings.SETTINGS}
+        self.controls: dict[str, SettingField] = {s.name: SettingField(s) for s in settings.SETTINGS}
+        self._base_preset = difficulty.DEFAULT_PRESET
+        self._base_tone = DEFAULT_TONE
 
-        self.tone_combo = QComboBox()
+        self.tone_combo = SegmentedControl()
         self.tone_combo.addItems([*TONES, CUSTOM_TONE])
         for index, name in enumerate(TONES):
             self.tone_combo.setItemData(index, TONE_TOOLTIPS[name], Qt.ToolTipRole)
@@ -300,18 +238,18 @@ class ControlsPanel(QWidget):
             self.legend_combo.setItemData(index, LEGEND_TOOLTIPS[name], Qt.ToolTipRole)
         self.legend_combo.setCurrentText(DEFAULT_LEGEND_DETAIL)
         self.legend_combo.setToolTip(LEGEND_TOOLTIP)
-        self.paper_combo = QComboBox()
+        self.paper_combo = SegmentedControl()
         self.paper_combo.addItems(list(PAPERS))
         self.paper_combo.setCurrentText(DEFAULT_PAPER)
         self.paper_combo.setToolTip(PAPER_TOOLTIP)
-        self.medium_combo = QComboBox()
+        self.medium_combo = SegmentedControl()
         self.medium_combo.addItems(list(difficulty.MEDIA))
         for index, name in enumerate(difficulty.MEDIA):
             self.medium_combo.setItemData(index, MEDIUM_TOOLTIPS[name], Qt.ToolTipRole)
         self.medium_combo.setCurrentText(difficulty.DEFAULT_MEDIUM)
         self.medium_combo.setToolTip(MEDIUM_TOOLTIP)
         self._paints: tuple = ()
-        self.colors_from_combo = QComboBox()
+        self.colors_from_combo = SegmentedControl()
         self.colors_from_combo.addItems(list(COLORS_FROM))
         self.colors_from_combo.setToolTip(COLORS_FROM_TOOLTIP)
         self.paints_button = QPushButton("Paints…")
@@ -562,7 +500,7 @@ class ControlsPanel(QWidget):
         return next((section for section in self.sections.values() if section.body.isAncestorOf(widget)), None)
 
     # -- Settings --------------------------------------------------------
-    def _difficulty_controls(self) -> dict[str, SettingSlider]:
+    def _difficulty_controls(self) -> dict[str, SettingField]:
         return {name: c for name, c in self.controls.items() if c.setting.owner == settings.DIFFICULTY}
 
     def _show_preset(self, name: str) -> None:
@@ -587,17 +525,53 @@ class ControlsPanel(QWidget):
         self._save()
 
     def _on_setting_edited(self, name: str) -> None:
-        # A difficulty setting moved off its preset is a Custom difficulty, starting from the preset's other values;
-        # a gray moved off its tone, a Custom tone, likewise.
-        if self.controls[name].setting.owner == settings.DIFFICULTY and self.preset_combo.currentText() != CUSTOM:
-            self.preset_combo.blockSignals(True)
-            self.preset_combo.setCurrentText(CUSTOM)
-            self.preset_combo.blockSignals(False)
-        if name in TONE_FIELDS and self.tone_combo.currentText() != CUSTOM_TONE:
-            self.tone_combo.blockSignals(True)
-            self.tone_combo.setCurrentText(CUSTOM_TONE)
-            self.tone_combo.blockSignals(False)
+        # A difficulty setting moved off its preset is a Custom difficulty, starting from the preset's other values,
+        # until they are all the preset's again (each put back with its marker, say); a gray moved off its tone, a
+        # Custom tone, likewise.
+        if self.controls[name].setting.owner == settings.DIFFICULTY:
+            params = difficulty.params_for_preset(self._base_preset)
+            back = all(same_value(c.setting, c.value(), getattr(params, f))
+                       for f, c in self._difficulty_controls().items())
+            self._show_choice(self.preset_combo, self._base_preset if back else CUSTOM)
+        if name in TONE_FIELDS:
+            back = all(same_value(self.controls[f].setting, self.controls[f].value(), gray)
+                       for f, gray in zip(TONE_FIELDS, TONES[self._base_tone]))
+            self._show_choice(self.tone_combo, self._base_tone if back else CUSTOM_TONE)
         self._save()
+
+    @staticmethod
+    def _show_choice(combo, text: str) -> None:
+        """Show ``text`` chosen in ``combo`` without counting it as a choice made (the values are set already)."""
+        if combo.currentText() != text:
+            combo.blockSignals(True)
+            combo.setCurrentText(text)
+            combo.blockSignals(False)
+
+    def _show_references(self) -> None:
+        """What each field is compared with for its changed-value marker: the difficulty's settings with their
+        preset's (the last named, while it is Custom), the grays with their tone's, the rest with their defaults."""
+        if self.preset_combo.currentText() in difficulty.PRESETS:
+            self._base_preset = self.preset_combo.currentText()
+        if self.tone_combo.currentText() in TONES:
+            self._base_tone = self.tone_combo.currentText()
+        params = difficulty.params_for_preset(self._base_preset)
+        grays = dict(zip(TONE_FIELDS, TONES[self._base_tone]))
+        for name, control in self.controls.items():
+            if control.setting.owner == settings.DIFFICULTY:
+                control.set_reference(getattr(params, name), self._base_preset)
+            elif name in grays:
+                control.set_reference(grays[name], f"the {self._base_tone} tone")
+            else:
+                control.set_reference(control.setting.default, "the default")
+
+    def changed_settings(self) -> list[str]:
+        """The settings changed from their references (see ``_show_references``), by name."""
+        return [name for name, control in self.controls.items() if control.is_changed()]
+
+    def set_length_units(self, units: str) -> None:
+        """Show lengths and areas in ``units`` (``fields.MM`` or ``fields.INCH``); the values don't change."""
+        for control in self.controls.values():
+            control.set_units(units)
 
     def reset(self) -> None:
         """Every setting back to its default: the default preset, the default style, every switch on."""
@@ -632,6 +606,7 @@ class ControlsPanel(QWidget):
 
     def _save(self) -> None:
         """Announce the settings if they changed, and keep them in the store."""
+        self._show_references()
         if self._loading:
             return
         snapshot = self.snapshot()
@@ -642,6 +617,8 @@ class ControlsPanel(QWidget):
             return
         self._store.setValue(_PRESET_KEY, self.preset_combo.currentText())
         self._store.setValue(_TONE_KEY, self.tone_combo.currentText())
+        self._store.setValue(_PRESET_BASE_KEY, self._base_preset)
+        self._store.setValue(_TONE_BASE_KEY, self._base_tone)
         self._store.setValue(_PAPER_KEY, self.paper_combo.currentText())
         self._store.setValue(_MEDIUM_KEY, self.medium_combo.currentText())
         self._store.setValue(_LEGEND_KEY, self.legend_combo.currentText())
@@ -664,6 +641,12 @@ class ControlsPanel(QWidget):
             return
         self._loading = True
         try:
+            base = self._store.value(_PRESET_BASE_KEY)
+            if base in difficulty.PRESETS:
+                self._base_preset = base
+            base = self._store.value(_TONE_BASE_KEY)
+            if base in TONES:
+                self._base_tone = base
             preset = self._store.value(_PRESET_KEY)
             if preset in difficulty.preset_names():
                 self.preset_combo.setCurrentText(preset)
@@ -718,6 +701,7 @@ class ControlsPanel(QWidget):
             self._show_resolution()
         finally:
             self._loading = False
+        self._show_references()
 
     # -- Buttons -----------------------------------------------------------
     def _on_abort_clicked(self) -> None:
@@ -863,6 +847,7 @@ class ControlsPanel(QWidget):
         art's and text's settings without their switches."""
         chosen = self._chosen()
         screen = chosen["medium"] == difficulty.SCREEN_MEDIUM
+        said: set[tuple] = set()  # a reason is said once in a section, under the first field it turns off
         for name, control in self.controls.items():
             tip = control.setting.tooltip
             if name == "palette_margin_de00" and screen:
@@ -871,7 +856,9 @@ class ControlsPanel(QWidget):
                     "apart, whatever this says."
                 )
             reason = control.setting.disabled_reason(chosen)
-            control.setEnabled(reason is None)
+            where = (control.setting.category, control.setting.section, reason)
+            control.set_disabled_reason(reason, say=where not in said)  # said under it, not only in its tooltip
+            said.add(where)
             control.setToolTip(tip if reason is None else f"{reason} {tip}")
         mix = settings.choice("mix_paints")
         reason = mix.disabled_reason(chosen)
