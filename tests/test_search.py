@@ -140,6 +140,15 @@ def test_the_search_is_done_by_keyboard_alone(window):
     QTest.keyClicks(field, "brush")
     QTest.keyClick(field, Qt.Key_Escape)
     assert field.text() == "" and window.controls.search.results.isHidden()
+    # The results give the sidebar back when the focus moves on, and come back with it.
+    QTest.keyClicks(field, "brush")
+    assert window.controls.search.results.isVisible()
+    window.preview.setFocus()
+    _app.processEvents()
+    assert window.controls.search.results.isHidden() and field.text() == "brush"
+    window.commands["find"].trigger()
+    _app.processEvents()
+    assert window.controls.search.results.isVisible()
 
 
 def test_find_leaves_focus_mode(window):

@@ -158,6 +158,12 @@ class SettingsSearch(QWidget):
         self.field.selectAll()
 
     def eventFilter(self, watched, event) -> bool:
+        # The results only while the field has the focus: they give the sidebar back when you move on, and come back
+        # as they were when you return (a click on one doesn't take the focus from the field).
+        if watched is self.field and event.type() == QEvent.FocusOut:
+            self.results.hide()
+        elif watched is self.field and event.type() == QEvent.FocusIn:
+            self.results.setVisible(bool(self.field.text().strip()))
         if watched is self.field and event.type() == QEvent.KeyPress:
             key = event.key()
             if key in (Qt.Key_Down, Qt.Key_Up) and self.results.isVisible() and self.names():

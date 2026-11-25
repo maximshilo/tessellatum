@@ -23,6 +23,8 @@ Each release's notes on GitHub are its section below.
 
 - A command whose standard key the platform doesn't define (Quit on Windows) no longer shows an empty "()" in its
   tooltip.
+- The settings search's results hide when the focus leaves the search field, giving the sidebar back, and show again
+  when it returns.
 
 ## [1.1.13] - 2026-11-25
 
