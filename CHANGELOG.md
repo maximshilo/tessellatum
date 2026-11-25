@@ -4,6 +4,18 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.16] - 2026-11-25
+
+### Changed
+
+- A change to the lines or numbers (line width, grays, number size, leaders, smoothing, split necks, the gap beside
+  text) no longer builds the page's regions again: they are kept with the rest of a picture's stages, and the page is
+  drawn again from them, as it would be from scratch, pixel for pixel. The lion at Medium redraws in 0.9 s rather
+  than 1.6 s; line art, whose regions with no room for a number merge as the numbers are placed, in 2.0 s rather than
+  3.1 s on the comic.
+- The pipeline can announce each stage by name as it starts and ends, with how long it took and whether its results
+  were kept (`generate(..., stage_callback=...)`), for the app's progress and diagnostics.
+
 ## [1.1.15] - 2026-11-25
 
 ### Changed

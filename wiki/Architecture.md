@@ -116,9 +116,16 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
   runs row stripes and per-region work in parallel, which is effective because OpenCV, NumPy and every Numba kernel
   release the GIL.
 - **Cancellation.** Cooperative: the pipeline polls a cancel flag between stages and between numbers.
-- **Caching.** A per-image stage cache (a weak reference to the image, 16 entries, LRU) keeps resizes, detections and
-  palettes, so changing only a later setting skips straight to the region stages.
-- **Progress.** Each stage reports its measured share of the work, so the progress bar is real.
+- **Caching.** A per-image stage cache (a weak reference to the image, LRU, 9 entries per page kept, 2 pages by
+  default, set in Preferences) keeps resizes, detections, palettes and the region stage's output. The regions are
+  keyed by the page's size, the difficulty, the handling and the paper, and by nothing else the style says, so a change
+  to the lines or numbers draws the page again from the regions kept (on line art, the regions merged for want of room
+  for a number are merged again, after the cache). Their arrays are read-only, so nothing downstream can change a kept
+  result; generation is deterministic, which the keys rely on, and tests check a page drawn from kept regions against
+  one drawn from scratch, pixel for pixel (`tests/test_stage_cache.py`).
+- **Progress.** Each stage reports its measured share of the work, so the progress bar is real; with a
+  `stage_callback`, the pipeline also announces each stage by name as it starts and ends (`StageEvent`), with how
+  long it took and whether the stage cache had it.
 
 ## Theme
 

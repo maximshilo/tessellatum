@@ -35,6 +35,12 @@ images x presets x output sizes:
 - `--warmup` unmeasured runs (default 1), then `--repeats` measured runs
   (default 3); the median is reported. Every run gets a fresh copy of the
   image, so caching inside the pipeline can't turn repeats into cache hits.
+  That includes the region stage, cached from 1.1.16 (`_page_regions`, keyed by
+  the page's size, the difficulty, the handling and the paper): a timed run
+  always builds its regions, and `build_regions` and the stages after it are
+  still called from `pipeline`'s module, where the wrappers below find them.
+  The app's own stage timings come from `generate(..., stage_callback=...)`
+  (`StageEvent`), not from this harness.
 - Per-stage timings come from wrapping the stage functions that
   `tessellatum.core.pipeline.generate` calls: `resize_to_long_edge`,
   `detect_ink` (from 0.1.28), `quantize`, `build_regions`, `smooth_regions` (from
