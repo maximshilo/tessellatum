@@ -5,15 +5,15 @@
 ```mermaid
 flowchart TB
     GUI["Presentation: MainWindow · actions · ControlsPanel · PreviewWidget · theme (PySide6)"]
-    APP["Application: Document · DocumentSettings (QtCore, no widgets)"]
-    W["Concurrency: PipelineWorker (QThread) · warm-up thread · thread pool"]
+    APP["Application: Document · DocumentSettings · JobManager (QtCore, no widgets)"]
+    W["Concurrency: job threads (QThread) · warm-up thread · thread pool"]
     O["Orchestration: pipeline.py · settings.py · difficulty.py · print_size.py"]
     AN["Picture analysis: ink · faces · subject · text"]
     RG["Color and regions: color · quantize · regions · texture · tones · marks"]
     DR["Drawing and output: boundaries · labels · render · legend · painting · redraw · ink_outline · export"]
     K["Compute kernels: kernels.py (Numba) · parallel.py"]
     GUI --> APP
-    GUI --> W --> O
+    APP --> W --> O
     APP --> O
     O --> AN & RG & DR
     AN & RG & DR --> K
@@ -58,8 +58,9 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 | `core/painting.py`, `legend.py`, `color_names.py`, `redraw.py`, `export.py`, `swatches.py` | Painted versions; legend and its color names; print-size redraw; PNG and PDF; palette files |
 | `core/kernels.py`, `parallel.py` | Numba-compiled pixel loops; the shared thread pool |
 | `app/snapshot.py`, `app/document.py` | `DocumentSettings`, every setting as one immutable value; `Document`, the picture, its settings and the page made of them |
+| `app/jobs.py` | `JobManager` and `Job`: every background step, its identity, and the checks on its result |
 | `gui/actions.py` | Every command as one `QAction`: text, icon, shortcut, menu |
-| `gui/main_window.py`, `controls_panel.py`, `preview_widget.py`, `worker.py`, `paints_dialog.py` | Window, settings panel, zoomable preview, background worker, the paints' list (swatches, a color picker, sample kits) |
+| `gui/main_window.py`, `controls_panel.py`, `preview_widget.py`, `paints_dialog.py` | Window, settings panel, zoomable preview, the paints' list (swatches, a color picker, sample kits) |
 
 ## Data model
 
@@ -90,12 +91,22 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 
 ## Runtime
 
-- **Threads.** The UI thread never runs the pipeline. A `PipelineWorker` (`QThread`) runs each preview or export and
-  reports progress and results through Qt signals; a second worker draws the preview's page at print size in the
-  background for the zoom and the export; a `TaskWorker` draws a PNG in pixels from it (QtPdf, not cancellable); a
-  warm-up thread compiles the kernels at start-up; a shared thread pool runs
-  row stripes and per-region work in parallel, which is effective because OpenCV, NumPy and every Numba kernel release
-  the GIL.
+- **Jobs.** The UI thread never runs the pipeline. Every slow step is a `Job` run by the window's `JobManager`
+  (`app/jobs.py`) on a thread of its own: the preview (with its three versions), the preview laid out at print size
+  (for the zoom and the export), a page made afresh to export, writing the file (the PDF, the PNG drawn in pixels with
+  QtPdf, a palette; not cancellable), and the legend's recipes. A job records the document's revision, picture and
+  settings when it starts; its task gets a progress callback and a cancel flag and never touches a widget. Its outcome
+  comes back through a queued signal and is checked on the GUI thread: it is delivered only if the job is still the
+  newest of its kind, wasn't cancelled, and is of the picture the document still holds (plus the job's own check,
+  such as "the print layout is of the preview still shown"). A result made while a setting changed is delivered with
+  the settings it was made with, so the document knows it is out of date. One job of each kind runs at a time: a new
+  one cancels the last and starts when it has stopped, so two jobs never compute the same stage side by side.
+  Failures keep their traceback. Closing the window cancels every job without waiting; the threads aren't children of
+  the window, and the application waits for them, bounded, when it quits. Tests drive the manager with tasks they
+  hold and release (`tests/test_jobs.py`).
+- **Other threads.** A warm-up thread compiles the kernels at start-up (a failure is logged); a shared thread pool
+  runs row stripes and per-region work in parallel, which is effective because OpenCV, NumPy and every Numba kernel
+  release the GIL.
 - **Cancellation.** Cooperative: the pipeline polls a cancel flag between stages and between numbers.
 - **Caching.** A per-image stage cache (a weak reference to the image, 16 entries, LRU) keeps resizes, detections and
   palettes, so changing only a later setting skips straight to the region stages.

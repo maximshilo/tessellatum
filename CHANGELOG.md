@@ -4,6 +4,20 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.5] - 2026-11-25
+
+### Changed
+
+- Every slow step runs as a background job with an identity: making the preview, laying it out to print, making a
+  page to export, writing the file, and mixing the legend's recipes. A job's result is used only if it is still
+  wanted: a page of a picture replaced while it was made is never shown, and a page made while a setting changed is
+  kept with the settings it was made with, never taken for one made with the new ones. One job of each kind runs at a
+  time; a newer one stops the last first.
+- Writing a PDF or a palette file, and mixing a legend's recipes (up to a second with many paints), no longer hold up
+  the window: they run in the background too.
+- Closing the window while a page is being made closes it at once, rather than waiting for the page; the app finishes
+  stopping it as it quits.
+
 ## [1.1.4] - 2026-11-25
 
 ### Fixed

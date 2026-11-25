@@ -24,7 +24,8 @@ from tessellatum.core.print_size import print_scale  # noqa: E402
 from tessellatum.core.render import PageStyle  # noqa: E402
 from tessellatum.gui import controls_panel, main_window  # noqa: E402
 from tessellatum.gui.main_window import MainWindow  # noqa: E402
-from tessellatum.gui.worker import PipelineWorker  # noqa: E402
+from tessellatum.app import jobs  # noqa: E402
+from tessellatum.app.jobs import EXPORT, PREVIEW, PRINT_LAYOUT, JobManager, page_task  # noqa: E402
 
 import pdf_reading  # noqa: E402
 from difficulty_levels import COARSE  # noqa: E402
@@ -90,23 +91,16 @@ class _Drive:
         self.window.controls.set_export_dpi(300)
 
     def wait(self) -> None:
-        """Until the window's workers are done -- making or exporting a page, drawing it at print size or in pixels,
-        and any stopped -- and their last signals have reached the window."""
+        """Until the window's jobs are done -- making or exporting a page, drawing it at print size, writing the file,
+        and any stopped -- and their outcomes have reached the window."""
         deadline = time.monotonic() + TIMEOUT_S
-        window = self.window
-
-        def running() -> bool:
-            return any(
-                worker is not None and worker.isRunning()
-                for worker in (window._worker, window._print_worker, window._raster_worker, *window._retired)
-            )
-
         while True:
-            # A finished worker's signals are queued by the time it stops running, and may start another.
-            idle = not running()
+            # An outcome delivered may start another job.
             _app.processEvents()
-            if idle and not running():
-                return
+            if self.window.jobs.is_idle():
+                _app.processEvents()
+                if self.window.jobs.is_idle():
+                    return
             assert time.monotonic() < deadline, "the pipeline didn't finish"
             time.sleep(0.005)
 
@@ -286,7 +280,7 @@ def test_a_running_generation_can_be_cancelled(drive, monkeypatch):
     monkeypatch.setattr(pipeline, "generate", until_cancelled)
     drive.window.current_image_bgr = _blocks((300, 200))
     drive.window.generate_preview()
-    assert drive.window._worker.isRunning()
+    assert drive.window.jobs.is_running(PREVIEW)
     drive.window.abort_generation()
     assert drive.status() == "Cancelling…"
     drive.wait()
@@ -400,16 +394,27 @@ def test_cancelling_while_the_versions_are_drawn_cancels_the_preview(monkeypatch
         return Page()
 
     monkeypatch.setattr(pipeline, "generate", finishing_as_cancelled)
-    worker = PipelineWorker(_blocks((60, 40)), COARSE, 60, versions=tuple(Version))
+    manager = JobManager()
     outcomes = []
-    worker.succeeded.connect(lambda page: outcomes.append("succeeded"))
-    worker.cancelled.connect(lambda: outcomes.append("cancelled"))
-    worker.start()
-    worker.requestInterruption()
-    assert worker.wait(TIMEOUT_S * 1000)
-    _app.processEvents()
+    manager.succeeded.connect(lambda job, page: outcomes.append("succeeded"))
+    manager.cancelled.connect(lambda job: outcomes.append("cancelled"))
+    task = page_task(_blocks((60, 40)), COARSE, 60, versions=tuple(Version))
+    seen = []
+    # The task itself stops before drawing a version once asked to, whatever the manager makes of its outcome.
+    job = manager.start(PREVIEW, lambda progress, should_cancel: seen.append(_run_to_cancel(task, progress, should_cancel)))
+    manager.cancel(PREVIEW)
+    _until(manager.is_idle)
+    manager.deleteLater()
 
-    assert outcomes == ["cancelled"] and drawn == []
+    assert outcomes == ["cancelled"] and drawn == [] and seen == ["cancelled"] and job.state == jobs.CANCELLED
+
+
+def _run_to_cancel(task, progress, should_cancel) -> str:
+    try:
+        task(progress, should_cancel)
+    except PipelineCancelled:
+        return "cancelled"
+    return "finished"
 
 
 def test_the_version_asked_for_is_exported(drive, tmp_path):
@@ -473,10 +478,10 @@ def test_zoomed_in_the_preview_shows_its_page_as_it_prints_and_the_export_saves_
     window.generate_preview()
     drive.wait()
     preview = window.preview
-    assert window.current_page.page.size == (2216, 1108) and window._print_worker is None  # nothing drawn yet
+    assert window.current_page.page.size == (2216, 1108) and window.jobs.current(PRINT_LAYOUT) is None  # nothing drawn yet
 
     preview.zoom_to(1.5)
-    assert window._print_worker.isRunning() and drive.status() == "Drawing the page as it prints, for the zoom…"
+    assert window.jobs.is_running(PRINT_LAYOUT) and drive.status() == "Drawing the page as it prints, for the zoom…"
     drive.wait()
     printed = window._print_page
     assert drawn == [window.current_page] and printed.page.size == (3272, 1636)
@@ -516,7 +521,7 @@ def test_an_export_asked_for_while_the_zoom_draws_the_page_waits_for_it(drive, d
     release = threading.Event()  # the zoom's page is held until the export is asked for, so that it is still drawn then
     monkeypatch.setattr(pipeline, "draw_page", _held_until(pipeline.draw_page, release))
     window.preview.zoom_to(1.5)
-    assert window._print_worker.isRunning()
+    assert window.jobs.is_running(PRINT_LAYOUT)
 
     # A PNG: a PDF places its numbers for itself, on a page drawn for it (T2a).
     drive.save_path = str(tmp_path / "page.png")
@@ -548,7 +553,7 @@ def test_an_export_waiting_for_the_page_drawn_at_print_size_can_be_cancelled(dri
     monkeypatch.setattr(pipeline, "draw_page", until_cancelled)
     drive.save_path = str(tmp_path / "page")
     window.export_page()
-    assert window._print_worker.isRunning()
+    assert window.jobs.is_running(PRINT_LAYOUT)
     window.abort_generation()
     drive.wait()
 
@@ -568,12 +573,12 @@ def test_a_new_preview_drops_the_page_drawn_for_the_last_one(drive, drawn, monke
     monkeypatch.setattr(pipeline, "draw_page", _held_until(pipeline.draw_page, release))
     window.preview.zoom_to(1.5)
     on_paper = window.preview.printed_zoom()
-    stopped = window._print_worker
-    assert stopped.isRunning()
+    stopped = window.jobs.current(PRINT_LAYOUT)
+    assert stopped.state == jobs.RUNNING
 
     window.controls.preset_combo.setCurrentText("Hard")
     window.generate_preview()  # while the zoom's page is still being drawn
-    assert stopped.isInterruptionRequested() and window._print_worker is None
+    assert window.jobs.current(PRINT_LAYOUT) is None and stopped.state == jobs.RUNNING  # dropped, still stopping
     release.set()
     drive.wait()
 
@@ -610,7 +615,7 @@ def test_a_zoom_while_a_preview_is_made_draws_the_new_page_not_the_last(drive, d
     window.controls.preset_combo.setCurrentText("Hard")
     window.generate_preview()
     window.preview.zoom_to(1.5)  # while the new page is made
-    assert window._print_worker is None
+    assert window.jobs.current(PRINT_LAYOUT) is None
     drive.wait()
 
     second = window.current_page
@@ -702,8 +707,8 @@ def test_abort_cancels_an_export_with_other_settings_not_the_zoom_s_drawing(driv
 
     window.abort_generation()
     _until(lambda: drive.status() == "Cancelled.")
-    assert window._print_worker.isRunning()  # the zoom still wants its page
-    assert window._worker.wait(TIMEOUT_S * 1000)
+    assert window.jobs.is_running(PRINT_LAYOUT)  # the zoom still wants its page
+    assert not window.jobs.is_running(EXPORT)
     drawn_release.set()
     drive.wait()
 
@@ -721,7 +726,7 @@ def test_a_zoom_while_an_export_is_made_with_other_settings_draws_the_preview_s_
     drive.save_path = str(tmp_path / "page")
     window.export_page()  # another page: made at the preview's size and drawn at print size
     window.preview.zoom_to(1.5)
-    assert window._print_worker is None
+    assert window.jobs.current(PRINT_LAYOUT) is None
     drive.wait()
 
     assert drive.dialogs[-1][1] == "Export complete" and len(drawn) == 2
@@ -840,6 +845,8 @@ def test_the_legend_s_recipes_mix_each_color_from_the_paints_listed_and_follow_t
     coded = window.preview._legend  # no paints listed: the codes
     controls.set_paints((("Titanium white", (255, 255, 255)), ("Ultramarine", (25, 0, 89)), ("Lemon", (250, 240, 60))))
     assert controls.colors_from_combo.currentText() == "The picture"  # listed for the recipes, the colors the picture's
+    assert window.jobs.is_running(jobs.RECIPES)  # mixed off the GUI thread, then the legend drawn again with them
+    drive.wait()
     with_recipes = window.preview._legend
     assert with_recipes != coded and len(drive.calls) == calls  # the legend drawn again, the page not made again
 
@@ -886,3 +893,55 @@ def test_mixed_colors_come_after_the_paints_on_the_preview_s_legend_the_pdf_and_
     drive.wait()
     legend_sheet = pdf_reading.sheets((tmp_path / "page.pdf").read_bytes())[1]["content"]
     assert "(Your paints)" in legend_sheet and all(f"({line})" in legend_sheet for line in page.mixes[start])
+
+
+def test_a_preview_of_a_picture_replaced_while_it_was_made_is_never_shown(drive, monkeypatch):
+    # G1 (R1): a result is delivered only if it is of the picture the document still holds.
+    window = drive.window
+    release, started = threading.Event(), threading.Event()
+    monkeypatch.setattr(pipeline, "generate", _held_back(pipeline.generate, release, started=started))
+    window.current_image_bgr = _blocks((300, 200))
+    window.generate_preview()
+    assert started.wait(TIMEOUT_S)
+    window.current_image_bgr = _blocks((200, 300))  # a new picture, as a drop or a paste will bring one (W1, H5)
+    release.set()
+    drive.wait()
+
+    assert window.current_page is None and window.preview.shown_image() is None
+    assert window.controls.generate_button.isEnabled() and drive.dialogs == []
+
+
+def test_a_preview_made_while_a_setting_changed_is_shown_as_made_with_the_settings_before(drive, monkeypatch):
+    # D-011: the page is of the current picture, kept with the settings it was made with, so it is never taken for
+    # one made with the new ones.
+    window = drive.window
+    release, started = threading.Event(), threading.Event()
+    monkeypatch.setattr(pipeline, "generate", _held_back(pipeline.generate, release, started=started))
+    window.current_image_bgr = _blocks((300, 200))
+    window.generate_preview()
+    assert started.wait(TIMEOUT_S)
+    made_with = window.document.settings()
+    window.controls.tone_combo.setCurrentText("Dark")
+    release.set()
+    drive.wait()
+
+    assert window.current_page is not None and window.document.result_settings() == made_with
+    assert not window.document.result_is_current()
+
+
+def test_closing_the_window_while_a_page_is_made_returns_at_once(monkeypatch):
+    # G1 (R3): the window no longer waits on its threads; the application does, bounded, when it quits.
+    monkeypatch.setattr(main_window, "_warm_up_pipeline", lambda: None)
+    release = threading.Event()
+    monkeypatch.setattr(pipeline, "generate", _held_until(pipeline.generate, release))
+    window = MainWindow()
+    window.current_image_bgr = _blocks((300, 200))
+    window.generate_preview()
+    began = time.monotonic()
+    window.close()
+    window.deleteLater()
+    _app.processEvents()
+    assert time.monotonic() - began < 1.0 and jobs.live_threads() >= 1
+    release.set()
+    assert jobs.wait_for_all(TIMEOUT_S)
+    _until(lambda: jobs.live_threads() == 0)
