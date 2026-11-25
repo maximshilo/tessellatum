@@ -1343,7 +1343,7 @@ class MainWindow(QMainWindow):
         if self._pending_export_drawn:
             self._on_worker_failed(message)
         elif self._pending_export_path is None:
-            self._say(f"The page could not be drawn as it prints. {message}", FAILED)
+            self._say(message, FAILED)
 
     def _on_print_page_cancelled(self) -> None:
         if self._pending_export_drawn:
