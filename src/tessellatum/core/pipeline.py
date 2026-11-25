@@ -339,11 +339,18 @@ class _StageCache:
         """How many lookups the calling thread has made that found their entry, and how many that didn't."""
         return getattr(self._counts, "hits", 0), getattr(self._counts, "misses", 0)
 
+    def set_bypassed(self, bypassed: bool) -> None:
+        """Whether the calling thread's lookups go past the cache: computed every time, nothing kept, and the
+        entries kept for another image left as they are (see ``warm_up``)."""
+        self._counts.bypassed = bypassed
+
     def _count(self, hit: bool) -> None:
         name = "hits" if hit else "misses"
         setattr(self._counts, name, getattr(self._counts, name, 0) + 1)
 
     def get_or_compute(self, image: np.ndarray, key: Hashable, compute: Callable[[], T]) -> T:
+        if getattr(self._counts, "bypassed", False):
+            return compute()
         with self._lock:
             if self._image_ref is None or self._image_ref() is not image:
                 self._image_ref = weakref.ref(image)
@@ -565,12 +572,19 @@ def warm_up() -> None:
     Loads the compiled region kernels (compiling them if this is the first run
     since install, which takes a few seconds) and runs the whole pipeline once
     on a tiny synthetic image. Meant for a background thread at app start.
+
+    It goes past the stage cache, which keeps one image's stages: a picture
+    opened and previewed while it runs keeps its own, for the next preview.
     """
     kernels.warm_up()
     tiny = np.zeros((48, 64, 3), dtype=np.uint8)
     tiny[:, 32:] = (40, 160, 220)
     tiny[12:36, 8:24] = (200, 60, 60)
-    generate(tiny, DifficultyParams(num_colors=4, min_region_area_mm2=500.0, blur_sigma=1.0), long_edge=64)
+    _cache.set_bypassed(True)
+    try:
+        generate(tiny, DifficultyParams(num_colors=4, min_region_area_mm2=500.0, blur_sigma=1.0), long_edge=64)
+    finally:
+        _cache.set_bypassed(False)
 
 
 def _scaled_label(label: Label, sx: float, sy: float, size: tuple[int, int], exact: bool = False) -> Label:

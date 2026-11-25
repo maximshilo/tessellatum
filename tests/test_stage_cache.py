@@ -188,3 +188,14 @@ def test_the_stages_change_nothing_on_the_page(sample_image_bgr):
     pipeline.clear_cache()
     told = generate(sample_image_bgr, MIDDLE, long_edge=300, stage_callback=lambda _event: None)
     _same(told, plain)
+
+
+def test_the_warm_up_leaves_the_stages_kept_for_the_picture_being_worked_on(sample_image_bgr, monkeypatch):
+    # The app warms the pipeline up on a background thread as it starts, on a tiny picture of its own: if that runs
+    # after the first preview, it must not throw away the preview's stages, which the next redraw is made from.
+    pipeline.clear_cache()
+    generate(sample_image_bgr, MIDDLE, long_edge=400)
+    pipeline.warm_up()
+    calls = _counting(monkeypatch)
+    generate(sample_image_bgr, MIDDLE, long_edge=400, style=PageStyle(line_width_mm=0.4))
+    assert calls == []
