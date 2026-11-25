@@ -124,6 +124,7 @@ class PaletteInspector(QWidget):
         layout.addWidget(self.title)
         layout.addWidget(self.summary)
         layout.addWidget(self.list, 1)
+        layout.addStretch(0)  # takes the room while the list is hidden, so the title stays at the top
         self.show_page(None)
 
     def show_page(self, page) -> None:

@@ -43,7 +43,11 @@ from tessellatum.gui import theme
 from tessellatum.core import settings as registry
 from tessellatum.gui.actions import ACTIVITY_ACTIONS, THEME_ACTIONS, VERSION_ACTIONS, ZOOM_ACTIONS, Actions
 from tessellatum.gui.controls_panel import DPI, PALETTE, ControlsPanel
+from tessellatum.gui.notifications import (
+    ERROR, INFO, SUCCESS, DiagnosticsPanel, NotificationBar, install_log_handler, remove_log_handler, show_in_folder,
+)
 from tessellatum.gui.preview_widget import PreviewWidget, VersionBar, ZoomBar
+from tessellatum.gui.status import BUSY, CANCELLED, DONE, FAILED, IDLE, StatusBar
 from tessellatum.gui.workspace import ActivityBar, LayoutStore, PaletteInspector
 
 OPEN_IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.gif)"
@@ -100,6 +104,9 @@ class MainWindow(QMainWindow):
         canvas_layout.setContentsMargins(0, 0, 0, 0)
         canvas_layout.setSpacing(0)
         canvas_layout.addWidget(self.canvas_bar)
+        # What just happened, over the page: never a dialog in the way (see ``gui.notifications``).
+        self.notification = NotificationBar()
+        canvas_layout.addWidget(self.notification)
         canvas_layout.addWidget(self.preview, 1)
 
         self.inspector = PaletteInspector()
@@ -119,13 +126,26 @@ class MainWindow(QMainWindow):
         central_layout.setSpacing(0)
         central_layout.addWidget(self.activity_bar)
         central_layout.addWidget(self.splitter, 1)
-        self.setCentralWidget(central)
+        # The diagnostics under it all: closed until asked for, and never opened by itself.
+        self.diagnostics = DiagnosticsPanel()
+        self.diagnostics.hide()
+        self.bottom_splitter = QSplitter(Qt.Vertical)
+        self.bottom_splitter.setObjectName("diagnosticsSplitter")
+        self.bottom_splitter.setChildrenCollapsible(False)
+        self.bottom_splitter.addWidget(central)
+        self.bottom_splitter.addWidget(self.diagnostics)
+        self.bottom_splitter.setStretchFactor(0, 1)
+        self.bottom_splitter.setStretchFactor(1, 0)
+        self.bottom_splitter.setSizes([640, 180])
+        self.setCentralWidget(self.bottom_splitter)
         self.setMinimumSize(MIN_WINDOW)
         self._focus: dict | None = None  # in focus mode: what showed before it, to put back exactly
         self._auto_hidden: set[str] = set()  # the panels folded away by a narrow window, not by the user
         self._scroll_restored = False
 
-        self.statusBar().showMessage("Open an image to get started.")
+        self.status = StatusBar()
+        self.setStatusBar(self.status)
+        self._say("Open an image to get started.")
 
         self._previewed_image: np.ndarray | None = None  # the picture current_page is of
         self._pending_export_path: Path | None = None
@@ -156,11 +176,19 @@ class MainWindow(QMainWindow):
         self.jobs.cancelled.connect(self._on_job_cancelled)
         self.jobs.dropped.connect(self._on_job_dropped)
         self.jobs.progress.connect(self._on_job_progress)
+        # Each job, and the app's own warnings and errors, in the diagnostics; the status bar counts them.
+        self.diagnostics.watch(self.jobs)
+        self._log_handler = install_log_handler(self.diagnostics)
+        self.diagnostics.counts_changed.connect(self.status.set_counts)
+        self.diagnostics.close_requested.connect(lambda: self.set_diagnostics_visible(False))
+        self.status.diagnostics_requested.connect(lambda: self.set_diagnostics_visible(True))
+        self.preview.zoom_changed.connect(self.status.set_zoom)
 
         self._build_commands()
 
         self.resize(1280, 840)
         self.document.result_changed.connect(lambda: self.inspector.show_page(self.current_page))
+        self.document.result_changed.connect(self._show_page_status)
         self._restore_layout()
 
         # Get one-time costs (loading/compiling the compiled kernels, first
@@ -237,6 +265,7 @@ class MainWindow(QMainWindow):
         commands["toggle_inspector"].triggered.connect(self.set_inspector_visible)
         commands["focus_mode"].triggered.connect(self.set_focus_mode)
         commands["reset_layout"].triggered.connect(self.reset_layout)
+        commands["toggle_diagnostics"].triggered.connect(self.set_diagnostics_visible)
         # Enabled as the buttons are: whatever turns one on or off turns its command with it.
         self._enablement = _Watcher(self._sync_commands, self)
         for widget in (c.open_button, c.generate_button, c.export_button, c.abort_button, c.progress_row,
@@ -325,17 +354,18 @@ class MainWindow(QMainWindow):
         self.commands["toggle_sidebar"].setChecked(self.sidebar_visible())
         self.commands["toggle_inspector"].setChecked(self.inspector_visible())
         self.commands["focus_mode"].setChecked(self._focus is not None)
+        self.commands["toggle_diagnostics"].setChecked(not self.diagnostics.isHidden())
 
     def in_focus_mode(self) -> bool:
         return self._focus is not None
 
     def set_focus_mode(self, on: bool) -> None:
-        """Hide every panel around the page (the toolbar, the activity bar, the sidebar, the inspector and the status
-        bar), or put them back exactly as they were."""
+        """Hide every panel around the page (the toolbar, the activity bar, the sidebar, the inspector, the
+        diagnostics and the status bar), or put them back exactly as they were."""
         if on == (self._focus is not None):
             self._show_panel_state()
             return
-        panels = (self.toolbar, self.activity_bar, self.controls, self.inspector, self.statusBar())
+        panels = (self.toolbar, self.activity_bar, self.controls, self.inspector, self.diagnostics, self.statusBar())
         if on:
             self._focus = {"shown": [not panel.isHidden() for panel in panels], "sizes": self.splitter.sizes()}
             for panel in panels:
@@ -457,6 +487,40 @@ class MainWindow(QMainWindow):
         if manager is not None:
             manager.set_mode(mode)  # its mode_changed checks the mode's command
 
+    # -- Feedback: the status bar, notifications and the diagnostics ------------------
+    def _say(self, text: str, state: str = IDLE) -> None:
+        """Say ``text`` in the status bar, in ``state`` (see ``gui.status``)."""
+        self.status.set_state(text, state)
+
+    def notify(self, level: str, text: str, actions=()) -> None:
+        """Tell ``text`` in the banner over the page (see ``NotificationBar.notify``)."""
+        self.notification.notify(level, text, tuple(actions))
+
+    def _details(self) -> tuple[str, object]:
+        """A notification's action that shows the last error in the diagnostics, with its details."""
+        return ("Details", self.show_last_error)
+
+    def show_last_error(self) -> None:
+        self.set_diagnostics_visible(True)
+        errors = [entry for entry in self.diagnostics.entries if entry.level == ERROR]
+        if errors:
+            self.diagnostics.select(errors[-1])
+
+    def set_diagnostics_visible(self, on: bool) -> None:
+        self.diagnostics.setVisible(bool(on))
+        self._show_panel_state()
+
+    def _show_page_status(self) -> None:
+        """The page's colors, regions and size in the status bar."""
+        page = self.current_page
+        if page is None or page.drawing is None:
+            self.status.set_page(None, None)
+            self.status.set_size(None, None)
+            return
+        paper = page.drawing.style.paper_format
+        self.status.set_page(page.num_colors_used, page.num_regions)
+        self.status.set_size(page.page.size, print_scale(page.page.size, paper).printed_size_mm, paper.name)
+
     def show_about(self) -> None:
         QMessageBox.about(self, "About Tessellatum", about_text())
 
@@ -469,7 +533,10 @@ class MainWindow(QMainWindow):
         try:
             image = pipeline.load_image_bgr(path)
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Could not open image", str(exc))
+            text = f"Could not open {path.name}: {exc}"
+            self.diagnostics.add(ERROR, text)
+            self._say(text, FAILED)
+            self.notify(ERROR, text)
             return
         self.document.set_source(image, path)  # drops the last picture's page
 
@@ -479,7 +546,7 @@ class MainWindow(QMainWindow):
         self._drop_print_page()
         self.controls.set_export_enabled(False)
         self.version_bar.setEnabled(False)  # the preview left showing is the last picture's, until the next one
-        self.statusBar().showMessage(f"Loaded {path.name}. Click \"Generate Preview\".")
+        self._say(f"Loaded {path.name}. Click \"Generate Preview\".")
 
     # -- Preview ----------------------------------------------------------
     def _making(self) -> bool:
@@ -490,9 +557,12 @@ class MainWindow(QMainWindow):
         """Whether an export is under way: waiting for its page, or writing its file."""
         return self._pending_export_path is not None or self.jobs.is_running(SAVE)
 
+    def _no_picture(self) -> None:
+        self.notify(INFO, "Open a picture first.", [("Open Image…", self.commands["open"].trigger)])
+
     def generate_preview(self) -> None:
         if self.current_image_bgr is None:
-            QMessageBox.warning(self, "No image", "Open an image first.")
+            self._no_picture()
             return
         if self._making() or self._exporting():
             return
@@ -501,7 +571,7 @@ class MainWindow(QMainWindow):
         self.document.set_settings(self.controls.snapshot())  # as the panel shows them, to the last edit
         settings = self.document.settings()
         self.controls.set_busy(True)
-        self.statusBar().showMessage("Generating preview…")
+        self._say("Generating preview…", BUSY)
 
         # The page at its working size, where its level's brush is a few pixels across: what an export draws larger.
         image = self.current_image_bgr
@@ -519,7 +589,7 @@ class MainWindow(QMainWindow):
         if job is not None and job.cancellable and self.jobs.cancel(kind):
             # It stops at the pipeline's next stage: the button stays off meanwhile, against a second press.
             self.controls.abort_button.setEnabled(False)
-            self.statusBar().showMessage("Cancelling…")
+            self._say("Cancelling…", BUSY)
 
     # -- What the jobs come to ------------------------------------------------
     def _on_job_succeeded(self, job: Job, result) -> None:
@@ -561,11 +631,12 @@ class MainWindow(QMainWindow):
         # The zoom's drawing tells nothing, unless an export waits for it.
         if job.kind in (PREVIEW, EXPORT) or (job.kind == PRINT_LAYOUT and self._pending_export_drawn):
             self.controls.set_progress(percent)
+            self.status.set_progress(percent)
 
     def _on_worker_cancelled(self) -> None:
         self.controls.set_busy(False)
         self._clear_pending_export()
-        self.statusBar().showMessage("Cancelled.")
+        self._say("Cancelled.", CANCELLED)
 
     def _on_preview_ready(self, page: GeneratedPage, made_with: DocumentSettings) -> None:
         # A new page of the picture shown is shown as far in and in the same place, to compare the two.
@@ -575,11 +646,9 @@ class MainWindow(QMainWindow):
         self._previewed_image = self.current_image_bgr
         self.controls.set_busy(False)
         self.controls.set_export_enabled(True)
-        width, height = page.page.size
-        self._ready_message = (
-            f"Preview ready: {page.num_colors_used} colors, {page.num_regions} regions, made at {width} × {height} px."
-        )
-        self.statusBar().showMessage(self._ready_message)
+        # Its colors, regions and size are in the status bar's own fields (see _show_page_status).
+        self._ready_message = "Preview ready."
+        self._say(self._ready_message, DONE)
         versions = {version: page.image(version) for version in Version}
         long_edge = self._print_long_edge()
         print_scale = 1.0 if long_edge is None else long_edge / max(page.page.size)
@@ -638,13 +707,13 @@ class MainWindow(QMainWindow):
     def _on_worker_failed(self, message: str) -> None:
         self.controls.set_busy(False)
         self._clear_pending_export()
-        QMessageBox.critical(self, "Generation failed", message)
-        self.statusBar().showMessage("Generation failed.")
+        self._say("Generation failed.", FAILED)
+        self.notify(ERROR, f"Generation failed: {message}", [self._details()])
 
     # -- Export -----------------------------------------------------------
     def export_page(self) -> None:
         if self.current_image_bgr is None:
-            QMessageBox.warning(self, "No image", "Open an image first.")
+            self._no_picture()
             return
         if self._making() or self.jobs.is_running(SAVE):
             return
@@ -671,7 +740,7 @@ class MainWindow(QMainWindow):
         self._pending_export_version = version
         self._pending_export_resolution = self.controls.get_export_resolution()
         self.controls.set_busy(True)
-        self.statusBar().showMessage(f"Rendering the {fmt} at print resolution…")
+        self._say(f"Rendering the {fmt} at print resolution…", BUSY)
 
         # Every export is drawn from the page's print layout: the preview's page laid out at 300 dpi on its paper, its
         # numbers placed once, as small as the style asks (see ``pipeline.draw_page``), drawn once for the zoom and
@@ -721,14 +790,14 @@ class MainWindow(QMainWindow):
         self.controls.set_busy(True, cancellable=False)
         if fmt == PALETTE:
             names = _palette_names(page)
-            self.statusBar().showMessage("Writing the palette…")
+            self._say("Writing the palette…", BUSY)
             self.jobs.start(
                 SAVE, lambda _p, _c: swatches.save_palette(path, page.palette_rgb, names=names),
                 cancellable=False, context=self._on_palette_saved, label=f"Palette {path.name}",
             )
             return
         if fmt == "PDF":
-            self.statusBar().showMessage("Writing the PDF…")
+            self._say("Writing the PDF…", BUSY)
 
             def save_pdf(_progress, _should_cancel):
                 export.save_pdf(
@@ -748,7 +817,7 @@ class MainWindow(QMainWindow):
         unit, value = resolution
         printed_long_mm = max(print_scale(page.page.size, page.drawing.style.paper_format).printed_size_mm)
         dpi = value if unit == DPI else value * MM_PER_INCH / printed_long_mm
-        self.statusBar().showMessage(f"Drawing the PNG at {dpi:.0f} dpi…")
+        self._say(f"Drawing the PNG at {dpi:.0f} dpi…", BUSY)
         self.jobs.start(
             SAVE,
             lambda _p, _c: export.export_png(
@@ -767,22 +836,23 @@ class MainWindow(QMainWindow):
         width, height = size
         dpi = print_scale(size, paper).dpi
         printed = f"{width:,} × {height:,} px, {dpi:.0f} dpi on {paper.name}"
-        self.statusBar().showMessage(f"Exported to {path} ({printed})")
-        QMessageBox.information(self, "Export complete", f"Saved to:\n{path}\n\n{printed}")
+        self._say(f"Exported to {path} ({printed})", DONE)
+        self.notify(SUCCESS, f"Exported {path.name}: {printed}.", [("Show in Folder", lambda: show_in_folder(path))])
 
     def _on_palette_saved(self, written: list[Path]) -> None:
         self.controls.set_busy(False)
         if self.preview.wants_detail():
             self._draw_print_page()  # asked for by a zoom while the export was made
-        files = "\n".join(str(path) for path in written)
         note = f"{len(written)} palettes of at most {swatches.PROCREATE_MAX_SWATCHES} colors" if len(written) > 1 else ""
-        self.statusBar().showMessage(f"Exported the palette to {written[0]}" + (f" ({note})" if note else ""))
-        QMessageBox.information(self, "Export complete", f"Saved to:\n{files}" + (f"\n\n{note}" if note else ""))
+        self._say(f"Exported the palette to {written[0]}" + (f" ({note})" if note else ""), DONE)
+        names = ", ".join(path.name for path in written)
+        self.notify(SUCCESS, f"Exported {names}" + (f": {note}." if note else "."),
+                    [("Show in Folder", lambda: show_in_folder(written[0]))])
 
     def _on_export_failed(self, message: str) -> None:
         self.controls.set_busy(False)
-        QMessageBox.critical(self, "Export failed", message)
-        self.statusBar().showMessage("Export failed.")
+        self._say("Export failed.", FAILED)
+        self.notify(ERROR, f"Export failed: {message}", [self._details()])
 
     def _clear_pending_export(self) -> None:
         self._pending_export_path = None
@@ -829,7 +899,7 @@ class MainWindow(QMainWindow):
             label=f"Print layout at {long_edge} px",
         )
         if self._pending_export_path is None:
-            self.statusBar().showMessage("Drawing the page as it prints, for the zoom…")
+            self._say("Drawing the page as it prints, for the zoom…", BUSY)
 
     def _drop_print_page(self) -> None:
         """Forget the preview's page at print size, and stop drawing it: the preview is about to change."""
@@ -844,25 +914,26 @@ class MainWindow(QMainWindow):
         if self._pending_export_drawn:
             self._on_export_ready(drawn)
         elif self._pending_export_path is None:
-            self.statusBar().showMessage(self._ready_message)
+            self._say(self._ready_message, DONE)
 
     def _on_print_page_failed(self, message: str) -> None:
         if self._pending_export_drawn:
             self._on_worker_failed(message)
         elif self._pending_export_path is None:
-            self.statusBar().showMessage(f"The page could not be drawn as it prints: {message}")
+            self._say(f"The page could not be drawn as it prints: {message}", FAILED)
 
     def _on_print_page_cancelled(self) -> None:
         if self._pending_export_drawn:
             self._on_worker_cancelled()
         elif self._pending_export_path is None:
-            self.statusBar().showMessage(self._ready_message)
+            self._say(self._ready_message, DONE)
 
     def closeEvent(self, event) -> None:
         self.save_layout()
         # Stop what is still running, without waiting for it: the threads outlive the window, and the application
         # waits for them, bounded, when it quits (see ``app.jobs.wait_for_all``).
         self.jobs.shutdown()
+        remove_log_handler(self._log_handler)
         super().closeEvent(event)
 
 
