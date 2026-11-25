@@ -75,5 +75,7 @@ What makes it fast:
 - **Algorithmic shortcuts.** One distance transform per class of non-adjacent regions instead of per region; a sparse
   lattice for large bilateral filters; the edge vote only near edges and run by run; contours in each region's own box.
 - **Parallelism** across row stripes and regions, on threads that release the GIL.
-- **Caching** of resizes, detections and palettes per image, so changing one setting re-runs only what depends on it.
+- **Caching** of resizes, detections, palettes and regions per image, so changing one setting re-runs only what
+  depends on it: a change to the lines or numbers draws the page again from its regions (the lion at Medium, 0.9 s
+  rather than 1.6 s; line art merges regions for room for the numbers, so it gains less: 3.1 to 2.0 s on the comic).
 - **Gated inference.** The text detector's fine look runs only where a cheap first look finds text.
