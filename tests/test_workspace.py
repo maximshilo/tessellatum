@@ -74,6 +74,7 @@ def test_the_workspace_starts_with_every_panel_and_the_generation_page():
         for category, button in window.activity_bar.buttons.items():
             assert button.accessibleName() == category and category in button.toolTip()
         assert window.inspector.color_count() == 0 and "Generate" in window.inspector.summary.text()
+        assert window.inspector.title.geometry().top() < window.inspector.height() // 4  # at the top, not centered
     finally:
         _close(window)
 

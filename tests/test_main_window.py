@@ -48,10 +48,11 @@ def _blocks(size: tuple[int, int]) -> np.ndarray:
 
 
 class _Drive:
-    """A window whose dialogs are stubs: what they were shown, and the file names they answer with."""
+    """A window whose file dialogs are stubs answering with the file names given, and what it told: its notifications
+    (the level and the text) and any message box."""
 
     def __init__(self, monkeypatch):
-        self.dialogs: list[tuple[str, str, str]] = []
+        self.dialogs: list[tuple[str, ...]] = []
         self.open_path = ""
         self.save_path = ""
         self.save_names: list[str] = []  # the file names the save dialog was opened with
@@ -89,6 +90,7 @@ class _Drive:
         self.window = MainWindow()
         # The tests' PNGs at 300 dpi, a quarter of the default's pixels: the default and others are tested on their own.
         self.window.controls.set_export_dpi(300)
+        self.window.notification.notified.connect(lambda level, text: self.dialogs.append((level, text)))
 
     def wait(self) -> None:
         """Until the window's jobs are done -- making or exporting a page, drawing it at print size, writing the file,
@@ -105,7 +107,11 @@ class _Drive:
             time.sleep(0.005)
 
     def status(self) -> str:
-        return self.window.statusBar().currentMessage()
+        return self.window.status.text()
+
+    def exported(self) -> bool:
+        """Whether the last thing the window told was an export done."""
+        return bool(self.dialogs) and self.dialogs[-1][0] == "success" and self.dialogs[-1][1].startswith("Exported ")
 
 
 @pytest.fixture
@@ -165,9 +171,10 @@ def test_an_opened_picture_is_previewed_with_the_panel_s_settings(drive, tmp_pat
     assert page is not None and page.page.size == (1100, 733)
     assert controls.generate_button.isEnabled() and controls.export_button.isEnabled()
     assert drive.window.preview.shown_image() is not None
-    assert drive.status() == (
-        f"Preview ready: {page.num_colors_used} colors, {page.num_regions} regions, made at 1100 × 733 px."
-    )
+    assert drive.status() == "Preview ready."
+    status = drive.window.status
+    assert status.page_label.text() == f"{page.num_colors_used} colors · {page.num_regions:,} regions"
+    assert status.size_label.text().startswith("1,100 × 733 px · ")
     assert drive.dialogs == []
 
 
@@ -183,7 +190,7 @@ def test_a_png_and_a_pdf_are_exported_at_300_dpi_on_a4(drive, tmp_path):
     assert long_edge == 3272 and kwargs["style"] == PageStyle() and kwargs["handling"] == Handling()
     with Image.open(tmp_path / "page.png") as png:
         assert png.width == 3272 and png.info["dpi"] == pytest.approx((300, 300), abs=0.2)
-    assert drive.dialogs == [("information", "Export complete", f"Saved to:\n{tmp_path / 'page.png'}\n\n3,272 × 1,636 px, 300 dpi on A4")]
+    assert drive.dialogs == [("success", "Exported page.png: 3,272 × 1,636 px, 300 dpi on A4.")]
     assert drive.status().endswith("(3,272 × 1,636 px, 300 dpi on A4)")
 
     controls.pdf_radio.setChecked(True)
@@ -200,7 +207,7 @@ def test_a_png_and_a_pdf_are_exported_at_300_dpi_on_a4(drive, tmp_path):
     _left, _top, mm_per_px, _ = pdf_reading.page_transform(page_sheet["content"])
     assert 25.4 / mm_per_px == pytest.approx(300, abs=0.2)
     assert print_scale((3272, 1636)).dpi == pytest.approx(300, abs=0.2)
-    assert len(drive.dialogs) == 2 and drive.dialogs[-1][1] == "Export complete"
+    assert len(drive.dialogs) == 2 and drive.exported()
 
 
 def test_an_export_is_its_preview_s_page_drawn_at_print_size(drive, tmp_path, monkeypatch):
@@ -250,7 +257,7 @@ def test_every_export_is_drawn_from_the_preview_s_print_layout(drive, drawn, tmp
     with Image.open(tmp_path / "page.png") as png:
         assert png.width == 3272 and png.info["dpi"] == pytest.approx((300, 300), abs=0.2)
         assert np.asarray(png.convert("RGB"))[: expected.height].tobytes() == expected.tobytes()
-    assert drive.dialogs[-1][1] == "Export complete" and not window.controls.progress_row.isVisible()
+    assert drive.exported() and not window.controls.progress_row.isVisible()
 
     window.controls.pdf_radio.setChecked(True)
     drive.save_path = str(tmp_path / "page.pdf")
@@ -266,7 +273,7 @@ def test_every_export_is_drawn_from_the_preview_s_print_layout(drive, drawn, tmp
     drive.wait()
     (_image, _params, long_edge), kwargs = drive.calls[-1]
     assert len(drive.calls) == calls + 1 and long_edge == 3272 and kwargs["handling"].brush_px == 2.0
-    assert kwargs["vector"] and drive.dialogs[-1][1] == "Export complete"
+    assert kwargs["vector"] and drive.exported()
 
 
 def test_a_running_generation_can_be_cancelled(drive, monkeypatch):
@@ -299,7 +306,7 @@ def test_a_failure_is_reported_and_the_window_is_ready_again(drive, monkeypatch)
     drive.window.generate_preview()
     drive.wait()
 
-    assert drive.dialogs == [("critical", "Generation failed", "no luck")]
+    assert drive.dialogs == [("error", "Generation failed: no luck")]
     assert drive.status() == "Generation failed." and drive.window.controls.generate_button.isEnabled()
 
 
@@ -307,7 +314,7 @@ def test_nothing_is_generated_or_exported_without_a_picture(drive):
     drive.window.generate_preview()
     drive.window.export_page()
 
-    assert drive.dialogs == [("warning", "No image", "Open an image first.")] * 2
+    assert drive.dialogs == [("info", "Open a picture first.")] * 2
     assert drive.calls == []
 
 
@@ -433,7 +440,7 @@ def test_the_version_asked_for_is_exported(drive, tmp_path):
     with Image.open(tmp_path / "completed.png") as png:
         top = png.convert("RGB").crop((0, 0, *expected.size))
         assert top.tobytes() == expected.tobytes()
-    assert drive.dialogs[-1][1] == "Export complete"
+    assert drive.exported()
 
     controls.version_combo.setCurrentIndex(controls.version_combo.findData(Version.TINTED))
     controls.pdf_radio.setChecked(True)
@@ -443,7 +450,7 @@ def test_the_version_asked_for_is_exported(drive, tmp_path):
     assert drive.save_names[-1] == "coloring_page_tinted.pdf"
     page_sheet = pdf_reading.sheets((tmp_path / "tinted.pdf").read_bytes())[0]
     assert page_sheet["content"].endswith("q /Mu gs /Pg Do Q\nQ")  # the page laid over its wash
-    assert drive.dialogs[-1][1] == "Export complete" and len(drive.dialogs) == 2
+    assert drive.exported() and len(drive.dialogs) == 2
 
 
 def _array(image) -> np.ndarray:
@@ -501,7 +508,7 @@ def test_zoomed_in_the_preview_shows_its_page_as_it_prints_and_the_export_saves_
     window.export_page()
     drive.wait()
     assert drawn == [window.current_page]  # the export is the page drawn for the zoom, not drawn again
-    assert drive.dialogs[-1][1] == "Export complete" and not window.controls.progress_row.isVisible()
+    assert drive.exported() and not window.controls.progress_row.isVisible()
     with Image.open(tmp_path / "page.png") as png:
         exported = np.asarray(png.convert("RGB"))
     # The PNG is the layout's vectors drawn in pixels (T3b); the zoom, the layout's own drawing of them: the same page,
@@ -532,8 +539,7 @@ def test_an_export_asked_for_while_the_zoom_draws_the_page_waits_for_it(drive, d
     drive.wait()
 
     assert drawn == [window.current_page] and len(drive.calls) == 1
-    saved = f"Saved to:\n{tmp_path / 'page.png'}\n\n3,272 × 1,636 px, 300 dpi on A4"
-    assert drive.dialogs == [("information", "Export complete", saved)]
+    assert drive.dialogs == [("success", "Exported page.png: 3,272 × 1,636 px, 300 dpi on A4.")]
     assert window.controls.generate_button.isEnabled()
 
 
@@ -680,7 +686,7 @@ def test_a_page_drawn_for_the_zoom_while_an_export_with_other_settings_is_made_i
     release.set()
     drive.wait()
 
-    assert drive.dialogs[-1][1] == "Export complete"
+    assert drive.exported()
     with Image.open(tmp_path / "page.png") as png:
         exported = np.asarray(png.convert("RGB"))
     assert (exported[: 1636] == np.asarray(export.rasterize(made[0].drawing, 300))).all()
@@ -728,7 +734,7 @@ def test_a_zoom_while_an_export_is_made_with_other_settings_draws_the_preview_s_
     assert window.jobs.current(PRINT_LAYOUT) is None
     drive.wait()
 
-    assert drive.dialogs[-1][1] == "Export complete" and len(drawn) == 2
+    assert drive.exported() and len(drawn) == 2
     assert drawn[-1] is shown and window._print_page.model is shown.model  # the page the preview shows
 
 
@@ -749,7 +755,7 @@ def test_a_png_is_drawn_at_the_resolution_asked_for(drive, tmp_path):
         assert png.width == expected.width == 1636 and png.info["dpi"] == pytest.approx((150, 150), abs=0.2)
         assert np.asarray(png.convert("RGB"))[: expected.height].tobytes() == expected.tobytes()
         assert png.height > expected.height  # its legend below
-    assert drive.dialogs[-1][1] == "Export complete" and "1,636 × 818 px, 150 dpi on A4" in drive.dialogs[-1][2]
+    assert drive.exported() and "1,636 × 818 px, 150 dpi on A4" in drive.dialogs[-1][1]
 
     controls.resolution_unit.setCurrentIndex(controls.resolution_unit.findData(controls_panel.PIXELS))
     controls.resolution_spin.setValue(5000)
@@ -812,7 +818,7 @@ def test_the_palette_is_exported_from_the_preview_s_legend_without_drawing_the_p
     expected = tmp_path / f"expected{suffix}"
     swatches.save_palette(expected, window.current_page.palette_rgb, title="colors")
     assert path.read_bytes() == expected.read_bytes()
-    assert drive.dialogs[-1] == ("information", "Export complete", f"Saved to:\n{path}")
+    assert drive.dialogs[-1] == ("success", f"Exported {path.name}.")
 
 
 def test_a_page_made_from_the_paints_listed_is_painted_in_them_and_its_legend_calls_them_by_name(drive):

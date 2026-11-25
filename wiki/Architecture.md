@@ -61,6 +61,7 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 | `app/jobs.py` | `JobManager` and `Job`: every background step, its identity, and the checks on its result |
 | `gui/actions.py` | Every command as one `QAction`: text, icon, shortcut, menu |
 | `gui/main_window.py`, `workspace.py` | The window: toolbar, activity bar, sidebar, canvas and inspector in a splitter; focus mode, reflow, the layout kept between runs |
+| `gui/status.py`, `notifications.py` | The status bar (state, progress, the page's figures, the zoom); the notifications over the page and the diagnostics log, which records each job as it ends and the app's own warnings and errors from any thread |
 | `gui/controls_panel.py`, `preview_widget.py`, `paints_dialog.py` | The settings sidebar (a page per category, laid out by the registry's sections), the zoomable preview, the paints' list (swatches, a color picker, sample kits) |
 
 ## Data model

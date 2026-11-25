@@ -89,6 +89,21 @@ QWidget#inspector > QLabel[role="secondary"] {{ background: {c.sidebar}; padding
 QListWidget#paletteList {{ background: {c.sidebar}; color: {c.text}; border: none; outline: 0; padding: 0px 6px; }}
 QListWidget#paletteList::item {{ padding: 3px 4px; border-radius: {rs}px; }}
 QListWidget#paletteList::item:hover {{ background: {c.hover}; }}
+QFrame#notification {{ background: {c.raised}; border: 1px solid {c.border}; border-left: 4px solid {c.info};
+    border-radius: {rs}px; margin: 6px 8px 0px; }}
+QFrame#notification[level="success"] {{ border-left-color: {c.success}; }}
+QFrame#notification[level="warning"] {{ border-left-color: {c.warning}; }}
+QFrame#notification[level="error"] {{ border-left-color: {c.error}; }}
+QLabel#notificationText {{ color: {c.text}; }}
+QWidget#diagnostics {{ background: {c.sidebar}; border-top: 1px solid {c.border}; }}
+QListWidget#diagnosticsList, QPlainTextEdit#diagnosticsDetails {{ background: {c.field}; color: {c.text};
+    border: none; border-top: 1px solid {c.border}; }}
+QListWidget#diagnosticsList::item {{ padding: 2px 4px; }}
+QListWidget#diagnosticsList::item:selected {{ background: {c.selected}; color: {c.text}; }}
+QLabel#statusText {{ color: {c.text}; }}
+QProgressBar#statusProgress {{ background: {c.field}; border: 1px solid {c.border}; border-radius: {rs}px;
+    max-height: 6px; }}
+QProgressBar#statusProgress::chunk {{ background: {c.accent}; border-radius: {rs}px; }}
 QGraphicsView#canvas {{ background: {c.canvas}; border: none; }}
 QLabel#thumbnail {{ border: 1px solid {c.border_strong}; color: {c.text_hint}; background: {c.field};
     border-radius: {rs}px; }}

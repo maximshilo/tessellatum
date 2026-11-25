@@ -27,7 +27,15 @@ The window follows your system's light or dark appearance, and changes with it w
   what doesn't fit goes into the toolbar's » menu.
 - **Inspector** (right): the page's colors, numbered as on its legend, with their names; hover one for its hex and
   RGB, and, for a mixed color, its recipe.
-- **Status bar** (bottom): what the app is doing, and what the last page came to.
+- **Status bar** (bottom): what the app is doing, with a progress bar while it works; on its right, the page's colors
+  and regions, its size in pixels and on paper, the zoom, and the count of warnings and errors in the diagnostics
+  (click it to open them).
+- **Notifications** (over the page): what just happened, such as an export done, with **Show in Folder**, or a failure,
+  with **Details**. They never take the keyboard focus: a success goes by itself, a warning or an error stays until
+  you close it.
+- **Diagnostics** (View > Diagnostics, Ctrl+Shift+D): a log, under the page, of each step the app ran, how long it took
+  and how it ended, and every warning and error. Select one to see its details; **Copy** puts it on the clipboard,
+  for a bug report. It never opens by itself.
 
 Drag the borders between the panels to resize them. **View > Sidebar** (Ctrl+B) and **View > Inspector** (Ctrl+Alt+B)
 show or hide them; **Focus Mode** (Ctrl+Shift+F) hides everything around the page, and Esc, or the same shortcut,
@@ -61,6 +69,7 @@ Every command is in the menu bar, and the most used have a shortcut (Cmd in plac
 | View > Source, Generation, Colors, Document Settings | Ctrl+Shift+1 to 4 |
 | View > Sidebar, Inspector | Ctrl+B, Ctrl+Alt+B |
 | View > Focus Mode | Ctrl+Shift+F (Esc leaves it) |
+| View > Diagnostics | Ctrl+Shift+D |
 
 **View > Appearance** picks System (the window follows the system's light or dark setting as it changes), Light or
 Dark, and the choice is kept. **Edit > Reset All Settings** is the Difficulty section's Reset; **Help > About Tessellatum** shows

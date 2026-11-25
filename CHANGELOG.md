@@ -4,6 +4,23 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.7] - 2026-11-25
+
+### Changed
+
+- **No more message boxes in the way.** What just happened is told in a banner over the page: an export done, with
+  **Show in Folder**; a failure, with **Details**. It never takes the keyboard focus; a success goes by itself after a
+  few seconds, a warning or an error stays until closed.
+- **The status bar** says what the app is doing, with an icon and a progress bar while it works, and keeps the page's
+  colors and regions, its size in pixels and on paper, and the zoom on its right.
+- **Diagnostics** (View > Diagnostics, Ctrl+Shift+D): a log under the page of each step the app ran, how long it took
+  and how it ended, and every warning and error with its details, to copy into a bug report. It never opens by
+  itself: the status bar counts its warnings and errors, and a click on the count opens it.
+
+### Fixed
+
+- With no page yet, the inspector's title sat halfway down the panel.
+
 ## [1.1.6] - 2026-11-25
 
 ### Changed

@@ -53,7 +53,7 @@ def main() -> None:
         time.sleep(0.01)
     out = ROOT / "docs" / "assets" / "screenshot.png"
     window.grab().save(str(out))
-    print("written", out.relative_to(ROOT), window.statusBar().currentMessage())
+    print("written", out.relative_to(ROOT), window.status.text(), window.status.page_label.text())
     window.close()
 
 
