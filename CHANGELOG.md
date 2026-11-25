@@ -4,6 +4,28 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.6] - 2026-11-25
+
+### Changed
+
+- **A new workspace.** A toolbar along the top (Open, Generate Preview, which turns into Cancel while a page is made,
+  and Export); an activity bar down the left that picks the settings shown: **Source** (the picture and how it is
+  read), **Generation** (the difficulty, the regions and their detail), **Colors** (what the page is colored with,
+  and its palette) and **Document** (the paper, lines, numbers, legend and export). Each category has its own page,
+  in sections; sections of advanced settings start folded. Generate Preview and Export stay at the foot of every page.
+- **The palette beside the page**: an inspector on the right lists the page's colors, numbered as on its legend, with
+  their names; hover one for its hex and RGB.
+- The canvas has its own toolbar: the version shown and the zoom. On a narrow window, what doesn't fit goes into its
+  overflow menu.
+- The sidebar and the inspector can be resized and folded away (View > Sidebar, Ctrl+B; View > Inspector,
+  Ctrl+Alt+B; or click the page already shown in the activity bar). **Focus Mode** (Ctrl+Shift+F) hides every panel
+  around the page, and Esc brings them back as they were. The categories have shortcuts too (Ctrl+Shift+1 to 4).
+- The layout is kept between runs: the window's size, the panels' sizes and whether they show, the page shown, and
+  each page's scroll position and folded sections. **View > Reset Layout** puts it back as it starts.
+- On a narrow window the inspector folds away by itself, then the sidebar, and they come back as the window widens.
+- The large thumbnail of the picture is gone from the panel: the Source page shows it small, with its file name and
+  size.
+
 ## [1.1.5] - 2026-11-25
 
 ### Changed

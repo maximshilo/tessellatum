@@ -1,4 +1,8 @@
-"""Left-hand controls: open image, difficulty and every setting, page style, picture handling, export, generate.
+"""The settings sidebar: one page per category of the registry (Source, Generation, Colors, Document), each in its
+own scroll area, over a footer with the primary action (Generate), the progress, and Export.
+
+Each page is laid out by the registry's sections (``PAGE_SECTIONS``): every setting sits in its entry's category and
+section, the choices of a section before its sliders. A section of advanced settings only starts folded.
 
 Each setting the app offers (see ``core.settings``) gets a slider, built from
 its entry there: its range, its step, its unit and its tooltip. The difficulty
@@ -17,14 +21,16 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
-    QGroupBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QProgressBar,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSlider,
     QSpinBox,
+    QStackedWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -67,7 +73,22 @@ from tessellatum.core.settings import (  # noqa: F401 - the registry's strings, 
     Setting,
 )
 
-THUMBNAIL_SIZE = 220
+# The picture on the Source page: no wider than this (the canvas's Original view, I1, shows it whole).
+THUMBNAIL_SIZE = 160
+
+# The sections of each page, in order: the registry's sections of that category (``Setting.section``,
+# ``Choice.section``), and the two the panel adds, the picture itself and the export's options (W5 moves those to the
+# export dialog).
+PICTURE, EXPORT = "Picture", "Export"
+PAGE_SECTIONS = {
+    settings.SOURCE: (PICTURE, "Picture handling"),
+    settings.GENERATION: (
+        "Difficulty", "Detail", "Faces and subject", "Line art", "Text", "Advanced · Edges", "Advanced · Corners",
+        "Advanced · Resolution",
+    ),
+    settings.COLORS: ("Medium", "Source of colors", "Palette", "Mixing"),
+    settings.DOCUMENT: ("Page", "Lines and numbers", "Tone", "Legend", "Advanced · Lines", "Advanced · Numbers", EXPORT),
+}
 
 # A slider over a setting that moves in equal ratios (``Setting.log``) has this many steps: the region size's, from 5
 # to 500 mm², about 4% apart, so that 5 -> 10 mm² is as big a move as 250 -> 500 mm².
@@ -240,10 +261,13 @@ class ControlsPanel(QWidget):
         self._announced: DocumentSettings | None = None  # the settings last sent with settings_changed
 
         self.open_button = QPushButton("Open Image…")
-        self.thumbnail_label = QLabel("No image loaded")
+        self.thumbnail_label = QLabel("No picture open")
         self.thumbnail_label.setAlignment(Qt.AlignCenter)
-        self.thumbnail_label.setFixedSize(THUMBNAIL_SIZE, THUMBNAIL_SIZE)
+        self.thumbnail_label.setFixedSize(THUMBNAIL_SIZE, THUMBNAIL_SIZE * 2 // 3)
         self.thumbnail_label.setObjectName("thumbnail")
+        self.picture_label = QLabel()
+        self.picture_label.setProperty("role", "secondary")
+        self.picture_label.setWordWrap(True)
 
         self.preset_combo = QComboBox()
         self.preset_combo.addItems(difficulty.preset_names())
@@ -260,15 +284,8 @@ class ControlsPanel(QWidget):
         preset_layout.addWidget(self.preset_combo, 1)
         preset_layout.addWidget(self.reset_button)
 
-        # One slider per setting, by the field's name, in the section its group names.
+        # One slider per setting, by the field's name; placed in its section by _lay_out.
         self.controls: dict[str, SettingSlider] = {s.name: SettingSlider(s) for s in settings.SETTINGS}
-        self.sections: dict[str, Section] = {
-            group: Section(group, expanded=group in (settings.REGIONS, settings.LINES)) for group in settings.GROUPS
-        }
-        for s in settings.SETTINGS:
-            label = QLabel(s.label)
-            label.setToolTip(s.tooltip)
-            self.sections[s.group].form.addRow(label, self.controls[s.name])
 
         self.tone_combo = QComboBox()
         self.tone_combo.addItems([*TONES, CUSTOM_TONE])
@@ -277,29 +294,22 @@ class ControlsPanel(QWidget):
         self.tone_combo.setItemData(len(TONES), CUSTOM_TONE_TOOLTIP, Qt.ToolTipRole)
         self.tone_combo.setCurrentText(DEFAULT_TONE)
         self.tone_combo.setToolTip(settings.choice("tone").tooltip)
-        self.sections[settings.LINES].form.insertRow(1, "Tone", self.tone_combo)
         self.legend_combo = QComboBox()
         self.legend_combo.addItems(list(LEGEND_DETAILS))
         for index, name in enumerate(LEGEND_DETAILS):
             self.legend_combo.setItemData(index, LEGEND_TOOLTIPS[name], Qt.ToolTipRole)
         self.legend_combo.setCurrentText(DEFAULT_LEGEND_DETAIL)
         self.legend_combo.setToolTip(LEGEND_TOOLTIP)
-        self.sections[settings.LINES].form.insertRow(2, "Legend", self.legend_combo)
-        self.sections[settings.LINES].form.labelForField(self.legend_combo).setToolTip(LEGEND_TOOLTIP)
         self.paper_combo = QComboBox()
         self.paper_combo.addItems(list(PAPERS))
         self.paper_combo.setCurrentText(DEFAULT_PAPER)
         self.paper_combo.setToolTip(PAPER_TOOLTIP)
-        self.sections[settings.REGIONS].form.insertRow(0, "Paper", self.paper_combo)
-        self.sections[settings.REGIONS].form.labelForField(self.paper_combo).setToolTip(PAPER_TOOLTIP)
         self.medium_combo = QComboBox()
         self.medium_combo.addItems(list(difficulty.MEDIA))
         for index, name in enumerate(difficulty.MEDIA):
             self.medium_combo.setItemData(index, MEDIUM_TOOLTIPS[name], Qt.ToolTipRole)
         self.medium_combo.setCurrentText(difficulty.DEFAULT_MEDIUM)
         self.medium_combo.setToolTip(MEDIUM_TOOLTIP)
-        self.sections[settings.REGIONS].form.insertRow(1, "Coloring on", self.medium_combo)
-        self.sections[settings.REGIONS].form.labelForField(self.medium_combo).setToolTip(MEDIUM_TOOLTIP)
         self._paints: tuple = ()
         self.colors_from_combo = QComboBox()
         self.colors_from_combo.addItems(list(COLORS_FROM))
@@ -311,20 +321,8 @@ class ControlsPanel(QWidget):
         colors_from_layout.setContentsMargins(0, 0, 0, 0)
         colors_from_layout.addWidget(self.colors_from_combo, 1)
         colors_from_layout.addWidget(self.paints_button)
-        self.sections[settings.REGIONS].form.insertRow(2, "Colors from", colors_from_row)
-        self.sections[settings.REGIONS].form.labelForField(colors_from_row).setToolTip(COLORS_FROM_TOOLTIP)
         self.mix_check = QCheckBox(settings.choice("mix_paints").label)
         self.mix_check.setToolTip(MIX_TOOLTIP)
-        self.sections[settings.REGIONS].form.insertRow(3, QLabel(""), self.mix_check)
-        # Every section's labels as wide as the widest, so that the sliders line up from one section to the next.
-        labels = [
-            section.form.labelForField(section.form.itemAt(row, QFormLayout.FieldRole).widget())
-            for section in self.sections.values()
-            for row in range(section.form.rowCount())
-        ]
-        label_width = max(label.sizeHint().width() for label in labels)
-        for label in labels:
-            label.setMinimumWidth(label_width)
 
         self._switches: dict[str, QCheckBox] = {}
         for name in settings.SWITCHES:
@@ -332,14 +330,9 @@ class ControlsPanel(QWidget):
             check.setToolTip(settings.choice(name).tooltip)
             self._switches[name] = check
         self.line_art_check, self.detail_check, self.text_check = (self._switches[n] for n in settings.SWITCHES)
-        handling_group = QGroupBox("Picture handling")
-        handling_layout = QVBoxLayout()
         for check in self._switches.values():
             check.setChecked(True)
-            handling_layout.addWidget(check)
-        handling_group.setLayout(handling_layout)
 
-        export_group = QGroupBox("Export")
         self.version_combo = QComboBox()
         for index, version in enumerate(Version):
             self.version_combo.addItem(version.value, version)
@@ -405,7 +398,9 @@ class ControlsPanel(QWidget):
         export_form.addRow("", presets_row)
         export_form.addRow(self.resolution_readout)
         export_form.labelForField(resolution_row).setToolTip(RESOLUTION_TOOLTIP)
-        export_group.setLayout(export_form)
+        export_form.setContentsMargins(0, 0, 0, 0)
+        export_box = QWidget()
+        export_box.setLayout(export_form)
 
         self.generate_button = QPushButton("Generate Preview")
         self.generate_button.setProperty("primary", True)  # the one primary action
@@ -435,21 +430,13 @@ class ControlsPanel(QWidget):
         progress_row_layout.addWidget(self.abort_button)
         self.progress_row.setVisible(False)
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.open_button)
-        layout.addWidget(self.thumbnail_label, alignment=Qt.AlignCenter)
-        layout.addWidget(QLabel("Difficulty"))
-        layout.addWidget(preset_row)
-        layout.addWidget(self.sections[settings.REGIONS])
-        layout.addWidget(self.sections[settings.LINES])
-        layout.addWidget(handling_group)
-        for group in (settings.FACES, settings.LINE_ART, settings.TEXT):
-            layout.addWidget(self.sections[group])
-        layout.addWidget(export_group)
-        layout.addWidget(self.generate_button)
-        layout.addWidget(self.progress_row)
-        layout.addWidget(self.export_button)
-        layout.addStretch(1)
+        # Each of the registry's choices, by name, and the control that edits it.
+        self.choice_widgets: dict[str, QWidget] = {
+            "preset": self.preset_combo, "paper": self.paper_combo, "medium": self.medium_combo,
+            "colors_from": self.colors_from_combo, "paints": self.paints_button, "mix_paints": self.mix_check,
+            "tone": self.tone_combo, "legend_detail": self.legend_combo, **self._switches,
+        }
+        self._lay_out(preset_row, colors_from_row, export_box)
 
         self.open_button.clicked.connect(self.open_image_requested)
         self.generate_button.clicked.connect(self.generate_requested)
@@ -475,18 +462,104 @@ class ControlsPanel(QWidget):
         for check in self._switches.values():
             check.toggled.connect(lambda _checked: self._on_switch_changed())
 
-        # Each of the registry's choices, by name, and the control that edits it.
-        self.choice_widgets: dict[str, QWidget] = {
-            "preset": self.preset_combo, "paper": self.paper_combo, "medium": self.medium_combo,
-            "colors_from": self.colors_from_combo, "paints": self.paints_button, "mix_paints": self.mix_check,
-            "tone": self.tone_combo, "legend_detail": self.legend_combo, **self._switches,
-        }
-
         self._show_preset(difficulty.DEFAULT_PRESET)
         self._show_resolution()
         self._show_paints()  # the mixing settings stand aside until the colors come from the paints
         self._load()
         self._announced = self.snapshot()
+
+    # -- Layout ----------------------------------------------------------
+    def _lay_out(self, preset_row: QWidget, colors_from_row: QWidget, export_box: QWidget) -> None:
+        """Every control into its page and section (``PAGE_SECTIONS``), the pages into a stack of scroll areas, and
+        the footer under them."""
+        row_widgets: dict[str, QWidget] = {**self.choice_widgets, "preset": preset_row, "colors_from": colors_from_row}
+        del row_widgets["paints"]  # its button sits in the Colors from row
+        self.sections: dict[str, Section] = {}
+        self.pages: dict[str, QWidget] = {}
+        self.scrolls: dict[str, QScrollArea] = {}
+        self.stack = QStackedWidget()
+        for category, names in PAGE_SECTIONS.items():
+            page = QWidget()
+            page.setObjectName("sidebarPage")
+            page_layout = QVBoxLayout(page)
+            page_layout.setContentsMargins(8, 4, 8, 8)
+            page_layout.setSpacing(6)
+            labels: list[QLabel] = []
+            for name in names:
+                entries = [e for e in settings.entries() if e.category == category and e.section == name]
+                # A section of advanced settings only starts folded.
+                section = Section(name, expanded=not entries or any(e.level != settings.ADVANCED for e in entries))
+                self.sections[name] = section
+                page_layout.addWidget(section)
+                choices = [e for e in entries if isinstance(e, settings.Choice) and e.name in row_widgets]
+                for entry in choices + [e for e in entries if isinstance(e, Setting)]:
+                    widget = self.controls[entry.name] if isinstance(entry, Setting) else row_widgets[entry.name]
+                    if isinstance(widget, QCheckBox):
+                        section.form.addRow(widget)
+                        continue
+                    if entry.label == name:  # the section's title names it already: "Tone" under Tone
+                        target = self.preset_combo if entry.name == "preset" else widget
+                        target.setAccessibleName(entry.label)
+                        section.form.addRow(widget)
+                        continue
+                    label = QLabel(entry.label)
+                    label.setToolTip(entry.tooltip)
+                    label.setBuddy(widget.slider if isinstance(widget, SettingSlider) else widget)
+                    section.form.addRow(label, widget)
+                    labels.append(label)
+            if category == settings.SOURCE:
+                self.sections[PICTURE].form.addRow(self.open_button)
+                self.sections[PICTURE].form.addRow(self.thumbnail_label)
+                self.sections[PICTURE].form.addRow(self.picture_label)
+            if category == settings.DOCUMENT:
+                self.sections[EXPORT].form.addRow(export_box)
+            page_layout.addStretch(1)
+            # A page's labels as wide as its widest, so that its sliders line up from one section to the next.
+            if labels:
+                width = max(label.sizeHint().width() for label in labels)
+                for label in labels:
+                    label.setMinimumWidth(width)
+            scroll = QScrollArea()
+            scroll.setObjectName("sidebarScroll")
+            scroll.setWidget(page)
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            # As wide as the page needs with the scroll bar beside it, so that nothing is cut off when it shows.
+            scroll.setMinimumWidth(page.minimumSizeHint().width() + scroll.verticalScrollBar().sizeHint().width())
+            self.pages[category] = page
+            self.scrolls[category] = scroll
+            self.stack.addWidget(scroll)
+
+        self.title = QLabel()
+        self.title.setObjectName("sidebarTitle")
+        footer = QWidget()
+        footer.setObjectName("sidebarFooter")
+        footer_layout = QVBoxLayout(footer)
+        footer_layout.setContentsMargins(8, 8, 8, 8)
+        footer_layout.addWidget(self.generate_button)
+        footer_layout.addWidget(self.progress_row)
+        footer_layout.addWidget(self.export_button)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.title)
+        layout.addWidget(self.stack, 1)
+        layout.addWidget(footer)
+        self.show_category(settings.GENERATION)
+
+    def show_category(self, category: str) -> None:
+        """Show the page of ``category`` (one of ``PAGE_SECTIONS``)."""
+        self.stack.setCurrentWidget(self.scrolls[category])
+        self.title.setText(category)
+
+    def category(self) -> str:
+        """The category whose page is shown."""
+        return next(c for c, scroll in self.scrolls.items() if scroll is self.stack.currentWidget())
+
+    def section_of(self, widget: QWidget) -> Section | None:
+        """The section holding ``widget``, if any."""
+        return next((section for section in self.sections.values() if section.body.isAncestorOf(widget)), None)
 
     # -- Settings --------------------------------------------------------
     def _difficulty_controls(self) -> dict[str, SettingSlider]:
@@ -654,10 +727,9 @@ class ControlsPanel(QWidget):
         self.abort_requested.emit()
 
     def set_thumbnail(self, pixmap: QPixmap) -> None:
-        scaled = pixmap.scaled(
-            THUMBNAIL_SIZE, THUMBNAIL_SIZE, Qt.KeepAspectRatio, Qt.SmoothTransformation
-        )
-        self.thumbnail_label.setPixmap(scaled)
+        """The picture, small, on the Source page."""
+        box = self.thumbnail_label.size()
+        self.thumbnail_label.setPixmap(pixmap.scaled(box, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     # -- The settings as one value -----------------------------------------
     def snapshot(self) -> DocumentSettings:
@@ -828,9 +900,11 @@ class ControlsPanel(QWidget):
         return self.version_combo.currentData()
 
     # -- The PNG's resolution ------------------------------------------------
-    def set_picture_size(self, size: tuple[int, int] | None) -> None:
-        """The picture's pixels (width, height), whose shape sets how large the page prints, or None."""
+    def set_picture_size(self, size: tuple[int, int] | None, name: str = "") -> None:
+        """The picture's pixels (width, height), whose shape sets how large the page prints, or None; ``name``, its
+        file's, shown with it on the Source page."""
         self._picture_size = size
+        self.picture_label.setText("" if size is None else f"{name + ': ' if name else ''}{size[0]:,} × {size[1]:,} px")
         self._show_resolution()
 
     def set_export_dpi(self, dpi: float) -> None:

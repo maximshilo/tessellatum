@@ -65,15 +65,38 @@ def test_every_setting_has_a_slider_in_its_section_with_its_tooltip_and_unit(pan
         assert control.setting is s and control.isEnabled() == (reason is None)
         assert control.toolTip() == (s.tooltip if reason is None else f"{reason} {s.tooltip}")
         assert control.value_label.text() == s.text(control.value())
-        assert panel.sections[s.group].body.isAncestorOf(control)
-    # The tone sits with the lines; the faces', line art's and text's own settings start folded away.
-    assert panel.sections[settings.LINES].body.isAncestorOf(panel.tone_combo)
-    assert {group: section.is_expanded() for group, section in panel.sections.items()} == {
-        settings.REGIONS: True, settings.FACES: False, settings.LINES: True, settings.LINE_ART: False,
-        settings.TEXT: False,
+        # On its category's page, in its section (W1).
+        assert panel.sections[s.section].body.isAncestorOf(control) and panel.pages[s.category].isAncestorOf(control)
+    for name, widget in panel.choice_widgets.items():
+        choice = settings.choice(name)
+        assert panel.sections[choice.section].body.isAncestorOf(widget), name
+        assert panel.pages[choice.category].isAncestorOf(widget), name
+    # The tone heads its grays; a section of advanced settings only starts folded away.
+    assert panel.sections["Tone"].body.isAncestorOf(panel.tone_combo)
+    folded = {name for name, section in panel.sections.items() if not section.is_expanded()}
+    assert folded == {
+        "Line art", "Text", "Advanced · Edges", "Advanced · Corners", "Advanced · Resolution", "Advanced · Lines",
+        "Advanced · Numbers",
     }
-    panel.sections[settings.TEXT].toggle.click()
-    assert panel.sections[settings.TEXT].is_expanded() and not panel.sections[settings.TEXT].body.isHidden()
+    panel.sections["Text"].toggle.click()
+    assert panel.sections["Text"].is_expanded() and not panel.sections["Text"].body.isHidden()
+
+
+def test_every_section_of_the_registry_has_its_place_on_its_category_s_page():
+    for entry in settings.entries():
+        assert entry.section in controls_panel.PAGE_SECTIONS[entry.category], entry.name
+    named = [name for names in controls_panel.PAGE_SECTIONS.values() for name in names]
+    assert len(named) == len(set(named))
+
+
+def test_the_sidebar_shows_one_category_s_page_at_a_time(panel):
+    assert panel.category() == settings.GENERATION and panel.title.text() == settings.GENERATION
+    panel.show_category(settings.COLORS)
+    assert panel.category() == settings.COLORS and panel.stack.currentWidget() is panel.scrolls[settings.COLORS]
+    assert panel.pages[settings.SOURCE].isAncestorOf(panel.open_button)
+    assert panel.pages[settings.DOCUMENT].isAncestorOf(panel.png_radio)  # the export's options, until W5
+    # The primary action stays in the footer, whatever page shows.
+    assert not any(page.isAncestorOf(panel.generate_button) for page in panel.pages.values())
 
 
 def test_the_panel_starts_at_the_defaults(panel):
@@ -305,17 +328,21 @@ def test_at_its_narrowest_every_slider_has_room_and_the_sliders_line_up(panel):
     for section in panel.sections.values():
         section.toggle.setChecked(True)
     panel.show()  # laid out only once shown
-    panel.resize(panel.minimumSizeHint().width(), panel.sizeHint().height())
-    _app.processEvents()
-    for s in settings.SETTINGS:
-        control = panel.controls[s.name]
-        assert control.slider.width() >= controls_panel.MIN_SLIDER_WIDTH, s.name
-        # A setting's label explains it too.
-        assert panel.sections[s.group].form.labelForField(control).toolTip() == s.tooltip
-    # Every section's labels are as wide as the widest, so the sliders start in one column.
-    lefts = {panel.controls[s.name].slider.mapTo(panel, panel.controls[s.name].slider.rect().topLeft()).x()
-             for s in settings.SETTINGS}
-    assert len(lefts) == 1
+    for category in controls_panel.PAGE_SECTIONS:
+        panel.show_category(category)
+        panel.resize(panel.minimumSizeHint().width(), 2000)
+        _app.processEvents()
+        on_page = [s for s in settings.SETTINGS if s.category == category]
+        for s in on_page:
+            control = panel.controls[s.name]
+            assert control.slider.width() >= controls_panel.MIN_SLIDER_WIDTH, s.name
+            # A setting's label explains it too, and names it to a screen reader (its buddy).
+            label = panel.sections[s.section].form.labelForField(control)
+            assert label.toolTip() == s.tooltip and label.buddy() is control.slider
+        # A page's labels are as wide as its widest, so its sliders start in one column.
+        lefts = {panel.controls[s.name].slider.mapTo(panel, panel.controls[s.name].slider.rect().topLeft()).x()
+                 for s in on_page}
+        assert len(lefts) <= 1, category
 
 
 def test_any_version_of_the_page_can_be_exported_and_the_page_itself_is_the_default(panel):

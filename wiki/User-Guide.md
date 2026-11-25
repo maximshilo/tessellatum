@@ -1,12 +1,38 @@
 # User guide
 
-The panel on the left holds every setting; **Generate Preview** draws the page with them, and **Export…** draws that
+The settings sit in the sidebar on the left, one page per category; **Generate Preview** draws the page with them,
+and **Export…** draws that
 same page at print resolution: the regions, colors and legend the preview shows, its lines smoothed as they are
 there, and its numbers placed again, as small as the style lets them print. If a setting changed since the preview,
 the export makes the page with it first. Every setting has a tooltip; sizes are on the printed page, on the sheet
-**Paper** names; the panel keeps them between runs, and **Reset** puts them all back.
+**Paper** names; the app keeps them between runs, and **Reset** puts them all back.
 
 The window follows your system's light or dark appearance, and changes with it while open.
+
+## The workspace
+
+- **Toolbar** (top): Open Image, Generate Preview (it turns into Cancel while a page is made) and Export; at its right
+  end, the buttons that show or hide the sidebar and the inspector, and Focus Mode.
+- **Activity bar** (left edge): picks the settings shown in the sidebar:
+  - **Source**: the picture, small, with its file name and size, and how it is read (line art, faces and subject,
+    text);
+  - **Generation**: the difficulty and the settings that shape the regions;
+  - **Colors**: what the page is colored with, where its colors come from, the palette and mixing;
+  - **Document**: the paper, lines and numbers, their tone, the legend, and the export's options.
+
+  Clicking the page already shown folds the sidebar away; clicking any page brings it back.
+- **Sidebar**: the category's settings in sections; click a section's title to fold or unfold it (sections of
+  advanced settings start folded). Generate Preview and Export stay at its foot on every page.
+- **Canvas** (middle): the page, with its own toolbar above it: the version shown and the zoom. On a narrow window,
+  what doesn't fit goes into the toolbar's » menu.
+- **Inspector** (right): the page's colors, numbered as on its legend, with their names; hover one for its hex and
+  RGB, and, for a mixed color, its recipe.
+- **Status bar** (bottom): what the app is doing, and what the last page came to.
+
+Drag the borders between the panels to resize them. **View > Sidebar** (Ctrl+B) and **View > Inspector** (Ctrl+Alt+B)
+show or hide them; **Focus Mode** (Ctrl+Shift+F) hides everything around the page, and Esc, or the same shortcut,
+brings it all back as it was. On a narrow window the inspector folds away by itself, then the sidebar, and they come
+back as the window widens. The layout is kept between runs; **View > Reset Layout** puts it back as it starts.
 
 ## The three versions
 
@@ -32,9 +58,12 @@ Every command is in the menu bar, and the most used have a shortcut (Cmd in plac
 | View > Page, Completed, Tinted | Ctrl+1, Ctrl+2, Ctrl+3 |
 | View > Zoom In, Zoom Out | Ctrl+plus, Ctrl+minus |
 | View > Fit Page, 100% | Ctrl+0, Ctrl+Alt+0 |
+| View > Source, Generation, Colors, Document Settings | Ctrl+Shift+1 to 4 |
+| View > Sidebar, Inspector | Ctrl+B, Ctrl+Alt+B |
+| View > Focus Mode | Ctrl+Shift+F (Esc leaves it) |
 
 **View > Appearance** picks System (the window follows the system's light or dark setting as it changes), Light or
-Dark, and the choice is kept. **Edit > Reset All Settings** is the panel's Reset; **Help > About Tessellatum** shows
+Dark, and the choice is kept. **Edit > Reset All Settings** is the Difficulty section's Reset; **Help > About Tessellatum** shows
 the version and the licenses.
 
 ## Zoom
@@ -141,6 +170,9 @@ paper whatever its pixel count, and a long, narrow picture, which prints smaller
 smaller ones.
 
 ## Settings
+
+The sidebar shows them by category (see [The workspace](#the-workspace)); below they are described by what they
+shape.
 
 **Regions and colors**
 - **Colors**: how many colors to look for. Colors closer than the color margin are merged, so a page can keep fewer.

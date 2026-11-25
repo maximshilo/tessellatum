@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart TB
-    GUI["Presentation: MainWindow · actions · ControlsPanel · PreviewWidget · theme (PySide6)"]
+    GUI["Presentation: MainWindow · workspace · actions · ControlsPanel · PreviewWidget · theme (PySide6)"]
     APP["Application: Document · DocumentSettings · JobManager (QtCore, no widgets)"]
     W["Concurrency: job threads (QThread) · warm-up thread · thread pool"]
     O["Orchestration: pipeline.py · settings.py · difficulty.py · print_size.py"]
@@ -60,7 +60,8 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 | `app/snapshot.py`, `app/document.py` | `DocumentSettings`, every setting as one immutable value; `Document`, the picture, its settings and the page made of them |
 | `app/jobs.py` | `JobManager` and `Job`: every background step, its identity, and the checks on its result |
 | `gui/actions.py` | Every command as one `QAction`: text, icon, shortcut, menu |
-| `gui/main_window.py`, `controls_panel.py`, `preview_widget.py`, `paints_dialog.py` | Window, settings panel, zoomable preview, the paints' list (swatches, a color picker, sample kits) |
+| `gui/main_window.py`, `workspace.py` | The window: toolbar, activity bar, sidebar, canvas and inspector in a splitter; focus mode, reflow, the layout kept between runs |
+| `gui/controls_panel.py`, `preview_widget.py`, `paints_dialog.py` | The settings sidebar (a page per category, laid out by the registry's sections), the zoomable preview, the paints' list (swatches, a color picker, sample kits) |
 
 ## Data model
 

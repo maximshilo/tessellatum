@@ -14,6 +14,7 @@ from PySide6.QtCore import QObject
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import QMenuBar, QWidget
 
+from tessellatum.core import settings
 from tessellatum.core.painting import Version
 from tessellatum.gui import theme
 from tessellatum.gui.theme import icons
@@ -52,6 +53,16 @@ COMMANDS = (
     Command("actual_pixels", "&100%", VIEW, "A pixel of the page as it prints on a pixel of the screen",
             "actual_size", ("Ctrl+Alt+0",)),
     Command("print_size", "&Print Size", VIEW, "The page as large as on paper, by the size the screen reports"),
+    *(Command(f"activity_{category.lower()}", f"&{category} Settings", VIEW, f"Show the {category} settings",
+              category.lower(), (f"Ctrl+Shift+{i}",), checkable=True)
+      for i, category in enumerate(settings.CATEGORIES, start=1)),
+    Command("toggle_sidebar", "&Sidebar", VIEW, "Show or hide the settings sidebar", "left_panel", ("Ctrl+B",),
+            checkable=True),
+    Command("toggle_inspector", "&Inspector", VIEW, "Show or hide the inspector: the page's colors", "right_panel",
+            ("Ctrl+Alt+B",), checkable=True),
+    Command("focus_mode", "F&ocus Mode", VIEW, "Hide every panel around the page; Esc brings them back", "focus",
+            ("Ctrl+Shift+F",), checkable=True),
+    Command("reset_layout", "Reset &Layout", VIEW, "Put the panels back where they start"),
     *(Command(f"theme_{mode.lower()}", f"&{mode}", VIEW, f"The {mode.lower()} appearance" if mode != theme.SYSTEM
               else "The system's appearance, following it as it changes", checkable=True) for mode in theme.MODES),
     Command("about", "&About Tessellatum", HELP, "Its version and licenses", "info", role=QAction.AboutRole),
@@ -60,6 +71,7 @@ COMMAND_IDS = tuple(command.id for command in COMMANDS)
 VERSION_ACTIONS = {v: f"show_{v.name.lower()}" for v in Version}
 THEME_ACTIONS = {mode: f"theme_{mode.lower()}" for mode in theme.MODES}
 ZOOM_ACTIONS = ("zoom_in", "zoom_out", "fit", "actual_pixels", "print_size")
+ACTIVITY_ACTIONS = {category: f"activity_{category.lower()}" for category in settings.CATEGORIES}
 
 
 class Actions(QObject):
@@ -89,6 +101,9 @@ class Actions(QObject):
         self.themes = QActionGroup(parent)
         for action_id in THEME_ACTIONS.values():
             self.themes.addAction(self._by_id[action_id])
+        self.activities = QActionGroup(parent)
+        for action_id in ACTIVITY_ACTIONS.values():
+            self.activities.addAction(self._by_id[action_id])
         self.refresh_icons()
         manager = theme.current()
         if manager is not None:
@@ -128,7 +143,8 @@ class Actions(QObject):
                         appearance = menu.addMenu("&Appearance")
                     appearance.addAction(action)
                     continue
-                if command.id in ("quit", "zoom_in", "cancel") and not menu.isEmpty():
+                if command.id in ("quit", "zoom_in", "cancel", ACTIVITY_ACTIONS[settings.SOURCE], "toggle_sidebar") \
+                        and not menu.isEmpty():
                     menu.addSeparator()
                 menu.addAction(action)
         return menus

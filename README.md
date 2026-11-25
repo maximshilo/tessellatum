@@ -44,7 +44,7 @@ domain ([sources](tests/sample_images/SOURCES.md)).
 
 ## The app
 
-![Tessellatum's window: settings on the left, the coloring page and its legend on the right](docs/assets/screenshot.png)
+![Tessellatum's window: the settings by category on the left, the coloring page and its legend in the middle, its palette on the right](docs/assets/screenshot.png)
 
 Pick a difficulty from Beginner to Realistic, or tune any of 30 settings; preview the page, its painted version and a
 tinted painting guide; export a PNG at the resolution you choose (600 dpi by default) or a PDF of vector art, on A4, A3 or A2.

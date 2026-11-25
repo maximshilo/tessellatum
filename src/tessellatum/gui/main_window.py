@@ -1,4 +1,11 @@
-"""Top-level application window."""
+"""Top-level application window: the workspace around the canvas.
+
+From the top: the menu bar; the global toolbar (Open, Generate/Cancel, Export, the panel toggles); then the activity
+bar, the settings sidebar (``ControlsPanel``), the canvas with its own toolbar (the version shown, the zoom), and the
+inspector (the page's colors), side by side in a splitter; the status bar. The sidebar and the inspector can be
+resized, folded away (View menu, or the toolbar), or all hidden at once in focus mode; on a narrow window the inspector
+and then the sidebar fold away by themselves. The arrangement is kept between runs (see ``workspace.LayoutStore``).
+"""
 
 from __future__ import annotations
 
@@ -8,16 +15,17 @@ import threading
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QEvent, QObject, QSettings, Qt
+from PySide6.QtCore import QEvent, QObject, QSettings, QSize, Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
-    QFrame,
     QHBoxLayout,
     QMainWindow,
     QMessageBox,
-    QScrollArea,
+    QSizePolicy,
     QSplitter,
+    QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -32,14 +40,25 @@ from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import GeneratedPage
 from tessellatum.core.print_size import MM_PER_INCH, print_scale
 from tessellatum.gui import theme
-from tessellatum.gui.actions import THEME_ACTIONS, VERSION_ACTIONS, ZOOM_ACTIONS, Actions
+from tessellatum.core import settings as registry
+from tessellatum.gui.actions import ACTIVITY_ACTIONS, THEME_ACTIONS, VERSION_ACTIONS, ZOOM_ACTIONS, Actions
 from tessellatum.gui.controls_panel import DPI, PALETTE, ControlsPanel
 from tessellatum.gui.preview_widget import PreviewWidget, VersionBar, ZoomBar
+from tessellatum.gui.workspace import ActivityBar, LayoutStore, PaletteInspector
 
 OPEN_IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.gif)"
 # The preview's legend is drawn at least this many pixels a millimeter on paper (300 dpi), finer than a preview's
 # page, so that its names and codes stay sharp zoomed in.
 PREVIEW_LEGEND_PX_PER_MM = 300 / MM_PER_INCH
+
+# The workspace's layout. Below these window widths (logical pixels) the inspector, then the sidebar, fold away by
+# themselves, and come back as the window widens again: 1280 x 720 at 125% scaling is 1024 px wide, where the canvas
+# keeps the room the inspector would take.
+INSPECTOR_MIN_WINDOW = 1100
+SIDEBAR_MIN_WINDOW = 760
+MIN_WINDOW = QSize(720, 480)  # nothing clips at this size: the canvas's toolbar folds what doesn't fit into a menu
+DEFAULT_SPLIT = (340, 700, 240)  # the sidebar, the canvas, the inspector
+DEFAULT_ACTIVITY = registry.GENERATION
 _NOT_MIXED = object()  # recipes asked for but not mixed yet (see MainWindow._recipes)
 
 log = logging.getLogger(__name__)
@@ -58,41 +77,53 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Tessellatum")
 
-        self.controls = ControlsPanel(store=store)
+        self._layout = LayoutStore(store)
+        self.controls = ControlsPanel(store=store)  # the settings sidebar: its pages scroll on a short window
         self.preview = PreviewWidget()
         self.preview.setObjectName("canvas")  # the theme's canvas surface; the page keeps its own pixels
         # Every version of a page is drawn with it, so the bar switches between them at once.
         self.version_bar = VersionBar()
         self.version_bar.setEnabled(False)
         self.zoom_bar = ZoomBar(self.preview)
-        bars = QHBoxLayout()
-        bars.addWidget(self.version_bar, 1)
-        bars.addWidget(self.zoom_bar)
-        preview_pane = QWidget()
-        preview_layout = QVBoxLayout(preview_pane)
-        preview_layout.setContentsMargins(0, 0, 0, 0)
-        preview_layout.addLayout(bars)
-        preview_layout.addWidget(self.preview)
+        # The canvas's own toolbar: a toolbar, so that on a narrow window what doesn't fit goes into its overflow menu
+        # rather than being cut off.
+        self.canvas_bar = QToolBar("Canvas")
+        self.canvas_bar.setObjectName("canvasToolbar")
+        self.canvas_bar.setMovable(False)
+        self.canvas_bar.addWidget(self.version_bar)
+        gap = QWidget()
+        gap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.canvas_bar.addWidget(gap)
+        self.canvas_bar.addWidget(self.zoom_bar)
+        canvas_pane = QWidget()
+        canvas_layout = QVBoxLayout(canvas_pane)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+        canvas_layout.setSpacing(0)
+        canvas_layout.addWidget(self.canvas_bar)
+        canvas_layout.addWidget(self.preview, 1)
 
-        # The panel scrolls rather than holding the window taller than a small screen.
-        controls_scroll = QScrollArea()
-        controls_scroll.setObjectName("sidebarScroll")
-        controls_scroll.setWidget(self.controls)
-        controls_scroll.setWidgetResizable(True)
-        controls_scroll.setFrameShape(QFrame.NoFrame)
-        controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        # As wide as the panel needs with the scroll bar beside it, so that nothing is cut off when it shows.
-        controls_scroll.setMinimumWidth(
-            self.controls.minimumSizeHint().width() + controls_scroll.verticalScrollBar().sizeHint().width()
-        )
-
-        splitter = QSplitter()
-        splitter.addWidget(controls_scroll)
-        splitter.addWidget(preview_pane)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([320, 880])
-        self.setCentralWidget(splitter)
+        self.inspector = PaletteInspector()
+        self.activity_bar = ActivityBar()
+        self.splitter = QSplitter()
+        self.splitter.setObjectName("workspaceSplitter")
+        self.splitter.setChildrenCollapsible(False)  # folded away with the View menu, never squeezed to nothing
+        for widget in (self.controls, canvas_pane, self.inspector):
+            self.splitter.addWidget(widget)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setStretchFactor(2, 0)
+        self.splitter.setSizes(list(DEFAULT_SPLIT))
+        central = QWidget()
+        central_layout = QHBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self.activity_bar)
+        central_layout.addWidget(self.splitter, 1)
+        self.setCentralWidget(central)
+        self.setMinimumSize(MIN_WINDOW)
+        self._focus: dict | None = None  # in focus mode: what showed before it, to put back exactly
+        self._auto_hidden: set[str] = set()  # the panels folded away by a narrow window, not by the user
+        self._scroll_restored = False
 
         self.statusBar().showMessage("Open an image to get started.")
 
@@ -129,6 +160,8 @@ class MainWindow(QMainWindow):
         self._build_commands()
 
         self.resize(1280, 840)
+        self.document.result_changed.connect(lambda: self.inspector.show_page(self.current_page))
+        self._restore_layout()
 
         # Get one-time costs (loading/compiling the compiled kernels, first
         # OpenCV/Pillow calls) out of the way while the user picks an image,
@@ -196,6 +229,14 @@ class MainWindow(QMainWindow):
         if manager is not None:
             commands[THEME_ACTIONS[manager.mode()]].setChecked(True)
             manager.mode_changed.connect(self._show_theme_mode)  # a method: it stops with the window
+        self._build_toolbar()
+        self.activity_bar.activity_chosen.connect(self._on_activity_chosen)
+        for category, command_id in ACTIVITY_ACTIONS.items():
+            commands[command_id].triggered.connect(lambda _checked=False, c=category: self.show_activity(c))
+        commands["toggle_sidebar"].triggered.connect(self.set_sidebar_visible)
+        commands["toggle_inspector"].triggered.connect(self.set_inspector_visible)
+        commands["focus_mode"].triggered.connect(self.set_focus_mode)
+        commands["reset_layout"].triggered.connect(self.reset_layout)
         # Enabled as the buttons are: whatever turns one on or off turns its command with it.
         self._enablement = _Watcher(self._sync_commands, self)
         for widget in (c.open_button, c.generate_button, c.export_button, c.abort_button, c.progress_row,
@@ -213,6 +254,200 @@ class MainWindow(QMainWindow):
             commands[command_id].setEnabled(self.version_bar.isEnabled())
         for command_id in ZOOM_ACTIONS:
             commands[command_id].setEnabled(self.zoom_bar.isEnabled())
+        # One button starts the page or stops it, whichever can be done.
+        if hasattr(self, "run_button"):
+            busy = not c.progress_row.isHidden()
+            wanted = commands["cancel"] if busy else commands["generate"]
+            if self.run_button.defaultAction() is not wanted:
+                self.run_button.setDefaultAction(wanted)
+
+    def _build_toolbar(self) -> None:
+        """The global toolbar: Open, Generate (Cancel while a page is made), Export; the panel toggles at its end."""
+        commands = self.commands
+        bar = QToolBar("Main")
+        bar.setObjectName("mainToolbar")
+        bar.setMovable(False)
+        bar.setFloatable(False)
+        bar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        bar.setIconSize(QSize(18, 18))
+        self.addToolBar(Qt.TopToolBarArea, bar)
+        bar.addAction(commands["open"])
+        self.run_button = QToolButton()
+        self.run_button.setObjectName("runButton")
+        self.run_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.run_button.setDefaultAction(commands["generate"])
+        bar.addWidget(self.run_button)
+        bar.addAction(commands["export"])
+        gap = QWidget()
+        gap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        bar.addWidget(gap)
+        for command_id in ("toggle_sidebar", "toggle_inspector", "focus_mode"):
+            bar.addAction(commands[command_id])
+            button = bar.widgetForAction(commands[command_id])
+            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.toolbar = bar
+
+    # -- The workspace's layout ---------------------------------------------------
+    def show_activity(self, category: str) -> None:
+        """Show ``category``'s settings in the sidebar, unfolding it if it was folded away."""
+        self.controls.show_category(category)
+        self.activity_bar.set_current(category)
+        self.commands[ACTIVITY_ACTIONS[category]].setChecked(True)
+        self.set_sidebar_visible(True)
+
+    def _on_activity_chosen(self, category: str) -> None:
+        # The page already shown, clicked: the sidebar folds away; clicked again, it comes back.
+        if category == self.controls.category() and self.sidebar_visible():
+            self.set_sidebar_visible(False)
+        else:
+            self.show_activity(category)
+
+    def sidebar_visible(self) -> bool:
+        return not self.controls.isHidden()
+
+    def inspector_visible(self) -> bool:
+        return not self.inspector.isHidden()
+
+    def set_sidebar_visible(self, visible: bool) -> None:
+        self._set_panel_visible("sidebar", self.controls, visible)
+
+    def set_inspector_visible(self, visible: bool) -> None:
+        self._set_panel_visible("inspector", self.inspector, visible)
+
+    def _set_panel_visible(self, name: str, widget: QWidget, visible: bool) -> None:
+        if self._focus is not None:
+            self.set_focus_mode(False)  # asking for a panel ends focus mode
+        self._auto_hidden.discard(name)  # the user's choice now, whatever the window's width
+        widget.setVisible(visible)
+        self._show_panel_state()
+
+    def _show_panel_state(self) -> None:
+        self.commands["toggle_sidebar"].setChecked(self.sidebar_visible())
+        self.commands["toggle_inspector"].setChecked(self.inspector_visible())
+        self.commands["focus_mode"].setChecked(self._focus is not None)
+
+    def in_focus_mode(self) -> bool:
+        return self._focus is not None
+
+    def set_focus_mode(self, on: bool) -> None:
+        """Hide every panel around the page (the toolbar, the activity bar, the sidebar, the inspector and the status
+        bar), or put them back exactly as they were."""
+        if on == (self._focus is not None):
+            self._show_panel_state()
+            return
+        panels = (self.toolbar, self.activity_bar, self.controls, self.inspector, self.statusBar())
+        if on:
+            self._focus = {"shown": [not panel.isHidden() for panel in panels], "sizes": self.splitter.sizes()}
+            for panel in panels:
+                panel.hide()
+        else:
+            focus, self._focus = self._focus, None
+            for panel, shown in zip(panels, focus["shown"]):
+                panel.setVisible(shown)
+            self.splitter.setSizes(focus["sizes"])
+            self._reflow()
+        self._show_panel_state()
+
+    def keyPressEvent(self, event) -> None:
+        # Esc leaves focus mode (when it isn't cancelling a page: Cancel's shortcut takes it first).
+        if event.key() == Qt.Key_Escape and self._focus is not None:
+            self.set_focus_mode(False)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._reflow()
+
+    def _reflow(self) -> None:
+        """On a narrow window fold the inspector away, then the sidebar; bring back what was folded so as the window
+        widens. What the user folded stays folded."""
+        if not hasattr(self, "inspector"):
+            return  # still being built
+        if self._focus is None:
+            width = self.width()
+            for name, threshold, widget in (
+                ("inspector", INSPECTOR_MIN_WINDOW, self.inspector), ("sidebar", SIDEBAR_MIN_WINDOW, self.controls),
+            ):
+                if width < threshold and not widget.isHidden():
+                    widget.hide()
+                    self._auto_hidden.add(name)
+                elif width >= threshold and name in self._auto_hidden:
+                    widget.show()
+                    self._auto_hidden.discard(name)
+        if hasattr(self, "commands"):
+            self._show_panel_state()
+
+    def _wanted(self, name: str, widget: QWidget) -> bool:
+        """Whether the user wants the panel ``name`` shown: shown, or folded away only by the window's width or by
+        focus mode."""
+        if self._focus is not None:
+            index = {"sidebar": 2, "inspector": 3}[name]
+            return self._focus["shown"][index] or name in self._auto_hidden
+        return not widget.isHidden() or name in self._auto_hidden
+
+    def _restore_layout(self) -> None:
+        """The arrangement kept from the last run, where there is one."""
+        self._default_expanded = {name: section.is_expanded() for name, section in self.controls.sections.items()}
+        layout = self._layout
+        geometry = layout.get_bytes("geometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        split = layout.get_bytes("splitter")
+        if split is not None:
+            self.splitter.restoreState(split)
+        activity = layout.get("activity", DEFAULT_ACTIVITY)
+        self.controls.show_category(activity if activity in ACTIVITY_ACTIONS else DEFAULT_ACTIVITY)
+        self.activity_bar.set_current(self.controls.category())
+        self.commands[ACTIVITY_ACTIONS[self.controls.category()]].setChecked(True)
+        for name, section in self.controls.sections.items():
+            section.toggle.setChecked(layout.get_bool(f"expanded/{name}", self._default_expanded[name]))
+        self.controls.setVisible(layout.get_bool("sidebar", True))
+        self.inspector.setVisible(layout.get_bool("inspector", True))
+        self._reflow()
+        self._show_panel_state()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._scroll_restored:
+            self._scroll_restored = True
+            # Once the pages are laid out, so that their scroll ranges reach the positions kept.
+            QTimer.singleShot(0, self._restore_scroll)
+
+    def _restore_scroll(self) -> None:
+        for category, scroll in self.controls.scrolls.items():
+            scroll.verticalScrollBar().setValue(self._layout.get_int(f"scroll/{category}", 0))
+
+    def save_layout(self) -> None:
+        """Keep the arrangement for the next run."""
+        layout = self._layout
+        layout.set("geometry", self.saveGeometry())
+        layout.set("splitter", self.splitter.saveState() if self._focus is None else layout.get_bytes("splitter"))
+        layout.set("activity", self.controls.category())
+        layout.set("sidebar", self._wanted("sidebar", self.controls))
+        layout.set("inspector", self._wanted("inspector", self.inspector))
+        for category, scroll in self.controls.scrolls.items():
+            layout.set(f"scroll/{category}", scroll.verticalScrollBar().value())
+        for name, section in self.controls.sections.items():
+            layout.set(f"expanded/{name}", section.is_expanded())
+
+    def reset_layout(self) -> None:
+        """Put the panels back where they start: both shown, at their first sizes, the Generation page at its top
+        with its sections folded as they start. The window's own size stays."""
+        if self._focus is not None:
+            self.set_focus_mode(False)
+        self._layout.clear()
+        self._auto_hidden.clear()
+        self.controls.show()
+        self.inspector.show()
+        self.splitter.setSizes(list(DEFAULT_SPLIT))
+        for name, section in self.controls.sections.items():
+            section.toggle.setChecked(self._default_expanded[name])
+        for scroll in self.controls.scrolls.values():
+            scroll.verticalScrollBar().setValue(0)
+        self.show_activity(DEFAULT_ACTIVITY)
+        self._reflow()
 
     def _show_theme_mode(self, mode: str) -> None:
         self.commands[THEME_ACTIONS[mode]].setChecked(True)
@@ -240,7 +475,7 @@ class MainWindow(QMainWindow):
 
         self.controls.set_thumbnail(_bgr_to_pixmap(self.current_image_bgr))
         height, width = self.current_image_bgr.shape[:2]
-        self.controls.set_picture_size((width, height))
+        self.controls.set_picture_size((width, height), path.name)
         self._drop_print_page()
         self.controls.set_export_enabled(False)
         self.version_bar.setEnabled(False)  # the preview left showing is the last picture's, until the next one
@@ -624,6 +859,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(self._ready_message)
 
     def closeEvent(self, event) -> None:
+        self.save_layout()
         # Stop what is still running, without waiting for it: the threads outlive the window, and the application
         # waits for them, bounded, when it quits (see ``app.jobs.wait_for_all``).
         self.jobs.shutdown()
@@ -661,6 +897,9 @@ def about_text() -> str:
 def _warm_up_pipeline() -> None:
     try:
         pipeline.warm_up()
+    except RuntimeError as exc:
+        if "after shutdown" not in str(exc):  # the app quit while it ran: nothing to tell
+            log.warning("warming up the pipeline failed", exc_info=True)
     except Exception:  # noqa: BLE001 - best effort; a real failure resurfaces on Generate
         log.warning("warming up the pipeline failed", exc_info=True)
 

@@ -38,10 +38,12 @@ def main() -> None:
     window.show()
     window.current_image_bgr = pipeline.load_image_bgr(PICTURE)
     window.controls.set_thumbnail(main_window._bgr_to_pixmap(window.current_image_bgr))
+    height, width = window.current_image_bgr.shape[:2]
+    window.controls.set_picture_size((width, height), PICTURE.name)
     window.version_bar.buttons[SHOWN].setChecked(True)
     window.generate_preview()
     deadline = time.monotonic() + 300
-    while window.current_page is None or (window._worker is not None and window._worker.isRunning()):
+    while window.current_page is None or not window.jobs.is_idle():
         app.processEvents()
         if time.monotonic() > deadline:
             raise TimeoutError("the preview didn't finish")

@@ -67,6 +67,28 @@ QSplitter::handle:horizontal {{ width: 1px; }}
 QSplitter::handle:vertical {{ height: 1px; }}
 
 QWidget#sidebar, QScrollArea#sidebarScroll > QWidget#qt_scrollarea_viewport {{ background: {c.sidebar}; }}
+QToolBar#mainToolbar {{ background: {c.chrome}; border: none; border-bottom: 1px solid {c.border}; padding: 2px 6px;
+    spacing: 4px; }}
+QToolBar#canvasToolbar {{ background: {c.window}; border: none; border-bottom: 1px solid {c.border}; padding: 2px 6px;
+    spacing: 6px; }}
+QToolButton#runButton {{ background: {c.accent}; color: {c.on_accent}; font-weight: 600; padding: 3px 10px; }}
+QToolButton#runButton:hover {{ background: {c.accent_hover}; }}
+QToolButton#runButton:pressed {{ background: {c.accent_pressed}; }}
+QToolButton#runButton:focus {{ border: 2px solid {c.text}; }}
+QToolButton#runButton:disabled {{ background: {c.pressed}; color: {c.text_disabled}; }}
+QToolButton#runButton::menu-indicator {{ image: none; width: 0px; }}
+QWidget#activityBar {{ background: {c.chrome}; border-right: 1px solid {c.border}; }}
+QToolButton#activityButton {{ padding: 6px; border-radius: {r}px; border-left: 2px solid transparent; }}
+QToolButton#activityButton:checked {{ background: {c.selected}; border-left: 2px solid {c.accent}; }}
+QToolButton#activityButton:focus {{ border: 1px solid {c.accent}; border-left: 2px solid {c.accent}; }}
+QLabel#sidebarTitle, QLabel#panelTitle {{ background: {c.sidebar}; color: {c.text}; font-weight: 600;
+    padding: 8px 12px 4px; }}
+QWidget#sidebarFooter {{ background: {c.sidebar}; border-top: 1px solid {c.border}; }}
+QWidget#inspector {{ background: {c.sidebar}; border-left: 1px solid {c.border}; }}
+QWidget#inspector > QLabel[role="secondary"] {{ background: {c.sidebar}; padding: 0px 12px 6px; }}
+QListWidget#paletteList {{ background: {c.sidebar}; color: {c.text}; border: none; outline: 0; padding: 0px 6px; }}
+QListWidget#paletteList::item {{ padding: 3px 4px; border-radius: {rs}px; }}
+QListWidget#paletteList::item:hover {{ background: {c.hover}; }}
 QGraphicsView#canvas {{ background: {c.canvas}; border: none; }}
 QLabel#thumbnail {{ border: 1px solid {c.border_strong}; color: {c.text_hint}; background: {c.field};
     border-radius: {rs}px; }}
