@@ -42,6 +42,7 @@ COMMANDS = (
     Command("quit", "&Quit", FILE, "Close Tessellatum", "quit", (QKeySequence.Quit,), role=QAction.QuitRole),
     Command("undo", "&Undo", EDIT, "Undo the last change to the settings or the picture", "undo", (QKeySequence.Undo,)),
     Command("redo", "&Redo", EDIT, "Redo what was undone", "redo", (QKeySequence.Redo, "Ctrl+Shift+Z")),
+    Command("find", "&Find Setting…", EDIT, "Search the settings by name or by what they do", "search", ("Ctrl+F",)),
     Command("reset", "&Reset All Settings", EDIT, "Put every setting back to its default, and the difficulty to Medium",
             "reset"),
     Command("generate", "&Generate Preview", GENERATE, "Make the page with the settings as they are", "generate",
@@ -154,7 +155,7 @@ class Actions(QObject):
                         appearance = menu.addMenu("&Appearance")
                     appearance.addAction(action)
                     continue
-                if command.id in ("quit", "reset", "zoom_in", "cancel", ACTIVITY_ACTIONS[settings.SOURCE],
+                if command.id in ("quit", "find", "reset", "zoom_in", "cancel", ACTIVITY_ACTIONS[settings.SOURCE],
                                   "toggle_sidebar") \
                         and not menu.isEmpty():
                     menu.addSeparator()

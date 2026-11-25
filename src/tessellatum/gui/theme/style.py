@@ -165,6 +165,11 @@ QRadioButton::indicator:checked:disabled {{
                                 stop: 0.5 {c.text_disabled}, stop: 0.6 {c.field}, stop: 1 {c.field});
 }}
 QLabel#exportWarnings {{ color: {c.text}; }}
+QLineEdit#settingsSearch {{ padding: 4px 6px; }}
+QListWidget#searchResults {{ background: {c.field}; border: 1px solid {c.border}; }}
+QListWidget#searchResults::item {{ padding: 3px 4px; }}
+QListWidget#searchResults::item:selected {{ background: {c.selected}; color: {c.text}; }}
+*[found="true"] {{ border: 2px solid {c.accent}; border-radius: 4px; }}
 
 {fields} {{ background: {c.field}; color: {c.text}; border: 1px solid {c.border_strong}; border-radius: {r}px;
     padding: 2px 6px; selection-background-color: {c.accent}; selection-color: {c.on_accent}; }}

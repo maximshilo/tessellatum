@@ -22,7 +22,8 @@ The window follows your system's light or dark appearance, and changes with it w
   - **Document**: the paper, lines and numbers, their tone, and the legend.
 
   Clicking the page already shown folds the sidebar away; clicking any page brings it back.
-- **Sidebar**: the category's settings in sections, the everyday ones on top and the rest in one folded
+- **Sidebar**: a search field on top (Ctrl+F; see [Finding a setting](#finding-a-setting)), then the category's
+  settings in sections, the everyday ones on top and the rest in one folded
   **Advanced** group at the foot of the page (see [Levels of detail](#levels-of-detail)); click a section's title to
   fold or unfold it, and its **Reset**, shown while something in it is changed, to put just that section back.
   Generate Preview and Export stay at its foot on every page.
@@ -65,6 +66,7 @@ Every command is in the menu bar, and the most used have a shortcut (Cmd in plac
 | File > Open Image | Ctrl+O |
 | File > Export | Ctrl+E |
 | Edit > Undo, Redo | Ctrl+Z; Ctrl+Y or Ctrl+Shift+Z |
+| Edit > Find Setting | Ctrl+F |
 | Generate > Generate Preview | Ctrl+Enter, F5 |
 | Generate > Cancel | Esc |
 | View > Page, Completed, Tinted | Ctrl+1, Ctrl+2, Ctrl+3 |
@@ -193,6 +195,15 @@ smaller ones.
 
 The sidebar shows them by category (see [The workspace](#the-workspace)); below they are described by what they
 shape.
+
+### Finding a setting
+
+Type in the search field at the top of the sidebar (Ctrl+F puts the focus there, from anywhere) to find a setting by
+its name ("brush"), by a word it may be called by ("outline" finds Line width, "pupils" Dark mark contrast), by what
+its tooltip says, or by its page or section. Every word typed must match; the best matches come first, each with where
+it is and what it is set to. Up and Down move through them; Enter (or a click) goes to the setting: its page opens, its
+section unfolds (the Advanced group too), the page scrolls to it, and it is outlined for a moment with the focus on
+it, to change from the keyboard at once. Esc clears the search.
 
 ### Levels of detail
 
