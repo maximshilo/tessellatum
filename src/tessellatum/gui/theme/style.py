@@ -172,6 +172,9 @@ QLabel#exportWarnings {{ color: {c.text}; }}
 QLineEdit#settingsSearch {{ padding: 4px 6px; }}
 QListWidget#searchResults {{ background: {c.field}; border: 1px solid {c.border}; }}
 QListWidget#searchResults::item {{ padding: 3px 4px; }}
+QListWidget#preferencePages {{ background: {c.field}; border: 1px solid {c.border}; }}
+QListWidget#preferencePages::item {{ padding: 6px 8px; }}
+QListWidget#preferencePages::item:selected {{ background: {c.selected}; color: {c.text}; }}
 QListWidget#searchResults::item:selected {{ background: {c.selected}; color: {c.text}; }}
 *[found="true"] {{ border: 2px solid {c.accent}; border-radius: 4px; }}
 
