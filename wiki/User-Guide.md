@@ -1,7 +1,8 @@
 # User guide
 
-The settings sit in the sidebar on the left, one page per category; **Generate Preview** draws the page with them,
-and **Export…** draws that
+The settings sit in the sidebar on the left, one page per category; **Generate Preview** draws the page with them
+(a change to the lines, the numbers or the tone draws it again by itself, a moment after the last change), and
+**Export…** draws that
 same page at print resolution: the regions, colors and legend the preview shows, its lines smoothed as they are
 there, and its numbers placed again, as small as the style lets them print. If a setting changed since the preview,
 the export makes the page with it first. Every setting has a tooltip; sizes are on the printed page, on the sheet
@@ -27,8 +28,15 @@ The window follows your system's light or dark appearance, and changes with it w
   **Advanced** group at the foot of the page (see [Levels of detail](#levels-of-detail)); click a section's title to
   fold or unfold it, and its **Reset**, shown while something in it is changed, to put just that section back.
   Generate Preview and Export stay at its foot on every page.
-- **Canvas** (middle): the page, with its own toolbar above it: the version shown and the zoom. On a narrow window,
-  what doesn't fit goes into the toolbar's » menu.
+- **Canvas** (middle): the page, with its own toolbar above it: the version shown, whether the page shown is up to
+  date, and the zoom. On a narrow window, what doesn't fit goes into the toolbar's » menu. The preview's state reads
+  **Up to date** (the page the settings make), **Out of date** (a setting that changes the page moved since; its
+  tooltip names them), **Generating…**, or **Cancelled** / **Failed** with **· earlier preview** when the page asked
+  for didn't come and the one shown is from before. How soon a change shows:
+  - the **legend**'s detail: at once, as it changes nothing but the legend;
+  - the **lines, numbers and tone** (Document page): the page is drawn again by itself, 0.4 s after the last change
+    (a slider dragged draws once, when it stops), from the regions already found, in about a second;
+  - **everything else** makes the page again, which takes longer, so it waits for **Generate Preview**.
 - **Inspector** (right): the page's colors, numbered as on its legend, with their names; hover one for its hex and
   RGB, and, for a mixed color, its recipe.
 - **Status bar** (bottom): what the app is doing, with a progress bar while it works (the ✕ beside the sidebar's
@@ -87,7 +95,8 @@ for what it did ("Undo Brush width", "Undo Difficulty: Hard", "Undo Reset Detail
 dragged is one step, a preset or a reset is one step however many settings it moves, and opening another picture is
 one. The zoom, the panels and the version shown are never undone. A change made after an undo drops what could have
 been redone. Undo restores the settings, not the preview: if the preview was made with other settings, the status
-bar says so, and Generate Preview shows them. **Edit > Reset All Settings** is the Difficulty section's Reset, and asks first; **Help > About Tessellatum** shows
+bar says so, and Generate Preview shows them (an undo of the lines, numbers or tone redraws it by itself). Whether
+the preview is up to date is apart from whether the settings have changed since they were last saved. **Edit > Reset All Settings** is the Difficulty section's Reset, and asks first; **Help > About Tessellatum** shows
 the version and the licenses.
 
 ## Zoom
@@ -185,7 +194,7 @@ and it is kept between runs. Each change applies at once.
 | Appearance | **Theme** (System, Light, Dark) and **Motion** (System, Reduced, Full), as in View > Appearance. **Interface scale**, Automatic (the system's) or 90% to 200%: applied when Tessellatum next starts, as the dialog says. The page's zoom is apart from it, so 100% stays a pixel of the page to a pixel of the screen. **Canvas background**: the theme's, a neutral gray to judge the page's colors against, white or black. |
 | Units | **Lengths in** millimeters or inches: how lengths and areas are shown and typed. The page's values are kept in millimeters, so switching never changes them. |
 | Workspace | **Reset Layout**, as in View. |
-| Performance | **Results kept**: how many pages' intermediate results are kept, so that trying one setting after another makes the next preview faster (Automatic keeps two, a few tens of MB each). **Clear Now** frees them. |
+| Performance | **Results kept**: how many pages' intermediate results are kept, so that trying one setting after another makes the next preview faster (Automatic keeps two, a few tens of MB each). **Clear Now** frees them. **Redraw lines and numbers**: how soon a change to the lines, numbers or tone draws the preview again by itself (after 0.2, 0.4 or 1 s), or **Only with Generate**. |
 | Shortcuts | Every command's keys. |
 
 ## Difficulty

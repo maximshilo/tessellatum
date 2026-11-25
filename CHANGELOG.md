@@ -4,6 +4,23 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.17] - 2026-11-25
+
+### Added
+
+- The bar above the page says whether the page shown is **Up to date**, **Out of date** (its tooltip names what
+  changed), **Generating…**, or **Cancelled** / **Failed** with **· earlier preview** when the page asked for didn't
+  come and the one shown is from before.
+- A change to the lines, the numbers or the tone now draws the preview again by itself, 0.4 s after the last change:
+  a slider dragged draws the page once, when it stops, from the regions already found. Every other setting still
+  waits for Generate Preview, and the legend's detail still applies at once. **Preferences > Performance > Redraw
+  lines and numbers** sets the delay (0.2, 0.4 or 1 s) or turns it off.
+
+### Changed
+
+- The out-of-date status names only the settings that change the page; the legend's detail is no longer among them
+  when other settings changed too.
+
 ## [1.1.16] - 2026-11-25
 
 ### Changed

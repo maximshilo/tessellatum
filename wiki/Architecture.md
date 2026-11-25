@@ -88,8 +88,9 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 - **Settings registry.** `core/settings.py` describes every setting once, Qt-free: the 30 sliders (`Setting`: the
   pipeline field it sets, range, step, unit) and the 11 choices (`Choice`: the difficulty, paper, Coloring on, Colors
   from, paints, mixing, tone, legend and the three handling switches), each with its category and section, level
-  (intent, precise, advanced), unit kind, aliases for search, update policy (only the legend applies at once; the
-  rest with Generate), an enablement predicate over the document's choices that returns the reason to show, and its
+  (intent, precise, advanced), unit kind, aliases for search, update policy (`update_policy`: the legend applies at
+  once; the page's style but for its paper, the lines, numbers and tone, a moment after the last change, as the stage
+  cache keeps the regions and only the drawing runs again; the rest with Generate), an enablement predicate over the document's choices that returns the reason to show, and its
   persistence key (unchanged from earlier versions). Validation (`check`) refuses a value with a reason and never
   clamps. Tests check that every field of `DifficultyParams`, `PageStyle` and `Handling` is covered once (two
   internal fields named as such), that the presets' values match `difficulty.py`, that every entry has a control in

@@ -146,23 +146,32 @@ class DocumentSettings:
         switches = {name: getattr(self, name) for name in SWITCHES}
         return Handling(**switches, **self._owned(settings.HANDLING), paints=paints, mix_paints=bool(paints) and self.mix)
 
-    def changes_from(self, made: DocumentSettings) -> tuple[str, ...]:
-        """The settings, by label, that differ from ``made`` (a page's) and change the page: not the legend's detail
-        nor the export's options, which an export applies without making the page again. Empty if the page made with
-        ``made`` is the page these would make."""
+    def changed_entries(self, made: DocumentSettings) -> tuple[str, ...]:
+        """The registry's entries, by name, that differ from ``made`` (a page's) and change the page: not the
+        legend's detail nor the export's options, which an export applies without making the page again. Empty if the
+        page made with ``made`` is the page these would make; otherwise never empty (``"settings"``, which the registry
+        doesn't know, if the difference is in nothing named)."""
         if made.generation_key() == self.generation_key():
             return ()
         # Another difficulty is named as such, not as the settings it moved.
         preset = made.preset != self.preset
-        labels = [settings.choice("preset").label] if preset else []
-        labels += [
-            s.label for s in settings.SETTINGS
+        names = ["preset"] if preset else []
+        names += [
+            s.name for s in settings.SETTINGS
             if made.values[s.name] != self.values[s.name] and not (preset and s.owner == settings.DIFFICULTY)
         ]
         for name, entry in _CHOICE_FIELDS.items():
-            if entry not in ("legend", "preset") and getattr(made, name) != getattr(self, name):
-                labels.append(settings.choice(entry).label)
-        return tuple(labels) or ("the settings",)
+            if entry not in ("legend_detail", "preset") and getattr(made, name) != getattr(self, name):
+                names.append(entry)
+        return tuple(names) or ("settings",)
+
+    def changes_from(self, made: DocumentSettings) -> tuple[str, ...]:
+        """The settings, by label, that differ from ``made`` (a page's) and change the page (see
+        ``changed_entries``). Empty if the page made with ``made`` is the page these would make."""
+        names = self.changed_entries(made)
+        if names == ("settings",):
+            return ("the settings",)
+        return tuple(settings.entry(name).label for name in names)
 
     def change_text(self, before: DocumentSettings) -> str:
         """What changed from ``before``, in a few words, as Edit > Undo names it: the one setting moved ("Brush
