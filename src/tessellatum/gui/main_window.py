@@ -49,7 +49,8 @@ from tessellatum.app.presets import PresetStore
 from tessellatum.gui.controls_panel import DPI, PALETTE, ControlsPanel
 from tessellatum.gui.export_dialog import ExportDialog, ExportState, palette_pixmap, pixmap_of, warnings_for
 from tessellatum.gui.notifications import (
-    ERROR, INFO, SUCCESS, DiagnosticsPanel, NotificationBar, install_log_handler, remove_log_handler, show_in_folder,
+    ERROR, INFO, SUCCESS, WARNING, DiagnosticsPanel, NotificationBar, install_log_handler, remove_log_handler,
+    show_in_folder,
 )
 from tessellatum.gui.preview_widget import PreviewWidget, VersionBar, ZoomBar
 from tessellatum.gui.status import BUSY, CANCELLED, DONE, FAILED, IDLE, StatusBar
@@ -914,10 +915,16 @@ class MainWindow(QMainWindow):
             self._on_print_page_cancelled()
 
     def _on_job_dropped(self, job: Job) -> None:
-        # Superseded, or made of a picture since replaced: whatever waited for it alone is over.
-        if job.kind == EXPORT:
+        # Superseded, or made of a picture since replaced: whatever waited for it alone is over. An export waits for
+        # its page made afresh, or for the preview's laid out to print: either dropped, the export ends with it.
+        waited = job.kind == EXPORT or (job.kind == PRINT_LAYOUT and self._pending_export_drawn)
+        if waited:
+            if self._pending_export_path is not None:
+                self._say("Export stopped.", CANCELLED)
+                self.notify(WARNING, "The export was stopped: another picture was opened before its page was ready. "
+                            "Export again to write the new picture's page.")
             self._clear_pending_export()
-        if job.kind in (PREVIEW, EXPORT) and not self._making() and not self._exporting():
+        if (job.kind in (PREVIEW, EXPORT) or waited) and not self._making() and not self._exporting():
             self.controls.set_busy(False)
         if job.kind == PREVIEW:
             self._show_freshness()
