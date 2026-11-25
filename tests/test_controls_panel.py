@@ -68,15 +68,19 @@ def test_every_setting_has_a_slider_in_its_section_with_its_tooltip_and_unit(pan
         # On its category's page, in its section, or in the page's Advanced group if it is advanced (W1, W4).
         section = panel.sections[panel.section_key(s)]
         assert section.body.isAncestorOf(control) and panel.pages[s.category].isAncestorOf(control)
-        assert (s.level == settings.ADVANCED) == (section.title == controls_panel.ADVANCED), s.name
+        # An advanced one in its subsection of the page's Advanced group.
+        group = panel.sections[controls_panel.advanced_key(s.category)] if s.level == settings.ADVANCED else None
+        assert (s.level == settings.ADVANCED) == section.nested, s.name
+        assert group is None or group.body.isAncestorOf(section), s.name
     for name, widget in panel.choice_widgets.items():
         choice = settings.choice(name)
         assert panel.sections[panel.section_key(choice)].body.isAncestorOf(widget), name
         assert panel.pages[choice.category].isAncestorOf(widget), name
-    # The tone on top, its grays in Advanced; the Advanced groups only start folded away.
+    # The tone on top, its grays in Advanced; only the Advanced groups and their subsections start folded away.
     assert panel.sections["Tone"].body.isAncestorOf(panel.tone_combo)
     folded = {name for name, section in panel.sections.items() if not section.is_expanded()}
-    assert folded == {controls_panel.advanced_key(c) for c in (settings.GENERATION, settings.COLORS, settings.DOCUMENT)}
+    groups = {controls_panel.advanced_key(c) for c in (settings.GENERATION, settings.COLORS, settings.DOCUMENT)}
+    assert folded == groups | {name for name, section in panel.sections.items() if section.nested}
     group = panel.sections[controls_panel.advanced_key(settings.GENERATION)]
     group.toggle.click()
     assert group.is_expanded() and not group.body.isHidden()

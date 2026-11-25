@@ -4,6 +4,24 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.15] - 2026-11-25
+
+### Changed
+
+- Each part of a page's **Advanced** group (Edges, Corners, Resolution, Lines, Numbers…) now folds on its own, under a
+  header of its own with its own Reset, folded at first: opening the group lists its parts by name. Finding a setting
+  unfolds its part too, and the search names it ("Generation · Advanced · Edges"). What is folded is kept between
+  runs.
+
+### Fixed
+
+- Focus mode said nothing about how to leave it once its button was hidden: it now says so over the page (Esc, or
+  the same shortcut), and **Exit Focus Mode** stays on the bar above the page.
+- The ✕ beside the progress bar did nothing: it turned itself off before asking to cancel, which turned off the
+  Cancel command it triggers. It cancels now, as the toolbar's Cancel does.
+- "The preview is out of date" was said only after an undo: it is now said as soon as a setting that changes the page
+  moves, naming what changed, and "Preview ready." comes back once the settings are as the page was made with.
+
 ## [1.1.14] - 2026-11-25
 
 ### Added

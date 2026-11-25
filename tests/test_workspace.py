@@ -113,6 +113,7 @@ def test_the_layout_is_kept_between_runs(tmp_path):
     window.show_activity(settings.DOCUMENT)
     window.set_inspector_visible(False)
     window.controls.sections["Document · Advanced"].toggle.setChecked(True)
+    window.controls.sections["Document · Advanced · Numbers"].toggle.setChecked(True)  # a subsection, kept too
     window.controls.sections["Tone"].toggle.setChecked(False)
     window.splitter.setSizes([420, 860, 0])
     sizes = window.splitter.sizes()
@@ -127,6 +128,8 @@ def test_the_layout_is_kept_between_runs(tmp_path):
         assert again.controls.category() == settings.DOCUMENT and again.activity_bar.current() == settings.DOCUMENT
         assert again.sidebar_visible() and not again.inspector_visible()
         assert again.controls.sections["Document · Advanced"].is_expanded()
+        assert again.controls.sections["Document · Advanced · Numbers"].is_expanded()
+        assert not again.controls.sections["Document · Advanced · Lines"].is_expanded()
         assert not again.controls.sections["Tone"].is_expanded()
         assert again.splitter.sizes()[0] == sizes[0]
         _app.processEvents()  # the scroll positions come back once the pages are laid out
@@ -147,6 +150,13 @@ def test_focus_mode_hides_every_panel_and_brings_them_back_exactly():
         for panel in (window.toolbar, window.activity_bar, window.controls, window.inspector, window.statusBar()):
             assert panel.isHidden()
         assert not window.preview.isHidden()
+        # The way back is said, and stays on the canvas's own bar while the toolbar is hidden.
+        assert window.notification.isVisible() and "Esc" in window.notification.text.text()
+        assert window.exit_focus_action.isVisible() and not window.canvas_bar.isHidden()
+        window.exit_focus_action.trigger()
+        assert not window.in_focus_mode() and not window.exit_focus_action.isVisible()
+        assert not window.notification.isVisible()
+        window.commands["focus_mode"].trigger()
 
         QTest.keyClick(window, Qt.Key_Escape)  # Esc brings them back; the same command does too
         assert not window.in_focus_mode() and not window.commands["focus_mode"].isChecked()

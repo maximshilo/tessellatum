@@ -95,6 +95,7 @@ THUMBNAIL_SIZE = 160
 # ``Choice.section``), and the two the panel adds, the picture itself and the export's options (W5 moves those to the
 # export dialog).
 PICTURE = "Picture"
+SUBSECTION_INDENT = 12  # how much further in a subsection's settings start (the form's left margin)
 FLASH_MS = 1500  # how long a setting found stays outlined
 PAGE_SECTIONS = {
     settings.SOURCE: (PICTURE, "Picture handling"),
@@ -119,6 +120,12 @@ ADVANCED_SECTIONS = {
 def advanced_key(category: str) -> str:
     """The Advanced group of ``category``'s page, as ``ControlsPanel.sections`` names it."""
     return f"{category} · {ADVANCED}"
+
+
+def advanced_subsection_key(category: str, section: str) -> str:
+    """A subsection of the Advanced group of ``category``'s page (``section``, a registry section), as
+    ``ControlsPanel.sections`` names it: "Generation · Advanced · Edges"."""
+    return f"{advanced_key(category)} · {section.replace(ADVANCED_PREFIX, '')}"
 
 PALETTE_TOOLTIP = (
     "The legend's colors as a palette file, for coloring the page in a painting app with exactly its colors, each "
@@ -172,11 +179,13 @@ class Section(QWidget):
 
     reset_requested = Signal()
 
-    def __init__(self, title: str, expanded: bool = True, parent: QWidget | None = None):
+    def __init__(self, title: str, expanded: bool = True, parent: QWidget | None = None, nested: bool = False):
+        """``nested``: a subsection, inside another section (the Advanced group's), its header a step quieter."""
         super().__init__(parent)
         self.title = title
+        self.nested = nested
         self.toggle = QToolButton()
-        self.toggle.setObjectName("sectionHeader")  # styled by the theme (see ``theme.style``)
+        self.toggle.setObjectName("subsectionHeader" if nested else "sectionHeader")  # styled by the theme
         self.toggle.setText(title)
         self.toggle.setCheckable(True)
         self.toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
@@ -514,21 +523,17 @@ class ControlsPanel(QWidget):
             page_layout = QVBoxLayout(page)
             page_layout.setContentsMargins(8, 4, 8, 8)
             page_layout.setSpacing(6)
-            labels: list[QLabel] = []
+            labels: list[tuple[QLabel, int]] = []  # each with how far in its section's form starts, past the page's
 
-            def place(section: Section, entries, heading_title: str = "") -> None:
-                """``entries`` into ``section``: the choices before the sliders, under ``heading_title`` if given."""
-                if heading_title:
-                    heading = QLabel(heading_title)
-                    heading.setObjectName("subsectionTitle")
-                    section.form.addRow(heading)
+            def place(section: Section, entries) -> None:
+                """``entries`` into ``section``: the choices before the sliders."""
                 choices = [e for e in entries if isinstance(e, settings.Choice) and e.name in row_widgets]
                 for entry in choices + [e for e in entries if isinstance(e, Setting)]:
                     widget = self.controls[entry.name] if isinstance(entry, Setting) else row_widgets[entry.name]
                     if isinstance(widget, QCheckBox):
                         section.form.addRow(widget)
                         continue
-                    if entry.label == section.title and not heading_title:  # "Tone" under Tone: named already
+                    if entry.label == section.title and not section.nested:  # "Tone" under Tone: named already
                         target = self.preset_combo if entry.name == "preset" else widget
                         target.setAccessibleName(entry.label)
                         section.form.addRow(widget)
@@ -539,7 +544,7 @@ class ControlsPanel(QWidget):
                     label.setToolTip(entry.tooltip)
                     label.setBuddy(widget.slider if isinstance(widget, SettingField) else widget)
                     section.form.addRow(label, widget)
-                    labels.append(label)
+                    labels.append((label, SUBSECTION_INDENT if section.nested else 0))
 
             for name in names:
                 entries = [e for e in settings.entries()
@@ -557,11 +562,18 @@ class ControlsPanel(QWidget):
                 self.sections[key] = group
                 self._section_entries[key] = []
                 page_layout.addWidget(group)
+                # Each of its registry sections a subsection that folds on its own, folded at first: opening the
+                # group shows what is in it by name, and one more click shows one part.
                 for name in advanced:
                     entries = [e for e in settings.entries()
                                if e.category == category and e.section == name and e.level == settings.ADVANCED]
                     self._section_entries[key] += entries
-                    place(group, entries, heading_title=name.replace(ADVANCED_PREFIX, ""))
+                    sub_key = advanced_subsection_key(category, name)
+                    sub = Section(name.replace(ADVANCED_PREFIX, ""), expanded=False, nested=True)
+                    self.sections[sub_key] = sub
+                    self._section_entries[sub_key] = entries
+                    group.form.addRow(sub)
+                    place(sub, entries)
             if category == settings.SOURCE:
                 picture = self.sections[PICTURE].form
                 for widget in (self.open_button, self.thumbnail_label, self.picture_label, self.picture_print_label,
@@ -572,10 +584,11 @@ class ControlsPanel(QWidget):
                 medium.addRow(self.medium_hint)
             page_layout.addStretch(1)
             # A page's labels as wide as its widest, so that its sliders line up from one section to the next.
+            # A subsection's form starts further in, so its labels are as much narrower.
             if labels:
-                width = max(label.sizeHint().width() for label in labels)
-                for label in labels:
-                    label.setMinimumWidth(width)
+                width = max(label.sizeHint().width() + indent for label, indent in labels)
+                for label, indent in labels:
+                    label.setMinimumWidth(width - indent)
             scroll = QScrollArea()
             scroll.setObjectName("sidebarScroll")
             scroll.setWidget(page)
@@ -641,7 +654,8 @@ class ControlsPanel(QWidget):
         into sight, focused, and outlined a moment."""
         entry = settings.setting(name) if name in self.controls else settings.choice(name)
         self.show_category(entry.category)
-        self.sections[self.section_key(entry)].toggle.setChecked(True)
+        for key in self.section_keys(entry):  # the Advanced group, and its subsection
+            self.sections[key].toggle.setChecked(True)
         widget = self.entry_widget(name)
         target = widget.slider if isinstance(widget, SettingField) else widget
         scroll = self.scrolls[entry.category]
@@ -675,12 +689,21 @@ class ControlsPanel(QWidget):
 
     @staticmethod
     def section_key(entry) -> str:
-        """The section an entry of the registry is shown in: its own, or its page's Advanced group."""
-        return advanced_key(entry.category) if entry.level == settings.ADVANCED else entry.section
+        """The section an entry of the registry is shown in: its own, or its subsection of the page's Advanced
+        group."""
+        if entry.level == settings.ADVANCED:
+            return advanced_subsection_key(entry.category, entry.section)
+        return entry.section
+
+    def section_keys(self, entry) -> list[str]:
+        """The sections an entry is in, outermost first: its own, or the Advanced group and its subsection."""
+        key = self.section_key(entry)
+        return [advanced_key(entry.category), key] if entry.level == settings.ADVANCED else [key]
 
     def section_of(self, widget: QWidget) -> Section | None:
-        """The section holding ``widget``, if any."""
-        return next((section for section in self.sections.values() if section.body.isAncestorOf(widget)), None)
+        """The innermost section holding ``widget``, if any (a subsection is listed after its group)."""
+        return next((section for section in reversed(self.sections.values()) if section.body.isAncestorOf(widget)),
+                    None)
 
     # -- Settings --------------------------------------------------------
     def _difficulty_controls(self) -> dict[str, SettingField]:
@@ -1082,9 +1105,9 @@ class ControlsPanel(QWidget):
 
     # -- Buttons -----------------------------------------------------------
     def _on_abort_clicked(self) -> None:
-        # Cancellation takes effect at the pipeline's next stage boundary, so
-        # disable the button immediately to avoid double-clicks while we wait.
-        self.abort_button.setEnabled(False)
+        # Asked first: the Cancel command is on while this button is, so turning the button off before asking would
+        # turn off the command it asks. The window turns it off once the job is told to stop, against a second press
+        # while the pipeline reaches its next stage.
         self.abort_requested.emit()
 
     def set_thumbnail(self, pixmap: QPixmap) -> None:

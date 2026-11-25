@@ -31,7 +31,10 @@ The window follows your system's light or dark appearance, and changes with it w
   what doesn't fit goes into the toolbar's » menu.
 - **Inspector** (right): the page's colors, numbered as on its legend, with their names; hover one for its hex and
   RGB, and, for a mixed color, its recipe.
-- **Status bar** (bottom): what the app is doing, with a progress bar while it works; on its right, the page's colors
+- **Status bar** (bottom): what the app is doing, with a progress bar while it works (the ✕ beside the sidebar's
+  progress bar cancels, as Cancel does), and, once a setting that changes the page moves, that the preview is out of
+  date and which settings changed (the legend's detail and the export's options don't count; put them back and it is
+  ready again); on its right, the page's colors
   and regions, its size in pixels and on paper, the zoom, and the count of warnings and errors in the diagnostics
   (click it to open them).
 - **Notifications** (over the page): what just happened, such as an export done, with **Show in Folder**, or a failure,
@@ -42,8 +45,8 @@ The window follows your system's light or dark appearance, and changes with it w
   for a bug report. It never opens by itself.
 
 Drag the borders between the panels to resize them. **View > Sidebar** (Ctrl+B) and **View > Inspector** (Ctrl+Alt+B)
-show or hide them; **Focus Mode** (Ctrl+Shift+F) hides everything around the page, and Esc, or the same shortcut,
-brings it all back as it was. On a narrow window the inspector folds away by itself, then the sidebar, and they come
+show or hide them; **Focus Mode** (Ctrl+Shift+F) hides everything around the page, saying how to leave it, and Esc,
+the same shortcut, or **Exit Focus Mode** on the bar above the page brings it all back as it was. On a narrow window the inspector folds away by itself, then the sidebar, and they come
 back as the window widens. The layout is kept between runs; **View > Reset Layout** puts it back as it starts.
 
 ## The three versions
@@ -232,14 +235,15 @@ Type in the search field at the top of the sidebar (Ctrl+F puts the focus there,
 its name ("brush"), by a word it may be called by ("outline" finds Line width, "pupils" Dark mark contrast), by what
 its tooltip says, or by its page or section. Every word typed must match; the best matches come first, each with where
 it is and what it is set to. Up and Down move through them; Enter (or a click) goes to the setting: its page opens, its
-section unfolds (the Advanced group too), the page scrolls to it, and it is outlined for a moment with the focus on
+section unfolds (the Advanced group and its part of it too), the page scrolls to it, and it is outlined for a moment with the focus on
 it, to change from the keyboard at once. Esc clears the search.
 
 ### Levels of detail
 
 Each page shows its settings at three levels. On top, the choices most pages need (the difficulty, the paper, where
 the colors come from), then the settings worth a look (the detail, the palette, the lines and numbers); last, folded
-away, one **Advanced** group with the rest, under small headings:
+away, one **Advanced** group with the rest, in parts that each fold on their own (folded at first, so opening the
+group lists them by name):
 
 | Page | In Advanced |
 |---|---|
@@ -248,7 +252,7 @@ away, one **Advanced** group with the rest, under small headings:
 | Document | Tone (the three grays), Lines (line smoothing), Numbers (leaders, gap beside text, necks) |
 
 Open a picture, pick a difficulty, generate and export: none of it takes an Advanced setting. Every section, the
-Advanced groups included, shows **Reset** in its header while something under it is changed: it puts the sliders
+Advanced groups and their parts included, shows **Reset** in its header while something under it is changed: it puts the sliders
 back to their preset (the grays to the tone, the rest to their default) and the choices to their defaults, and leaves
 the other sections alone. The paints you list stay listed. The folded and unfolded sections are kept between runs.
 

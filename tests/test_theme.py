@@ -202,8 +202,10 @@ def test_switching_repaints_every_label_and_button(installed):
             installed.set_mode(mode)
             _app.processEvents()
             assert _text_problems(window.controls, COLORS[scheme]) == [], scheme
-            headers = [s.toggle for s in window.controls.sections.values()]
-            assert all(h.palette().color(QPalette.ButtonText).name().upper() == COLORS[scheme].text for h in headers)
+            # The Advanced groups' subsections a step quieter than the sections.
+            for s in window.controls.sections.values():
+                want = COLORS[scheme].text_secondary if s.nested else COLORS[scheme].text
+                assert s.toggle.palette().color(QPalette.ButtonText).name().upper() == want.upper(), s.title
     finally:
         window.close()
 
