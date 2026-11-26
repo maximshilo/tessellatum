@@ -4,6 +4,15 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.27] - 2026-11-26
+
+### Added
+
+- **Compare**, on the canvas bar and in the View menu: two views of the page side by side, following each other's zoom
+  and scroll, or one over the other split left and right or top and bottom, with a divider to drag. Compare the view
+  shown with Page, Completed, Tinted, Original or the **Previous version**: the page shown before the last change, if
+  it is still kept, labeled with that change. Each view is named in its corner. Comparing never makes a page.
+
 ## [1.1.26] - 2026-11-26
 
 ### Added
