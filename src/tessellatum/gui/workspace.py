@@ -16,20 +16,21 @@ from PySide6.QtWidgets import QButtonGroup, QToolButton, QVBoxLayout, QWidget
 
 from tessellatum.core import settings
 from tessellatum.gui import theme
+from tessellatum.gui.actions import ACTIVITIES, ANALYSIS
 from tessellatum.gui.palette_inspector import PaletteInspector  # noqa: F401  (the inspector, where it was)
 from tessellatum.gui.theme import icons
 from tessellatum.gui.theme.tokens import COLORS, LIGHT
 
-ACTIVITIES = settings.CATEGORIES  # Source, Generation, Colors, Document; Analysis comes with I5
 ACTIVITY_ICONS = {
     settings.SOURCE: "source", settings.GENERATION: "generation", settings.COLORS: "colors",
-    settings.DOCUMENT: "document",
+    settings.DOCUMENT: "document", ANALYSIS: "analysis",
 }
 ACTIVITY_TIPS = {
     settings.SOURCE: "Source: the picture, and how it is read",
     settings.GENERATION: "Generation: the difficulty, the regions and their detail",
     settings.COLORS: "Colors: what the page is colored with, and its palette",
     settings.DOCUMENT: "Document: the paper, the lines and numbers, the legend, and the export",
+    ANALYSIS: "Analysis: the page measured on paper, its issues, and overlays to see them",
 }
 
 

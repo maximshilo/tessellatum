@@ -19,8 +19,8 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
-from PySide6.QtCore import QEvent, QObject, QRectF, QSettings, QSize, Qt, QTimer
-from PySide6.QtGui import QImage, QPainter, QPalette, QPixmap
+from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QSettings, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QImage, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -42,6 +42,7 @@ from tessellatum.app import errors
 from tessellatum.app import project as projects
 from tessellatum.app.document import Document
 from tessellatum.app.history import SETTINGS, History
+from tessellatum.app.jobs import ANALYSIS as ANALYSIS_JOB
 from tessellatum.app.jobs import (
     EXPORT, INSPECTION, PREVIEW, PRINT_LAYOUT, RECIPES, SAVE, Job, JobManager, page_task,
 )
@@ -57,7 +58,7 @@ from tessellatum.core.print_size import MM_PER_INCH, print_scale
 from tessellatum.gui import freshness, preferences, theme
 from tessellatum.core import settings as registry
 from tessellatum.gui.actions import (
-    ACTIVITY_ACTIONS, COMPARE_ACTIONS, COMPARE_MENU, COMPARE_WITH_ACTIONS, GUIDE_ACTIONS, THEME_ACTIONS,
+    ACTIVITY_ACTIONS, ANALYSIS, COMPARE_ACTIONS, COMPARE_MENU, COMPARE_WITH_ACTIONS, GUIDE_ACTIONS, THEME_ACTIONS,
     VERSION_ACTIONS, ZOOM_ACTIONS, Actions,
 )
 from tessellatum.gui.actions import FILE as FILE_MENU
@@ -70,10 +71,12 @@ from tessellatum.gui.notifications import (
     show_in_folder,
 )
 from tessellatum.gui.preview_widget import (
-    ANNOTATION, COMPARE_OFF, ORIGINAL, PREVIOUS, SIDE_BY_SIDE, SPLIT_HORIZONTAL, SPLIT_VERTICAL, PreviewWidget, SideBySide,
+    ANNOTATION, COMPARE_OFF, DIAGNOSTICS, ORIGINAL, PREVIOUS, SIDE_BY_SIDE, SPLIT_HORIZONTAL, SPLIT_VERTICAL, PreviewWidget, SideBySide,
     VersionBar, ZoomBar, view_name,
 )
 from tessellatum.gui.status import BUSY, CANCELLED, DONE, FAILED, IDLE, StatusBar
+from tessellatum.gui import analysis
+from tessellatum.gui.theme.tokens import COLORS, LIGHT
 from tessellatum.gui.palette_inspector import PaletteInspector
 from tessellatum.gui.region_inspector import RegionInspector, region_info
 from tessellatum.gui.workspace import ActivityBar, LayoutStore
@@ -140,6 +143,37 @@ def highlight_image(mask: np.ndarray, accent: tuple[int, int, int], isolate: boo
     return QImage(pixels.data, width, height, width * 4, QImage.Format_ARGB32).copy()
 
 
+def diagnostic_image(mask: np.ndarray, color: str, alpha: int, outline: bool = False) -> QImage:
+    """An overlay (ARGB, the mask's size) of ``mask`` in ``color`` (a hex) at ``alpha``; with ``outline``, edged in it
+    too, so that small regions show at any zoom."""
+    rgb = QColor(color)
+    accent = (rgb.red(), rgb.green(), rgb.blue())
+    if outline:
+        return highlight_image(mask, accent, False, tint=alpha)
+    pixels = np.zeros(mask.shape, dtype=np.uint32)
+    pixels[mask] = np.uint32((alpha << 24) | (accent[0] << 16) | (accent[1] << 8) | accent[2])
+    height, width = mask.shape
+    return QImage(pixels.data, width, height, width * 4, QImage.Format_ARGB32).copy()
+
+
+def leader_image(shape: tuple[int, int], leaders, color: str) -> QImage:
+    """An overlay (the region map's size) that draws each number's leader line, and a box round its number."""
+    height, width = shape
+    image = QImage(width, height, QImage.Format_ARGB32_Premultiplied)
+    image.fill(Qt.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor(color), 2)
+    painter.setPen(pen)
+    for (start, end), box in leaders:
+        painter.drawLine(QPointF(*start), QPointF(*end))
+        x0, y0, x1, y1 = box
+        painter.drawRect(QRectF(x0 - 1, y0 - 1, x1 - x0 + 2, y1 - y0 + 2))
+    painter.end()
+    return image
+
+
+DIAGNOSTIC_ALPHA = 150  # the analysis's overlays over the page
 HIGHLIGHT_ALPHA = 90  # the highlight's tint over the regions of the color picked
 ISOLATE_ALPHA = 190  # how far the other regions are dimmed toward white, with Isolate
 REGION_ALPHA = 160  # the tint over the region picked, under its outline: darker than its color's other regions
@@ -235,6 +269,9 @@ class MainWindow(QMainWindow):
             view.viewport().setAcceptDrops(False)
 
         self.inspector = PaletteInspector()
+        self.analysis = analysis.AnalysisPanel()
+        self.controls.add_page(ANALYSIS, self.analysis)
+        self._analyzed = None  # the page the analysis shown is of
         self.region_inspector = RegionInspector()
         self.inspector.add_section(self.region_inspector)
         self._region: int | None = None  # the region picked on the canvas, by its id in the page's region map
@@ -361,6 +398,10 @@ class MainWindow(QMainWindow):
 
         self.resize(1280, 840)
         self.document.result_changed.connect(self._inspect_page)
+        self.document.result_changed.connect(self._analyze_page)
+        self.analysis.region_activated.connect(lambda region: self.select_region(region, center=True))
+        self.analysis.overlays_changed.connect(self._show_analysis_overlays)
+        self.analysis.issue_chosen.connect(lambda _regions: self._show_issue_highlight())
         self.inspector.color_selected.connect(self._on_color_selected)
         self.inspector.regions_requested.connect(self.list_regions)
         self.region_inspector.region_chosen.connect(lambda region: self.select_region(region, center=True))
@@ -555,11 +596,12 @@ class MainWindow(QMainWindow):
 
     # -- The workspace's layout ---------------------------------------------------
     def show_activity(self, category: str) -> None:
-        """Show ``category``'s settings in the sidebar, unfolding it if it was folded away."""
+        """Show ``category``'s settings in the sidebar (or the analysis), unfolding it if it was folded away."""
         self.controls.show_category(category)
         self.activity_bar.set_current(category)
         self.commands[ACTIVITY_ACTIONS[category]].setChecked(True)
         self.set_sidebar_visible(True)
+        self._analyze_page()
 
     def _on_activity_chosen(self, category: str) -> None:
         # The page already shown, clicked: the sidebar folds away; clicked again, it comes back.
@@ -576,6 +618,8 @@ class MainWindow(QMainWindow):
 
     def set_sidebar_visible(self, visible: bool) -> None:
         self._set_panel_visible("sidebar", self.controls, visible)
+        if visible and hasattr(self, "analysis"):
+            self._analyze_page()  # the analysis shown again: measured, if this page isn't yet
 
     def set_inspector_visible(self, visible: bool) -> None:
         self._set_panel_visible("inspector", self.inspector, visible)
@@ -1662,6 +1706,11 @@ class MainWindow(QMainWindow):
         elif job.kind == RECIPES:
             self._recipes_for = (job.context, result)
             self._show_legend()
+        elif job.kind == ANALYSIS_JOB:
+            if job.context is self.current_page:
+                self._analyzed = job.context
+                self.analysis.show_measures(result)
+                self._show_analysis_overlays()
         elif job.kind == INSPECTION:
             if job.context is self.current_page:
                 coverage, stats = result
@@ -1831,6 +1880,80 @@ class MainWindow(QMainWindow):
             return None
         height, width = page.model.region_id_map.shape
         return print_scale((width, height), page.drawing.style.paper_format).px_per_mm
+
+    # -- The analysis -----------------------------------------------------------------------------------------
+    def analysis_shown(self) -> bool:
+        return self.controls.category() == ANALYSIS and self.sidebar_visible()
+
+    def _analyze_page(self) -> None:
+        """Measure the page shown for the Analysis page, in the background, if that page is shown and hasn't measured
+        it yet; a new page puts the measures away (and their overlays) until then."""
+        page = self.current_page
+        running = self.jobs.current(ANALYSIS_JOB)
+        measuring = running is not None and running.context is page
+        if self._analyzed is not page and self._analyzed is not None or running is not None and not measuring:
+            self._analyzed = None
+            self.jobs.drop(ANALYSIS_JOB)
+            self.analysis.show_measures(None)
+            self._show_analysis_overlays()
+        if page is None or page.model is None or self._analyzed is page or measuring or not self.analysis_shown():
+            return
+        model, paper = page.model, page.drawing.style.paper_format
+        height, width = model.region_id_map.shape
+        scale = print_scale((width, height), paper)
+        params = model.params
+
+        def measure(_progress, _should_cancel):
+            return measures.measure_page(
+                model.region_id_map, model.labels, model.legend_size, scale.px_per_mm, params.min_width_mm,
+                params.min_region_area_mm2 / max(params.detail_weight, 1), model.style.min_label_pt, scale.px_per_pt)
+
+        self.analysis.set_measuring()
+        self.jobs.start(ANALYSIS_JOB, measure, context=page, label="Analyzing the page")
+
+    def _show_analysis_overlays(self) -> None:
+        """The overlays asked for on the Analysis page, in the canvas's diagnostics layer (and the one compared with).
+        Never exported: an export draws the page from its own data."""
+        found = self.analysis.measures() if self._analyzed is self.current_page else None
+        page = self.current_page
+        wanted = self.analysis.overlays() if found is not None and page is not None else set()
+        images = {key: None for key in analysis.OVERLAYS}
+        if wanted:
+            ids = page.model.region_id_map
+            manager = theme.current()
+            colors = manager.colors() if manager is not None else COLORS[LIGHT]
+            if analysis.NARROW_PARTS in wanted:
+                images[analysis.NARROW_PARTS] = diagnostic_image(found.slivers, colors.error, DIAGNOSTIC_ALPHA)
+            if analysis.SMALL_REGIONS in wanted:
+                small = np.zeros(int(ids.max()) + 1, dtype=bool)
+                small[found.small] = True
+                mask = np.zeros(ids.shape, dtype=bool)
+                inside = ids >= 0
+                mask[inside] = small[ids[inside]]
+                images[analysis.SMALL_REGIONS] = diagnostic_image(mask, colors.warning, DIAGNOSTIC_ALPHA, outline=True)
+            if analysis.LEADERS in wanted:
+                images[analysis.LEADERS] = leader_image(ids.shape, found.leaders, colors.info)
+        for view in (self.preview, self.compare_view):
+            for key, image in images.items():
+                view.set_overlay(DIAGNOSTICS, key, image)
+        self._show_issue_highlight()
+
+    def _show_issue_highlight(self) -> None:
+        """Highlight the regions of the issue chosen on the Analysis page, on the canvas (the annotation layer)."""
+        page = self.current_page
+        regions = self.analysis.chosen_issue() if self._analyzed is page and page is not None else None
+        image = None
+        if regions:
+            ids = page.model.region_id_map
+            chosen = np.zeros(int(ids.max()) + 1, dtype=bool)
+            chosen[regions] = True
+            mask = np.zeros(ids.shape, dtype=bool)
+            inside = ids >= 0
+            mask[inside] = chosen[ids[inside]]
+            accent = self.palette().color(QPalette.Highlight)
+            image = highlight_image(mask, (accent.red(), accent.green(), accent.blue()), False)
+        for view in (self.preview, self.compare_view):
+            view.set_overlay(ANNOTATION, "issue", image)
 
     # -- Inspecting the page: its regions ----------------------------------------------------------------
     _region_page = None  # the page the region was picked on, until its stats are measured
@@ -2054,8 +2177,9 @@ class MainWindow(QMainWindow):
         if split:
             self.preview.set_captions(shown, other_name)
         if side and hasattr(self, "inspector"):
-            self._show_color_highlight()  # the second canvas's highlights, which a mirror doesn't carry
+            self._show_color_highlight()  # the second canvas's highlights and overlays, which a mirror doesn't carry
             self._show_region_highlight()
+            self._show_analysis_overlays()
 
     def _sync_views(self, leader: PreviewWidget, follower: PreviewWidget) -> None:
         """Put ``follower`` as far in and in the same place as ``leader``, while the two are side by side."""

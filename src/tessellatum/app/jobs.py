@@ -42,7 +42,8 @@ EXPORT = "export"  # a page made afresh to export, when the preview isn't what i
 SAVE = "save"  # writing a file: the PDF, the PNG drawn in pixels, a palette
 RECIPES = "recipes"  # how to mix each legend color from the paints listed
 INSPECTION = "inspection"  # measuring the page shown for the inspectors: how much of it each color paints
-KINDS = (PREVIEW, PRINT_LAYOUT, EXPORT, SAVE, RECIPES, INSPECTION)
+ANALYSIS = "analysis"  # measuring the page shown as the benchmark does, for the Analysis page
+KINDS = (PREVIEW, PRINT_LAYOUT, EXPORT, SAVE, RECIPES, INSPECTION, ANALYSIS)
 
 # A job's states. QUEUED waits for its kind's last job to stop; DROPPED finished, but was no longer wanted.
 QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED, DROPPED = (
