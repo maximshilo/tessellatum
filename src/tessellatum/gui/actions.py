@@ -102,6 +102,8 @@ COMMANDS = (
     *(Command(f"activity_{category.lower()}", f"&{category} Settings", VIEW, f"Show the {category} settings",
               category.lower(), (f"Ctrl+Shift+{i}",), checkable=True)
       for i, category in enumerate(settings.CATEGORIES, start=1)),
+    Command("activity_analysis", "&Analysis", VIEW, "Show the page's analysis: its measures, issues and overlays",
+            "analysis", (f"Ctrl+Shift+{len(settings.CATEGORIES) + 1}",), checkable=True),
     Command("toggle_sidebar", "&Sidebar", VIEW, "Show or hide the settings sidebar", "left_panel", ("Ctrl+B",),
             checkable=True),
     Command("toggle_inspector", "&Inspector", VIEW, "Show or hide the inspector: the page's colors", "right_panel",
@@ -124,7 +126,9 @@ COMPARE_ACTIONS = {COMPARE_OFF: "compare_off", SIDE_BY_SIDE: "compare_side", SPL
 COMPARE_WITH_ACTIONS = {view: f"compare_with_{key}" for key, view in COMPARE_WITH.items()}
 THEME_ACTIONS = {mode: f"theme_{mode.lower()}" for mode in theme.MODES}
 ZOOM_ACTIONS = ("zoom_in", "zoom_out", "fit", "actual_pixels", "print_size")
-ACTIVITY_ACTIONS = {category: f"activity_{category.lower()}" for category in settings.CATEGORIES}
+ANALYSIS = "Analysis"  # the sidebar's page that isn't settings: the page measured (see ``gui.analysis``)
+ACTIVITIES = (*settings.CATEGORIES, ANALYSIS)
+ACTIVITY_ACTIONS = {category: f"activity_{category.lower()}" for category in ACTIVITIES}
 
 
 class Actions(QObject):

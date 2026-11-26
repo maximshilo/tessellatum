@@ -20,7 +20,8 @@ The window follows your system's light or dark appearance, and changes with it w
     read (line art, faces and subject, text);
   - **Generation**: the difficulty and the settings that shape the regions;
   - **Colors**: what the page is colored with, where its colors come from, the palette and mixing;
-  - **Document**: the paper, lines and numbers, their tone, and the legend.
+  - **Document**: the paper, lines and numbers, their tone, and the legend;
+  - **Analysis**: the page measured on paper, its issues, and overlays to see them (see [Analysis](#analysis)).
 
   Clicking the page already shown folds the sidebar away; clicking any page brings it back.
 - **Sidebar**: a search field on top (Ctrl+F; see [Finding a setting](#finding-a-setting)), then the category's
@@ -28,8 +29,8 @@ The window follows your system's light or dark appearance, and changes with it w
   **Advanced** group at the foot of the page (see [Levels of detail](#levels-of-detail)); click a section's title to
   fold or unfold it, and its **Reset**, shown while something in it is changed, to put just that section back.
   Generate Preview and Export stay at its foot on every page.
-- **Canvas** (middle): the page, with its own toolbar above it: the version shown, whether the page shown is up to
-  date, and the zoom. On a narrow window, what doesn't fit goes into the toolbar's » menu. The preview's state reads
+- **Canvas** (middle): the page, with its own toolbar above it (the version shown, Compare, and whether the page
+  shown is up to date) and the zoom under it. On a narrow window, what doesn't fit goes into a toolbar's » menu. The preview's state reads
   **Up to date** (the page the settings make), **Out of date** (a setting that changes the page moved since; its
   tooltip names them), **Generating…**, or **Cancelled** / **Failed** with **· earlier preview** when the page asked
   for didn't come and the one shown is from before. How soon a change shows:
@@ -79,6 +80,20 @@ the zoom and the scroll:
 - **Original**: the picture itself, in the page's place, so a point of the page is the same point of the picture. It
   is shown, never exported.
 
+### Comparing
+
+**Compare** above the page (also View > Compare) shows two views at once, each named in a corner:
+
+- **Side by Side**: two canvases, exactly as wide as each other, that zoom and move together; zooming or dragging
+  either moves both, so a point of the page is at the same place in each.
+- **Split Left and Right** or **Top and Bottom**: the view compared with past a divider across the page, in the same
+  place; drag the divider to move it.
+
+Compare **With** any version, the **Original**, or the **Previous version**: the page made before this one, of the
+same picture, in the version shown, named by what changed since ("Previous version (before: Colors)"). It comes from
+the pages kept for undo (Preferences > Performance > **Memory for pages made**), so it may be gone; it is never made
+again. Comparing makes nothing: every view is of the page shown, or kept.
+
 ## The palette
 
 The inspector lists the page's colors by their legend numbers, with their names and how much of the page each
@@ -106,19 +121,22 @@ From the keyboard: press Enter on a color to list its regions, largest first. Th
 canvas; Up and Down go through the rest, and Esc goes back to the palette. A pick is kept when the page is made again
 with the same regions (a change to the lines or the numbers), and let go when the regions change.
 
-### Comparing
+## Analysis
 
-**Compare** above the page (also View > Compare) shows two views at once, each named in a corner:
+The Analysis page of the sidebar (View > Analysis, Ctrl+Shift+5, or the chart button at the foot of the activity bar)
+measures the page shown on paper, as the project's own quality benchmark does. It measures in the background while
+the page is open, once a page:
 
-- **Side by Side**: two canvases, exactly as wide as each other, that zoom and move together; zooming or dragging
-  either moves both, so a point of the page is at the same place in each.
-- **Split Left and Right** or **Top and Bottom**: the view compared with past a divider across the page, in the same
-  place; drag the divider to move it.
-
-Compare **With** any version, the **Original**, or the **Previous version**: the page made before this one, of the
-same picture, in the version shown, named by what changed since ("Previous version (before: Colors)"). It comes from
-the pages kept for undo (Preferences > Performance > **Memory for pages made**), so it may be gone; it is never made
-again. Comparing makes nothing: every view is of the page shown, or kept.
+- **Measures**: the colors and regions, regions per cm², the smallest region, the narrowest region (the widest brush
+  that fits in it), the share of the page thinner than the brush (leaving out corners' points, which a brush's tip
+  fills), the numbers written on leader lines, cramped, or smaller than the page's smallest size, and the regions with
+  no number.
+- **Issues**: the regions behind those measures, largest first: regions nowhere as wide as the brush, smaller than
+  the settings keep anywhere, with no number, with a cramped number, a number under the smallest size, or a number on
+  a leader line. Choose an issue to highlight all its regions on the canvas; unfold it and choose a region (or move to
+  it with the arrow keys) to pick it, centered, with its measures in the inspector.
+- **Show on the canvas**: the parts thinner than the brush, the small regions and the numbers on leader lines, each
+  drawn over the page in its own color. They are off until asked for, and never reach an export.
 
 ## Menus and shortcuts
 
@@ -140,7 +158,7 @@ Every command is in the menu bar, and the most used have a shortcut (Cmd in plac
 | View > Zoom In, Zoom Out | Ctrl+plus, Ctrl+minus |
 | View > Fit Page, 100% | Ctrl+0, Ctrl+Alt+0 |
 | View > Rulers, Grid | Ctrl+R, Ctrl+' |
-| View > Source, Generation, Colors, Document Settings | Ctrl+Shift+1 to 4 |
+| View > Source, Generation, Colors, Document Settings; Analysis | Ctrl+Shift+1 to 4; Ctrl+Shift+5 |
 | View > Sidebar, Inspector | Ctrl+B, Ctrl+Alt+B |
 | View > Focus Mode | Ctrl+Shift+F (Esc leaves it) |
 | View > Diagnostics | Ctrl+Shift+D |
@@ -206,7 +224,7 @@ one's work. Copies left go after 14 days.
 ## Zoom
 
 The preview zooms about the point under the cursor, with the mouse wheel, Ctrl+wheel, a touchpad's pinch, Ctrl+plus
-and Ctrl+minus, or the buttons above it. The zoom's field takes a zoom typed in (150, or 37.5%) or picked from its
+and Ctrl+minus, or the buttons under it. The zoom's field takes a zoom typed in (150, or 37.5%) or picked from its
 list, where **100%** (Ctrl+Alt+0) is a pixel of the page as it prints on a pixel of the screen and **Print size** the
 page as large as on paper: approximate, by the size the screen reports. **Fit** (Ctrl+0) shows the whole page. A
 window resized keeps the same point of the page in its middle.

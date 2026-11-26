@@ -678,6 +678,16 @@ class ControlsPanel(QWidget):
             widget.style().unpolish(widget)
             widget.style().polish(widget)
 
+    def add_page(self, category: str, widget: QWidget) -> None:
+        """A page of the sidebar that isn't settings (the analysis), shown as ``category``."""
+        scroll = QScrollArea()
+        scroll.setWidget(widget)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scrolls[category] = scroll
+        self.stack.addWidget(scroll)
+
     def show_category(self, category: str) -> None:
         """Show the page of ``category`` (one of ``PAGE_SECTIONS``)."""
         self.stack.setCurrentWidget(self.scrolls[category])

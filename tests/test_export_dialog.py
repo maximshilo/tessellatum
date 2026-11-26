@@ -181,6 +181,14 @@ def test_what_the_canvas_shows_around_the_page_never_reaches_a_file(window, tmp_
     window.inspector.isolate_check.setChecked(True)  # its regions highlighted on the canvas, the rest dimmed
     assert window.preview.overlay(main_window.ANNOTATION, "color") is not None
     window.set_diagnostics_visible(True)
+    # The analysis open, its overlays all shown, a region of an issue picked.
+    window.show_activity(main_window.ANALYSIS)
+    _wait(window)
+    for check in window.analysis.overlay_checks.values():
+        check.setChecked(True)
+    for key in main_window.analysis.OVERLAYS:
+        assert window.preview.overlay(main_window.DIAGNOSTICS, key) is not None
+    window.select_region(int(window.current_page.model.region_id_map[0, 0]), center=True)
     _app.processEvents()
     _save_to(monkeypatch, tmp_path / "around.png")
     window.export_page()

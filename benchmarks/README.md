@@ -263,7 +263,10 @@ millimeters and points, and converted to pixels for each output image by the
 print-size model in `src/tessellatum/core/print_size.py`. The harness loads that
 file from its own checkout (`bench_metrics.print_size`), not from the version
 being measured, so every version is judged at the same scale, including
-versions older than the model.
+versions older than the model. It loads `src/tessellatum/core/measures.py` the
+same way (`bench_metrics.measures`): the slivers, corners' tips, undersized and
+unnumbered regions and the numbers' sizes are measured there, by the functions
+the app's Analysis page shows, so the app and the benchmark judge a page alike.
 
 - **Paper:** A4, 210 × 297 mm, with 10 mm margins, leaving a 190 × 277 mm
   printable area. Print resolution 300 dpi.

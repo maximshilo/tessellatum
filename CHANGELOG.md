@@ -4,6 +4,27 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.30] - 2026-11-26
+
+### Added
+
+- **Analysis**, a fifth page of the sidebar (View > Analysis, Ctrl+Shift+5): the page measured on paper as the
+  project's quality benchmark measures it, in the background while the page is open:
+  - its measures: colors, regions, regions per cm², the smallest and the narrowest region, the share thinner than
+    the brush, numbers on leaders, cramped or too small, and regions with no number;
+  - its issues, the regions behind them: an issue chosen highlights them all on the canvas, a region chosen is
+    picked and centered;
+  - overlays on the canvas for the parts thinner than the brush, the small regions and the numbers on leader lines,
+    off until asked for and never exported.
+
+### Changed
+
+- The zoom (−, the zoom field, +, Fit) is under the page, in a bar of its own: on the default window with both panels
+  open, the bar above the page had no room left for it.
+- The benchmark measures the slivers, corners' tips, undersized and unnumbered regions and the numbers' sizes with the
+  app's own functions, loaded from this checkout as the print model is: one implementation for both. Its numbers are
+  unchanged.
+
 ## [1.1.29] - 2026-11-26
 
 ### Added

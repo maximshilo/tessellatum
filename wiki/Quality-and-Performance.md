@@ -86,6 +86,8 @@ What makes it fast:
   is a write and a check: 65 ms for the lion (1.4 MB) and 0.48 s for a 24-megapixel JPEG (20 MB), including reading it
   back. Opening takes 29 ms and 0.3 s. From launch, an example's first page is ready in about 5 s: the window in 1.6 s,
   then 3.1 s for a first page with the models loading.
+- **Analysis in the background.** The Analysis page measures the lion at Realistic in 2.7 s, off the GUI thread,
+  and then shows it in 2 ms; its overlays draw in 6 to 46 ms. It is measured only while the page is open.
 - **Inspecting without waiting.** On the lion at Realistic (2,216 × 1,478, 3,758 regions), the coverage and every
   region's area and box are measured in the background in 13 and 127 ms once a page is shown. Picking a region
   measures its widest brush in 0.07 ms at the median (0.9 ms for the largest) and outlines it over its box alone; a
