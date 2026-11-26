@@ -1,3 +1,5 @@
+import threading
+
 import numpy as np
 import pytest
 
@@ -7,6 +9,17 @@ try:  # numbers shown and typed in the fields follow the locale: the tests' is U
     QLocale.setDefault(QLocale(QLocale.English, QLocale.UnitedStates))
 except ImportError:
     pass
+
+
+@pytest.fixture(autouse=True)
+def _no_warm_up_left_running():
+    """A window starts warming the pipeline up in a thread of its own, which can outlive the test that opened it (on a
+    cold machine it loads the models first). It calls ``pipeline.generate``: left running, it would call the next
+    test's fake instead. Each test starts once any such thread is done."""
+    for thread in threading.enumerate():
+        if thread.name == "pipeline-warm-up":
+            thread.join(timeout=300)
+    yield
 
 
 @pytest.fixture
