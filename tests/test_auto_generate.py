@@ -15,7 +15,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from tessellatum.app.jobs import PREVIEW, SAVE, Job  # noqa: E402
+from tessellatum.app.jobs import PREVIEW, PRINT_LAYOUT, SAVE, Job  # noqa: E402
 from tessellatum.core import pipeline  # noqa: E402
 from tessellatum.gui import freshness, preferences  # noqa: E402
 from test_results import _Window  # noqa: E402  (the counting window)
@@ -170,7 +170,7 @@ def test_a_page_kept_is_shown_at_once_under_every_setting(win, mode):
     win.preview()
     made = win.made
     win.colors(3)
-    assert win.window.current_page is first and win.window.jobs.is_idle()
+    assert win.window.current_page is first and _nothing_made(win.window)
     assert not win.window._auto_timer.isActive()
     win.settle(AFTER_S + 0.2)
     assert win.made == made and win.state() == freshness.CURRENT
@@ -190,3 +190,8 @@ def test_the_preference_is_kept_and_applies_at_once(win, tmp_path):
     win.mode(preferences.ALWAYS)  # turned on while out of date: made, a second later
     win.settle(AFTER_S + 0.2)
     assert win.made == 2 and win.state() == freshness.CURRENT
+
+
+def _nothing_made(window) -> bool:
+    """No page being made or laid out: the inspectors' measuring of a page shown is not making one."""
+    return not window.jobs.is_running(PREVIEW) and not window.jobs.is_running(PRINT_LAYOUT)
