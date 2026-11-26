@@ -82,4 +82,8 @@ What makes it fast:
   38 of 38 undos and redos over 20 cycles found their page, in 97 ms at the median and 116 ms at most (a page takes
   2.1 to 2.3 s). The process's memory stayed flat over 50 more cycles (1,219 to 1,226 MB). Under a 200 MB budget, with
   new pages made, it levelled off at about 1,306 MB.
+- **Projects stored, not compressed again.** The picture goes into the project as its own bytes, unchanged, so saving
+  is a write and a check: 65 ms for the lion (1.4 MB) and 0.48 s for a 24-megapixel JPEG (20 MB), including reading it
+  back. Opening takes 29 ms and 0.3 s. From launch, an example's first page is ready in about 5 s: the window in 1.6 s,
+  then 3.1 s for a first page with the models loading.
 - **Gated inference.** The text detector's fine look runs only where a cheap first look finds text.

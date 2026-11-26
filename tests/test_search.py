@@ -145,7 +145,7 @@ def test_the_search_is_done_by_keyboard_alone(window):
     # The results give the sidebar back when the focus moves on, and come back with it.
     QTest.keyClicks(field, "brush")
     assert window.controls.search.results.isVisible()
-    window.preview.setFocus()
+    window.welcome.open_picture_button.setFocus()  # the canvas: the welcome page, no picture being open
     _app.processEvents()
     assert window.controls.search.results.isHidden() and field.text() == "brush"
     window.commands["find"].trigger()
