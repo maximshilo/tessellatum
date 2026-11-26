@@ -66,9 +66,10 @@ show or hide them; **Focus Mode** (Ctrl+Shift+F) hides everything around the pag
 the same shortcut, or **Exit Focus Mode** on the bar above the page brings it all back as it was. On a narrow window the inspector folds away by itself, then the sidebar, and they come
 back as the window widens. The layout is kept between runs; **View > Reset Layout** puts it back as it starts.
 
-## The three versions
+## The views
 
-Every preview is drawn in three versions, and the bar above it switches between them, keeping the zoom and the scroll:
+Every preview is drawn in three versions, and the bar above it switches between them and the picture itself, keeping
+the zoom and the scroll:
 
 - **Page**: the coloring page as it prints.
 - **Completed**: the page painted in. Every region is filled in its legend color, which covers the lines and numbers,
@@ -76,6 +77,8 @@ Every preview is drawn in three versions, and the bar above it switches between 
   letters of a sign) shows on top, and paper the page leaves bare stays white.
 - **Tinted**: the page under a faint wash of its colors, each 40% of the way from white, with the lines, numbers and
   ink showing through as through a translucent paint: a guide to paint from.
+- **Original**: the picture itself, in the page's place, so a point of the page is the same point of the picture. It
+  is shown, never exported.
 
 ## Menus and shortcuts
 
@@ -93,9 +96,10 @@ Every command is in the menu bar, and the most used have a shortcut (Cmd in plac
 | Edit > Preferences | Ctrl+, (macOS: in the app menu, Cmd+,) |
 | Generate > Generate Preview | Ctrl+Enter, F5 |
 | Generate > Cancel | Esc |
-| View > Page, Completed, Tinted | Ctrl+1, Ctrl+2, Ctrl+3 |
+| View > Page, Completed, Tinted, Original | Ctrl+1, Ctrl+2, Ctrl+3, Ctrl+4 |
 | View > Zoom In, Zoom Out | Ctrl+plus, Ctrl+minus |
 | View > Fit Page, 100% | Ctrl+0, Ctrl+Alt+0 |
+| View > Rulers, Grid | Ctrl+R, Ctrl+' |
 | View > Source, Generation, Colors, Document Settings | Ctrl+Shift+1 to 4 |
 | View > Sidebar, Inspector | Ctrl+B, Ctrl+Alt+B |
 | View > Focus Mode | Ctrl+Shift+F (Esc leaves it) |
@@ -162,9 +166,22 @@ one's work. Copies left go after 14 days.
 ## Zoom
 
 The preview zooms about the point under the cursor, with the mouse wheel, Ctrl+wheel, a touchpad's pinch, Ctrl+plus
-and Ctrl+minus, or the buttons above it, and the page is dragged to move it. **Fit** (Ctrl+0) shows the whole page,
-**100%** a pixel of the page as it prints on a pixel of the screen, and **Print size** the page as large as on paper,
-by the size the screen reports. Further in than the preview's own pixels, the zoom shows the page as it prints: the
+and Ctrl+minus, or the buttons above it. The zoom's field takes a zoom typed in (150, or 37.5%) or picked from its
+list, where **100%** (Ctrl+Alt+0) is a pixel of the page as it prints on a pixel of the screen and **Print size** the
+page as large as on paper: approximate, by the size the screen reports. **Fit** (Ctrl+0) shows the whole page. A
+window resized keeps the same point of the page in its middle.
+
+To move the page, drag it, drag with the middle button, or hold Space and drag (Space only while the canvas has the
+keyboard: in a text field it types a space). A click without a drag picks the point under it.
+
+**View > Rulers**, **Grid** and **Page Bounds** are hidden until asked for, and kept as they were left:
+
+- the rulers measure on paper, in millimeters or inches as Preferences > Units says, from the page's top left corner;
+- the grid is a line every centimeter (or inch) on paper;
+- the bounds are the sheet the page prints on and its margins, the page in the middle of them, as the export lays it
+  out; the legend, which prints on a sheet of its own, moves below it.
+
+Further in than the preview's own pixels, the zoom shows the page as it prints: the
 export's own drawing, with its numbers where and as small as they print. It is drawn in the background the first time
 and kept, so the export is drawn from it without laying the page out again. A new preview of the same picture keeps the zoom and the
 place, to compare settings there.

@@ -4,6 +4,24 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.26] - 2026-11-26
+
+### Added
+
+- **Original** view (View > Original, Ctrl+4): the picture itself in the page's place, beside Page, Completed and
+  Tinted, keeping the zoom and the place. It is never exported.
+- A zoom field above the canvas: type a zoom (150, 37.5%) and press Enter, or pick one from its list, where 100% and
+  Print size now are (they were buttons).
+- Pan with the middle button, or by holding Space and dragging, as well as by dragging. Space only pans while the canvas
+  has the keyboard.
+- **View > Rulers** (Ctrl+R), **Grid** (Ctrl+') and **Page Bounds**: rulers in millimeters or inches on paper, a grid
+  every centimeter or inch, and the sheet and its margins around the page. Hidden until asked for, then kept.
+
+### Changed
+
+- A window resized keeps the same point of the page in its middle, rather than its top left corner.
+- **Print size** says it is approximate: it goes by the size the screen reports.
+
 ## [1.1.25] - 2026-11-26
 
 ### Added

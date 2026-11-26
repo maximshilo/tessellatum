@@ -53,7 +53,9 @@ from tessellatum.core.pipeline import GeneratedPage
 from tessellatum.core.print_size import MM_PER_INCH, print_scale
 from tessellatum.gui import freshness, preferences, theme
 from tessellatum.core import settings as registry
-from tessellatum.gui.actions import ACTIVITY_ACTIONS, THEME_ACTIONS, VERSION_ACTIONS, ZOOM_ACTIONS, Actions
+from tessellatum.gui.actions import (
+    ACTIVITY_ACTIONS, GUIDE_ACTIONS, THEME_ACTIONS, VERSION_ACTIONS, ZOOM_ACTIONS, Actions,
+)
 from tessellatum.gui.actions import FILE as FILE_MENU
 from tessellatum.gui.welcome import WelcomePage
 from tessellatum.app.presets import PresetStore
@@ -63,7 +65,7 @@ from tessellatum.gui.notifications import (
     ERROR, INFO, SUCCESS, WARNING, DiagnosticsPanel, NotificationBar, install_log_handler, remove_log_handler,
     show_in_folder,
 )
-from tessellatum.gui.preview_widget import PreviewWidget, VersionBar, ZoomBar
+from tessellatum.gui.preview_widget import ORIGINAL, PreviewWidget, VersionBar, ZoomBar
 from tessellatum.gui.status import BUSY, CANCELLED, DONE, FAILED, IDLE, StatusBar
 from tessellatum.gui.workspace import ActivityBar, LayoutStore, PaletteInspector
 
@@ -211,6 +213,7 @@ class MainWindow(QMainWindow):
         self._say("Open an image to get started.")
 
         self._previewed_image: np.ndarray | None = None  # the picture current_page is of
+        self._original_kept: tuple | None = None  # the picture, the long edge and its Original view (_original_view)
         self._pending_export_path: Path | None = None
         self._pending_export_format: str | None = None
         self._pending_export_version: Version | None = None
@@ -379,6 +382,13 @@ class MainWindow(QMainWindow):
             self.preview.zoom_to_printed_pixels, self.preview.zoom_to_print_size,
         )):
             commands[command_id].triggered.connect(method)
+        # The rulers, the grid and the sheet's bounds: hidden at first, then as they were left.
+        for command_id, method in zip(GUIDE_ACTIONS, (self.preview.set_rulers, self.preview.set_grid,
+                                                      self.preview.set_bounds)):
+            shown = self._layout.get_bool(command_id, False)
+            commands[command_id].setChecked(shown)
+            method(shown)
+            commands[command_id].toggled.connect(method)
         manager = theme.current()
         for mode, command_id in THEME_ACTIONS.items():
             action = commands[command_id]
@@ -625,6 +635,8 @@ class MainWindow(QMainWindow):
         layout.set("activity", self.controls.category())
         layout.set("sidebar", self._wanted("sidebar", self.controls))
         layout.set("inspector", self._wanted("inspector", self.inspector))
+        for command_id in GUIDE_ACTIONS:
+            layout.set(command_id, self.commands[command_id].isChecked())
         for category, scroll in self.controls.scrolls.items():
             layout.set(f"scroll/{category}", scroll.verticalScrollBar().value())
         for name, section in self.controls.sections.items():
@@ -637,6 +649,8 @@ class MainWindow(QMainWindow):
             self.set_focus_mode(False)
         self._layout.clear()
         self._auto_hidden.clear()
+        for command_id in GUIDE_ACTIONS:
+            self.commands[command_id].setChecked(False)
         self._end_scroll_restore()
         self.controls.show()
         self.inspector.show()
@@ -653,6 +667,7 @@ class MainWindow(QMainWindow):
         prefs = self.preferences
         if key in (None, preferences.UNITS_KEY):
             self.controls.set_length_units(prefs.units())
+            self.preview.set_units(prefs.units())
         if key in (None, preferences.CANVAS_KEY):
             preferences.apply_canvas(self.preview, prefs.canvas_color())
         if key in (None, preferences.CACHE_KEY):
@@ -1150,6 +1165,7 @@ class MainWindow(QMainWindow):
         self.controls.edit_label = None
         self._show_source(loaded.image, None, loaded.source_bytes, loaded.source_name)
         self.preview.clear_page()
+        self._original_kept = None
         self._recorded = self.controls.snapshot()
         self.history.clear()
         self.history.set_clean()
@@ -1216,6 +1232,7 @@ class MainWindow(QMainWindow):
         self.jobs.drop(PREVIEW)
         self._show_source(None, None)
         self.preview.clear_page()
+        self._original_kept = None
         self.history.clear()
         self.history.set_clean()
         self._recorded = self.controls.snapshot()
@@ -1652,6 +1669,9 @@ class MainWindow(QMainWindow):
         self._show_freshness()  # out of date at once if the settings moved on while it was made
         versions = {version: page.image(version) for version in Version}
         long_edge = self._print_long_edge()
+        original = self._original_view(page, long_edge)
+        if original is not None:
+            versions[ORIGINAL] = original
         print_scale = 1.0 if long_edge is None else long_edge / max(page.page.size)
         legend, legend_scale = self._preview_legend(page)
         self.preview.show_page(
@@ -1662,6 +1682,22 @@ class MainWindow(QMainWindow):
         if print_page is not None:
             self._print_page = print_page
             self.preview.show_detail({version: print_page.image(version) for version in Version})
+
+    def _original_view(self, page: GeneratedPage, long_edge: int | None) -> Image.Image | None:
+        """The picture ``page`` is made of, for the canvas's Original view: its own pixels, no more of them than the
+        page has as it prints, since the canvas shows nothing finer (see ``PreviewWidget``). Kept for the next page of
+        the same picture."""
+        image = self.current_image_bgr
+        if image is None:
+            return None
+        most = max(long_edge or 0, *page.page.size)
+        kept = self._original_kept
+        if kept is not None and kept[0] is image and kept[1] == most:
+            return kept[2]
+        smaller = pipeline.resize_to_long_edge(image, most) if max(image.shape[:2]) > most else image
+        original = Image.fromarray(np.ascontiguousarray(smaller[:, :, 2::-1]))
+        self._original_kept = (image, most, original)
+        return original
 
     def _preview_legend(self, page: GeneratedPage):
         """The legend of ``page`` as the panel asks for it now, drawn finer than the page, and how many of its pixels go

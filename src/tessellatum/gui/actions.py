@@ -18,6 +18,7 @@ from tessellatum.core import settings
 from tessellatum.core.painting import Version
 from tessellatum.gui import theme
 from tessellatum.gui.theme import icons
+from tessellatum.gui.preview_widget import ORIGINAL, ORIGINAL_DESCRIPTION
 from tessellatum.gui.theme.tokens import COLORS, LIGHT
 
 
@@ -60,12 +61,19 @@ COMMANDS = (
     Command("cancel", "&Cancel", GENERATE, "Stop making the page", "cancel", ("Esc",)),
     *(Command(f"show_{v.name.lower()}", f"&{v.value}", VIEW, v.description, None, (f"Ctrl+{i}",), checkable=True)
       for i, v in enumerate(Version, start=1)),
+    Command("show_original", "O&riginal", VIEW, ORIGINAL_DESCRIPTION, None, ("Ctrl+4",), checkable=True),
     Command("zoom_in", "Zoom &In", VIEW, "Zoom in; the mouse wheel zooms too", "zoom_in", (QKeySequence.ZoomIn, "Ctrl+=")),
     Command("zoom_out", "Zoom &Out", VIEW, "Zoom out; the mouse wheel zooms too", "zoom_out", (QKeySequence.ZoomOut,)),
     Command("fit", "&Fit Page", VIEW, "The whole page in the window", "fit", ("Ctrl+0",)),
     Command("actual_pixels", "&100%", VIEW, "A pixel of the page as it prints on a pixel of the screen",
             "actual_size", ("Ctrl+Alt+0",)),
-    Command("print_size", "&Print Size", VIEW, "The page as large as on paper, by the size the screen reports"),
+    Command("print_size", "&Print Size", VIEW,
+            "The page as large as on paper: approximate, by the size the screen reports"),
+    Command("rulers", "R&ulers", VIEW, "Rulers along the canvas, in millimeters or inches on paper", None,
+            ("Ctrl+R",), checkable=True),
+    Command("grid", "&Grid", VIEW, "A grid over the page, every centimeter (or inch) on paper", None, ("Ctrl+'",),
+            checkable=True),
+    Command("page_bounds", "Page &Bounds", VIEW, "The sheet the page prints on, and its margins", checkable=True),
     *(Command(f"activity_{category.lower()}", f"&{category} Settings", VIEW, f"Show the {category} settings",
               category.lower(), (f"Ctrl+Shift+{i}",), checkable=True)
       for i, category in enumerate(settings.CATEGORIES, start=1)),
@@ -84,7 +92,8 @@ COMMANDS = (
     Command("about", "&About Tessellatum", HELP, "Its version and licenses", "info", role=QAction.AboutRole),
 )
 COMMAND_IDS = tuple(command.id for command in COMMANDS)
-VERSION_ACTIONS = {v: f"show_{v.name.lower()}" for v in Version}
+VERSION_ACTIONS = {**{v: f"show_{v.name.lower()}" for v in Version}, ORIGINAL: "show_original"}
+GUIDE_ACTIONS = ("rulers", "grid", "page_bounds")
 THEME_ACTIONS = {mode: f"theme_{mode.lower()}" for mode in theme.MODES}
 ZOOM_ACTIONS = ("zoom_in", "zoom_out", "fit", "actual_pixels", "print_size")
 ACTIVITY_ACTIONS = {category: f"activity_{category.lower()}" for category in settings.CATEGORIES}
@@ -167,7 +176,7 @@ class Actions(QObject):
                         appearance = menu.addMenu("&Appearance")
                     appearance.addAction(action)
                     continue
-                if command.id in ("save", "export", "quit", "find", "preferences", "zoom_in", "cancel",
+                if command.id in ("save", "export", "quit", "find", "preferences", "zoom_in", "cancel", "rulers",
                                   ACTIVITY_ACTIONS[settings.SOURCE], "toggle_sidebar") \
                         and not menu.isEmpty():
                     menu.addSeparator()
