@@ -72,3 +72,63 @@ def color_mask(region_id_map: np.ndarray, region_color: np.ndarray, color: int) 
     mask[inside] = lookup[ids[inside]]
     return mask
 
+
+@dataclass(frozen=True)
+class RegionStats:
+    """Every region's area and bounding box on a page, by region id: ``areas[id]`` pixels within the box
+    ``x0[id] <= x < x1[id]``, ``y0[id] <= y < y1[id]``. An id merged away has area 0 and an empty box."""
+
+    areas: np.ndarray
+    x0: np.ndarray
+    y0: np.ndarray
+    x1: np.ndarray
+    y1: np.ndarray
+
+    def box(self, region_id: int) -> tuple[int, int, int, int]:
+        return int(self.x0[region_id]), int(self.y0[region_id]), int(self.x1[region_id]), int(self.y1[region_id])
+
+    def __contains__(self, region_id: int) -> bool:
+        return 0 <= region_id < len(self.areas) and self.areas[region_id] > 0
+
+
+def region_stats(region_id_map: np.ndarray) -> RegionStats:
+    """Each region's area and bounding box (see ``RegionStats``), in one pass over the page."""
+    ids = np.asarray(region_id_map)
+    height, width = ids.shape
+    flat = ids.ravel()
+    where = np.flatnonzero(flat >= 0)
+    count = int(flat[where].max()) + 1 if where.size else 0
+    areas = np.bincount(flat[where], minlength=count).astype(np.int64)
+    x0 = np.zeros(count, dtype=np.int64)
+    y0 = np.zeros(count, dtype=np.int64)
+    x1 = np.zeros(count, dtype=np.int64)
+    y1 = np.zeros(count, dtype=np.int64)
+    if where.size:
+        order = where[np.argsort(flat[where], kind="stable")]
+        present = np.flatnonzero(areas)
+        starts = np.concatenate(([0], np.cumsum(areas[present])[:-1]))
+        ys, xs = np.divmod(order, width)
+        y0[present] = ys[starts]  # the pixels are in reading order within a region: its first is in its top row
+        y1[present] = np.maximum.reduceat(ys, starts) + 1
+        x0[present] = np.minimum.reduceat(xs, starts)
+        x1[present] = np.maximum.reduceat(xs, starts) + 1
+    return RegionStats(areas=areas, x0=x0, y0=y0, x1=x1, y1=y1)
+
+
+def widest_brush_px(region_id_map: np.ndarray, region_id: int, box: tuple[int, int, int, int]) -> float:
+    """The width, in pixels, of the widest round brush that fits somewhere in region ``region_id`` (whose bounding
+    box is ``box``): twice the farthest any pixel of it is from outside it, less the pixel the brush is centered on."""
+    import cv2
+
+    x0, y0, x1, y1 = box
+    crop = np.asarray(region_id_map)[y0:y1, x0:x1] == region_id
+    if not crop.any():
+        return 0.0
+    padded = np.pad(crop, 1).astype(np.uint8)  # the page's edge bounds a region as its neighbors do
+    distance = cv2.distanceTransform(padded, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+    return max(2.0 * float(distance.max()) - 1.0, 1.0)
+
+
+def region_mask(region_id_map: np.ndarray, region_id: int) -> np.ndarray:
+    """HxW bool: the pixels of region ``region_id``."""
+    return np.asarray(region_id_map) == region_id

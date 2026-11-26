@@ -806,9 +806,11 @@ class PreviewWidget(QGraphicsView):
         self._scene.setSceneRect(rect)
 
     # -- The layers ----------------------------------------------------------------------------------
-    def set_overlay(self, layer: str, key: str, image: QImage | None, smooth: bool = False) -> None:
+    def set_overlay(self, layer: str, key: str, image: QImage | None, smooth: bool = False,
+                    rect: QRectF | None = None) -> None:
         """Show ``image`` over the page, in ``layer`` (see ``LAYERS``), as ``key`` there: stretched over the page, of
-        whatever size it is; None takes it away. The page under it isn't drawn again."""
+        whatever size it is, or over ``rect`` of it (in the page's pixels); None takes it away. The page under it isn't
+        drawn again."""
         item = self._overlays.get((layer, key))
         if image is None or image.isNull() or self._page_size is None:
             if item is not None:
@@ -820,8 +822,10 @@ class PreviewWidget(QGraphicsView):
             self._overlays[(layer, key)] = item
         item.setTransformationMode(Qt.SmoothTransformation if smooth else Qt.FastTransformation)
         item.setPixmap(QPixmap.fromImage(image))
-        width, height = self._page_size
-        item.setTransform(QTransform.fromScale(width / image.width(), height / image.height()))
+        if rect is None:
+            rect = QRectF(0, 0, *self._page_size)
+        transform = QTransform.fromTranslate(rect.x(), rect.y())
+        item.setTransform(transform.scale(rect.width() / image.width(), rect.height() / image.height()))
 
     def overlay(self, layer: str, key: str) -> QGraphicsPixmapItem | None:
         return self._overlays.get((layer, key))

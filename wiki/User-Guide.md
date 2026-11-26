@@ -95,6 +95,17 @@ paints. That share is measured in the background once the page is made, and fill
 - **Copy** the hex (Ctrl+C, or the Copy button), or the RGB or name from the button's menu or a color's right-click
   menu.
 
+### A region
+
+Click a region on the canvas, in any view, to pick it: its color is picked in the palette, the region is outlined, and
+the inspector shows, under the color, the region measured on paper: its area in mm², its size, the widest brush that
+fits in it, and how its number is written (inside it, outside on a leader line, or cramped where lines may cross it),
+at what size in points and on how many other sides. Picking another color lets it go; so does a click off the regions.
+
+From the keyboard: press Enter on a color to list its regions, largest first. The first is picked and centered on the
+canvas; Up and Down go through the rest, and Esc goes back to the palette. A pick is kept when the page is made again
+with the same regions (a change to the lines or the numbers), and let go when the regions change.
+
 ### Comparing
 
 **Compare** above the page (also View > Compare) shows two views at once, each named in a corner:

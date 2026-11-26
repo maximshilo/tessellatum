@@ -4,6 +4,20 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.29] - 2026-11-26
+
+### Added
+
+- Click a region on the canvas to pick it: its color is picked in the palette and the region outlined, and the
+  inspector shows its area and size on paper, the widest brush that fits, and how its number is written (inside, on a
+  leader line or cramped, at what size in points, and on how many other sides).
+- Enter on a color lists its regions, largest first; Up and Down go through them, each centered on the canvas, and Esc
+  goes back to the palette.
+
+### Changed
+
+- A color's highlight on the canvas is built about four times as fast.
+
 ## [1.1.28] - 2026-11-26
 
 ### Added
