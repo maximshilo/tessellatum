@@ -264,6 +264,7 @@ class PaletteInspector(QWidget):
         layout.addWidget(self.tools)
         layout.addWidget(self.list, 1)
         layout.addWidget(self.detail)
+        self._sections = layout.count()
         layout.addStretch(0)  # takes the room while the list is hidden, so the title stays at the top
         self.search.textChanged.connect(self._filter)
         self.sort_combo.currentTextChanged.connect(lambda _text: self._fill())
@@ -293,6 +294,11 @@ class PaletteInspector(QWidget):
         self.summary.setText(f"{len(self._colors)} colors, {page.num_regions:,} regions")
         self.list.setVisible(True)
         self.tools.setVisible(True)
+
+    def add_section(self, widget: QWidget) -> None:
+        """Show ``widget`` under the color picked (the region inspector)."""
+        self.layout().insertWidget(self._sections, widget)
+        self._sections += 1
 
     def set_coverage(self, coverage: ColorCoverage | None, px_per_mm: float | None) -> None:
         """How much of the page each color paints, measured: its texts fill in, and Coverage sorts by it."""

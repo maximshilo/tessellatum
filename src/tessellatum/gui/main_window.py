@@ -12,13 +12,14 @@ from __future__ import annotations
 import dataclasses
 import io
 import logging
+import math
 import threading
 import time
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
-from PySide6.QtCore import QEvent, QObject, QSettings, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QRectF, QSettings, QSize, Qt, QTimer
 from PySide6.QtGui import QImage, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -74,6 +75,7 @@ from tessellatum.gui.preview_widget import (
 )
 from tessellatum.gui.status import BUSY, CANCELLED, DONE, FAILED, IDLE, StatusBar
 from tessellatum.gui.palette_inspector import PaletteInspector
+from tessellatum.gui.region_inspector import RegionInspector, region_info
 from tessellatum.gui.workspace import ActivityBar, LayoutStore
 
 OPEN_IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.gif)"
@@ -110,27 +112,37 @@ def mix_recipes(palette_rgb, paints) -> list[list[str]]:
     found = mixing.recipes(palette_rgb, [rgb for _name, rgb in paints])
     return [mixing.recipe_lines(recipe, paints) for recipe in found]
 
-def highlight_image(mask: np.ndarray, accent: tuple[int, int, int], isolate: bool) -> QImage:
-    """An image over the page (ARGB, its size) that highlights the pixels of ``mask``: tinted in ``accent`` and
-    outlined in it, so the regions show on any page; with ``isolate``, every other pixel dimmed toward white."""
+def highlight_image(mask: np.ndarray, accent: tuple[int, int, int], isolate: bool, tint: int | None = None,
+                    edge: int = 1) -> QImage:
+    """An image over the page (ARGB, its size) that highlights the pixels of ``mask``: tinted in ``accent`` (at
+    ``tint``'s alpha) and outlined in it ``edge`` pixels in, so the regions show on any page; with ``isolate``, every
+    other pixel dimmed toward white."""
     height, width = mask.shape
-    rgba = np.zeros((height, width, 4), dtype=np.uint8)
-    rgba[mask] = (*accent, HIGHLIGHT_ALPHA)
+
+    def argb(rgb, alpha) -> np.uint32:  # a pixel of Qt's ARGB32: a native 32-bit 0xAARRGGBB
+        return np.uint32((alpha << 24) | (rgb[0] << 16) | (rgb[1] << 8) | rgb[2])
+
+    pixels = np.zeros((height, width), dtype=np.uint32)
+    pixels[mask] = argb(accent, HIGHLIGHT_ALPHA if tint is None else tint)
     inner = mask.copy()
-    inner[1:, :] &= mask[:-1, :]
-    inner[:-1, :] &= mask[1:, :]
-    inner[:, 1:] &= mask[:, :-1]
-    inner[:, :-1] &= mask[:, 1:]
-    rgba[mask & ~inner] = (*accent, 255)
+    for _ in range(edge):
+        shrunk = inner.copy()
+        shrunk[1:, :] &= inner[:-1, :]
+        shrunk[:-1, :] &= inner[1:, :]
+        shrunk[:, 1:] &= inner[:, :-1]
+        shrunk[:, :-1] &= inner[:, 1:]
+        shrunk[0, :] = shrunk[-1, :] = False
+        shrunk[:, 0] = shrunk[:, -1] = False
+        inner = shrunk
+    pixels[mask & ~inner] = argb(accent, 255)
     if isolate:
-        rgba[~mask] = (255, 255, 255, ISOLATE_ALPHA)
-    # Qt's ARGB32 is BGRA in memory on every platform Qt runs on (little-endian).
-    bgra = np.ascontiguousarray(rgba[:, :, [2, 1, 0, 3]])
-    return QImage(bgra.data, width, height, width * 4, QImage.Format_ARGB32).copy()
+        pixels[~mask] = argb((255, 255, 255), ISOLATE_ALPHA)
+    return QImage(pixels.data, width, height, width * 4, QImage.Format_ARGB32).copy()
 
 
 HIGHLIGHT_ALPHA = 90  # the highlight's tint over the regions of the color picked
 ISOLATE_ALPHA = 190  # how far the other regions are dimmed toward white, with Isolate
+REGION_ALPHA = 160  # the tint over the region picked, under its outline: darker than its color's other regions
 
 FOCUS_HINT = "Focus mode: the panels are hidden. Press Esc, or Exit Focus Mode above the page, to bring them back."
 STALE_NAMED = 3  # how many changed settings the out-of-date status names
@@ -223,6 +235,11 @@ class MainWindow(QMainWindow):
             view.viewport().setAcceptDrops(False)
 
         self.inspector = PaletteInspector()
+        self.region_inspector = RegionInspector()
+        self.inspector.add_section(self.region_inspector)
+        self._region: int | None = None  # the region picked on the canvas, by its id in the page's region map
+        self._stats: tuple[object, measures.RegionStats] | None = None  # (page, its regions' areas and boxes)
+        self._picking_color = False
         self.activity_bar = ActivityBar()
         self.splitter = QSplitter()
         self.splitter.setObjectName("workspaceSplitter")
@@ -344,7 +361,12 @@ class MainWindow(QMainWindow):
 
         self.resize(1280, 840)
         self.document.result_changed.connect(self._inspect_page)
-        self.inspector.color_selected.connect(lambda _index: self._show_color_highlight())
+        self.inspector.color_selected.connect(self._on_color_selected)
+        self.inspector.regions_requested.connect(self.list_regions)
+        self.region_inspector.region_chosen.connect(lambda region: self.select_region(region, center=True))
+        self.region_inspector.back.connect(self.inspector.list.setFocus)
+        for view in (self.preview, self.compare_view):
+            view.clicked.connect(self.pick_at)
         self.inspector.isolate_changed.connect(lambda _isolated: self._show_color_highlight())
         self.document.result_changed.connect(self._show_page_status)
         self.document.result_changed.connect(self._show_freshness)
@@ -1642,7 +1664,9 @@ class MainWindow(QMainWindow):
             self._show_legend()
         elif job.kind == INSPECTION:
             if job.context is self.current_page:
-                self.inspector.set_coverage(result, self._page_px_per_mm())
+                coverage, stats = result
+                self._stats = (job.context, stats)
+                self.inspector.set_coverage(coverage, self._page_px_per_mm())
 
     def _explain(self, job: Job) -> str:
         """``job``'s failure in words that say what to try (see ``app.errors``)."""
@@ -1771,18 +1795,34 @@ class MainWindow(QMainWindow):
     def _inspect_page(self) -> None:
         """List the page shown's colors in the inspector, and measure how much of it each paints, in the background."""
         page = self.current_page
+        kept = self._kept_region(page)
+        self._region, self._stats = None, None
         self.inspector.show_page(page)
+        self.region_inspector.show_regions(None, [])
+        self.region_inspector.show_region(None)
         self._show_color_highlight()
+        self._show_region_highlight()
         if page is None or page.model is None:
             self.jobs.drop(INSPECTION)
             return
         model = page.model
-        self.jobs.start(
-            INSPECTION,
-            lambda _progress, _should_cancel: measures.color_coverage(
-                model.region_id_map, model.region_color, len(page.palette_rgb)),
-            context=page, label="Measuring the palette's coverage",
-        )
+
+        def inspect(_progress, _should_cancel):
+            coverage = measures.color_coverage(model.region_id_map, model.region_color, len(page.palette_rgb))
+            return coverage, measures.region_stats(model.region_id_map)
+
+        self.jobs.start(INSPECTION, inspect, context=page, label="Measuring the page for the inspectors")
+        if kept is not None:
+            self.select_region(kept)
+
+    def _kept_region(self, page) -> int | None:
+        """The region picked, if ``page`` (the new page) has the same regions as the page it was picked on: else a
+        region of that id is another region, and the pick is dropped."""
+        old = self._stats[0] if self._stats is not None else self._region_page
+        if self._region is None or page is None or page.model is None or old is None or old.model is None:
+            return None
+        same = old is page or np.array_equal(old.model.region_id_map, page.model.region_id_map)
+        return self._region if same else None
 
     def _page_px_per_mm(self) -> float | None:
         """The pixels of the page's region map to a millimeter on paper: what its measures are counted in."""
@@ -1791,6 +1831,127 @@ class MainWindow(QMainWindow):
             return None
         height, width = page.model.region_id_map.shape
         return print_scale((width, height), page.drawing.style.paper_format).px_per_mm
+
+    # -- Inspecting the page: its regions ----------------------------------------------------------------
+    _region_page = None  # the page the region was picked on, until its stats are measured
+
+    def _region_stats(self) -> measures.RegionStats | None:
+        """The page shown's regions' areas and boxes: measured in the background with the coverage, or now if that
+        isn't done yet."""
+        page = self.current_page
+        if page is None or page.model is None:
+            return None
+        if self._stats is None or self._stats[0] is not page:
+            self._stats = (page, measures.region_stats(page.model.region_id_map))
+        return self._stats[1]
+
+    def region_at(self, point) -> int | None:
+        """The region at ``point`` (in the page's pixels, as the canvas's ``clicked`` gives it), or None: the region
+        map's pixel under it, whatever size the map is made at."""
+        page = self.current_page
+        size = self.preview.page_size()
+        if page is None or page.model is None or size is None:
+            return None
+        ids = page.model.region_id_map
+        x = math.floor(point.x() * ids.shape[1] / size[0])
+        y = math.floor(point.y() * ids.shape[0] / size[1])
+        if not (0 <= x < ids.shape[1] and 0 <= y < ids.shape[0]):
+            return None
+        region = int(ids[y, x])
+        return region if region >= 0 else None
+
+    def pick_at(self, point) -> None:
+        """A click on the canvas: pick the region there (or let go, off the regions)."""
+        self.select_region(self.region_at(point))
+
+    def selected_region(self) -> int | None:
+        return self._region
+
+    def select_region(self, region: int | None, center: bool = False) -> None:
+        """Pick ``region`` (its id; None lets go): its color in the palette, its measures in the region inspector,
+        its outline on the canvas; with ``center``, the canvas centered on it."""
+        page = self.current_page
+        stats = self._region_stats() if region is not None else None
+        if region is None or stats is None or region not in stats:
+            self._region = None
+            self.region_inspector.show_region(None)
+            self._show_region_highlight()
+            return
+        self._region, self._region_page = region, page
+        model = page.model
+        color = int(model.region_color[region])
+        if self.inspector.selected() != color:
+            self._picking_color = True
+            try:
+                self.inspector.select(color if color < self.inspector.color_count() else None)
+            finally:
+                self._picking_color = False
+        px_per_mm = self._page_px_per_mm() or 1.0
+        box = stats.box(region)
+        info = region_info(model, region, stats, px_per_mm, page.color_names,
+                           measures.widest_brush_px(model.region_id_map, region, box))
+        self.region_inspector.show_region(info)
+        self._show_region_highlight()
+        if center:
+            for view in (self.preview, self.compare_view):
+                if view.has_page():
+                    view.center_on_rect(self._page_rect(box))
+
+    def _page_rect(self, box) -> QRectF:
+        """``box`` (x0, y0, x1, y1 in the region map's pixels) in the page's pixels, as the canvas shows it."""
+        ids = self.current_page.model.region_id_map
+        width, height = self.preview.page_size()
+        sx, sy = width / ids.shape[1], height / ids.shape[0]
+        x0, y0, x1, y1 = box
+        return QRectF(x0 * sx, y0 * sy, (x1 - x0) * sx, (y1 - y0) * sy)
+
+    def list_regions(self, color: int) -> None:
+        """Enter on a color: list its regions in the region inspector, largest first, pick the first and center it,
+        and give that list the keyboard (Up and Down go through them; Esc goes back)."""
+        page = self.current_page
+        stats = self._region_stats()
+        if stats is None:
+            return
+        ids = page.model.region_id_map
+        region_color = np.asarray(page.model.region_color)
+        present = np.flatnonzero(stats.areas)
+        regions = present[region_color[present] == color]
+        regions = regions[np.lexsort((regions, -stats.areas[regions]))]
+        px_per_mm = self._page_px_per_mm() or 1.0
+        self.region_inspector.show_regions(
+            color + 1, [(int(r), float(stats.areas[r]) / px_per_mm ** 2) for r in regions])
+        del ids
+        if regions.size:
+            self.select_region(int(regions[0]), center=True)
+            self.region_inspector.list.setCurrentRow(0)
+            self.region_inspector.list.setFocus()
+
+    def _on_color_selected(self, index) -> None:
+        if not self._picking_color and self._region is not None and self.current_page is not None:
+            if index is None or int(self.current_page.model.region_color[self._region]) != index:
+                self.select_region(None)  # another color picked: the region goes
+            if self.region_inspector.list.count():
+                self.region_inspector.show_regions(None, [])
+        self._show_color_highlight()
+
+    def _show_region_highlight(self) -> None:
+        """Outline the region picked on the canvas (and the one compared with), over the color's highlight."""
+        page = self.current_page
+        image = None
+        rect = None
+        if self._region is not None and page is not None and page.model is not None:
+            # Drawn over the region's box alone (a pixel more round it, for its outline): a pick builds no page-sized image.
+            ids = page.model.region_id_map
+            x0, y0, x1, y1 = self._region_stats().box(self._region)
+            x0, y0 = max(x0 - 1, 0), max(y0 - 1, 0)
+            x1, y1 = min(x1 + 1, ids.shape[1]), min(y1 + 1, ids.shape[0])
+            mask = measures.region_mask(ids[y0:y1, x0:x1], self._region)
+            accent = self.palette().color(QPalette.Highlight)
+            image = highlight_image(mask, (accent.red(), accent.green(), accent.blue()), False,
+                                    tint=REGION_ALPHA, edge=2)
+            rect = self._page_rect((x0, y0, x1, y1))
+        for view in (self.preview, self.compare_view):
+            view.set_overlay(ANNOTATION, "region", image, rect=rect)
 
     def _show_color_highlight(self) -> None:
         """Highlight the regions of the color picked in the inspector, on the canvas (and the one compared with); with
@@ -1893,7 +2054,8 @@ class MainWindow(QMainWindow):
         if split:
             self.preview.set_captions(shown, other_name)
         if side and hasattr(self, "inspector"):
-            self._show_color_highlight()  # the second canvas's highlight, which a mirror doesn't carry
+            self._show_color_highlight()  # the second canvas's highlights, which a mirror doesn't carry
+            self._show_region_highlight()
 
     def _sync_views(self, leader: PreviewWidget, follower: PreviewWidget) -> None:
         """Put ``follower`` as far in and in the same place as ``leader``, while the two are side by side."""
