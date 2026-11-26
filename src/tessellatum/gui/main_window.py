@@ -40,6 +40,7 @@ from tessellatum.app import project as projects
 from tessellatum.app.document import Document
 from tessellatum.app.history import SETTINGS, History
 from tessellatum.app.jobs import EXPORT, PREVIEW, PRINT_LAYOUT, RECIPES, SAVE, Job, JobManager, page_task
+from tessellatum.app.recovery import RecoveryStore, Snapshot
 from tessellatum.app.results import ResultCache, ResultKey
 from tessellatum.app.snapshot import DocumentSettings
 from tessellatum.core import export, mixing, pipeline, swatches
@@ -99,9 +100,15 @@ STALE_NAMED = 3  # how many changed settings the out-of-date status names
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, store: QSettings | None = None, presets: PresetStore | None = None):
-        """``store``, if given, is where the panel keeps its settings between runs (see ``ControlsPanel``)."""
+    def __init__(self, store: QSettings | None = None, presets: PresetStore | None = None,
+                 recovery: RecoveryStore | None = None):
+        """``store``, if given, is where the panel keeps its settings between runs (see ``ControlsPanel``);
+        ``recovery``, where unsaved work is kept to be recovered after a crash (see ``app.recovery``)."""
         super().__init__()
+        self.recovery = recovery
+        self._recovery_revision: int | None = None  # the document's revision the last snapshot was of
+        self._recovery_timer = QTimer(self)
+        self._recovery_timer.timeout.connect(self._keep_for_recovery)
         self.setWindowTitle("Tessellatum")
 
         self._layout = LayoutStore(store)
@@ -629,6 +636,12 @@ class MainWindow(QMainWindow):
             pipeline.set_cache_pages(prefs.cache_pages())
         if key in (None, preferences.RESULTS_KEY):
             self.results.set_budget(prefs.result_memory())
+        if key in (None, preferences.RECOVERY_KEY):
+            every = prefs.recovery_every_ms()
+            if every is None or self.recovery is None:
+                self._recovery_timer.stop()
+            else:
+                self._recovery_timer.start(every)
         if key in (preferences.REDRAW_KEY, preferences.AUTO_KEY):
             self._schedule_redraw()
             self._show_freshness()
@@ -1095,6 +1108,14 @@ class MainWindow(QMainWindow):
         except (projects.ProjectError, OSError) as exc:
             self._open_failed(path, exc)
             return False
+        self._load_project(loaded, path)
+        self._remember_recent(path)
+        self._say(f"Opened {path.name}.")
+        self.generate_preview()  # its page, made again: projects keep the picture and the settings, not pages
+        return True
+
+    def _load_project(self, loaded: projects.Project, path: Path | None) -> None:
+        """Make ``loaded`` the work, saved in ``path``: its settings shown, its picture open, nothing to undo."""
         self._restoring = True
         try:
             self.controls.show_settings(loaded.settings)
@@ -1108,10 +1129,8 @@ class MainWindow(QMainWindow):
         self.history.set_clean()
         self.document.mark_saved()
         self.document.set_project_path(path)
-        self._remember_recent(path)
-        self._say(f"Opened {path.name}.")
-        self.generate_preview()  # its page, made again: projects keep the picture and the settings, not pages
-        return True
+        if self.recovery is not None:
+            self.recovery.clear()  # the work now is what the project holds
 
     def save_project(self) -> bool:
         """Save the document in its project, or ask where (Save As) if it has none. True if it was saved."""
@@ -1144,11 +1163,7 @@ class MainWindow(QMainWindow):
             return False
         if self._record_scheduled:
             self._record_settings()
-        if source.data is None:  # a picture that came from no file: kept as a PNG, losslessly
-            out = io.BytesIO()
-            Image.fromarray(np.ascontiguousarray(source.image[:, :, ::-1])).save(out, "PNG")
-            source.data = out.getvalue()
-            source.name = f"{Path(source.name or 'picture').stem}.png"
+        _keep_bytes(source)
         try:
             projects.save_project(path, self.controls.snapshot(), source.name or "picture.png", source.data,
                                   source.image)
@@ -1162,6 +1177,8 @@ class MainWindow(QMainWindow):
         self.document.mark_saved()
         self.document.set_project_path(path)
         self._remember_recent(path)
+        if self.recovery is not None:
+            self.recovery.clear()  # saved: nothing to recover
         self._say(f"Saved {path.name}.", DONE)
         return True
 
@@ -1179,6 +1196,73 @@ class MainWindow(QMainWindow):
         self.document.mark_saved()
         self.document.set_project_path(None)
         self.controls.set_busy(False)
+        if self.recovery is not None:
+            self.recovery.clear()  # closed: let go
+        return True
+
+    # -- Recovery (see ``app.recovery``) -------------------------------------------------------------
+    def _keep_for_recovery(self, force: bool = False) -> bool:
+        """Write the work's snapshot if it has unsaved changes not kept yet (or with ``force``); remove it once there
+        are none. True if one was written."""
+        if self.recovery is None:
+            return False
+        if not self.has_unsaved_work():
+            if self.recovery.has_snapshot():
+                self.recovery.clear()
+            self._recovery_revision = None
+            return False
+        revision = self.document.revision()
+        if revision == self._recovery_revision and not force:
+            return False
+        source = self.document.source()
+        _keep_bytes(source)
+        try:
+            self.recovery.write(self.controls.snapshot(), source.name or "picture.png", source.data, source.image,
+                                self._document_name(), self.document.project_path())
+        except OSError as exc:
+            log.warning("keeping the work for recovery failed: %s", exc)
+            return False
+        self._recovery_revision = revision
+        return True
+
+    def _run_recovery_dialog(self, dialog) -> bool:
+        return dialog.exec() == dialog.DialogCode.Accepted
+
+    def offer_recovery(self) -> None:
+        """As the app starts: the work a crash left, if any, offered back (see ``gui.recovery_dialog``)."""
+        if self.recovery is None:
+            return
+        self.recovery.prune()
+        pending = self.recovery.pending()
+        if not pending:
+            return
+        from tessellatum.gui.recovery_dialog import RecoveryDialog
+
+        dialog = RecoveryDialog(pending, self.recovery, self)
+        if self._run_recovery_dialog(dialog) and dialog.chosen is not None:
+            self.restore_snapshot(dialog.chosen)
+
+    def restore_snapshot(self, snapshot: Snapshot) -> bool:
+        """Make ``snapshot`` the work: unsaved, saying where it came from, kept again as this session's before the
+        snapshot is let go. True if it was restored."""
+        if self._busy_with_file() or not self._settle_unsaved():
+            return False
+        try:
+            loaded = projects.read_project(snapshot.path)
+        except (projects.ProjectError, OSError) as exc:
+            self._open_failed(snapshot.path, exc)
+            return False
+        self._load_project(loaded, snapshot.project)
+        self.history.mark_unsaved()
+        self._keep_for_recovery(force=True)
+        self.recovery.discard(snapshot)
+        from tessellatum.gui.recovery_dialog import when
+
+        text = (f"Recovered {snapshot.name} as it was {when(snapshot.saved_at)}. It isn't saved: "
+                f"Save Project keeps it.")
+        self._say(text)
+        self.notify(INFO, text)
+        self.generate_preview()
         return True
 
     def _show_title(self) -> None:
@@ -1791,6 +1875,9 @@ class MainWindow(QMainWindow):
         if not self._settle_unsaved():
             event.ignore()
             return
+        self._recovery_timer.stop()
+        if self.recovery is not None:
+            self.recovery.close()  # a clean exit: nothing to recover
         self.save_layout()
         # Stop what is still running, without waiting for it: the threads outlive the window, and the application
         # waits for them, bounded, when it quits (see ``app.jobs.wait_for_all``).
@@ -1835,6 +1922,15 @@ def _warm_up_pipeline() -> None:
             log.warning("warming up the pipeline failed", exc_info=True)
     except Exception:  # noqa: BLE001 - best effort; a real failure resurfaces on Generate
         log.warning("warming up the pipeline failed", exc_info=True)
+
+
+def _keep_bytes(source) -> None:
+    """Give a picture that came from no file (pasted, say) bytes to keep in a project: a PNG, lossless."""
+    if source.data is None:
+        out = io.BytesIO()
+        Image.fromarray(np.ascontiguousarray(source.image[:, :, ::-1])).save(out, "PNG")
+        source.data = out.getvalue()
+        source.name = f"{Path(source.name or 'picture').stem}.png"
 
 
 def _bgr_to_pixmap(image_bgr: np.ndarray) -> QPixmap:

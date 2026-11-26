@@ -4,6 +4,20 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.24] - 2026-11-26
+
+### Added
+
+- Recovery: while the work has changes that aren't saved, it is kept every 2 minutes in the app's own folder, never
+  over a project.
+  - If Tessellatum ends without closing properly (a crash, a power cut), the next start offers it back with its
+    thumbnail and when it was kept: **Restore** (it opens unsaved, saying where it came from), **Discard**, or
+    **Keep for Later**.
+  - Saving, closing the picture and quitting remove it.
+  - A window still open is never offered to another.
+  - What is kept goes after 14 days, and past the latest 20.
+- Preferences > Workspace > **Keep for recovery**: every 1, 2, 5 or 10 minutes, or Off.
+
 ## [1.1.23] - 2026-11-26
 
 ### Added

@@ -8,7 +8,8 @@ same ``QSettings`` as the window, under ``preferences/``; the theme and motion u
   exists), so changing it says a restart is needed; the canvas's background behind the page.
 - **Units:** lengths and areas shown in millimeters or inches. Only how they are shown and typed: a document's values
   are kept in millimeters whatever is picked.
-- **Workspace:** the panels put back where they start.
+- **Workspace:** the panels put back where they start; how often unsaved work is kept for recovery after a crash
+  (``app.recovery``; every 2 minutes by default).
 - **Performance:** how much memory the pages made may take, kept so that undo, redo and a setting put back show them
   at once (``app.results``; Automatic: a quarter of the memory, at most 2 GB); how many pages' intermediate results the
   generator keeps to make the next preview faster; clearing both; how soon a change to the lines, the numbers or the
@@ -56,6 +57,7 @@ CACHE_KEY = "preferences/cache_pages"
 REDRAW_KEY = "preferences/redraw"
 RESULTS_KEY = "preferences/result_memory"
 AUTO_KEY = "preferences/auto_generate"
+RECOVERY_KEY = "preferences/recovery"
 
 AUTOMATIC = "Automatic"
 SCALES = {AUTOMATIC: None, "90%": 0.9, "100%": 1.0, "110%": 1.1, "125%": 1.25, "150%": 1.5, "175%": 1.75, "200%": 2.0}
@@ -78,6 +80,10 @@ OFF, QUICK, ALWAYS = "Off", "When it's quick", "Always"
 AUTO_GENERATE = {OFF: OFF, QUICK: QUICK, ALWAYS: ALWAYS}
 QUICK_S = 2.0
 AUTO_AFTER_MS = 1000
+# How often unsaved work is kept for recovery, in ms; None: never.
+RECOVERY = {"Every 2 min": 120_000, "Every 1 min": 60_000, "Every 5 min": 300_000, "Every 10 min": 600_000,
+            "Off": None}
+DEFAULT_RECOVERY = "Every 2 min"
 RESTART_NOTE = "The new scale applies when Tessellatum is started again."
 
 
@@ -103,7 +109,8 @@ class Preferences(QObject):
         super().__init__(parent)
         self._store = store
         self._values = {SCALE_KEY: AUTOMATIC, CANVAS_KEY: THEME_CANVAS, UNITS_KEY: "Millimeters", CACHE_KEY: AUTOMATIC,
-                        REDRAW_KEY: DEFAULT_REDRAW, RESULTS_KEY: AUTOMATIC, AUTO_KEY: OFF}
+                        REDRAW_KEY: DEFAULT_REDRAW, RESULTS_KEY: AUTOMATIC, AUTO_KEY: OFF,
+                        RECOVERY_KEY: DEFAULT_RECOVERY}
         if store is not None:
             for key, choices in _CHOICES.items():
                 kept = store.value(key)
@@ -148,12 +155,16 @@ class Preferences(QObject):
         """Whether a change that makes the page again makes it by itself: ``OFF``, ``QUICK`` or ``ALWAYS``."""
         return AUTO_GENERATE[self._values[AUTO_KEY]]
 
+    def recovery_every_ms(self) -> int | None:
+        """How often unsaved work is kept for recovery; None: never."""
+        return RECOVERY[self._values[RECOVERY_KEY]]
+
     def restart_needed(self) -> bool:
         return self._values[SCALE_KEY] != self.started_scale
 
 
 _CHOICES = {SCALE_KEY: SCALES, CANVAS_KEY: CANVASES, UNITS_KEY: UNITS, CACHE_KEY: CACHE_PAGES, REDRAW_KEY: REDRAW,
-            RESULTS_KEY: RESULT_MEMORY, AUTO_KEY: AUTO_GENERATE}
+            RESULTS_KEY: RESULT_MEMORY, AUTO_KEY: AUTO_GENERATE, RECOVERY_KEY: RECOVERY}
 
 
 def apply_canvas(view: QWidget, color: str | None) -> None:
@@ -237,6 +248,15 @@ class PreferencesDialog(QDialog):
         workspace = QWidget()
         form = QFormLayout(workspace)
         form.addRow("Panels", self.reset_layout_button)
+        self.recovery_combo = self._choice(RECOVERY_KEY, RECOVERY)
+        self.recovery_combo.setToolTip("How often work with unsaved changes is kept, to be recovered after a crash")
+        recovery_note = QLabel("While the work has changes that aren't saved, it is kept this often in the app's own "
+                               "folder, never over a project, and offered back if Tessellatum doesn't close properly. "
+                               "Saving or closing removes it.")
+        recovery_note.setProperty("role", "hint")
+        recovery_note.setWordWrap(True)
+        form.addRow("Keep for recovery", self.recovery_combo)
+        form.addRow("", recovery_note)
 
         # Performance
         self.results_combo = self._choice(RESULTS_KEY, RESULT_MEMORY)
