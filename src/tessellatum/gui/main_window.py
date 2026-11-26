@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from PySide6.QtCore import QEvent, QObject, QSettings, QSize, Qt, QTimer
-from PySide6.QtGui import QImage, QPainter, QPixmap
+from PySide6.QtGui import QImage, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -41,11 +41,13 @@ from tessellatum.app import errors
 from tessellatum.app import project as projects
 from tessellatum.app.document import Document
 from tessellatum.app.history import SETTINGS, History
-from tessellatum.app.jobs import EXPORT, PREVIEW, PRINT_LAYOUT, RECIPES, SAVE, Job, JobManager, page_task
+from tessellatum.app.jobs import (
+    EXPORT, INSPECTION, PREVIEW, PRINT_LAYOUT, RECIPES, SAVE, Job, JobManager, page_task,
+)
 from tessellatum.app.recovery import RecoveryStore, Snapshot
 from tessellatum.app.results import ResultCache, ResultKey
 from tessellatum.app.snapshot import DocumentSettings
-from tessellatum.core import export, mixing, pipeline, swatches
+from tessellatum.core import export, measures, mixing, pipeline, swatches
 from tessellatum.core.difficulty import SCREEN_MEDIUM
 from tessellatum.core.legend import NAME_RECIPE, render_legend
 from tessellatum.core.painting import Version
@@ -67,11 +69,12 @@ from tessellatum.gui.notifications import (
     show_in_folder,
 )
 from tessellatum.gui.preview_widget import (
-    COMPARE_OFF, ORIGINAL, PREVIOUS, SIDE_BY_SIDE, SPLIT_HORIZONTAL, SPLIT_VERTICAL, PreviewWidget, SideBySide,
+    ANNOTATION, COMPARE_OFF, ORIGINAL, PREVIOUS, SIDE_BY_SIDE, SPLIT_HORIZONTAL, SPLIT_VERTICAL, PreviewWidget, SideBySide,
     VersionBar, ZoomBar, view_name,
 )
 from tessellatum.gui.status import BUSY, CANCELLED, DONE, FAILED, IDLE, StatusBar
-from tessellatum.gui.workspace import ActivityBar, LayoutStore, PaletteInspector
+from tessellatum.gui.palette_inspector import PaletteInspector
+from tessellatum.gui.workspace import ActivityBar, LayoutStore
 
 OPEN_IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.gif)"
 PROJECT_FILTER = f"Tessellatum projects (*{projects.SUFFIX})"
@@ -106,6 +109,28 @@ def mix_recipes(palette_rgb, paints) -> list[list[str]]:
     a second with many paints, so run off the GUI thread."""
     found = mixing.recipes(palette_rgb, [rgb for _name, rgb in paints])
     return [mixing.recipe_lines(recipe, paints) for recipe in found]
+
+def highlight_image(mask: np.ndarray, accent: tuple[int, int, int], isolate: bool) -> QImage:
+    """An image over the page (ARGB, its size) that highlights the pixels of ``mask``: tinted in ``accent`` and
+    outlined in it, so the regions show on any page; with ``isolate``, every other pixel dimmed toward white."""
+    height, width = mask.shape
+    rgba = np.zeros((height, width, 4), dtype=np.uint8)
+    rgba[mask] = (*accent, HIGHLIGHT_ALPHA)
+    inner = mask.copy()
+    inner[1:, :] &= mask[:-1, :]
+    inner[:-1, :] &= mask[1:, :]
+    inner[:, 1:] &= mask[:, :-1]
+    inner[:, :-1] &= mask[:, 1:]
+    rgba[mask & ~inner] = (*accent, 255)
+    if isolate:
+        rgba[~mask] = (255, 255, 255, ISOLATE_ALPHA)
+    # Qt's ARGB32 is BGRA in memory on every platform Qt runs on (little-endian).
+    bgra = np.ascontiguousarray(rgba[:, :, [2, 1, 0, 3]])
+    return QImage(bgra.data, width, height, width * 4, QImage.Format_ARGB32).copy()
+
+
+HIGHLIGHT_ALPHA = 90  # the highlight's tint over the regions of the color picked
+ISOLATE_ALPHA = 190  # how far the other regions are dimmed toward white, with Isolate
 
 FOCUS_HINT = "Focus mode: the panels are hidden. Press Esc, or Exit Focus Mode above the page, to bring them back."
 STALE_NAMED = 3  # how many changed settings the out-of-date status names
@@ -318,7 +343,9 @@ class MainWindow(QMainWindow):
         self._build_commands()
 
         self.resize(1280, 840)
-        self.document.result_changed.connect(lambda: self.inspector.show_page(self.current_page))
+        self.document.result_changed.connect(self._inspect_page)
+        self.inspector.color_selected.connect(lambda _index: self._show_color_highlight())
+        self.inspector.isolate_changed.connect(lambda _isolated: self._show_color_highlight())
         self.document.result_changed.connect(self._show_page_status)
         self.document.result_changed.connect(self._show_freshness)
         self.document.source_changed.connect(self._on_source_changed_for_preview)
@@ -1613,6 +1640,9 @@ class MainWindow(QMainWindow):
         elif job.kind == RECIPES:
             self._recipes_for = (job.context, result)
             self._show_legend()
+        elif job.kind == INSPECTION:
+            if job.context is self.current_page:
+                self.inspector.set_coverage(result, self._page_px_per_mm())
 
     def _explain(self, job: Job) -> str:
         """``job``'s failure in words that say what to try (see ``app.errors``)."""
@@ -1737,6 +1767,45 @@ class MainWindow(QMainWindow):
         self._show_previous_state()
         self._refresh_compare()
 
+    # -- Inspecting the page: its colors ---------------------------------------------------------------
+    def _inspect_page(self) -> None:
+        """List the page shown's colors in the inspector, and measure how much of it each paints, in the background."""
+        page = self.current_page
+        self.inspector.show_page(page)
+        self._show_color_highlight()
+        if page is None or page.model is None:
+            self.jobs.drop(INSPECTION)
+            return
+        model = page.model
+        self.jobs.start(
+            INSPECTION,
+            lambda _progress, _should_cancel: measures.color_coverage(
+                model.region_id_map, model.region_color, len(page.palette_rgb)),
+            context=page, label="Measuring the palette's coverage",
+        )
+
+    def _page_px_per_mm(self) -> float | None:
+        """The pixels of the page's region map to a millimeter on paper: what its measures are counted in."""
+        page = self.current_page
+        if page is None or page.drawing is None or page.model is None:
+            return None
+        height, width = page.model.region_id_map.shape
+        return print_scale((width, height), page.drawing.style.paper_format).px_per_mm
+
+    def _show_color_highlight(self) -> None:
+        """Highlight the regions of the color picked in the inspector, on the canvas (and the one compared with); with
+        Isolate, dim the others. Drawn over the page in the annotation layer: the page isn't drawn again, and no export
+        sees it."""
+        index = self.inspector.selected()
+        page = self.current_page
+        image = None
+        if index is not None and page is not None and page.model is not None:
+            mask = measures.color_mask(page.model.region_id_map, page.model.region_color, index)
+            accent = self.palette().color(QPalette.Highlight)
+            image = highlight_image(mask, (accent.red(), accent.green(), accent.blue()), self.inspector.isolated())
+        for view in (self.preview, self.compare_view):
+            view.set_overlay(ANNOTATION, "color", image)
+
     # -- Comparing two views ------------------------------------------------------------------------------
     def set_compare(self, mode: str) -> None:
         """Compare the view shown with another (``set_compare_with``): ``SIDE_BY_SIDE``, split by a divider up the page
@@ -1823,6 +1892,8 @@ class MainWindow(QMainWindow):
         self.preview.set_split(other if split else None, horizontal=mode == SPLIT_HORIZONTAL)
         if split:
             self.preview.set_captions(shown, other_name)
+        if side and hasattr(self, "inspector"):
+            self._show_color_highlight()  # the second canvas's highlight, which a mirror doesn't carry
 
     def _sync_views(self, leader: PreviewWidget, follower: PreviewWidget) -> None:
         """Put ``follower`` as far in and in the same place as ``leader``, while the two are side by side."""

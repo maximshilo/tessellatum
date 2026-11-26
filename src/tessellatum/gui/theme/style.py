@@ -93,6 +93,9 @@ QWidget#inspector > QLabel[role="secondary"] {{ background: {c.sidebar}; padding
 QListWidget#paletteList {{ background: {c.sidebar}; color: {c.text}; border: none; outline: 0; padding: 0px 6px; }}
 QListWidget#paletteList::item {{ padding: 3px 4px; border-radius: {rs}px; }}
 QListWidget#paletteList::item:hover {{ background: {c.hover}; }}
+QListWidget#paletteList::item:selected {{ background: {c.selected}; color: {c.text}; border: 2px solid {c.accent}; }}
+QLabel#detailTitle {{ font-weight: 600; }}
+QWidget#paletteDetail {{ background: {c.sidebar}; border-top: 1px solid {c.border}; }}
 QFrame#notification {{ background: {c.raised}; border: 1px solid {c.border}; border-left: 4px solid {c.info};
     border-radius: {rs}px; margin: 6px 8px 0px; }}
 QFrame#notification[level="success"] {{ border-left-color: {c.success}; }}

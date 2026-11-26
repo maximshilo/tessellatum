@@ -28,6 +28,12 @@ from tessellatum.core.pipeline import PipelineCancelled  # noqa: E402
 from tessellatum.gui import freshness, main_window, preferences  # noqa: E402
 from tessellatum.gui.main_window import MainWindow  # noqa: E402
 
+
+def _nothing_made(window) -> bool:
+    """No page being made or laid out: the inspectors' measuring of a page shown is not making one."""
+    return not window.jobs.is_running(PREVIEW) and not window.jobs.is_running(PRINT_LAYOUT)
+
+
 _app = QApplication.instance() or QApplication([])
 TIMEOUT_S = 120
 MB = 1024 ** 2
@@ -307,7 +313,7 @@ def test_undo_and_redo_show_the_pages_kept_at_once_with_no_page_made(win):
     second = win.window.current_page
     assert win.made == 2 and len(win.window.results) == 2
     win.window.undo()
-    assert win.window.jobs.is_idle()  # nothing started: the page is shown in this very call
+    assert _nothing_made(win.window)  # nothing started: the page is shown in this very call
     assert win.window.current_page is first and win.state() == freshness.CURRENT
     assert win.window.last_restore_ms < 200
     assert "made before" in win.window.status.text()
@@ -323,7 +329,7 @@ def test_a_setting_put_back_by_hand_shows_its_page_kept(win):
     win.colors(-4)
     win.preview()
     win.colors(4)  # back by hand, not by undo
-    assert win.window.current_page is first and win.window.jobs.is_idle()
+    assert win.window.current_page is first and _nothing_made(win.window)
     win.settle(0.3)
     assert win.made == 2 and win.state() == freshness.CURRENT
 
@@ -392,7 +398,7 @@ def test_a_branch_keeps_the_pages_of_the_one_left(win):
     win.preview()
     assert not win.window.history.can_redo()
     win.colors(-6)  # ...but its page is kept: back to b's settings by hand, it is shown
-    assert win.window.current_page is b and win.window.jobs.is_idle()
+    assert win.window.current_page is b and _nothing_made(win.window)
     assert win.made == 3
 
 
@@ -411,7 +417,7 @@ def test_undoing_an_open_shows_the_first_picture_s_page_kept(win, tmp_path, monk
         win.preview()
     first_key, second_page = win.window.results.keys()[-2], win.window.current_page
     win.window.undo()
-    assert win.window.document.source().path == paths[0] and win.window.jobs.is_idle()
+    assert win.window.document.source().path == paths[0] and _nothing_made(win.window)
     assert win.window.current_page is win.window.results.get(first_key).page
     win.window.redo()
     assert win.window.current_page is second_page

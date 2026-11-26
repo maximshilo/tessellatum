@@ -3,8 +3,7 @@
 - The **activity bar** picks the settings sidebar's page (see ``ControlsPanel.show_category``): one checkable icon
   button per category, its name in its tooltip and accessible name. Clicking the page already shown folds the sidebar
   away, and clicking any page shows it again.
-- The **inspector**, on the right, lists the page's colors: number, swatch and name, its hex in the tooltip (a
-  read-only first version of the palette inspector, I3).
+- The **inspector**, on the right, is the palette inspector (see ``gui.palette_inspector``).
 - ``LayoutStore`` keeps what the user arranged in the preferences store between runs (``workspace/`` keys): the
   window's geometry, the splitter's sizes, which panels show, the page shown, and each page's scroll position and
   folded sections.
@@ -13,20 +12,11 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QByteArray, QSettings, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QPixmap
-from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QButtonGroup,
-    QLabel,
-    QListWidget,
-    QListWidgetItem,
-    QToolButton,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QButtonGroup, QToolButton, QVBoxLayout, QWidget
 
 from tessellatum.core import settings
 from tessellatum.gui import theme
+from tessellatum.gui.palette_inspector import PaletteInspector  # noqa: F401  (the inspector, where it was)
 from tessellatum.gui.theme import icons
 from tessellatum.gui.theme.tokens import COLORS, LIGHT
 
@@ -95,71 +85,6 @@ class ActivityBar(QWidget):
 
     def current(self) -> str:
         return next(category for category, button in self.buttons.items() if button.isChecked())
-
-
-class PaletteInspector(QWidget):
-    """The page's colors, as its legend numbers them: a swatch, the number and the name of each."""
-
-    SWATCH = 18
-
-    def __init__(self, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setObjectName("inspector")
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self.title = QLabel("Palette")
-        self.title.setObjectName("panelTitle")
-        self.summary = QLabel()
-        self.summary.setProperty("role", "secondary")
-        self.summary.setWordWrap(True)
-        self.list = QListWidget()
-        self.list.setObjectName("paletteList")
-        self.list.setIconSize(QSize(self.SWATCH, self.SWATCH))
-        self.list.setSelectionMode(QAbstractItemView.NoSelection)
-        self.list.setFocusPolicy(Qt.TabFocus)
-        self.list.setAccessibleName("Palette")
-        self.list.setUniformItemSizes(True)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self.title)
-        layout.addWidget(self.summary)
-        layout.addWidget(self.list, 1)
-        layout.addStretch(0)  # takes the room while the list is hidden, so the title stays at the top
-        self.show_page(None)
-
-    def show_page(self, page) -> None:
-        """List ``page``'s colors (a ``GeneratedPage``), or say there are none yet."""
-        self.list.clear()
-        if page is None:
-            self.summary.setText("Generate a preview to see its colors here.")
-            self.list.setVisible(False)
-            return
-        names = list(page.color_names) if page.color_names else []
-        mixes = list(page.mixes) if page.mixes else []
-        for index, rgb in enumerate(page.palette_rgb):
-            r, g, b = (int(v) for v in rgb)
-            name = names[index] if index < len(names) else ""
-            hex_code = f"#{r:02X}{g:02X}{b:02X}"
-            item = QListWidgetItem(_swatch(QColor(r, g, b), self.SWATCH), f"{index + 1}   {name}".rstrip())
-            recipe = mixes[index] if index < len(mixes) else None
-            tip = f"{index + 1} {name}: {hex_code}, RGB {r}, {g}, {b}".replace(" :", ":")
-            if recipe:
-                tip += "\nMixed: " + " + ".join(recipe)
-            item.setToolTip(tip)
-            item.setData(Qt.AccessibleTextRole, tip)
-            self.list.addItem(item)
-        count = len(page.palette_rgb)
-        self.summary.setText(f"{count} colors, {page.num_regions:,} regions")
-        self.list.setVisible(True)
-
-    def color_count(self) -> int:
-        return self.list.count()
-
-
-def _swatch(color: QColor, size: int) -> QIcon:
-    pixmap = QPixmap(size, size)
-    pixmap.fill(color)
-    return QIcon(pixmap)
 
 
 class LayoutStore:

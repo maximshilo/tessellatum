@@ -40,8 +40,7 @@ The window follows your system's light or dark appearance, and changes with it w
     Preferences > Performance > **Generate automatically** says otherwise: **When it's quick** (while the picture's last
     page took under 2 s) or **Always** make it by itself a second after the last change;
   - a change back to settings whose page is kept shows that page at once, whatever the setting.
-- **Inspector** (right): the page's colors, numbered as on its legend, with their names; hover one for its hex and
-  RGB, and, for a mixed color, its recipe.
+- **Inspector** (right): the page's colors, numbered as on its legend (see [The palette](#the-palette)).
 - **Status bar** (bottom): what the app is doing, step by step while a page is made ("Choosing the colors… 42%",
   "Building the regions… 60%"), with a progress bar (one that just moves while a PNG is written, which can't say how
   far along it is). The ✕ beside the sidebar's progress bar cancels, as Cancel does; cancelling is said at once, with
@@ -79,6 +78,22 @@ the zoom and the scroll:
   ink showing through as through a translucent paint: a guide to paint from.
 - **Original**: the picture itself, in the page's place, so a point of the page is the same point of the picture. It
   is shown, never exported.
+
+## The palette
+
+The inspector lists the page's colors by their legend numbers, with their names and how much of the page each
+paints. That share is measured in the background once the page is made, and fills in a moment later.
+
+- **Sort** by number, coverage, lightness, hue (the grays first) or name. Sorting changes only the order shown: never
+  a number, a region's color or the export.
+- **Grid** shows swatches with their numbers; click it again for the list.
+- **Find** a color by its number ("12") or a word of its name.
+- Click a color (or move to it with the arrow keys) to see it in full: its hex and RGB, its recipe if it is mixed, its
+  share of the page and its area on paper, and its number of regions. Its regions are highlighted on the canvas, tinted
+  and outlined in the accent; **Isolate** dims the rest. The highlight is drawn over the page, never into an export.
+  Esc lets go of it.
+- **Copy** the hex (Ctrl+C, or the Copy button), or the RGB or name from the button's menu or a color's right-click
+  menu.
 
 ### Comparing
 
