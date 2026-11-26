@@ -237,3 +237,14 @@ def test_the_overlays_draw_what_they_say():
     assert image.pixelColor(0, 0).alpha() == 0
     leaders = main_window.leader_image((40, 40), [(((2, 2), (30, 30)), (0, 0, 4, 4))], "#0D7468")
     assert leaders.pixelColor(16, 16).alpha() > 0 and leaders.pixelColor(35, 5).alpha() == 0
+
+
+def test_a_page_that_can_t_be_measured_says_so(window, monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("out of memory")
+
+    monkeypatch.setattr(measures, "measure_page", fail)
+    window.show_activity(ANALYSIS)
+    _settle(window)
+    assert window.analysis.measures() is None
+    assert "couldn't be measured" in window.analysis.status.text() and "out of memory" in window.analysis.status.text()

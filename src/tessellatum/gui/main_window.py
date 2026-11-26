@@ -1736,7 +1736,10 @@ class MainWindow(QMainWindow):
             self._on_print_page_failed(text)
         elif job.kind == SAVE:
             self._on_export_failed(text)
-        # Recipes that couldn't be mixed: the legend stays without them (the job's details are logged).
+        elif job.kind == ANALYSIS_JOB and job.context is self.current_page:
+            self.analysis.show_measures(None, empty=f"The page couldn't be measured: {_message}")
+        # Recipes that couldn't be mixed: the legend stays without them (the job's details are logged). Nor could the
+        # palette's coverage be: its colors stay listed without it, and the region inspector measures for itself.
 
     def _on_job_cancelled(self, job: Job) -> None:
         if job.kind == PREVIEW:
