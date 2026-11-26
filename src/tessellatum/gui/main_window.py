@@ -37,10 +37,10 @@ from PySide6.QtWidgets import (
 from tessellatum import __version__
 from tessellatum.app import errors
 from tessellatum.app import project as projects
-from tessellatum.app.recovery import RecoveryStore, Snapshot
 from tessellatum.app.document import Document
 from tessellatum.app.history import SETTINGS, History
 from tessellatum.app.jobs import EXPORT, PREVIEW, PRINT_LAYOUT, RECIPES, SAVE, Job, JobManager, page_task
+from tessellatum.app.recovery import RecoveryStore, Snapshot
 from tessellatum.app.results import ResultCache, ResultKey
 from tessellatum.app.snapshot import DocumentSettings
 from tessellatum.core import export, mixing, pipeline, swatches
