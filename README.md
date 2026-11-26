@@ -78,7 +78,7 @@ tinted painting guide; export a PNG at the resolution you choose (600 dpi by def
 - Interactive speed: Numba-compiled kernels and multithreading, a preview in about 1–4 seconds.
 - Print output: a purpose-built vector PDF writer, and PNGs at any resolution rendered from the same vector page
   (QtPdf).
-- Quality assurance: 1,700+ automated tests, including pixel-exact equivalence tests, and a benchmark harness that
+- Quality assurance: 1,900+ automated tests, including pixel-exact equivalence tests, and a benchmark harness that
   scores every version on speed and image quality (ΔE00, SSIM, OCR error rate, edge F1).
 - Desktop delivery: cross-platform Qt 6 interface with background workers and a token-based light/dark design
   system (WCAG AA contrast, tested); undo and redo served from a content-addressed result cache; versioned project
