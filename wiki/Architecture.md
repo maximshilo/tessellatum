@@ -72,7 +72,9 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 | `gui/welcome.py` | The welcome page shown in the canvas while no picture is open: open buttons, the bundled examples (`resources/examples/`, each credited in its `README.md`), the recent projects and pictures (missing ones greyed, with Remove); the window takes drops and pastes itself (`_handed_over`: local file URLs, image data, a path pasted as text) |
 | `gui/search.py` | Settings search: the registry's entries ranked against what is typed (label, aliases, tooltip, section), and the field and results at the top of the sidebar; the panel's `reveal` shows a setting where it lives |
 | `gui/export_dialog.py` | The export dialog: the export's options beside a thumbnail and a summary of the file, non-blocking warnings, and the choice between the page made again and the page as previewed when the preview is out of date |
-| `gui/controls_panel.py`, `preview_widget.py`, `paints_dialog.py` | The settings sidebar (a page per category, laid out by the registry's sections and levels: the advanced settings in one folded group per page; a reset per section), the zoomable preview, the paints' list (swatches, a color picker, sample kits) |
+| `gui/controls_panel.py`, `preview_widget.py`, `paints_dialog.py` | The settings sidebar (a page per category, laid out by the registry's sections and levels: the advanced settings in one folded group per page; a reset per section), the canvas (the views, the original mapped onto the page's pixels; zoom and pan; the rulers, grid and sheet bounds; the
+scene in layers: artwork, guides, annotation, diagnostics, interaction, each drawn over the ones below so a highlight
+never draws the page again, and none of them but the artwork from the page's own data, which exports never read), the paints' list (swatches, a color picker, sample kits) |
 
 ## Data model
 
