@@ -19,6 +19,8 @@ Each release's notes on GitHub are its section below.
 
 ### Changed
 
+- The zoom (−, the zoom field, +, Fit) is under the page, in a bar of its own: on the default window with both panels
+  open, the bar above the page had no room left for it.
 - The benchmark measures the slivers, corners' tips, undersized and unnumbered regions and the numbers' sizes with the
   app's own functions, loaded from this checkout as the print model is: one implementation for both. Its numbers are
   unchanged.

@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import isValid
 
 from tessellatum import __version__
 from tessellatum.app import errors
@@ -241,7 +242,15 @@ class MainWindow(QMainWindow):
         gap = QWidget()
         gap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.canvas_bar.addWidget(gap)
-        self.canvas_bar.addWidget(self.zoom_bar)
+        # The zoom, under the page: the bar above it keeps the views, the comparison and the page's freshness, which fit
+        # on the default window with both panels open, and the zoom has the canvas's whole width.
+        self.canvas_footer = QToolBar("Zoom")
+        self.canvas_footer.setObjectName("canvasFooter")
+        self.canvas_footer.setMovable(False)
+        footer_gap = QWidget()
+        footer_gap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.canvas_footer.addWidget(footer_gap)
+        self.canvas_footer.addWidget(self.zoom_bar)
         # In focus mode the toolbar and its Focus Mode button are hidden: this is the way back, on the canvas's own bar.
         self.exit_focus_action = self.canvas_bar.addAction("Exit Focus Mode")
         self.exit_focus_action.setToolTip("Show the panels again (Esc)")
@@ -262,6 +271,7 @@ class MainWindow(QMainWindow):
         self.canvas_views = SideBySide(self.preview, self.compare_view)
         self.canvas_stack.addWidget(self.canvas_views)
         canvas_layout.addWidget(self.canvas_stack, 1)
+        canvas_layout.addWidget(self.canvas_footer)
         # A picture or a project dropped anywhere on the window opens; the canvas lets the window take it.
         self.setAcceptDrops(True)
         for view in (self.preview, self.compare_view):
@@ -549,6 +559,8 @@ class MainWindow(QMainWindow):
         self._show_canvas()
 
     def _sync_commands(self) -> None:
+        if not all(isValid(widget) for widget in (self.version_bar, self.zoom_bar, self.controls)):
+            return  # the window torn down: its bars are deleted one by one, each hidden as it goes
         c, commands = self.controls, self.commands
         commands["open"].setEnabled(c.open_button.isEnabled())
         commands["generate"].setEnabled(c.generate_button.isEnabled())
@@ -1523,6 +1535,7 @@ class MainWindow(QMainWindow):
         """The welcome page while no picture is open, else the page."""
         welcome = self.current_image_bgr is None
         self.canvas_stack.setCurrentWidget(self.welcome if welcome else self.canvas_views)
+        self.canvas_footer.setVisible(not welcome)
         if welcome:
             self._show_welcome_recent()
 

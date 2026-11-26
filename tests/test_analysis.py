@@ -248,3 +248,15 @@ def test_a_page_that_can_t_be_measured_says_so(window, monkeypatch):
     _settle(window)
     assert window.analysis.measures() is None
     assert "couldn't be measured" in window.analysis.status.text() and "out of memory" in window.analysis.status.text()
+
+
+def test_the_zoom_is_under_the_page(window):
+    """The views, the comparison and the freshness above the page, the zoom in a bar of its own under it, so that both
+    fit the default window with both panels open (checked natively by screenshot: offscreen fonts measure wider)."""
+    assert window.zoom_bar.parentWidget() is window.canvas_footer
+    assert window.version_bar.parentWidget() is window.canvas_bar
+    assert window.canvas_footer.isVisible() and window.zoom_bar.isVisible()
+    assert window.canvas_footer.geometry().top() >= window.canvas_stack.geometry().bottom()
+    window.close_document()
+    _settle(window)
+    assert window.canvas_stack.currentWidget() is window.welcome and window.canvas_footer.isHidden()

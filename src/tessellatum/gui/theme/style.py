@@ -71,6 +71,8 @@ QToolBar#mainToolbar {{ background: {c.chrome}; border: none; border-bottom: 1px
     spacing: 4px; }}
 QToolBar#canvasToolbar {{ background: {c.window}; border: none; border-bottom: 1px solid {c.border}; padding: 2px 6px;
     spacing: 6px; }}
+QToolBar#canvasFooter {{ background: {c.window}; border: none; border-top: 1px solid {c.border}; padding: 2px 6px;
+    spacing: 6px; }}
 QToolButton#runButton {{ background: {c.accent}; color: {c.on_accent}; font-weight: 600; padding: 3px 10px; }}
 QToolButton#runButton:hover {{ background: {c.accent_hover}; }}
 QToolButton#runButton:pressed {{ background: {c.accent_pressed}; }}

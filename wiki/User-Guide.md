@@ -29,8 +29,8 @@ The window follows your system's light or dark appearance, and changes with it w
   **Advanced** group at the foot of the page (see [Levels of detail](#levels-of-detail)); click a section's title to
   fold or unfold it, and its **Reset**, shown while something in it is changed, to put just that section back.
   Generate Preview and Export stay at its foot on every page.
-- **Canvas** (middle): the page, with its own toolbar above it: the version shown, whether the page shown is up to
-  date, and the zoom. On a narrow window, what doesn't fit goes into the toolbar's » menu. The preview's state reads
+- **Canvas** (middle): the page, with its own toolbar above it (the version shown, Compare, and whether the page
+  shown is up to date) and the zoom under it. On a narrow window, what doesn't fit goes into a toolbar's » menu. The preview's state reads
   **Up to date** (the page the settings make), **Out of date** (a setting that changes the page moved since; its
   tooltip names them), **Generating…**, or **Cancelled** / **Failed** with **· earlier preview** when the page asked
   for didn't come and the one shown is from before. How soon a change shows:
@@ -224,7 +224,7 @@ one's work. Copies left go after 14 days.
 ## Zoom
 
 The preview zooms about the point under the cursor, with the mouse wheel, Ctrl+wheel, a touchpad's pinch, Ctrl+plus
-and Ctrl+minus, or the buttons above it. The zoom's field takes a zoom typed in (150, or 37.5%) or picked from its
+and Ctrl+minus, or the buttons under it. The zoom's field takes a zoom typed in (150, or 37.5%) or picked from its
 list, where **100%** (Ctrl+Alt+0) is a pixel of the page as it prints on a pixel of the screen and **Print size** the
 page as large as on paper: approximate, by the size the screen reports. **Fit** (Ctrl+0) shows the whole page. A
 window resized keeps the same point of the page in its middle.
