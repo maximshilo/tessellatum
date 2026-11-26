@@ -1,3 +1,3 @@
 """Tessellatum: generate paint-by-numbers coloring pages from any image."""
 
-__version__ = "1.1.24"
+__version__ = "1.1.25"

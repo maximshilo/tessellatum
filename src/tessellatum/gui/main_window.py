@@ -19,13 +19,15 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from PySide6.QtCore import QEvent, QObject, QSettings, QSize, Qt, QTimer
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QStackedWidget,
     QSizePolicy,
     QSplitter,
     QToolBar,
@@ -53,6 +55,7 @@ from tessellatum.gui import freshness, preferences, theme
 from tessellatum.core import settings as registry
 from tessellatum.gui.actions import ACTIVITY_ACTIONS, THEME_ACTIONS, VERSION_ACTIONS, ZOOM_ACTIONS, Actions
 from tessellatum.gui.actions import FILE as FILE_MENU
+from tessellatum.gui.welcome import WelcomePage
 from tessellatum.app.presets import PresetStore
 from tessellatum.gui.controls_panel import DPI, PALETTE, ControlsPanel
 from tessellatum.gui.export_dialog import ExportDialog, ExportState, palette_pixmap, pixmap_of, warnings_for
@@ -69,6 +72,9 @@ PROJECT_FILTER = f"Tessellatum projects (*{projects.SUFFIX})"
 OPEN_FILTER = (f"Pictures and projects (*{projects.SUFFIX} *.png *.jpg *.jpeg *.bmp *.webp *.tiff *.gif);;"
                f"{OPEN_IMAGE_FILTER};;{PROJECT_FILTER}")
 RECENT_KEY = "recent/projects"
+RECENT_PICTURES_KEY = "recent/pictures"
+PASTED_NAME = "Pasted picture.png"
+PICTURE_SUFFIXES = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tiff", ".tif", ".gif")
 RECENT_MAX = 10
 SAVE_CHANGES, DISCARD_CHANGES, KEEP_WORKING = "save", "discard", "cancel"  # unsaved work (see _settle_unsaved)
 # The preview's legend is drawn at least this many pixels a millimeter on paper (300 dpi), finer than a preview's
@@ -113,7 +119,7 @@ class MainWindow(QMainWindow):
 
         self._layout = LayoutStore(store)
         self._store = store  # the preferences read it too (see ``_build_commands``), and the recent projects
-        self._recent_kept: list[str] = []  # the recent projects, without a store
+        self._recent_kept: dict[str, list[str]] = {}  # the recent projects and pictures, without a store
         self.controls = ControlsPanel(store=store, presets=presets)  # the settings sidebar: its pages scroll on a short window
         # The export's options, kept by the panel, shown in the export dialog beside what they will write.
         self.export_dialog = ExportDialog(self.controls.export_options, self)
@@ -154,7 +160,16 @@ class MainWindow(QMainWindow):
         # What just happened, over the page: never a dialog in the way (see ``gui.notifications``).
         self.notification = NotificationBar()
         canvas_layout.addWidget(self.notification)
-        canvas_layout.addWidget(self.preview, 1)
+        # The page, or the welcome page while no picture is open (see ``gui.welcome``).
+        self.welcome = WelcomePage()
+        self.canvas_stack = QStackedWidget()
+        self.canvas_stack.addWidget(self.welcome)
+        self.canvas_stack.addWidget(self.preview)
+        canvas_layout.addWidget(self.canvas_stack, 1)
+        # A picture or a project dropped anywhere on the window opens; the canvas lets the window take it.
+        self.setAcceptDrops(True)
+        self.preview.setAcceptDrops(False)
+        self.preview.viewport().setAcceptDrops(False)
 
         self.inspector = PaletteInspector()
         self.activity_bar = ActivityBar()
@@ -277,6 +292,7 @@ class MainWindow(QMainWindow):
         self.document.source_identified.connect(self._on_source_identified)
         # The window's title: the project's name (or the picture's), and whether it has unsaved changes.
         self.document.source_changed.connect(self._show_title)
+        self.document.source_changed.connect(self._show_canvas)
         self.document.source_changed.connect(self._sync_commands)  # Save and Close need a picture
         self.document.project_changed.connect(self._show_title)
         self.history.changed.connect(self._show_title)
@@ -348,6 +364,12 @@ class MainWindow(QMainWindow):
         commands["save"].triggered.connect(self.save_project)
         commands["save_as"].triggered.connect(self.save_project_as)
         commands["close"].triggered.connect(self.close_document)
+        commands["paste"].triggered.connect(self.paste)
+        self.welcome.open_picture_requested.connect(self.open_picture_dialog)
+        self.welcome.open_project_requested.connect(self.open_project_dialog)
+        self.welcome.open_requested.connect(self.open_path)
+        self.welcome.example_requested.connect(self.open_example)
+        self.welcome.remove_requested.connect(self.forget_recent)
         commands["about"].triggered.connect(self.show_about)
         for version, command_id in VERSION_ACTIONS.items():
             commands[command_id].triggered.connect(lambda _checked=False, v=version: self.version_bar.buttons[v].click())
@@ -386,6 +408,7 @@ class MainWindow(QMainWindow):
                        self.version_bar, self.zoom_bar):
             widget.installEventFilter(self._enablement)
         self._sync_commands()
+        self._show_canvas()
 
     def _sync_commands(self) -> None:
         c, commands = self.controls, self.commands
@@ -711,8 +734,13 @@ class MainWindow(QMainWindow):
     def open_path(self, path: Path) -> None:
         """Open ``path``: a project (``.tessellatum``) in place of the document, or a picture into it, as one step
         to undo. A file that can't be read says why and leaves the work as it was."""
+        path = Path(path)
         if path.suffix.lower() == projects.SUFFIX:
             self.open_project(path)
+            return
+        if path.suffix.lower() not in PICTURE_SUFFIXES:
+            self._open_failed(path, ValueError("Tessellatum opens pictures (PNG, JPEG, BMP, WebP, TIFF, GIF) and "
+                                               f"projects ({projects.SUFFIX})"))
             return
         try:
             data = path.read_bytes()
@@ -720,10 +748,8 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._open_failed(path, exc)
             return
-        old = self.document.source()
-        self._show_source(image, path, data)
-        if old is not None:  # a picture replaced in an open document: undoable, the loads kept with their hashes
-            self.history.record_source(old, self.document.source(), f"Open {path.name}")
+        self._open_picture(image, path, data, None)
+        self._remember_recent(path, RECENT_PICTURES_KEY)
 
     def _open_failed(self, path: Path, exc: Exception) -> None:
         text = f"Could not open {path.name}: {exc}"
@@ -1273,44 +1299,183 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{self._document_name()}[*] — Tessellatum")
         self.setWindowModified(self.current_image_bgr is not None and not self.history.is_clean())
 
-    # -- Recent projects -----------------------------------------------------------------
-    def recent_projects(self) -> list[Path]:
-        """The projects opened or saved last, the latest first (whether or not they are still there)."""
+    # -- Recent projects and pictures ------------------------------------------------------
+    def _recent(self, key: str) -> list[Path]:
         if self._store is None:
-            kept = self._recent_kept
+            kept = self._recent_kept.get(key, [])
         else:
-            kept = self._store.value(RECENT_KEY, [])
+            kept = self._store.value(key, [])
             kept = [kept] if isinstance(kept, str) else list(kept or [])
         return [Path(p) for p in kept if isinstance(p, str) and p]
 
-    def _set_recent(self, paths: list[Path]) -> None:
+    def _set_recent_list(self, key: str, paths: list[Path]) -> None:
         kept = [str(p) for p in paths[:RECENT_MAX]]
         if self._store is None:
-            self._recent_kept = kept
+            self._recent_kept[key] = kept
         else:
-            self._store.setValue(RECENT_KEY, kept)
+            self._store.setValue(key, kept)
+        self._show_welcome_recent()
 
-    def _remember_recent(self, path: Path) -> None:
+    def recent_projects(self) -> list[Path]:
+        """The projects opened or saved last, the latest first (whether or not they are still there)."""
+        return self._recent(RECENT_KEY)
+
+    def recent_pictures(self) -> list[Path]:
+        """The pictures opened last, the latest first (whether or not they are still there)."""
+        return self._recent(RECENT_PICTURES_KEY)
+
+    def _set_recent(self, paths: list[Path]) -> None:
+        self._set_recent_list(RECENT_KEY, paths)
+
+    def _remember_recent(self, path: Path, key: str = RECENT_KEY) -> None:
         path = Path(path).absolute()
-        self._set_recent([path] + [p for p in self.recent_projects() if p != path])
+        self._set_recent_list(key, [path] + [p for p in self._recent(key) if p != path])
+
+    def forget_recent(self, path: Path) -> None:
+        """Take ``path`` off the recent lists (Remove, on the welcome page)."""
+        for key in (RECENT_KEY, RECENT_PICTURES_KEY):
+            self._set_recent_list(key, [p for p in self._recent(key) if p != path])
+
+    def clear_recent(self) -> None:
+        for key in (RECENT_KEY, RECENT_PICTURES_KEY):
+            self._set_recent_list(key, [])
 
     def _show_recent(self) -> None:
-        """File > Open Recent as it opens: the recent projects still there (the others are let go), and Clear."""
+        """File > Open Recent as it opens: the recent projects, then the pictures, still there; and Clear."""
         menu = self.recent_menu
         menu.clear()
-        there = [p for p in self.recent_projects() if p.is_file()]
-        self._set_recent(there)
-        for path in there:
-            action = menu.addAction(path.name)
-            action.setToolTip(str(path))
-            action.setStatusTip(str(path))
-            action.triggered.connect(lambda _checked=False, p=path: self.open_project(p))
-        if not there:
-            menu.addAction("No recent projects").setEnabled(False)
+        shown = 0
+        for paths, open_one in ((self.recent_projects(), self.open_project), (self.recent_pictures(), self.open_path)):
+            there = [p for p in paths if p.is_file()]
+            if there and shown:
+                menu.addSeparator()
+            for path in there:
+                action = menu.addAction(path.name)
+                action.setToolTip(str(path))
+                action.setStatusTip(str(path))
+                action.triggered.connect(lambda _checked=False, p=path, o=open_one: o(p))
+            shown += len(there)
+        if not shown:
+            menu.addAction("No recent files").setEnabled(False)
         menu.addSeparator()
         clear = menu.addAction("&Clear Recent")
-        clear.setEnabled(bool(there))
-        clear.triggered.connect(lambda: self._set_recent([]))
+        clear.setEnabled(bool(self.recent_projects() or self.recent_pictures()))
+        clear.triggered.connect(self.clear_recent)
+
+    # -- The welcome page, drag and drop, paste ----------------------------------------------------
+    def _show_canvas(self) -> None:
+        """The welcome page while no picture is open, else the page."""
+        welcome = self.current_image_bgr is None
+        self.canvas_stack.setCurrentWidget(self.welcome if welcome else self.preview)
+        if welcome:
+            self._show_welcome_recent()
+
+    def _show_welcome_recent(self) -> None:
+        if getattr(self, "welcome", None) is not None:
+            self.welcome.set_recent(self.recent_projects(), self.recent_pictures())
+
+    def open_picture_dialog(self) -> None:
+        path_str, _ = QFileDialog.getOpenFileName(self, "Open Picture", self._folder(), OPEN_IMAGE_FILTER)
+        if path_str:
+            self.open_path(Path(path_str))
+
+    def open_project_dialog(self) -> None:
+        path_str, _ = QFileDialog.getOpenFileName(self, "Open Project", self._folder(), PROJECT_FILTER)
+        if path_str:
+            self.open_project(Path(path_str))
+
+    def open_example(self, path: Path) -> bool:
+        """Open the example picture ``path`` (``gui.welcome``) and make its page: as a picture from no folder, so
+        that saving and exporting never suggest the app's own."""
+        try:
+            data = Path(path).read_bytes()
+            image = projects.decode_image(data)
+        except (OSError, projects.ProjectError) as exc:
+            self._open_failed(Path(path), exc)
+            return False
+        self._open_picture(image, None, data, Path(path).name)
+        self.generate_preview()
+        return True
+
+    def _open_picture(self, image: np.ndarray, path: Path | None, data: bytes | None, name: str | None) -> None:
+        """Make ``image`` the picture: into the work open as one step to undo, the settings kept."""
+        old = self.document.source()
+        self._show_source(image, path, data, name)
+        if old is not None:  # a picture replaced in an open document: undoable, the loads kept with their hashes
+            self.history.record_source(old, self.document.source(), f"Open {self.document.source().name}")
+
+    def open_image_data(self, image: QImage, name: str = PASTED_NAME) -> bool:
+        """Open a picture handed over as an image (pasted, or dropped from another app): on white where it is
+        transparent, kept as a PNG. True if it was opened."""
+        if image.isNull() or image.width() * image.height() > projects.MAX_PIXELS:
+            self.notify(ERROR, "That picture can't be opened: it is empty, or larger than Tessellatum opens.")
+            return False
+        flat = QImage(image.size(), QImage.Format_RGB888)
+        flat.fill(Qt.white)
+        painter = QPainter(flat)
+        painter.drawImage(0, 0, image)
+        painter.end()
+        width, height, line = flat.width(), flat.height(), flat.bytesPerLine()
+        rows = np.frombuffer(flat.constBits(), np.uint8, count=line * height).reshape(height, line)
+        rgb = rows[:, : width * 3].reshape(height, width, 3)
+        out = io.BytesIO()
+        Image.fromarray(rgb).save(out, "PNG")
+        self._open_picture(np.ascontiguousarray(rgb[:, :, ::-1]), None, out.getvalue(), name)
+        return True
+
+    @staticmethod
+    def _handed_over(mime, text_paths: bool = False):
+        """What a drop or the clipboard holds: ("file", path), ("image", QImage), or None. A file named in text counts
+        only with ``text_paths`` (a path copied as text, then pasted)."""
+        for url in mime.urls() if mime.hasUrls() else ():
+            if url.isLocalFile():
+                return "file", Path(url.toLocalFile())
+        if mime.hasImage():
+            image = mime.imageData()
+            if isinstance(image, QImage) and not image.isNull():
+                return "image", image
+            if isinstance(image, QPixmap) and not image.isNull():
+                return "image", image.toImage()
+        if text_paths and mime.hasText():
+            text = mime.text().strip().strip('"').strip("'")
+            if text and "\n" not in text:
+                path = Path(text[7:] if text.startswith("file://") else text)
+                if path.is_file():
+                    return "file", path
+        return None
+
+    def _take(self, handed) -> None:
+        kind, value = handed
+        if kind == "file":
+            self.open_path(value)
+        else:
+            self.open_image_data(value)
+
+    def paste(self) -> None:
+        """Edit > Paste Picture: the picture copied, or the picture or project whose file (or path) was copied."""
+        handed = self._handed_over(QApplication.clipboard().mimeData(), text_paths=True)
+        if handed is None:
+            self.notify(INFO, "There's no picture to paste: copy a picture, or a picture's file, then paste.")
+            return
+        self._take(handed)
+
+    def dragEnterEvent(self, event) -> None:
+        if self._handed_over(event.mimeData()) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event) -> None:
+        handed = self._handed_over(event.mimeData())
+        if handed is None:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        # After the drop has returned to the system: a project may ask about unsaved work in a dialog.
+        QTimer.singleShot(0, lambda: self._take(handed))
 
     # -- Preview ----------------------------------------------------------
     def _making(self) -> bool:

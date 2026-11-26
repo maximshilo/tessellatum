@@ -88,6 +88,7 @@ Every command is in the menu bar, and the most used have a shortcut (Cmd in plac
 | File > Export | Ctrl+E |
 | File > Close | Ctrl+W |
 | Edit > Undo, Redo | Ctrl+Z; Ctrl+Y or Ctrl+Shift+Z |
+| Edit > Paste Picture | Ctrl+V |
 | Edit > Find Setting | Ctrl+F |
 | Edit > Preferences | Ctrl+, (macOS: in the app menu, Cmd+,) |
 | Generate > Generate Preview | Ctrl+Enter, F5 |
@@ -110,6 +111,18 @@ by hand. A page no longer kept (memory is limited, see Preferences) is made agai
 kept and labeled out of date until it is ready. Settings that never had a page wait for Generate Preview, as any other
 change does: the status bar says the preview is out of date. Whether the preview is up to date is apart from whether the settings have changed since they were last saved. **Edit > Reset All Settings** is the Difficulty section's Reset, and asks first; **Help > About Tessellatum** shows
 the version and the licenses.
+
+## Getting a picture in
+
+While no picture is open, the canvas shows the welcome page:
+- **Open Picture…** and **Open Project…**;
+- four example pictures to try (public domain or CC0): one click opens it and makes its page;
+- the recent projects and pictures. One no longer where it was is greyed, with **Remove** to take it off the list.
+
+A picture or a project can also be dropped anywhere on the window, or pasted with **Edit > Paste Picture** (Ctrl+V): a
+picture copied from another app, or a file (or its path) copied. A picture dropped or pasted into the work replaces the
+one there as one step to undo, and the settings stay; a project asks first if the work has unsaved changes. A file that
+can't be opened says why, and the work stays as it was. Ctrl+V in a text field pastes text there, as always.
 
 ## Projects
 

@@ -4,6 +4,23 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.25] - 2026-11-26
+
+### Added
+
+- A welcome page while no picture is open. It has a few words on what to do, **Open Picture…** and **Open
+  Project…**, the recent projects and pictures, and four example pictures to try, bundled with the app (public domain
+  or CC0). A recent file no longer there is greyed, with **Remove**.
+- Drag and drop: a picture or a project dropped anywhere on the window opens. A picture goes into the work as one
+  step to undo; a project over unsaved changes asks first.
+- **Edit > Paste Picture** (Ctrl+V) opens the picture copied, or the picture or project whose file or path was
+  copied. Ctrl+V in a text field still pastes text there.
+- **File > Open Recent** lists the recent pictures too.
+
+### Changed
+
+- A file Tessellatum can't open (not a picture, damaged) says why, and the work open stays as it was.
+
 ## [1.1.24] - 2026-11-26
 
 ### Added

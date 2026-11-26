@@ -48,6 +48,8 @@ COMMANDS = (
     Command("quit", "&Quit", FILE, "Close Tessellatum", "quit", (QKeySequence.Quit,), role=QAction.QuitRole),
     Command("undo", "&Undo", EDIT, "Undo the last change to the settings or the picture", "undo", (QKeySequence.Undo,)),
     Command("redo", "&Redo", EDIT, "Redo what was undone", "redo", (QKeySequence.Redo, "Ctrl+Shift+Z")),
+    Command("paste", "&Paste Picture", EDIT, "Open the picture copied, or the picture or project whose file was copied",
+            "paste", (QKeySequence.Paste,)),
     Command("find", "&Find Setting…", EDIT, "Search the settings by name or by what they do", "search", ("Ctrl+F",)),
     Command("preferences", "&Preferences…", EDIT, "How the app looks and works: theme, scale, units, the results kept",
             "settings", (QKeySequence.Preferences, "Ctrl+,"), role=QAction.PreferencesRole),
