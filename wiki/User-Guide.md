@@ -12,7 +12,7 @@ The window follows your system's light or dark appearance, and changes with it w
 
 ## The workspace
 
-- **Toolbar** (top): Open Image, Generate Preview (it turns into Cancel while a page is made) and Export; at its right
+- **Toolbar** (top): Open, Generate Preview (it turns into Cancel while a page is made) and Export; at its right
   end, the buttons that show or hide the sidebar and the inspector, and Focus Mode.
 - **Activity bar** (left edge): picks the settings shown in the sidebar:
   - **Source**: the picture, small, with its file name and size, how large it prints on the paper chosen and at how
@@ -83,8 +83,10 @@ Every command is in the menu bar, and the most used have a shortcut (Cmd in plac
 
 | Command | Shortcut |
 |---|---|
-| File > Open Image | Ctrl+O |
+| File > Open (a picture or a project) | Ctrl+O |
+| File > Save Project, Save Project As | Ctrl+S, Ctrl+Shift+S |
 | File > Export | Ctrl+E |
+| File > Close | Ctrl+W |
 | Edit > Undo, Redo | Ctrl+Z; Ctrl+Y or Ctrl+Shift+Z |
 | Edit > Find Setting | Ctrl+F |
 | Edit > Preferences | Ctrl+, (macOS: in the app menu, Cmd+,) |
@@ -108,6 +110,28 @@ by hand. A page no longer kept (memory is limited, see Preferences) is made agai
 kept and labeled out of date until it is ready. Settings that never had a page wait for Generate Preview, as any other
 change does: the status bar says the preview is out of date. Whether the preview is up to date is apart from whether the settings have changed since they were last saved. **Edit > Reset All Settings** is the Difficulty section's Reset, and asks first; **Help > About Tessellatum** shows
 the version and the licenses.
+
+## Projects
+
+**File > Save Project** keeps the work as a `.tessellatum` file, to open again later, on this computer or another:
+- the picture itself, its file as it was opened, byte for byte, so the project doesn't need the picture to stay where it
+  was;
+- every setting, the paints listed and the export's options;
+- a small thumbnail.
+
+Pages aren't kept in it. Opening a project makes its page again from the picture and the settings, and since making a
+page is deterministic, it is the page that was saved.
+
+**File > Open…** opens a project or a picture. A picture opened into the work replaces the one there as one step to
+undo, and the settings stay. A project replaces the work, so if the work has changes that aren't saved, it asks first
+whether to save them. Closing the picture (**File > Close**) and quitting ask the same. **Open Recent** lists the
+projects opened or saved last that are still there. The window's title names the project, with a mark while it has
+unsaved changes.
+
+Saving is safe: the project is written beside its file, read back and checked, and only then put in its place. A save
+that fails (a full disk, a folder that doesn't allow it) says why and leaves the file saved before as it was. A project
+that can't be read (damaged, made by a newer Tessellatum, or not a project at all) says why, and the work open stays as
+it was.
 
 ## Zoom
 

@@ -4,6 +4,27 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.23] - 2026-11-26
+
+### Added
+
+- Projects: **File > Save Project** (Ctrl+S) and **Save Project As…** (Ctrl+Shift+S) save the picture and every setting
+  as a `.tessellatum` file, to open again later or on another computer. **File > Open…** opens a project or a picture,
+  and **Open Recent** lists the projects opened or saved last. **Close** (Ctrl+W) closes the picture.
+  - A project keeps the picture's own file, byte for byte, so it doesn't depend on the picture staying where it was.
+    It also keeps the settings, the paints listed and the export options, and a small thumbnail.
+  - Pages aren't stored: opening a project makes its page again, and the page is the one that was saved.
+- Closing the picture, quitting, or opening a project over changes not saved asks whether to save them first.
+- The window's title names the project (or the picture), and marks unsaved changes.
+
+### Changed
+
+- Saving is atomic: a project is written beside its file, read back and checked, and only then put in the file's
+  place, so a save that fails leaves the file saved before untouched.
+- A project that is damaged, too large, made by a newer version, or holding a file outside itself is refused with the
+  reason, and the work open stays as it was.
+- Export suggests its file beside the project, if there is one, else beside the picture, named after the picture.
+
 ## [1.1.22] - 2026-11-26
 
 ### Added

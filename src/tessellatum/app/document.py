@@ -45,12 +45,19 @@ def _hash_reports() -> _Hashes:
 
 @dataclass(eq=False)
 class Source:
-    """The picture: its pixels (BGR), where it came from, and its content hash once worked out."""
+    """The picture: its pixels (BGR), where it came from, its file's bytes as read (what a project keeps), its file
+    name, and its content hash once worked out."""
 
     image: np.ndarray
     path: Path | None = None
     token: int = field(default_factory=lambda: next(_tokens))  # this load of it, whatever its content
     content_hash: str | None = None
+    data: bytes | None = None  # the file's bytes, as read; None for a picture that came from no file
+    name: str | None = None  # its file's name, the path's if it has one
+
+    def __post_init__(self):
+        if self.name is None and self.path is not None:
+            self.name = self.path.name
 
 
 def content_hash(image: np.ndarray) -> str:
@@ -67,6 +74,7 @@ class Document(QObject):
     source_identified = Signal(str)  # the picture's content hash, once worked out
     result_changed = Signal()
     dirty_changed = Signal(bool)
+    project_changed = Signal()  # the project file it is saved in
 
     def __init__(self, settings: DocumentSettings | None = None, parent: QObject | None = None):
         super().__init__(parent)
@@ -76,6 +84,7 @@ class Document(QObject):
         self._source: Source | None = None
         self._result = None
         self._result_settings: DocumentSettings | None = None
+        self._project_path: Path | None = None
         _hash_reports().found.connect(self._on_hashed)  # queued: the threads emit it
 
     # -- Settings ---------------------------------------------------------------
@@ -102,10 +111,12 @@ class Document(QObject):
     def source(self) -> Source | None:
         return self._source
 
-    def set_source(self, image: np.ndarray | None, path: Path | None = None) -> Source | None:
-        """Work on ``image`` (BGR) now, read from ``path`` if it was; None for no picture. The result made of the last
-        picture is dropped. Its hash is worked out in the background (``source_identified``)."""
-        return self.restore_source(None if image is None else Source(image, path))
+    def set_source(self, image: np.ndarray | None, path: Path | None = None, data: bytes | None = None,
+                   name: str | None = None) -> Source | None:
+        """Work on ``image`` (BGR) now, read from ``path`` (or from a file named ``name``, whose bytes are
+        ``data``) if it was; None for no picture. The result made of the last picture is dropped. Its hash is worked
+        out in the background (``source_identified``)."""
+        return self.restore_source(None if image is None else Source(image, path, data=data, name=name))
 
     def restore_source(self, source: Source | None) -> Source | None:
         """Work on ``source`` again, a picture this document held before (an Open undone or redone), as it was: the
@@ -154,6 +165,15 @@ class Document(QObject):
         if self._result is None or self._result_settings is None:
             return False
         return self._result_settings.generation_key() == self._settings.generation_key()
+
+    # -- The project ------------------------------------------------------------------
+    def project_path(self) -> Path | None:
+        """The project file the document was opened from or last saved to, or None."""
+        return self._project_path
+
+    def set_project_path(self, path: Path | None) -> None:
+        self._project_path = None if path is None else Path(path)
+        self.project_changed.emit()
 
     # -- Saved or not ---------------------------------------------------------------
     def is_dirty(self) -> bool:
