@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -33,8 +34,9 @@ from PySide6.QtWidgets import (
 from tessellatum import __version__
 from tessellatum.app import errors
 from tessellatum.app.document import Document
-from tessellatum.app.history import History
+from tessellatum.app.history import SETTINGS, History
 from tessellatum.app.jobs import EXPORT, PREVIEW, PRINT_LAYOUT, RECIPES, SAVE, Job, JobManager, page_task
+from tessellatum.app.results import ResultCache, ResultKey
 from tessellatum.app.snapshot import DocumentSettings
 from tessellatum.core import export, mixing, pipeline, swatches
 from tessellatum.core.difficulty import SCREEN_MEDIUM
@@ -210,12 +212,17 @@ class MainWindow(QMainWindow):
         self._recorded = self.controls.snapshot()  # the settings as the history last saw them
         self._record_scheduled = False
         self._restoring = False
+        self._moving = False  # an undo or redo under way: what the cache protects waits for its end
         self.controls.settings_changed.connect(self._on_settings_edited)
         self.controls.settings_changed.connect(self._on_settings_changed_for_preview)
         self.controls.edit_started.connect(self.history.begin_merge)
         # After the drag's last edit is recorded, which waits for the event loop too.
         self.controls.edit_finished.connect(lambda: QTimer.singleShot(0, self.history.end_merge))
 
+        # The pages made, kept so that undo, redo and a setting put back show theirs at once (see ``app.results``);
+        # its budget is the preferences' (see _apply_preference).
+        self.results = ResultCache()
+        self.last_restore_ms: float | None = None  # how long the last page shown from it took to show
         # Everything slow runs as a job (see ``app.jobs``): one of each kind at a time, its result delivered only if
         # still wanted.
         self.jobs = JobManager(self.document, self)
@@ -226,8 +233,8 @@ class MainWindow(QMainWindow):
         self.jobs.progress.connect(self._on_job_progress)
         self.jobs.stage.connect(self._on_job_stage)
         self.jobs.started.connect(self._on_job_started)
-        # A redraw that waited for an export goes ahead once it is done.
-        self.jobs.finished.connect(lambda job: job.kind in (EXPORT, SAVE) and self._schedule_redraw())
+        # A page kept or a redraw that waited for an export goes ahead once it is done.
+        self.jobs.finished.connect(self._on_job_finished)
         # Each job, and the app's own warnings and errors, in the diagnostics; the status bar counts them.
         self.diagnostics.watch(self.jobs)
         self._log_handler = install_log_handler(self.diagnostics)
@@ -243,6 +250,10 @@ class MainWindow(QMainWindow):
         self.document.result_changed.connect(self._show_page_status)
         self.document.result_changed.connect(self._show_freshness)
         self.document.source_changed.connect(self._on_source_changed_for_preview)
+        self.document.source_identified.connect(self._on_source_identified)
+        # The page shown and the ones undo and redo go to next are kept whatever the cache's budget.
+        self.document.result_changed.connect(self._protect_results)
+        self.history.changed.connect(self._protect_results)
         self._restore_layout()
 
         # Get one-time costs (loading/compiling the compiled kernels, first
@@ -582,6 +593,8 @@ class MainWindow(QMainWindow):
             preferences.apply_canvas(self.preview, prefs.canvas_color())
         if key in (None, preferences.CACHE_KEY):
             pipeline.set_cache_pages(prefs.cache_pages())
+        if key in (None, preferences.RESULTS_KEY):
+            self.results.set_budget(prefs.result_memory())
         if key == preferences.REDRAW_KEY:
             self._schedule_redraw()
             self._show_freshness()
@@ -591,6 +604,7 @@ class MainWindow(QMainWindow):
         if self.preferences_dialog is None:
             self.preferences_dialog = preferences.PreferencesDialog(self.preferences, self.commands, self)
             self.preferences_dialog.reset_layout_requested.connect(self.reset_layout)
+            self.preferences_dialog.clear_requested.connect(self.results.clear)
         self.preferences_dialog.show()
         self.preferences_dialog.raise_()
         self.preferences_dialog.activateWindow()
@@ -656,12 +670,18 @@ class MainWindow(QMainWindow):
             return
         old = self.document.source()
         self._show_source(image, path)
-        if old is not None:  # a picture replaced in an open document: undoable
-            self.history.record_source((old.image, old.path), (image, path), f"Open {path.name}")
+        if old is not None:  # a picture replaced in an open document: undoable, the loads kept with their hashes
+            self.history.record_source(old, self.document.source(), f"Open {path.name}")
 
     def _show_source(self, image: np.ndarray | None, path: Path | None) -> None:
         """Work on ``image``, read from ``path``, or on no picture: the last picture's page dropped."""
         self.document.set_source(image, path)  # drops the last picture's page
+        self._source_shown()
+
+    def _source_shown(self) -> None:
+        """Show the document's picture, just set, in the panel and the status bar."""
+        source = self.document.source()
+        image, path = (None, None) if source is None else (source.image, source.path)
         self._drop_print_page()
         self.controls.set_export_enabled(False)
         self.version_bar.setEnabled(False)  # the preview left showing is the last picture's, until the next one
@@ -705,12 +725,22 @@ class MainWindow(QMainWindow):
     def undo(self) -> None:
         if self._record_scheduled:
             self._record_settings()  # an edit not recorded yet is the one to undo
-        self.history.undo()
+        self._move(self.history.undo)
 
     def redo(self) -> None:
         if self._record_scheduled:
             self._record_settings()
-        self.history.redo()
+        self._move(self.history.redo)
+
+    def _move(self, step) -> None:
+        # The state is put back before the history's place moves: the pages kept are protected for the new place
+        # once both are done, so that the page left, a neighbor still, is never evicted in between.
+        self._moving = True
+        try:
+            step()
+        finally:
+            self._moving = False
+        self._protect_results()
 
     def _restore_settings(self, settings: DocumentSettings) -> None:
         self._restoring = True
@@ -721,10 +751,14 @@ class MainWindow(QMainWindow):
         self.controls.edit_label = None
         self._recorded = self.controls.snapshot()
         self._on_settings_changed_for_preview()
+        self._regenerate_if_made()
 
     # -- Whether the preview is the page the settings make (see ``gui.freshness``) ------------
     def _on_settings_changed_for_preview(self, _settings=None) -> None:
+        if self._restoring:
+            return  # once the settings restored are all shown (see _restore_settings)
         self._outcome = None  # a cancelled or failed preview's label holds until something changes
+        self._restore_cached()
         self._schedule_redraw()
         self._show_freshness()
 
@@ -805,9 +839,97 @@ class MainWindow(QMainWindow):
             self._stale = False
             self._say(self._ready_message, DONE)
 
-    def _restore_source(self, source: tuple | None) -> None:
-        image, path = source if source is not None else (None, None)
-        self._show_source(image, path)
+    def _restore_source(self, source) -> None:
+        """Work on ``source`` again (a ``Source``, or None), an Open undone or redone: its page shown at once if it is
+        kept for the settings as they are, else made again in the background if it had one."""
+        self.document.restore_source(source)
+        self._source_shown()
+        self._restore_cached()
+        self._regenerate_if_made()
+
+    # -- Pages kept (see ``app.results``) ------------------------------------------
+    def _result_key(self, settings: DocumentSettings | None = None) -> ResultKey | None:
+        """The key of the page ``settings`` (by default the panel's) make of the picture; None without a picture or
+        before its hash is known."""
+        source = self.document.source()
+        if source is None:
+            return None
+        return ResultKey.of(source.content_hash, settings if settings is not None else self.controls.snapshot())
+
+    def _shown_is_current(self, now: DocumentSettings) -> bool:
+        made = self.document.result_settings()
+        return self.current_page is not None and made is not None and made.generation_key() == now.generation_key()
+
+    def _restore_cached(self) -> bool:
+        """Show the page the settings as they are make, if it is kept: at once, with no page made. A preview being
+        made with other settings is dropped (as it is when the page shown is already the one they make). Not while an
+        export waits for its page or is written: it goes ahead after. True if a page kept was shown."""
+        if self.current_image_bgr is None or self._exporting() or self.jobs.is_running(EXPORT):
+            return False
+        now = self.controls.snapshot()
+        job = self.jobs.current(PREVIEW)
+        stale_job = job is not None and job.settings.generation_key() != now.generation_key()
+        if self._shown_is_current(now):
+            if stale_job:
+                self.jobs.drop(PREVIEW)
+                self.controls.set_busy(False)
+                self._say(self._ready_message or "Preview ready.", DONE)
+            return False
+        entry = self.results.get(self._result_key(now))
+        if entry is None:
+            return False
+        started = time.perf_counter()
+        if job is not None:
+            self.jobs.drop(PREVIEW)
+        self._redraw_timer.stop()
+        self._outcome = None
+        self.document.set_settings(now)
+        self._show_result(entry.page, now, "Preview ready: the page made before with these settings.", entry.print_page)
+        self.last_restore_ms = (time.perf_counter() - started) * 1000
+        return True
+
+    def _regenerate_if_made(self) -> None:
+        """A state put back that had a page, no longer kept: make it again in the background, the page shown kept
+        and labeled out of date meanwhile."""
+        if self.current_image_bgr is None or self._exporting() or self.jobs.is_running(EXPORT):
+            return
+        now = self.controls.snapshot()
+        job = self.jobs.current(PREVIEW)
+        if self._shown_is_current(now) or (job is not None and job.settings.generation_key() == now.generation_key()):
+            return
+        if self.results.was_made(self._result_key(now)):
+            self._start_preview(again=True)
+
+    def _protect_results(self) -> None:
+        """Keep the page shown and the pages of the states undo and redo go to, whatever the cache's budget."""
+        if self._moving:
+            return
+        source = self.document.source()
+        digest = source.content_hash if source is not None else None
+        keys = []
+        made = self.document.result_settings()
+        if self.current_page is not None and made is not None:
+            keys.append(ResultKey.of(digest, made))
+        if self.history.count():
+            now = self.controls.snapshot()
+            for kind, state in self.history.neighbors():
+                if kind == SETTINGS:
+                    keys.append(ResultKey.of(digest, state))
+                elif state is not None:
+                    keys.append(ResultKey.of(state.content_hash, now))
+        self.results.protect(keys)
+
+    def _on_source_identified(self, _digest: str) -> None:
+        """The picture's hash, worked out: a page made before it was is kept now, and a page kept for it shown."""
+        if self.current_page is not None:
+            self.results.put(self._result_key(self.document.result_settings()), self.current_page, self._print_page)
+        self._protect_results()
+        self._restore_cached()
+
+    def _on_job_finished(self, job: Job) -> None:
+        if job.kind in (EXPORT, SAVE) and not self._exporting() and not self.jobs.is_running(EXPORT):
+            self._restore_cached()  # a page kept, asked for while the export was under way
+            self._schedule_redraw()
 
     def _show_history(self) -> None:
         """Edit > Undo and Redo, named for what they would do ("Undo Brush width"), on when there is something."""
@@ -837,16 +959,18 @@ class MainWindow(QMainWindow):
             return
         self._start_preview()
 
-    def _start_preview(self, redraw: bool = False) -> None:
-        """Make the preview with the settings as the panel shows them: asked for (Generate Preview), or, with
-        ``redraw``, by itself after a change that only draws the page again, superseding a preview being made."""
+    def _start_preview(self, redraw: bool = False, again: bool = False) -> None:
+        """Make the preview with the settings as the panel shows them: asked for (Generate Preview); with ``redraw``,
+        by itself after a change that only draws the page again; with ``again``, a state put back whose page is no
+        longer kept. Either of those supersedes a preview being made."""
         self._redraw_timer.stop()
         self._outcome = None
         self._drop_print_page()  # the zoom asks for the new page's
         self.document.set_settings(self.controls.snapshot())  # as the panel shows them, to the last edit
         settings = self.document.settings()
         self.controls.set_busy(True)
-        self._say("Drawing the preview again…" if redraw else "Generating preview…", BUSY)
+        self._say("Drawing the preview again…" if redraw else "Making the page again: it is no longer kept…" if again
+                  else "Generating preview…", BUSY)
 
         # The page at its working size, where its level's brush is a few pixels across: what an export draws larger.
         image = self.current_image_bgr
@@ -854,7 +978,7 @@ class MainWindow(QMainWindow):
         long_edge = pipeline.working_long_edge(image, params, handling, style.paper_format)
         self.jobs.start(
             PREVIEW, page_task(image, params, long_edge, style, handling, versions=tuple(Version)),
-            label=f"{'Redraw' if redraw else 'Preview'} at {long_edge} px",
+            label=f"{'Redraw' if redraw else 'Made again' if again else 'Preview'} at {long_edge} px",
         )
         self._show_freshness()
 
@@ -962,6 +1086,11 @@ class MainWindow(QMainWindow):
         self._say("Cancelled.", CANCELLED)
 
     def _on_preview_ready(self, page: GeneratedPage, made_with: DocumentSettings) -> None:
+        self._show_result(page, made_with, "Preview ready.")
+        self.results.put(self._result_key(made_with), page)  # kept for undo, redo and a setting put back
+
+    def _show_result(self, page: GeneratedPage, made_with: DocumentSettings, message: str, print_page=None) -> None:
+        """Show ``page``, made with ``made_with``: just made, or kept (with its print layout, if drawn)."""
         # A new page of the picture shown is shown as far in and in the same place, to compare the two.
         same_picture = self.current_page is not None and self._previewed_image is self.current_image_bgr
         self._drop_print_page()  # any drawn of the last page, for a zoom while this one was made
@@ -972,7 +1101,7 @@ class MainWindow(QMainWindow):
         if page.model is not None:
             self.controls.set_picture_reading(page.model.line_art.is_line_art)
         # Its colors, regions and size are in the status bar's own fields (see _show_page_status).
-        self._ready_message = "Preview ready."
+        self._ready_message = message
         self._stale = False
         self._outcome = None
         self._say(self._ready_message, DONE)
@@ -986,6 +1115,9 @@ class MainWindow(QMainWindow):
             paper=page.drawing.style.paper_format, legend_scale=legend_scale,
         )
         self.version_bar.setEnabled(True)
+        if print_page is not None:
+            self._print_page = print_page
+            self.preview.show_detail({version: print_page.image(version) for version in Version})
 
     def _preview_legend(self, page: GeneratedPage):
         """The legend of ``page`` as the panel asks for it now, drawn finer than the page, and how many of its pixels go
@@ -1340,6 +1472,7 @@ class MainWindow(QMainWindow):
     # with other settings that may be under way.
     def _on_print_page_ready(self, drawn: GeneratedPage) -> None:
         self._print_page = drawn
+        self.results.attach_print_page(self._result_key(self.document.result_settings()), self.current_page, drawn)
         self.preview.show_detail({version: drawn.image(version) for version in Version})
         if self._pending_export_drawn:
             self._on_export_ready(drawn)

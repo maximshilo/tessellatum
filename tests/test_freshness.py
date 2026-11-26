@@ -271,6 +271,13 @@ def test_freshness_is_apart_from_unsaved_changes(win):
     win.preview()
     # Making the page saves nothing: the document still has its change, though the preview is up to date.
     assert not win.window.history.is_clean() and win.state() == CURRENT
+    made = len(win.made)
     win.window.undo()
     win.settle(0.1)
+    # Back where it was saved, its page kept (see test_results.py): shown again, none made.
+    assert win.window.history.is_clean() and win.state() == CURRENT and len(win.made) == made
+    # Saved with a change no page was made for: nothing unsaved, and out of date all the same.
+    win.window.controls.controls["num_colors"].step(-2)
+    win.settle(0.1)
+    win.window.history.set_clean()
     assert win.window.history.is_clean() and win.state() == MODIFIED

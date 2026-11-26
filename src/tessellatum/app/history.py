@@ -11,6 +11,9 @@ drops what could have been redone. Only the document is in it: the zoom, the pan
 never are.
 
 The clean state is where the document was last saved (``set_clean``), for projects (H3) to mark.
+
+The states undo and redo would go to next (``neighbors``) are what the result cache keeps whatever its budget, so that
+one step back or forward shows its page at once (see ``app.results``).
 """
 
 from __future__ import annotations
@@ -24,14 +27,18 @@ from PySide6.QtGui import QUndoCommand, QUndoStack
 _merge_keys = itertools.count(1)
 
 
+SETTINGS, SOURCE = "settings", "source"  # what a change changed
+
+
 class _Change(QUndoCommand):
     """A change from ``before`` to ``after``, put back by ``restore``; already made when it is pushed."""
 
     MERGING = 1
 
-    def __init__(self, before, after, text: str, restore: Callable, merge_key: int | None):
+    def __init__(self, before, after, text: str, restore: Callable, merge_key: int | None, kind: str = SETTINGS):
         super().__init__(text)
         self.before, self.after = before, after
+        self.kind = kind
         self._restore = restore
         self.merge_key = merge_key
         self._made = True  # pushed after the change was made: the first redo has nothing to do
@@ -78,7 +85,7 @@ class History(QObject):
 
     def record_source(self, before, after, text: str = "Open Image") -> None:
         """The picture changed from ``before`` to ``after`` (each whatever ``restore_source`` takes)."""
-        self.stack.push(_Change(before, after, text, self._restore_source, None))
+        self.stack.push(_Change(before, after, text, self._restore_source, None, SOURCE))
 
     def begin_merge(self) -> None:
         """The changes recorded until ``end_merge`` are one: a slider dragged."""
@@ -110,6 +117,19 @@ class History(QObject):
 
     def count(self) -> int:
         return self.stack.count()
+
+    def neighbors(self) -> list[tuple[str, object]]:
+        """The states undo and redo would put back, as (``SETTINGS`` or ``SOURCE``, the state) each: what the step
+        before the current one changed it from, and what the step after changes it to."""
+        found = []
+        index = self.stack.index()
+        if index > 0:
+            change = self.stack.command(index - 1)
+            found.append((change.kind, change.before))
+        if index < self.stack.count():
+            change = self.stack.command(index)
+            found.append((change.kind, change.after))
+        return found
 
     # -- The clean state ----------------------------------------------------------------
     def set_clean(self) -> None:

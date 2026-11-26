@@ -4,6 +4,25 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.21] - 2026-11-26
+
+### Added
+
+- Pages made are kept, so Undo, Redo and a setting put back show their page at once, without making it again (about
+  0.1 s for the lion at Medium, rather than 2 s). This holds for undoing an Open as well. A page kept brings its
+  print-size layout with it, so the zoom and the export don't lay it out again.
+- When a page undo or redo goes back to is no longer kept, the settings come back at once and the page is made again in
+  the background. Meanwhile the page shown is kept and labeled out of date. A state that never had a page still waits
+  for Generate Preview.
+- Preferences > Performance > **Memory for pages made**: how much memory the kept pages may take. Automatic uses a
+  quarter of the computer's memory, up to 2 GB. The page shown and the ones Undo and Redo go to are always kept.
+  **Clear Now** frees the kept pages too.
+
+### Changed
+
+- A page being made with settings that have since been put back is dropped, rather than replacing the page that is
+  now current.
+
 ## [1.1.20] - 2026-11-25
 
 ### Fixed

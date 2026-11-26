@@ -100,9 +100,10 @@ Dark, and the choice is kept. **Edit > Undo** takes back the last change to the 
 for what it did ("Undo Brush width", "Undo Difficulty: Hard", "Undo Reset Detail"), and **Redo** puts it back: a slider
 dragged is one step, a preset or a reset is one step however many settings it moves, and opening another picture is
 one. The zoom, the panels and the version shown are never undone. A change made after an undo drops what could have
-been redone. Undo restores the settings, not the preview: if the preview was made with other settings, the status
-bar says so, and Generate Preview shows them (an undo of the lines, numbers or tone redraws it by itself). Whether
-the preview is up to date is apart from whether the settings have changed since they were last saved. **Edit > Reset All Settings** is the Difficulty section's Reset, and asks first; **Help > About Tessellatum** shows
+been redone. The pages made are kept, so an undo or a redo shows its page at once, as does putting a setting back
+by hand. A page no longer kept (memory is limited, see Preferences) is made again in the background, with the page shown
+kept and labeled out of date until it is ready. Settings that never had a page wait for Generate Preview, as any other
+change does: the status bar says the preview is out of date. Whether the preview is up to date is apart from whether the settings have changed since they were last saved. **Edit > Reset All Settings** is the Difficulty section's Reset, and asks first; **Help > About Tessellatum** shows
 the version and the licenses.
 
 ## Zoom
@@ -200,7 +201,7 @@ and it is kept between runs. Each change applies at once.
 | Appearance | **Theme** (System, Light, Dark) and **Motion** (System, Reduced, Full), as in View > Appearance. **Interface scale**, Automatic (the system's) or 90% to 200%: applied when Tessellatum next starts, as the dialog says. The page's zoom is apart from it, so 100% stays a pixel of the page to a pixel of the screen. **Canvas background**: the theme's, a neutral gray to judge the page's colors against, white or black. |
 | Units | **Lengths in** millimeters or inches: how lengths and areas are shown and typed. The page's values are kept in millimeters, so switching never changes them. |
 | Workspace | **Reset Layout**, as in View. |
-| Performance | **Results kept**: how many pages' intermediate results are kept, so that trying one setting after another makes the next preview faster (Automatic keeps two, a few tens of MB each). **Clear Now** frees them. **Redraw lines and numbers**: how soon a change to the lines, numbers or tone draws the preview again by itself (after 0.2, 0.4 or 1 s), or **Only with Generate**. |
+| Performance | **Memory for pages made**: how much memory the pages made may take, kept so that Undo, Redo and a setting put back show their page at once (Automatic: a quarter of the memory, at most 2 GB; the page shown and the ones Undo and Redo go to are always kept). **Results kept**: how many pages' intermediate results are kept, so that trying one setting after another makes the next preview faster (Automatic keeps two, a few tens of MB each). **Clear Now** frees both. **Redraw lines and numbers**: how soon a change to the lines, numbers or tone draws the preview again by itself (after 0.2, 0.4 or 1 s), or **Only with Generate**. |
 | Shortcuts | Every command's keys. |
 
 ## Difficulty

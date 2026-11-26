@@ -105,24 +105,30 @@ class Document(QObject):
     def set_source(self, image: np.ndarray | None, path: Path | None = None) -> Source | None:
         """Work on ``image`` (BGR) now, read from ``path`` if it was; None for no picture. The result made of the last
         picture is dropped. Its hash is worked out in the background (``source_identified``)."""
+        return self.restore_source(None if image is None else Source(image, path))
+
+    def restore_source(self, source: Source | None) -> Source | None:
+        """Work on ``source`` again, a picture this document held before (an Open undone or redone), as it was: the
+        same load, its hash kept if it was worked out (else worked out again). The result made of the last picture
+        is dropped."""
         was_dirty = self.is_dirty()
-        self._source = None if image is None else Source(image, path)
+        self._source = source
         self._revision += 1
         self.set_result(None)
         self.source_changed.emit()
         self._dirty_maybe_changed(was_dirty)
-        if self._source is not None:
-            source = self._source
+        # A hash kept is the source's already, so nothing is announced: ``source_identified`` is for a hash found now.
+        if source is not None and source.content_hash is None:
             threading.Thread(
                 target=lambda reports=_hash_reports(): reports.found.emit(source.token, content_hash(source.image)),
                 name="source-hash", daemon=True,
             ).start()
-        return self._source
+        return source
 
     def _on_hashed(self, token: int, digest: str) -> None:
         source = self._source
-        if source is None or source.token != token:
-            return  # a picture since replaced
+        if source is None or source.token != token or source.content_hash is not None:
+            return  # a picture since replaced, or identified already
         source.content_hash = digest
         self.source_identified.emit(digest)
 
