@@ -80,8 +80,24 @@ class PreviewWidget(QGraphicsView):
         self._sharpen_timer.setInterval(SHARPEN_DELAY_MS)
         self._sharpen_timer.timeout.connect(self._sharpen)
         # Its zoom's keys are the window's View actions (see ``gui.actions``), and the menu's.
+        self._show_placeholder()
+
+    def _show_placeholder(self) -> None:
         self._placeholder = self._scene.addText("Open an image and click \"Generate Preview\"")
         self._placeholder.setDefaultTextColor(self.palette().color(QPalette.WindowText))
+
+    def clear_page(self) -> None:
+        """Show no page, as at the start: the picture was closed."""
+        self._scene.clear()
+        self._page_item = self._legend_item = None
+        self._page_size = None
+        self._previews, self._details, self._shown = {}, {}, {}
+        self._legend = None
+        self._legend_size = (0.0, 0.0)
+        self._held = None
+        self._fitted = True
+        self._show_placeholder()
+        self.resetTransform()
 
     def show_page(
         self,

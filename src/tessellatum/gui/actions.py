@@ -37,8 +37,14 @@ FILE, EDIT, VIEW, GENERATE, HELP = "&File", "&Edit", "&View", "&Generate", "&Hel
 MENUS = (FILE, EDIT, VIEW, GENERATE, HELP)
 
 COMMANDS = (
-    Command("open", "&Open Image…", FILE, "Open a picture to make a page of", "open", (QKeySequence.Open,)),
+    Command("open", "&Open…", FILE, "Open a picture to make a page of, or a project saved before", "open",
+            (QKeySequence.Open,)),
+    Command("save", "&Save Project", FILE, "Save the picture and its settings as a project, to open again later", "save",
+            (QKeySequence.Save,)),
+    Command("save_as", "Save Project &As…", FILE, "Save the picture and its settings as a new project",
+            keys=(QKeySequence.SaveAs, "Ctrl+Shift+S")),
     Command("export", "&Export…", FILE, "Save the page as a PNG, a PDF or a palette file", "export", ("Ctrl+E",)),
+    Command("close", "&Close", FILE, "Close the picture and its project", keys=("Ctrl+W", QKeySequence.Close)),
     Command("quit", "&Quit", FILE, "Close Tessellatum", "quit", (QKeySequence.Quit,), role=QAction.QuitRole),
     Command("undo", "&Undo", EDIT, "Undo the last change to the settings or the picture", "undo", (QKeySequence.Undo,)),
     Command("redo", "&Redo", EDIT, "Redo what was undone", "redo", (QKeySequence.Redo, "Ctrl+Shift+Z")),
@@ -159,8 +165,8 @@ class Actions(QObject):
                         appearance = menu.addMenu("&Appearance")
                     appearance.addAction(action)
                     continue
-                if command.id in ("quit", "find", "preferences", "zoom_in", "cancel", ACTIVITY_ACTIONS[settings.SOURCE],
-                                  "toggle_sidebar") \
+                if command.id in ("save", "export", "quit", "find", "preferences", "zoom_in", "cancel",
+                                  ACTIVITY_ACTIONS[settings.SOURCE], "toggle_sidebar") \
                         and not menu.isEmpty():
                     menu.addSeparator()
                 menu.addAction(action)

@@ -1,3 +1,4 @@
+import sys
 import threading
 
 import numpy as np
@@ -19,6 +20,16 @@ def _no_warm_up_left_running():
     for thread in threading.enumerate():
         if thread.name == "pipeline-warm-up":
             thread.join(timeout=300)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _unsaved_changes_let_go(monkeypatch):
+    """A window closed with unsaved changes asks what to do in a modal dialog, which would wait for ever in a test:
+    every test lets them go, unless it answers itself (``MainWindow._ask_unsaved``)."""
+    window = sys.modules.get("tessellatum.gui.main_window")
+    if window is not None:
+        monkeypatch.setattr(window.MainWindow, "_ask_unsaved", lambda self, name: window.DISCARD_CHANGES)
     yield
 
 

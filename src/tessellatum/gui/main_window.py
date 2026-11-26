@@ -10,18 +10,21 @@ and then the sidebar fold away by themselves. The arrangement is kept between ru
 from __future__ import annotations
 
 import dataclasses
+import io
 import logging
 import threading
 import time
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 from PySide6.QtCore import QEvent, QObject, QSettings, QSize, Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QSizePolicy,
     QSplitter,
@@ -33,6 +36,7 @@ from PySide6.QtWidgets import (
 
 from tessellatum import __version__
 from tessellatum.app import errors
+from tessellatum.app import project as projects
 from tessellatum.app.document import Document
 from tessellatum.app.history import SETTINGS, History
 from tessellatum.app.jobs import EXPORT, PREVIEW, PRINT_LAYOUT, RECIPES, SAVE, Job, JobManager, page_task
@@ -47,6 +51,7 @@ from tessellatum.core.print_size import MM_PER_INCH, print_scale
 from tessellatum.gui import freshness, preferences, theme
 from tessellatum.core import settings as registry
 from tessellatum.gui.actions import ACTIVITY_ACTIONS, THEME_ACTIONS, VERSION_ACTIONS, ZOOM_ACTIONS, Actions
+from tessellatum.gui.actions import FILE as FILE_MENU
 from tessellatum.app.presets import PresetStore
 from tessellatum.gui.controls_panel import DPI, PALETTE, ControlsPanel
 from tessellatum.gui.export_dialog import ExportDialog, ExportState, palette_pixmap, pixmap_of, warnings_for
@@ -59,6 +64,12 @@ from tessellatum.gui.status import BUSY, CANCELLED, DONE, FAILED, IDLE, StatusBa
 from tessellatum.gui.workspace import ActivityBar, LayoutStore, PaletteInspector
 
 OPEN_IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.gif)"
+PROJECT_FILTER = f"Tessellatum projects (*{projects.SUFFIX})"
+OPEN_FILTER = (f"Pictures and projects (*{projects.SUFFIX} *.png *.jpg *.jpeg *.bmp *.webp *.tiff *.gif);;"
+               f"{OPEN_IMAGE_FILTER};;{PROJECT_FILTER}")
+RECENT_KEY = "recent/projects"
+RECENT_MAX = 10
+SAVE_CHANGES, DISCARD_CHANGES, KEEP_WORKING = "save", "discard", "cancel"  # unsaved work (see _settle_unsaved)
 # The preview's legend is drawn at least this many pixels a millimeter on paper (300 dpi), finer than a preview's
 # page, so that its names and codes stay sharp zoomed in.
 PREVIEW_LEGEND_PX_PER_MM = 300 / MM_PER_INCH
@@ -94,7 +105,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Tessellatum")
 
         self._layout = LayoutStore(store)
-        self._store = store  # the preferences read it too (see ``_build_commands``)
+        self._store = store  # the preferences read it too (see ``_build_commands``), and the recent projects
+        self._recent_kept: list[str] = []  # the recent projects, without a store
         self.controls = ControlsPanel(store=store, presets=presets)  # the settings sidebar: its pages scroll on a short window
         # The export's options, kept by the panel, shown in the export dialog beside what they will write.
         self.export_dialog = ExportDialog(self.controls.export_options, self)
@@ -256,6 +268,11 @@ class MainWindow(QMainWindow):
         self.document.result_changed.connect(self._show_freshness)
         self.document.source_changed.connect(self._on_source_changed_for_preview)
         self.document.source_identified.connect(self._on_source_identified)
+        # The window's title: the project's name (or the picture's), and whether it has unsaved changes.
+        self.document.source_changed.connect(self._show_title)
+        self.document.source_changed.connect(self._sync_commands)  # Save and Close need a picture
+        self.document.project_changed.connect(self._show_title)
+        self.history.changed.connect(self._show_title)
         # The page shown and the ones undo and redo go to next are kept whatever the cache's budget.
         self.document.result_changed.connect(self._protect_results)
         self.history.changed.connect(self._protect_results)
@@ -291,7 +308,13 @@ class MainWindow(QMainWindow):
         """Every command as one action (see ``gui.actions``): in the menu bar, on its shortcut, and behind its button,
         enabled as its button is."""
         self.commands = Actions(self)
-        self.commands.build_menus(self.menuBar())
+        self.menus = self.commands.build_menus(self.menuBar())
+        # File > Open Recent, under Open: the projects opened or saved last, the ones still there.
+        self.recent_menu = QMenu("Open &Recent", self)
+        file_menu = self.menus[FILE_MENU]
+        after_open = file_menu.actions()[file_menu.actions().index(self.commands["open"]) + 1]
+        file_menu.insertMenu(after_open, self.recent_menu)
+        self.recent_menu.aboutToShow.connect(self._show_recent)
         c, commands = self.controls, self.commands
         for command_id, method, button in (
             ("open", self.open_image, c.open_button),
@@ -315,6 +338,9 @@ class MainWindow(QMainWindow):
         self.history.changed.connect(self._show_history)
         self._show_history()
         commands["quit"].triggered.connect(self.close)
+        commands["save"].triggered.connect(self.save_project)
+        commands["save_as"].triggered.connect(self.save_project_as)
+        commands["close"].triggered.connect(self.close_document)
         commands["about"].triggered.connect(self.show_about)
         for version, command_id in VERSION_ACTIONS.items():
             commands[command_id].triggered.connect(lambda _checked=False, v=version: self.version_bar.buttons[v].click())
@@ -359,6 +385,9 @@ class MainWindow(QMainWindow):
         commands["open"].setEnabled(c.open_button.isEnabled())
         commands["generate"].setEnabled(c.generate_button.isEnabled())
         commands["export"].setEnabled(c.export_button.isEnabled())
+        picture = self.current_image_bgr is not None
+        for command_id in ("save", "save_as", "close"):
+            commands[command_id].setEnabled(picture)
         commands["cancel"].setEnabled(not c.progress_row.isHidden() and c.abort_button.isEnabled())
         for command_id in VERSION_ACTIONS.values():
             commands[command_id].setEnabled(self.version_bar.isEnabled())
@@ -661,26 +690,39 @@ class MainWindow(QMainWindow):
 
     # -- Open -----------------------------------------------------------
     def open_image(self) -> None:
-        path_str, _ = QFileDialog.getOpenFileName(self, "Open Image", "", OPEN_IMAGE_FILTER)
-        if not path_str:
+        """File > Open: a picture, or a project saved before."""
+        path_str, _ = QFileDialog.getOpenFileName(self, "Open", self._folder(), OPEN_FILTER)
+        if path_str:
+            self.open_path(Path(path_str))
+
+    def open_path(self, path: Path) -> None:
+        """Open ``path``: a project (``.tessellatum``) in place of the document, or a picture into it, as one step
+        to undo. A file that can't be read says why and leaves the work as it was."""
+        if path.suffix.lower() == projects.SUFFIX:
+            self.open_project(path)
             return
-        path = Path(path_str)
         try:
-            image = pipeline.load_image_bgr(path)
+            data = path.read_bytes()
+            image = pipeline.load_image_bgr(io.BytesIO(data))  # as from the file itself, its bytes kept for a project
         except Exception as exc:  # noqa: BLE001
-            text = f"Could not open {path.name}: {exc}"
-            self.diagnostics.add(ERROR, text)
-            self._say(text, FAILED)
-            self.notify(ERROR, text)
+            self._open_failed(path, exc)
             return
         old = self.document.source()
-        self._show_source(image, path)
+        self._show_source(image, path, data)
         if old is not None:  # a picture replaced in an open document: undoable, the loads kept with their hashes
             self.history.record_source(old, self.document.source(), f"Open {path.name}")
 
-    def _show_source(self, image: np.ndarray | None, path: Path | None) -> None:
-        """Work on ``image``, read from ``path``, or on no picture: the last picture's page dropped."""
-        self.document.set_source(image, path)  # drops the last picture's page
+    def _open_failed(self, path: Path, exc: Exception) -> None:
+        text = f"Could not open {path.name}: {exc}"
+        self.diagnostics.add(ERROR, text)
+        self._say(text, FAILED)
+        self.notify(ERROR, text)
+
+    def _show_source(self, image: np.ndarray | None, path: Path | None, data: bytes | None = None,
+                     name: str | None = None) -> None:
+        """Work on ``image``, read from ``path`` (or a file named ``name``, its bytes ``data``), or on no picture: the
+        last picture's page dropped."""
+        self.document.set_source(image, path, data=data, name=name)  # drops the last picture's page
         self._source_shown()
 
     def _source_shown(self) -> None:
@@ -693,12 +735,14 @@ class MainWindow(QMainWindow):
         if image is None:
             self.controls.set_picture_size(None)
             self._say("No picture open.")
+            self._sync_commands()
             return
         self.controls.set_thumbnail(_bgr_to_pixmap(image))
         height, width = image.shape[:2]
-        name = path.name if path is not None else "the picture"
-        self.controls.set_picture_size((width, height), path.name if path is not None else "")
+        name = source.name or "the picture"
+        self.controls.set_picture_size((width, height), source.name or "")
         self._say(f"Loaded {name}. Click \"Generate Preview\".")
+        self._sync_commands()
 
     def find_setting(self) -> None:
         """The focus in the settings search, the sidebar shown for it (out of focus mode, if in it)."""
@@ -989,6 +1033,200 @@ class MainWindow(QMainWindow):
         commands["redo"].setEnabled(history.can_redo())
         commands["undo"].setText(f"&Undo {history.undo_text()}" if history.can_undo() else "&Undo")
         commands["redo"].setText(f"&Redo {history.redo_text()}" if history.can_redo() else "&Redo")
+
+    # -- Projects (see ``app.project``) ---------------------------------------------------
+    def _folder(self) -> str:
+        """Where a file dialog starts: the project's folder, else the picture's; empty for the dialog's own."""
+        project = self.document.project_path()
+        source = self.document.source()
+        if project is not None:
+            return str(project.parent)
+        if source is not None and source.path is not None:
+            return str(source.path.parent)
+        return ""
+
+    def has_unsaved_work(self) -> bool:
+        """Whether closing the picture would lose changes: it changed since it was opened or saved."""
+        if self._record_scheduled:
+            self._record_settings()
+        return self.current_image_bgr is not None and not self.history.is_clean()
+
+    def _document_name(self) -> str:
+        project = self.document.project_path()
+        if project is not None:
+            return project.name
+        source = self.document.source()
+        return source.name if source is not None and source.name else "Untitled"
+
+    def _ask_unsaved(self, name: str) -> str:
+        """Ask what to do with the unsaved changes to ``name``: ``SAVE_CHANGES``, ``DISCARD_CHANGES`` or
+        ``KEEP_WORKING``."""
+        answer = QMessageBox.question(
+            self, "Unsaved Changes",
+            f"{name} has changes that aren't saved. Save them as a project first?\n\nIf you don't, they are lost.",
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel, QMessageBox.Save,
+        )
+        return {QMessageBox.Save: SAVE_CHANGES, QMessageBox.Discard: DISCARD_CHANGES}.get(answer, KEEP_WORKING)
+
+    def _settle_unsaved(self) -> bool:
+        """Before the work is replaced or closed: True if it may be (nothing unsaved, saved now, or let go), False if
+        the user cancelled or the save didn't happen."""
+        if not self.has_unsaved_work():
+            return True
+        answer = self._ask_unsaved(self._document_name())
+        if answer == SAVE_CHANGES:
+            return self.save_project()
+        return answer == DISCARD_CHANGES
+
+    def _busy_with_file(self) -> bool:
+        if self._exporting():
+            self.notify(INFO, "Wait for the export to finish first.")
+            return True
+        return False
+
+    def open_project(self, path: Path) -> bool:
+        """Open the project at ``path`` in place of the document (asking first about unsaved changes) and make its
+        page. A project that can't be read says why and leaves the work as it was. True if it was opened."""
+        path = Path(path)
+        if self._busy_with_file() or not self._settle_unsaved():
+            return False
+        try:
+            loaded = projects.read_project(path)
+        except (projects.ProjectError, OSError) as exc:
+            self._open_failed(path, exc)
+            return False
+        self._restoring = True
+        try:
+            self.controls.show_settings(loaded.settings)
+        finally:
+            self._restoring = False
+        self.controls.edit_label = None
+        self._show_source(loaded.image, None, loaded.source_bytes, loaded.source_name)
+        self.preview.clear_page()
+        self._recorded = self.controls.snapshot()
+        self.history.clear()
+        self.history.set_clean()
+        self.document.mark_saved()
+        self.document.set_project_path(path)
+        self._remember_recent(path)
+        self._say(f"Opened {path.name}.")
+        self.generate_preview()  # its page, made again: projects keep the picture and the settings, not pages
+        return True
+
+    def save_project(self) -> bool:
+        """Save the document in its project, or ask where (Save As) if it has none. True if it was saved."""
+        path = self.document.project_path()
+        if path is None:
+            return self.save_project_as()
+        return self._write_project(path)
+
+    def save_project_as(self) -> bool:
+        """Ask where, and save the document there as a project; the one it was in stays as it is."""
+        if self.current_image_bgr is None:
+            self._no_picture()
+            return False
+        stem = Path(self._document_name()).stem
+        start = f"{stem}{projects.SUFFIX}"
+        if self._folder():
+            start = str(Path(self._folder()) / start)
+        path_str, _ = QFileDialog.getSaveFileName(self, "Save Project", start, PROJECT_FILTER)
+        if not path_str:
+            return False
+        path = Path(path_str)
+        if path.suffix.lower() != projects.SUFFIX:
+            path = path.with_name(path.name + projects.SUFFIX)
+        return self._write_project(path)
+
+    def _write_project(self, path: Path) -> bool:
+        source = self.document.source()
+        if source is None:
+            self._no_picture()
+            return False
+        if self._record_scheduled:
+            self._record_settings()
+        if source.data is None:  # a picture that came from no file: kept as a PNG, losslessly
+            out = io.BytesIO()
+            Image.fromarray(np.ascontiguousarray(source.image[:, :, ::-1])).save(out, "PNG")
+            source.data = out.getvalue()
+            source.name = f"{Path(source.name or 'picture').stem}.png"
+        try:
+            projects.save_project(path, self.controls.snapshot(), source.name or "picture.png", source.data,
+                                  source.image)
+        except (OSError, projects.ProjectError) as exc:
+            text = errors.explain(errors.WRITING, type(exc), str(exc), file_name=path.name)
+            self.diagnostics.add(ERROR, f"Saving {path} failed: {exc}")
+            self._say(f"Couldn't save {path.name}.", FAILED)
+            self.notify(ERROR, text, [("Retry", lambda: self._write_project(path)), self._details()])
+            return False
+        self.history.set_clean()
+        self.document.mark_saved()
+        self.document.set_project_path(path)
+        self._remember_recent(path)
+        self._say(f"Saved {path.name}.", DONE)
+        return True
+
+    def close_document(self) -> bool:
+        """Close the picture and its project (asking first about unsaved changes): the window as it starts, the
+        settings kept. True if it was closed."""
+        if self._busy_with_file() or not self._settle_unsaved():
+            return False
+        self.jobs.drop(PREVIEW)
+        self._show_source(None, None)
+        self.preview.clear_page()
+        self.history.clear()
+        self.history.set_clean()
+        self._recorded = self.controls.snapshot()
+        self.document.mark_saved()
+        self.document.set_project_path(None)
+        self.controls.set_busy(False)
+        return True
+
+    def _show_title(self) -> None:
+        if self.current_image_bgr is None and self.document.project_path() is None:
+            self.setWindowTitle("Tessellatum")
+            self.setWindowModified(False)
+            return
+        self.setWindowTitle(f"{self._document_name()}[*] — Tessellatum")
+        self.setWindowModified(self.current_image_bgr is not None and not self.history.is_clean())
+
+    # -- Recent projects -----------------------------------------------------------------
+    def recent_projects(self) -> list[Path]:
+        """The projects opened or saved last, the latest first (whether or not they are still there)."""
+        if self._store is None:
+            kept = self._recent_kept
+        else:
+            kept = self._store.value(RECENT_KEY, [])
+            kept = [kept] if isinstance(kept, str) else list(kept or [])
+        return [Path(p) for p in kept if isinstance(p, str) and p]
+
+    def _set_recent(self, paths: list[Path]) -> None:
+        kept = [str(p) for p in paths[:RECENT_MAX]]
+        if self._store is None:
+            self._recent_kept = kept
+        else:
+            self._store.setValue(RECENT_KEY, kept)
+
+    def _remember_recent(self, path: Path) -> None:
+        path = Path(path).absolute()
+        self._set_recent([path] + [p for p in self.recent_projects() if p != path])
+
+    def _show_recent(self) -> None:
+        """File > Open Recent as it opens: the recent projects still there (the others are let go), and Clear."""
+        menu = self.recent_menu
+        menu.clear()
+        there = [p for p in self.recent_projects() if p.is_file()]
+        self._set_recent(there)
+        for path in there:
+            action = menu.addAction(path.name)
+            action.setToolTip(str(path))
+            action.setStatusTip(str(path))
+            action.triggered.connect(lambda _checked=False, p=path: self.open_project(p))
+        if not there:
+            menu.addAction("No recent projects").setEnabled(False)
+        menu.addSeparator()
+        clear = menu.addAction("&Clear Recent")
+        clear.setEnabled(bool(there))
+        clear.triggered.connect(lambda: self._set_recent([]))
 
     # -- Preview ----------------------------------------------------------
     def _making(self) -> bool:
@@ -1297,7 +1535,7 @@ class MainWindow(QMainWindow):
         fmt = self.controls.get_output_format()
         version = self.controls.get_export_version()
         source = self.document.source()
-        stem = source.path.stem if source is not None and source.path is not None else "coloring_page"
+        stem = Path(source.name).stem if source is not None and source.name else "coloring_page"
         if fmt == PALETTE:
             suffix = self.controls.get_palette_format()
             file_filter = swatches.FORMATS[suffix]
@@ -1307,8 +1545,9 @@ class MainWindow(QMainWindow):
             file_filter = "PNG image (*.png)" if fmt == "PNG" else "PDF document (*.pdf)"
             name = f"{stem}_page" if version is Version.PAGE else f"{stem}_{version.value.lower()}"
         start = f"{name}{suffix}"
-        if source is not None and source.path is not None:
-            start = str(source.path.with_name(start))  # beside the picture
+        folder = self._folder()
+        if folder:
+            start = str(Path(folder) / start)  # beside the project, or the picture
         path_str, _ = QFileDialog.getSaveFileName(self, "Export Coloring Page", start, file_filter)
         if not path_str:
             return
@@ -1549,6 +1788,9 @@ class MainWindow(QMainWindow):
             self._say(self._ready_message, DONE)
 
     def closeEvent(self, event) -> None:
+        if not self._settle_unsaved():
+            event.ignore()
+            return
         self.save_layout()
         # Stop what is still running, without waiting for it: the threads outlive the window, and the application
         # waits for them, bounded, when it quits (see ``app.jobs.wait_for_all``).
