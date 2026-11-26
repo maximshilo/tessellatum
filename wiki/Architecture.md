@@ -61,6 +61,7 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 | `app/presets.py` | `PresetStore`: presets of one's own, the difficulty's settings by name, in a versioned JSON file in the preferences folder; a file that can't be read is left out with a warning and kept aside |
 | `app/history.py` | `History`: undo and redo on a `QUndoStack`, each change keeping the settings (or the picture) before and after it whole; the edits made in one go and a slider's drag are one step; the clean state for saving |
 | `app/jobs.py` | `JobManager` and `Job`: every background step, its identity, and the checks on its result |
+| `app/results.py` | `ResultCache`: the pages made (and their print layouts), by the picture's content hash, the settings' generation key and the pipeline's version, within a memory budget measured from their buffers; the page shown and its undo and redo neighbors protected |
 | `gui/actions.py` | Every command as one `QAction`: text, icon, shortcut, menu |
 | `gui/main_window.py`, `workspace.py` | The window: toolbar, activity bar, sidebar, canvas and inspector in a splitter; focus mode, reflow, the layout kept between runs |
 | `gui/fields.py` | The fields a setting is edited in, built from its registry entry: slider and exact entry (locale numbers, inline range errors, keyboard steps), millimetres or inches with the value kept in millimetres, the changed-value marker and its reset, the reason it is off, drag start and end for undo; the segmented control for two to four choices |
@@ -129,6 +130,16 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
   for a number are merged again, after the cache). Their arrays are read-only, so nothing downstream can change a kept
   result; generation is deterministic, which the keys rely on, and tests check a page drawn from kept regions against
   one drawn from scratch, pixel for pixel (`tests/test_stage_cache.py`).
+- **Result cache.** Whole pages are kept as well, in `app/results.py`, under a key of three parts: the picture's
+  content hash, so the same pixels find their pages however they were opened; the settings' generation key, the
+  pipeline's own settings objects, so the legend's detail and the export options are left out and equal settings
+  however reached share a key; and the pipeline's version, the app's plus a hash of the model files. Generation is
+  deterministic, so a key always stands for one page. Each entry is measured from its arrays and images. Least
+  recently used entries go first once over the budget (Automatic: a quarter of RAM, at most 2 GB), except the page
+  shown and the pages its undo and redo go to, which are protected. A page put in is made read-only, since everyone
+  who shows, exports or restores it shares it. The window looks a key up on every change to the settings and on every
+  undo or redo: a hit is shown without a job (about 0.1 s), and a miss for a state that had a page is made again in the
+  background. The history keeps settings and pictures, never pages (`tests/test_results.py`).
 - **Progress.** Each stage reports its measured share of the work, so the progress bar is real; with a
   `stage_callback`, the pipeline also announces each stage by name as it starts and ends (`StageEvent`), with how
   long it took and whether the stage cache had it.

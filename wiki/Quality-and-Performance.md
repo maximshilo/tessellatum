@@ -78,4 +78,8 @@ What makes it fast:
 - **Caching** of resizes, detections, palettes and regions per image, so changing one setting re-runs only what
   depends on it: a change to the lines or numbers draws the page again from its regions (the lion at Medium, 0.9 s
   rather than 1.6 s; line art merges regions for room for the numbers, so it gains less: 3.1 to 2.0 s on the comic).
+- **Pages kept** for undo, redo and a setting put back: shown at once rather than made again. On the lion at Medium,
+  38 of 38 undos and redos over 20 cycles found their page, in 97 ms at the median and 116 ms at most (a page takes
+  2.1 to 2.3 s). The process's memory stayed flat over 50 more cycles (1,219 to 1,226 MB). Under a 200 MB budget, with
+  new pages made, it levelled off at about 1,306 MB.
 - **Gated inference.** The text detector's fine look runs only where a cheap first look finds text.
