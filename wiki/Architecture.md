@@ -74,7 +74,7 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 | `gui/export_dialog.py` | The export dialog: the export's options beside a thumbnail and a summary of the file, non-blocking warnings, and the choice between the page made again and the page as previewed when the preview is out of date |
 | `gui/controls_panel.py`, `preview_widget.py`, `paints_dialog.py` | The settings sidebar (a page per category, laid out by the registry's sections and levels: the advanced settings in one folded group per page; a reset per section), the canvas (the views, the original mapped onto the page's pixels; zoom and pan; the rulers, grid and sheet bounds; the
 scene in layers: artwork, guides, annotation, diagnostics, interaction, each drawn over the ones below so a highlight
-never draws the page again, and none of them but the artwork from the page's own data, which exports never read), the comparison: a second canvas side by side, sharing the first's images and following its zoom and scroll, or a view drawn over the page clipped to one side of a divider; the previous version looked up with `ResultCache.peek`, which counts no hit and reorders nothing), the paints' list (swatches, a color picker, sample kits) |
+never draws the page again, and none of them but the artwork from the page's own data, which exports never read), the comparison (a second canvas side by side, sharing the first's images and following its zoom and scroll, or a view drawn over the page clipped to one side of a divider; the previous version looked up with `ResultCache.peek`, which counts no hit and reorders nothing), the paints' list (swatches, a color picker, sample kits) |
 
 ## Data model
 
