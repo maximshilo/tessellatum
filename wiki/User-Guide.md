@@ -133,6 +133,19 @@ that fails (a full disk, a folder that doesn't allow it) says why and leaves the
 that can't be read (damaged, made by a newer Tessellatum, or not a project at all) says why, and the work open stays as
 it was.
 
+### Recovery
+
+While the work has changes that aren't saved, Tessellatum keeps a copy of it every 2 minutes (Preferences > Workspace),
+in its own folder, never over the project. If it ends without closing properly (a crash, a power cut), the next start
+lists what was kept, with a thumbnail and when it was kept:
+
+- **Restore** opens it as it was. It isn't saved, and says where it came from; Save Project keeps it.
+- **Discard** removes it for good.
+- **Keep for Later** asks again at the next start.
+
+Saving, closing the picture and quitting remove the copy. A second window open at the same time never offers the first
+one's work. Copies left go after 14 days.
+
 ## Zoom
 
 The preview zooms about the point under the cursor, with the mouse wheel, Ctrl+wheel, a touchpad's pinch, Ctrl+plus
@@ -227,7 +240,7 @@ and it is kept between runs. Each change applies at once.
 |---|---|
 | Appearance | **Theme** (System, Light, Dark) and **Motion** (System, Reduced, Full), as in View > Appearance. **Interface scale**, Automatic (the system's) or 90% to 200%: applied when Tessellatum next starts, as the dialog says. The page's zoom is apart from it, so 100% stays a pixel of the page to a pixel of the screen. **Canvas background**: the theme's, a neutral gray to judge the page's colors against, white or black. |
 | Units | **Lengths in** millimeters or inches: how lengths and areas are shown and typed. The page's values are kept in millimeters, so switching never changes them. |
-| Workspace | **Reset Layout**, as in View. |
+| Workspace | **Reset Layout**, as in View. **Keep for recovery**: how often work with unsaved changes is kept to be recovered after a crash, every 1, 2 (the default), 5 or 10 minutes, or Off (see [Recovery](#recovery)). |
 | Performance | **Memory for pages made**: how much memory the pages made may take, kept so that Undo, Redo and a setting put back show their page at once (Automatic: a quarter of the memory, at most 2 GB; the page shown and the ones Undo and Redo go to are always kept). **Results kept**: how many pages' intermediate results are kept, so that trying one setting after another makes the next preview faster (Automatic keeps two, a few tens of MB each). **Clear Now** frees both. **Redraw lines and numbers**: how soon a change to the lines, numbers or tone draws the preview again by itself (after 0.2, 0.4 or 1 s), or **Only with Generate**. **Generate automatically**: whether a change to the colors, the difficulty, the paper or what is done with line art, faces and text makes the page by itself, a second after the last change: **Off** (the default; it waits for Generate Preview), **When it's quick** (while the picture's last page took under 2 s), or **Always**. |
 | Shortcuts | Every command's keys. |
 

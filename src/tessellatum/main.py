@@ -5,11 +5,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QSettings, QSize, QStandardPaths
+from PySide6.QtCore import QCoreApplication, QSettings, QSize, QStandardPaths, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from tessellatum.app import jobs
+from tessellatum.app import jobs, recovery
 from tessellatum.app.presets import FILE_NAME as PRESETS_FILE
 from tessellatum.app.presets import PresetStore
 from tessellatum.gui import preferences, theme
@@ -50,8 +50,16 @@ def main() -> None:
     theme.install(app, QSettings())
     # Presets of one's own, in a file of their own in the app's preferences folder.
     config = Path(QStandardPaths.writableLocation(QStandardPaths.AppConfigLocation))
-    window = MainWindow(store=QSettings(), presets=PresetStore(config / PRESETS_FILE))
+    # Unsaved work kept for recovery, in the app's data folder (see ``app.recovery``).
+    try:
+        data = Path(QStandardPaths.writableLocation(QStandardPaths.AppDataLocation))
+        keeper = recovery.RecoveryStore(data / recovery.FOLDER)
+    except OSError:
+        keeper = None  # nowhere to keep it: the app works without
+    window = MainWindow(store=QSettings(), presets=PresetStore(config / PRESETS_FILE), recovery=keeper)
     window.show()
+    # What a crash left, offered once the window is up.
+    QTimer.singleShot(0, window.offer_recovery)
     # Closing the window stops its jobs without waiting for them; quitting waits for them, bounded (see ``app.jobs``).
     app.aboutToQuit.connect(lambda: jobs.wait_for_all())
 

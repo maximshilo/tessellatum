@@ -138,6 +138,10 @@ class History(QObject):
     def is_clean(self) -> bool:
         return self.stack.isClean()
 
+    def mark_unsaved(self) -> None:
+        """No state of the history is the saved one: work recovered, never saved as it is."""
+        self.stack.resetClean()
+
     def clear(self) -> None:
         self.end_merge()
         self.stack.clear()
