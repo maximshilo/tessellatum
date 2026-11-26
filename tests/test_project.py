@@ -237,6 +237,14 @@ def test_members_past_their_bounds_are_refused(tmp_path, monkeypatch):
     _refused(path, "more than a project holds")
 
 
+def test_a_file_too_large_to_be_a_project_isn_t_read(tmp_path, monkeypatch):
+    path = tmp_path / "huge.tessellatum"
+    _save(path)
+    monkeypatch.setattr(projects, "MAX_FILE", path.stat().st_size - 1)
+    monkeypatch.setattr(Path, "read_bytes", lambda self: pytest.fail("read into memory"))
+    _refused(path, "larger than a project can be")
+
+
 def test_a_member_claiming_less_than_it_holds_is_read_only_up_to_the_bound(tmp_path, monkeypatch):
     # A zip whose header understates its size: reading stops at the bound, whatever the header says.
     archive = zipfile.ZipFile(io.BytesIO(), "w")

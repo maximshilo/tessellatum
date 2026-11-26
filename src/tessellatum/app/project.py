@@ -69,6 +69,7 @@ MAX_SOURCE = 512 * 1024 ** 2
 MAX_THUMBNAIL = 4 * 1024 ** 2
 MAX_MEMBERS = 16
 MAX_PIXELS = 200_000_000
+MAX_FILE = MAX_MANIFEST + MAX_SOURCE + MAX_THUMBNAIL + 1024 ** 2  # its members, and the archive's own records
 IMAGE_FORMATS = {"PNG", "JPEG", "BMP", "WEBP", "TIFF", "GIF"}  # what Open Image reads (``OPEN_IMAGE_FILTER``)
 
 _CHOICES = ("preset", "tone", "paper", "medium", "legend", "colors_from")  # DocumentSettings' text choices
@@ -310,6 +311,7 @@ def read_project(path: Path) -> Project:
     """The project at ``path``, checked whole (see the module's docstring); raises ``ProjectError`` saying what is
     wrong with it, or ``OSError`` if it can't be read at all."""
     path = Path(path)
+    _expect(path.stat().st_size <= MAX_FILE, "it is larger than a project can be")  # before it is read into memory
     data = path.read_bytes()
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
