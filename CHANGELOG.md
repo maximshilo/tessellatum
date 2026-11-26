@@ -4,6 +4,20 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.28] - 2026-11-26
+
+### Added
+
+- The palette inspector, on the right:
+  - each color's share of the page, its area on paper and its number of regions, measured in the background once the
+    page is made;
+  - sort by number, coverage, lightness, hue or name, without changing a number;
+  - a grid of swatches or a list;
+  - find a color by number or name;
+  - copy its hex (Ctrl+C), RGB or name;
+  - pick a color to see it in full and highlight its regions on the canvas; **Isolate** dims the rest. The highlight
+    never reaches an export.
+
 ## [1.1.27] - 2026-11-26
 
 ### Added

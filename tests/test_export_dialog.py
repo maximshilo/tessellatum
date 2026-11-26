@@ -178,6 +178,8 @@ def test_what_the_canvas_shows_around_the_page_never_reaches_a_file(window, tmp_
     window.version_bar.buttons[main_window.Version.COMPLETED].click()
     window.inspector.list.setCurrentRow(1)
     assert window.inspector.list.currentRow() == 1
+    window.inspector.isolate_check.setChecked(True)  # its regions highlighted on the canvas, the rest dimmed
+    assert window.preview.overlay(main_window.ANNOTATION, "color") is not None
     window.set_diagnostics_visible(True)
     _app.processEvents()
     _save_to(monkeypatch, tmp_path / "around.png")
