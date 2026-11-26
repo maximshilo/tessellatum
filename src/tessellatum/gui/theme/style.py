@@ -122,6 +122,7 @@ QProgressBar#statusProgress {{ background: {c.field}; border: 1px solid {c.borde
     max-height: 6px; }}
 QProgressBar#statusProgress::chunk {{ background: {c.accent}; border-radius: {rs}px; }}
 QGraphicsView#canvas {{ background: {c.canvas}; border: none; }}
+QLabel#canvasCaption {{ background: {c.tooltip}; color: {c.tooltip_text}; border-radius: {rs}px; padding: 2px 6px; }}
 QScrollArea#welcome, QWidget#welcomeBody {{ background: {c.canvas}; border: none; }}
 QLabel#thumbnail {{ border: 1px solid {c.border_strong}; color: {c.text_hint}; background: {c.field};
     border-radius: {rs}px; }}

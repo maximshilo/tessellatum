@@ -18,7 +18,17 @@ from tessellatum.core import settings
 from tessellatum.core.painting import Version
 from tessellatum.gui import theme
 from tessellatum.gui.theme import icons
-from tessellatum.gui.preview_widget import ORIGINAL, ORIGINAL_DESCRIPTION
+from tessellatum.gui.preview_widget import (
+    COMPARE_OFF,
+    ORIGINAL,
+    ORIGINAL_DESCRIPTION,
+    PREVIOUS,
+    SIDE_BY_SIDE,
+    SPLIT_HORIZONTAL,
+    SPLIT_VERTICAL,
+    view_description,
+    view_name,
+)
 from tessellatum.gui.theme.tokens import COLORS, LIGHT
 
 
@@ -32,10 +42,14 @@ class Command:
     keys: tuple = ()  # QKeySequence.StandardKey members or strings, the first shown in the menu
     checkable: bool = False
     role: QAction.MenuRole = QAction.NoRole
+    submenu: str = ""  # a submenu of ``menu`` it sits in instead, by title
 
 
 FILE, EDIT, VIEW, GENERATE, HELP = "&File", "&Edit", "&View", "&Generate", "&Help"
 MENUS = (FILE, EDIT, VIEW, GENERATE, HELP)
+COMPARE_MENU = "Co&mpare"
+# The views a comparison can be with, by the key of their command.
+COMPARE_WITH = {**{v.name.lower(): v for v in Version}, "original": ORIGINAL, "previous": PREVIOUS}
 
 COMMANDS = (
     Command("open", "&Open…", FILE, "Open a picture to make a page of, or a project saved before", "open",
@@ -74,6 +88,17 @@ COMMANDS = (
     Command("grid", "&Grid", VIEW, "A grid over the page, every centimeter (or inch) on paper", None, ("Ctrl+'",),
             checkable=True),
     Command("page_bounds", "Page &Bounds", VIEW, "The sheet the page prints on, and its margins", checkable=True),
+    Command("compare_off", "&No Comparison", VIEW, "One view of the page", checkable=True, submenu=COMPARE_MENU),
+    Command("compare_side", "&Side by Side", VIEW, "Two views of the page side by side, moving together",
+            checkable=True, submenu=COMPARE_MENU),
+    Command("compare_split", "Split &Left and Right", VIEW,
+            "The view compared with past a divider up the page; drag the divider to move it", checkable=True,
+            submenu=COMPARE_MENU),
+    Command("compare_split_h", "Split &Top and Bottom", VIEW,
+            "The view compared with past a divider across the page; drag the divider to move it", checkable=True,
+            submenu=COMPARE_MENU),
+    *(Command(f"compare_with_{key}", f"With {view_name(view)}", VIEW, view_description(view), checkable=True,
+              submenu=COMPARE_MENU) for key, view in COMPARE_WITH.items()),
     *(Command(f"activity_{category.lower()}", f"&{category} Settings", VIEW, f"Show the {category} settings",
               category.lower(), (f"Ctrl+Shift+{i}",), checkable=True)
       for i, category in enumerate(settings.CATEGORIES, start=1)),
@@ -94,6 +119,9 @@ COMMANDS = (
 COMMAND_IDS = tuple(command.id for command in COMMANDS)
 VERSION_ACTIONS = {**{v: f"show_{v.name.lower()}" for v in Version}, ORIGINAL: "show_original"}
 GUIDE_ACTIONS = ("rulers", "grid", "page_bounds")
+COMPARE_ACTIONS = {COMPARE_OFF: "compare_off", SIDE_BY_SIDE: "compare_side", SPLIT_VERTICAL: "compare_split",
+                   SPLIT_HORIZONTAL: "compare_split_h"}
+COMPARE_WITH_ACTIONS = {view: f"compare_with_{key}" for key, view in COMPARE_WITH.items()}
 THEME_ACTIONS = {mode: f"theme_{mode.lower()}" for mode in theme.MODES}
 ZOOM_ACTIONS = ("zoom_in", "zoom_out", "fit", "actual_pixels", "print_size")
 ACTIVITY_ACTIONS = {category: f"activity_{category.lower()}" for category in settings.CATEGORIES}
@@ -137,6 +165,15 @@ class Actions(QObject):
         self.activities = QActionGroup(parent)
         for action_id in ACTIVITY_ACTIONS.values():
             self.activities.addAction(self._by_id[action_id])
+        self.compares = QActionGroup(parent)
+        for action_id in COMPARE_ACTIONS.values():
+            self.compares.addAction(self._by_id[action_id])
+        self._by_id[COMPARE_ACTIONS[COMPARE_OFF]].setChecked(True)
+        self.compare_withs = QActionGroup(parent)
+        for action_id in COMPARE_WITH_ACTIONS.values():
+            self.compare_withs.addAction(self._by_id[action_id])
+        self._by_id[COMPARE_WITH_ACTIONS[ORIGINAL]].setChecked(True)
+        self.submenus: dict[str, object] = {}  # by title, once the menus are built
         self.refresh_icons()
         manager = theme.current()
         if manager is not None:
@@ -170,6 +207,15 @@ class Actions(QObject):
             appearance = None
             for command in commands:
                 action = self._by_id[command.id]
+                if command.submenu:
+                    if command.submenu not in self.submenus:
+                        menu.addSeparator()
+                        self.submenus[command.submenu] = menu.addMenu(command.submenu)
+                    submenu = self.submenus[command.submenu]
+                    if command.id == COMPARE_WITH_ACTIONS[Version.PAGE]:
+                        submenu.addSeparator()
+                    submenu.addAction(action)
+                    continue
                 if command.id.startswith("theme_"):
                     if appearance is None:
                         menu.addSeparator()

@@ -34,7 +34,9 @@ from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QComboBox,
+    QGraphicsItem,
     QGraphicsItemGroup,
+    QGraphicsLineItem,
     QGraphicsPathItem,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
@@ -63,6 +65,16 @@ SHARPEN_DELAY_MS = 120
 ORIGINAL = "Original"
 ORIGINAL_DESCRIPTION = "The picture itself, in the page's place: to compare the page with."
 VIEWS: tuple[Hashable, ...] = (*Version, ORIGINAL)
+# The page made before this one, of the same picture: a view to compare with, never shown alone.
+PREVIOUS = "Previous version"
+PREVIOUS_DESCRIPTION = "The page made before this one, kept with the results: to see what a change did."
+
+# How two views are compared: not at all; side by side, in two canvases that move together; or split, the second view
+# past a divider dragged across the page, up and down or across.
+COMPARE_OFF, SIDE_BY_SIDE, SPLIT_VERTICAL, SPLIT_HORIZONTAL = "off", "side by side", "split vertical", "split horizontal"
+COMPARE_MODES = (COMPARE_OFF, SIDE_BY_SIDE, SPLIT_VERTICAL, SPLIT_HORIZONTAL)
+# How near the divider, in the screen's logical pixels, the mouse takes hold of it.
+DIVIDER_GRAB_PX = 6
 
 
 def view_name(view: Hashable) -> str:
@@ -70,7 +82,9 @@ def view_name(view: Hashable) -> str:
 
 
 def view_description(view: Hashable) -> str:
-    return view.description if isinstance(view, Version) else ORIGINAL_DESCRIPTION
+    if isinstance(view, Version):
+        return view.description
+    return PREVIOUS_DESCRIPTION if view == PREVIOUS else ORIGINAL_DESCRIPTION
 
 
 # The scene's layers, bottom to top, and the height each is drawn at.
@@ -133,6 +147,10 @@ class PreviewWidget(QGraphicsView):
 
     A drag pans with the left button, the middle one, or the left with Space held (the Space only while the canvas has
     the keyboard, so a text field keeps its spaces). A click without a drag says where (``clicked``).
+
+    Split (``set_split``), a second view is shown past a divider across the page, in the same place; the divider is
+    dragged to move it. Another canvas can show what this one shows (``mirror``) and follow its zoom and place
+    (``view_state``), for two views side by side.
     """
 
     detail_wanted = Signal()
@@ -173,6 +191,27 @@ class PreviewWidget(QGraphicsView):
         self._sheet_item.setPen(QPen(Qt.NoPen))
         for item in (self._grid_item, self._bounds_item, self._margin_item, self._sheet_item):
             item.hide()
+        # Split: the second view, clipped to its side of the divider, over the page; the divider over everything.
+        self._split_clip = QGraphicsRectItem(self.layers[ARTWORK])
+        self._split_clip.setFlag(QGraphicsItem.ItemClipsChildrenToShape, True)
+        self._split_clip.setPen(QPen(Qt.NoPen))
+        self._split_clip.setZValue(1)
+        self._split_item = QGraphicsPixmapItem(self._split_clip)
+        self._split_item.setTransformationMode(Qt.SmoothTransformation)
+        self._divider = QGraphicsLineItem(self.layers[INTERACTION])
+        self._split_clip.hide()
+        self._divider.hide()
+        self._split_view: Hashable | None = None
+        self._split_horizontal = False
+        self._split_fraction = 0.5
+        self._dividing = False
+        self._near = False
+        self.viewport().setMouseTracking(True)
+        self._captions = (QLabel(self.viewport()), QLabel(self.viewport()))
+        for caption in self._captions:
+            caption.setObjectName("canvasCaption")
+            caption.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            caption.hide()
         self._page_size: tuple[int, int] | None = None
         self._previews: dict[Hashable, QImage] = {}
         self._details: dict[Hashable, QImage] = {}
@@ -228,6 +267,8 @@ class PreviewWidget(QGraphicsView):
             self.set_overlay(key[0], key[1], None)
         self._page_size = None
         self._previews, self._details, self._shown = {}, {}, {}
+        self._split_item.setPixmap(QPixmap())
+        self._show_split()
         self._legend = None
         self._legend_size = (0.0, 0.0)
         self._held = None
@@ -273,6 +314,8 @@ class PreviewWidget(QGraphicsView):
         self._previews = {view: pil_to_qimage(image) for view, image in versions.items()}
         self._details = {}
         self._version = shown if shown in self._previews else Version.PAGE
+        if self._split_view not in self._previews:
+            self._split_view = None
         self._page_size = size
         self._print_scale = max(1.0, print_scale)
         self._paper = paper
@@ -282,6 +325,7 @@ class PreviewWidget(QGraphicsView):
             self._placeholder = None
         for item in (self._page_item, self._legend_item):
             item.show()
+        self._show_split()
         self._place_legend(legend, legend_scale)
         if held is not None:
             middle, point, zoom = held
@@ -308,6 +352,133 @@ class PreviewWidget(QGraphicsView):
             self._version = version
             self._sharpen()
 
+    def set_view_image(self, view: Hashable, image: Image.Image | None) -> None:
+        """Give the page shown a view of its own (``PREVIOUS``), ``image`` mapped onto the page as the Original is; None
+        takes it away (a split showing it then shows nothing past the divider)."""
+        if self._page_size is None:
+            return
+        if image is None:
+            self._previews.pop(view, None)
+            self._details.pop(view, None)
+            if self._version == view:
+                self._version = Version.PAGE
+            if self._split_view == view:
+                self._split_view = None
+                self._show_split()
+        else:
+            self._previews[view] = pil_to_qimage(image)
+            self._details.pop(view, None)
+        self._shown.pop("split", None)
+        self._shown.pop("page", None)
+        self._sharpen()
+
+    # -- Split ---------------------------------------------------------------------------------------
+    def set_split(self, view: Hashable | None, horizontal: bool = False) -> None:
+        """Show ``view`` past a divider across the page (up and down; ``horizontal``, across), the view shown before
+        it; None: no split."""
+        self._split_view = view if view in self._previews else None
+        self._split_horizontal = horizontal
+        self._shown.pop("split", None)
+        self._show_split()
+        self._place_captions()
+        self._sharpen()
+
+    def split_view(self) -> Hashable | None:
+        return self._split_view
+
+    def split_fraction(self) -> float:
+        """Where the divider is: the share of the page's width (or height, split across) before it."""
+        return self._split_fraction
+
+    def set_split_fraction(self, fraction: float) -> None:
+        self._split_fraction = min(max(float(fraction), 0.0), 1.0)
+        self._show_split()
+
+    def _show_split(self) -> None:
+        shown = self._split_view is not None and self._page_size is not None
+        self._split_clip.setVisible(shown)
+        self._divider.setVisible(shown)
+        if not shown:
+            return
+        width, height = self._page_size
+        if self._split_horizontal:
+            at = self._split_fraction * height
+            self._split_clip.setRect(QRectF(0, at, width, height - at))
+            self._divider.setLine(QLineF(0, at, width, at))
+        else:
+            at = self._split_fraction * width
+            self._split_clip.setRect(QRectF(at, 0, width - at, height))
+            self._divider.setLine(QLineF(at, 0, at, height))
+        pen = QPen(self.palette().color(QPalette.Highlight), 2)
+        pen.setCosmetic(True)  # two pixels of the screen wide at any zoom
+        self._divider.setPen(pen)
+
+    def _near_divider(self, viewport_point: QPointF) -> bool:
+        if self._split_view is None or self._page_size is None:
+            return False
+        line = self._divider.line()
+        a = self.mapFromScene(line.p1())
+        b = self.mapFromScene(line.p2())
+        if self._split_horizontal:
+            return abs(viewport_point.y() - a.y()) <= DIVIDER_GRAB_PX and a.x() <= viewport_point.x() <= b.x()
+        return abs(viewport_point.x() - a.x()) <= DIVIDER_GRAB_PX and a.y() <= viewport_point.y() <= b.y()
+
+    def _drag_divider(self, viewport_point: QPointF) -> None:
+        point = self.page_point(viewport_point)
+        width, height = self._page_size
+        self.set_split_fraction(point.y() / height if self._split_horizontal else point.x() / width)
+
+    # -- Captions: which view is which, while comparing ------------------------------------------------
+    def set_captions(self, first: str | None, second: str | None = None) -> None:
+        """Name the view shown at the top left (``first``) and, split, the one past the divider at the top right (or,
+        split across, the bottom left); None names none there."""
+        for caption, text in zip(self._captions, (first, second)):
+            caption.setVisible(bool(text))
+            caption.setText(text or "")
+            caption.setAccessibleName(text or "")
+            caption.adjustSize()
+        self._place_captions()
+
+    def captions(self) -> tuple[str, str]:
+        return tuple(caption.text() if not caption.isHidden() else "" for caption in self._captions)
+
+    def _place_captions(self) -> None:
+        margin = 8
+        first, second = self._captions
+        first.move(margin, margin)
+        if self._split_horizontal:
+            second.move(margin, self.viewport().height() - second.height() - margin)
+        else:
+            second.move(self.viewport().width() - second.width() - margin, margin)
+
+    # -- Another canvas showing the same -------------------------------------------------------------
+    def mirror(self, other: "PreviewWidget") -> None:
+        """Show what ``other`` shows: its page, its views (their images shared, not copied), its legend and guides, as
+        far in and in the same place. The view shown here stays, if the page has it."""
+        self._previews, self._details = dict(other._previews), dict(other._details)
+        self._legend, self._legend_size = other._legend, other._legend_size
+        self._print_scale, self._paper = other._print_scale, other._paper
+        self._units = other._units
+        if other._page_size is None:
+            self.clear_page()
+            return
+        self._page_size = other._page_size
+        self._shown = {}
+        if self._version not in self._previews:
+            self._version = Version.PAGE
+        if self._placeholder is not None:
+            self._scene.removeItem(self._placeholder)
+            self._placeholder = None
+        for item in (self._page_item, self._legend_item):
+            item.show()
+        self._bounds, self._grid = other._bounds, other._grid
+        if self._rulers != other._rulers:
+            self.set_rulers(other._rulers)
+        self._position_legend()
+        self._fitted = False
+        self.set_view_state(other.view_state())
+        self._sharpen()
+
     def show_detail(self, versions: Mapping[Hashable, Image.Image]) -> None:
         """``versions`` of the page shown, as it prints (see ``pipeline.draw_page``): what is shown from the preview's
         own pixels in. They are ``print_scale`` times its size (to the pixel)."""
@@ -324,8 +495,7 @@ class PreviewWidget(QGraphicsView):
         as it prints."""
         if self._page_size is None:
             return None
-        detail = self._details.get(self._version) if self.zoom() > 1 + 1e-6 else None
-        return detail if detail is not None else self._previews[self._version]
+        return self._view_at_zoom(self._version)
 
     # -- The zoom ---------------------------------------------------------------------------------
     def zoom(self) -> float:
@@ -503,6 +673,11 @@ class PreviewWidget(QGraphicsView):
         return self._space
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.LeftButton and not self._space and self._near_divider(event.position()):
+            self._dividing = True
+            self._show_cursor()
+            event.accept()
+            return
         if self._page_size is not None and (
             event.button() == Qt.MiddleButton or (event.button() == Qt.LeftButton and self._space)
         ):
@@ -517,6 +692,15 @@ class PreviewWidget(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._dividing:
+            self._drag_divider(event.position())
+            event.accept()
+            return
+        if self._press is None:
+            near = self._near_divider(event.position())
+            if near != self._near:
+                self._near = near
+                self._show_cursor()
         if self._press is not None:
             moved = event.position() - self._press
             if not self._panning and self._page_size is not None and \
@@ -532,6 +716,11 @@ class PreviewWidget(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if self._dividing and event.button() == Qt.LeftButton:
+            self._dividing = False
+            self._show_cursor()
+            event.accept()
+            return
         if self._press is not None and event.button() in (Qt.LeftButton, Qt.MiddleButton):
             clicked = not self._panning and event.button() == Qt.LeftButton
             self._press, self._panning = None, False
@@ -547,6 +736,8 @@ class PreviewWidget(QGraphicsView):
             self.viewport().setCursor(QCursor(Qt.ClosedHandCursor))
         elif self._space:
             self.viewport().setCursor(QCursor(Qt.OpenHandCursor))
+        elif self._near or self._dividing:
+            self.viewport().setCursor(QCursor(Qt.SplitVCursor if self._split_horizontal else Qt.SplitHCursor))
         else:
             self.viewport().unsetCursor()
 
@@ -556,11 +747,13 @@ class PreviewWidget(QGraphicsView):
             if self._placeholder is not None:
                 self._placeholder.setDefaultTextColor(self.palette().color(QPalette.WindowText))
             self._show_guides()
+            self._show_split()
         super().changeEvent(event)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._place_rulers()
+        self._place_captions()
         if self._fitted:
             self.fit_to_window()
 
@@ -799,6 +992,13 @@ class PreviewWidget(QGraphicsView):
         zoom = self.zoom()
         _show_at(self._page_item, self.shown_image(), self._page_size, zoom, self._shown, "page")
         _show_at(self._legend_item, self._legend, self._legend_size, zoom, self._shown, "legend")
+        if self._split_view is not None:
+            _show_at(self._split_item, self._view_at_zoom(self._split_view), self._page_size, zoom, self._shown,
+                     "split")
+
+    def _view_at_zoom(self, view: Hashable) -> QImage:
+        detail = self._details.get(view) if self.zoom() > 1 + 1e-6 else None
+        return detail if detail is not None else self._previews[view]
 
 
 class _Ruler(QWidget):
@@ -860,6 +1060,38 @@ def _small_font(font: QFont) -> QFont:
     if small.pointSizeF() > 0:
         small.setPointSizeF(max(6.0, small.pointSizeF() * 0.75))
     return small
+
+
+class SideBySide(QWidget):
+    """Two canvases side by side, exactly as wide as each other (so a page point falls at the same place in both), or
+    the first alone while the second is hidden."""
+
+    resized = Signal()
+
+    def __init__(self, first: QWidget, second: QWidget, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.first, self.second = first, second
+        for widget in (first, second):
+            widget.setParent(self)
+        second.hide()
+
+    def set_both(self, both: bool) -> None:
+        self.second.setVisible(both)
+        self._place()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._place()
+
+    def _place(self) -> None:
+        width, height = self.width(), self.height()
+        if self.second.isHidden():
+            self.first.setGeometry(0, 0, width, height)
+        else:
+            half = width // 2
+            self.first.setGeometry(0, 0, half, height)
+            self.second.setGeometry(width - half, 0, half, height)
+        self.resized.emit()
 
 
 def _show_at(
