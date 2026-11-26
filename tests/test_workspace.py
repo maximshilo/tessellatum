@@ -149,7 +149,7 @@ def test_focus_mode_hides_every_panel_and_brings_them_back_exactly():
         assert window.in_focus_mode() and window.commands["focus_mode"].isChecked()
         for panel in (window.toolbar, window.activity_bar, window.controls, window.inspector, window.statusBar()):
             assert panel.isHidden()
-        assert not window.preview.isHidden()
+        assert not window.canvas_stack.isHidden()  # the canvas: the page, or the welcome page with no picture
         # The way back is said, and stays on the canvas's own bar while the toolbar is hidden.
         assert window.notification.isVisible() and "Esc" in window.notification.text.text()
         assert window.exit_focus_action.isVisible() and not window.canvas_bar.isHidden()

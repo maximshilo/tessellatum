@@ -442,12 +442,13 @@ def test_recent_projects(win):
     first.unlink()
     win.window._show_recent()
     shown = [a.text() for a in win.window.recent_menu.actions() if not a.isSeparator()]
-    assert shown == ["second.tessellatum", "&Clear Recent"]  # the one gone is let go
+    assert shown == ["second.tessellatum", "lion cub.png", "&Clear Recent"]  # the project gone isn't shown
+    assert first.absolute() in win.window.recent_projects()  # but kept: the welcome page greys it, with Remove
     win.window.recent_menu.actions()[0].trigger()
     win.settle()
     assert win.window.document.project_path() == second
     win.window.recent_menu.actions()[-1].trigger()
-    assert win.window.recent_projects() == []
+    assert win.window.recent_projects() == [] and win.window.recent_pictures() == []
 
 
 def test_save_and_close_wait_for_a_picture(win):
