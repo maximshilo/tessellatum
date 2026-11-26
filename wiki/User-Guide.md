@@ -80,6 +80,20 @@ the zoom and the scroll:
 - **Original**: the picture itself, in the page's place, so a point of the page is the same point of the picture. It
   is shown, never exported.
 
+### Comparing
+
+**Compare** above the page (also View > Compare) shows two views at once, each named in a corner:
+
+- **Side by Side**: two canvases, exactly as wide as each other, that zoom and move together; zooming or dragging
+  either moves both, so a point of the page is at the same place in each.
+- **Split Left and Right** or **Top and Bottom**: the view compared with past a divider across the page, in the same
+  place; drag the divider to move it.
+
+Compare **With** any version, the **Original**, or the **Previous version**: the page made before this one, of the
+same picture, in the version shown, named by what changed since ("Previous version (before: Colors)"). It comes from
+the pages kept for undo (Preferences > Performance > **Memory for pages made**), so it may be gone; it is never made
+again. Comparing makes nothing: every view is of the page shown, or kept.
+
 ## Menus and shortcuts
 
 Every command is in the menu bar, and the most used have a shortcut (Cmd in place of Ctrl on macOS):

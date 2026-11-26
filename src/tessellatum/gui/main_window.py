@@ -54,7 +54,8 @@ from tessellatum.core.print_size import MM_PER_INCH, print_scale
 from tessellatum.gui import freshness, preferences, theme
 from tessellatum.core import settings as registry
 from tessellatum.gui.actions import (
-    ACTIVITY_ACTIONS, GUIDE_ACTIONS, THEME_ACTIONS, VERSION_ACTIONS, ZOOM_ACTIONS, Actions,
+    ACTIVITY_ACTIONS, COMPARE_ACTIONS, COMPARE_MENU, COMPARE_WITH_ACTIONS, GUIDE_ACTIONS, THEME_ACTIONS,
+    VERSION_ACTIONS, ZOOM_ACTIONS, Actions,
 )
 from tessellatum.gui.actions import FILE as FILE_MENU
 from tessellatum.gui.welcome import WelcomePage
@@ -65,7 +66,10 @@ from tessellatum.gui.notifications import (
     ERROR, INFO, SUCCESS, WARNING, DiagnosticsPanel, NotificationBar, install_log_handler, remove_log_handler,
     show_in_folder,
 )
-from tessellatum.gui.preview_widget import ORIGINAL, PreviewWidget, VersionBar, ZoomBar
+from tessellatum.gui.preview_widget import (
+    COMPARE_OFF, ORIGINAL, PREVIOUS, SIDE_BY_SIDE, SPLIT_HORIZONTAL, SPLIT_VERTICAL, PreviewWidget, SideBySide,
+    VersionBar, ZoomBar, view_name,
+)
 from tessellatum.gui.status import BUSY, CANCELLED, DONE, FAILED, IDLE, StatusBar
 from tessellatum.gui.workspace import ActivityBar, LayoutStore, PaletteInspector
 
@@ -136,12 +140,30 @@ class MainWindow(QMainWindow):
         self.version_bar = VersionBar()
         self.version_bar.setEnabled(False)
         self.zoom_bar = ZoomBar(self.preview)
+        # Comparing: the second canvas, side by side with the first and moving with it (or the first split in two),
+        # and the button that picks how and with what.
+        self.compare_view = PreviewWidget()
+        self.compare_view.setObjectName("canvas")
+        self.compare_view.setAccessibleName("Canvas compared with")
+        self.compare_button = QToolButton()
+        self.compare_button.setObjectName("compareButton")
+        self.compare_button.setText("Compare")
+        self.compare_button.setAccessibleName("Compare")
+        self.compare_button.setToolTip("Compare two views of the page: side by side, or split by a divider")
+        self.compare_button.setPopupMode(QToolButton.InstantPopup)
+        self.compare_button.setCheckable(True)
+        self._compare_mode = COMPARE_OFF
+        self._compare_with = ORIGINAL
+        self._syncing = False  # a view following the other, not to be followed back
+        # The page made before the one shown, of the same picture: its key in the results kept, and its settings.
+        self._previous: tuple | None = None
         # The canvas's own toolbar: a toolbar, so that on a narrow window what doesn't fit goes into its overflow menu
         # rather than being cut off.
         self.canvas_bar = QToolBar("Canvas")
         self.canvas_bar.setObjectName("canvasToolbar")
         self.canvas_bar.setMovable(False)
         self.canvas_bar.addWidget(self.version_bar)
+        self.canvas_bar.addWidget(self.compare_button)
         # Whether the page shown is what the settings make (see ``gui.freshness``).
         self.freshness = freshness.FreshnessBadge()
         self.canvas_bar.addWidget(self.freshness)
@@ -166,12 +188,14 @@ class MainWindow(QMainWindow):
         self.welcome = WelcomePage()
         self.canvas_stack = QStackedWidget()
         self.canvas_stack.addWidget(self.welcome)
-        self.canvas_stack.addWidget(self.preview)
+        self.canvas_views = SideBySide(self.preview, self.compare_view)
+        self.canvas_stack.addWidget(self.canvas_views)
         canvas_layout.addWidget(self.canvas_stack, 1)
         # A picture or a project dropped anywhere on the window opens; the canvas lets the window take it.
         self.setAcceptDrops(True)
-        self.preview.setAcceptDrops(False)
-        self.preview.viewport().setAcceptDrops(False)
+        for view in (self.preview, self.compare_view):
+            view.setAcceptDrops(False)
+            view.viewport().setAcceptDrops(False)
 
         self.inspector = PaletteInspector()
         self.activity_bar = ActivityBar()
@@ -243,6 +267,12 @@ class MainWindow(QMainWindow):
         self.controls.paints_changed.connect(self._show_legend)
         self._recipes_for: tuple | None = None  # what the recipes kept were mixed for, and them (see _recipes)
         self.version_bar.version_changed.connect(self.preview.show_version)
+        self.version_bar.version_changed.connect(self._on_view_changed)
+        # Two views side by side move together: each follows the other's zoom and place.
+        self.preview.view_moved.connect(lambda: self._sync_views(self.preview, self.compare_view))
+        self.compare_view.view_moved.connect(lambda: self._sync_views(self.compare_view, self.preview))
+        self.canvas_views.resized.connect(lambda: self._sync_views(self.preview, self.compare_view))
+        self.compare_view.detail_wanted.connect(self._draw_print_page)
         self.preview.detail_wanted.connect(self._draw_print_page)
 
         # The document: the picture, its settings and the page made of them. The panel writes its edits into it.
@@ -389,6 +419,14 @@ class MainWindow(QMainWindow):
             commands[command_id].setChecked(shown)
             method(shown)
             commands[command_id].toggled.connect(method)
+            commands[command_id].toggled.connect(lambda _shown: self._refresh_compare())
+        # Comparing: how, and with what.
+        for mode, command_id in COMPARE_ACTIONS.items():
+            commands[command_id].triggered.connect(lambda _checked=False, m=mode: self.set_compare(m))
+        for view, command_id in COMPARE_WITH_ACTIONS.items():
+            commands[command_id].triggered.connect(lambda _checked=False, v=view: self.set_compare_with(v))
+        self.compare_button.setMenu(commands.submenus[COMPARE_MENU])
+        self._show_previous_state()
         manager = theme.current()
         for mode, command_id in THEME_ACTIONS.items():
             action = commands[command_id]
@@ -668,8 +706,10 @@ class MainWindow(QMainWindow):
         if key in (None, preferences.UNITS_KEY):
             self.controls.set_length_units(prefs.units())
             self.preview.set_units(prefs.units())
+            self._refresh_compare()
         if key in (None, preferences.CANVAS_KEY):
             preferences.apply_canvas(self.preview, prefs.canvas_color())
+            preferences.apply_canvas(self.compare_view, prefs.canvas_color())
         if key in (None, preferences.CACHE_KEY):
             pipeline.set_cache_pages(prefs.cache_pages())
         if key in (None, preferences.RESULTS_KEY):
@@ -1166,6 +1206,9 @@ class MainWindow(QMainWindow):
         self._show_source(loaded.image, None, loaded.source_bytes, loaded.source_name)
         self.preview.clear_page()
         self._original_kept = None
+        self._previous = None
+        self._show_previous_state()
+        self._refresh_compare()
         self._recorded = self.controls.snapshot()
         self.history.clear()
         self.history.set_clean()
@@ -1233,6 +1276,9 @@ class MainWindow(QMainWindow):
         self._show_source(None, None)
         self.preview.clear_page()
         self._original_kept = None
+        self._previous = None
+        self._show_previous_state()
+        self._refresh_compare()
         self.history.clear()
         self.history.set_clean()
         self._recorded = self.controls.snapshot()
@@ -1383,7 +1429,7 @@ class MainWindow(QMainWindow):
     def _show_canvas(self) -> None:
         """The welcome page while no picture is open, else the page."""
         welcome = self.current_image_bgr is None
-        self.canvas_stack.setCurrentWidget(self.welcome if welcome else self.preview)
+        self.canvas_stack.setCurrentWidget(self.welcome if welcome else self.canvas_views)
         if welcome:
             self._show_welcome_recent()
 
@@ -1654,6 +1700,12 @@ class MainWindow(QMainWindow):
         """Show ``page``, made with ``made_with``: just made, or kept (with its print layout, if drawn)."""
         # A new page of the picture shown is shown as far in and in the same place, to compare the two.
         same_picture = self.current_page is not None and self._previewed_image is self.current_image_bgr
+        # The page shown until now, kept as the previous version, to compare with: another picture's isn't.
+        before = self.document.result_settings() if same_picture else None
+        if before is not None and before.generation_key() != made_with.generation_key():
+            self._previous = (self._result_key(before), before)
+        elif not same_picture:
+            self._previous = None
         self._drop_print_page()  # any drawn of the last page, for a zoom while this one was made
         self.document.set_result(page, made_with)
         self._previewed_image = self.current_image_bgr
@@ -1682,6 +1734,105 @@ class MainWindow(QMainWindow):
         if print_page is not None:
             self._print_page = print_page
             self.preview.show_detail({version: print_page.image(version) for version in Version})
+        self._show_previous_state()
+        self._refresh_compare()
+
+    # -- Comparing two views ------------------------------------------------------------------------------
+    def set_compare(self, mode: str) -> None:
+        """Compare the view shown with another (``set_compare_with``): ``SIDE_BY_SIDE``, split by a divider up the page
+        (``SPLIT_VERTICAL``) or across it (``SPLIT_HORIZONTAL``), or not at all (``COMPARE_OFF``). Nothing is made:
+        every view is of the page shown, or kept."""
+        self._compare_mode = mode
+        self.commands[COMPARE_ACTIONS[mode]].setChecked(True)
+        self.compare_button.setChecked(mode != COMPARE_OFF)
+        self._refresh_compare()
+
+    def compare_mode(self) -> str:
+        return self._compare_mode
+
+    def set_compare_with(self, view) -> None:
+        """Compare with ``view``: a version of the page, the picture (``ORIGINAL``), or the page made before
+        (``PREVIOUS``), if it is kept. Choosing it with no comparison shows the two side by side."""
+        if view == PREVIOUS and self._previous_page() is None:
+            view = ORIGINAL
+        self._compare_with = view
+        self.commands[COMPARE_WITH_ACTIONS[view]].setChecked(True)
+        if self._compare_mode == COMPARE_OFF:
+            self.set_compare(SIDE_BY_SIDE)
+        else:
+            self._refresh_compare()
+
+    def compare_with(self):
+        return self._compare_with
+
+    def _previous_page(self):
+        """The page made before the one shown, if it is still kept with the results; None if not."""
+        if self._previous is None or self.current_page is None:
+            return None
+        entry = self.results.peek(self._previous[0])
+        return None if entry is None else entry.page
+
+    def previous_label(self) -> str:
+        """What the previous version is, by the change made since, as Edit > Undo names it: "Previous version (before:
+        Colors)", "(before: Difficulty: Hard)", "(before: 3 settings)"."""
+        made = self.document.result_settings()
+        if self._previous is None or made is None:
+            return view_name(PREVIOUS)
+        return f"{view_name(PREVIOUS)} (before: {made.change_text(self._previous[1])})"
+
+    def _show_previous_state(self) -> None:
+        """Give the canvas the previous version, in the version shown (the page, for the picture), or take it away."""
+        page = self._previous_page()
+        action = self.commands[COMPARE_WITH_ACTIONS[PREVIOUS]]
+        action.setEnabled(page is not None)
+        action.setToolTip(self.previous_label() if page is not None else "No page made before this one is kept")
+        if page is None:
+            self.preview.set_view_image(PREVIOUS, None)
+            if self._compare_with == PREVIOUS:
+                self._compare_with = ORIGINAL
+                self.commands[COMPARE_WITH_ACTIONS[ORIGINAL]].setChecked(True)
+            return
+        shown = self.version_bar.version()
+        self.preview.set_view_image(PREVIOUS, page.image(shown if isinstance(shown, Version) else Version.PAGE))
+
+    def _on_view_changed(self, _view) -> None:
+        if self._previous is not None:
+            self._show_previous_state()
+        self._refresh_compare()
+
+    def _refresh_compare(self) -> None:
+        """Show the comparison chosen, of the page shown: the second canvas mirroring the first, or the first split,
+        each view named."""
+        if not hasattr(self, "compare_view"):
+            return
+        mode, other = self._compare_mode, self._compare_with
+        has_page = self.preview.has_page()
+        shown = view_name(self.version_bar.version())
+        other_name = self.previous_label() if other == PREVIOUS else view_name(other)
+        side = mode == SIDE_BY_SIDE and has_page
+        self.canvas_views.set_both(side)
+        if side:
+            self.compare_view.mirror(self.preview)
+            self.compare_view.show_version(other)
+            self.compare_view.set_captions(other_name)
+            self.preview.set_captions(shown)
+        else:
+            self.compare_view.clear_page()
+            self.preview.set_captions(None)
+        split = mode in (SPLIT_VERTICAL, SPLIT_HORIZONTAL) and has_page
+        self.preview.set_split(other if split else None, horizontal=mode == SPLIT_HORIZONTAL)
+        if split:
+            self.preview.set_captions(shown, other_name)
+
+    def _sync_views(self, leader: PreviewWidget, follower: PreviewWidget) -> None:
+        """Put ``follower`` as far in and in the same place as ``leader``, while the two are side by side."""
+        if self._syncing or self._compare_mode != SIDE_BY_SIDE or not follower.has_page():
+            return
+        self._syncing = True
+        try:
+            follower.set_view_state(leader.view_state())
+        finally:
+            self._syncing = False
 
     def _original_view(self, page: GeneratedPage, long_edge: int | None) -> Image.Image | None:
         """The picture ``page`` is made of, for the canvas's Original view: its own pixels, no more of them than the
@@ -1743,6 +1894,7 @@ class MainWindow(QMainWindow):
         """Show the page's legend as the panel now asks for it: the page itself is the same."""
         if self.current_page is not None and self.current_page.drawing is not None:
             self.preview.set_legend(*self._preview_legend(self.current_page))
+            self._refresh_compare()
 
     def _on_worker_failed(self, message: str) -> None:
         self.controls.set_busy(False)
@@ -2055,6 +2207,7 @@ class MainWindow(QMainWindow):
         self._print_page = drawn
         self.results.attach_print_page(self._result_key(self.document.result_settings()), self.current_page, drawn)
         self.preview.show_detail({version: drawn.image(version) for version in Version})
+        self._refresh_compare()
         if self._pending_export_drawn:
             self._on_export_ready(drawn)
         elif self._pending_export_path is None:

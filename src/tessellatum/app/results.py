@@ -221,6 +221,14 @@ class ResultCache:
             self.hits += 1
             return entry
 
+    def peek(self, key: ResultKey | None) -> Entry | None:
+        """The entry kept for ``key``, or None: a look that neither counts as a hit or a miss nor makes it the most
+        recently used."""
+        if key is None:
+            return None
+        with self._lock:
+            return self._entries.get(key)
+
     def __contains__(self, key) -> bool:
         with self._lock:
             return key in self._entries

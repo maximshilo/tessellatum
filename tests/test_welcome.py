@@ -99,7 +99,7 @@ def test_the_welcome_page_shows_while_no_picture_is_open(win):
     window = win.window
     assert window.canvas_stack.currentWidget() is window.welcome
     window.open_path(win.picture)
-    assert window.canvas_stack.currentWidget() is window.preview
+    assert window.canvas_stack.currentWidget() is window.canvas_views
     window.close_document()
     assert window.canvas_stack.currentWidget() is window.welcome
 
