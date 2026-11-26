@@ -193,6 +193,11 @@ class MainWindow(QMainWindow):
         self._redraw_timer = QTimer(self)
         self._redraw_timer.setSingleShot(True)
         self._redraw_timer.timeout.connect(self._redraw)
+        # A change that makes the page again makes it by itself, if the preferences say so, a second after the last.
+        self._auto_timer = QTimer(self)
+        self._auto_timer.setSingleShot(True)
+        self._auto_timer.timeout.connect(self._auto_generate)
+        self._last_full_s: float | None = None  # how long the picture's last page made afresh took (not a redraw)
         # The preview's page drawn at print size: what the zoom shows past the preview's own pixels, and what the
         # export saves. Drawn in the background when either first asks for it, and dropped with the preview.
         self._print_page: GeneratedPage | None = None
@@ -595,7 +600,7 @@ class MainWindow(QMainWindow):
             pipeline.set_cache_pages(prefs.cache_pages())
         if key in (None, preferences.RESULTS_KEY):
             self.results.set_budget(prefs.result_memory())
-        if key == preferences.REDRAW_KEY:
+        if key in (preferences.REDRAW_KEY, preferences.AUTO_KEY):
             self._schedule_redraw()
             self._show_freshness()
 
@@ -763,8 +768,11 @@ class MainWindow(QMainWindow):
         self._show_freshness()
 
     def _on_source_changed_for_preview(self) -> None:
-        # Another picture, however it came: no redraw of the last one's page, and no label of its outcome.
+        # Another picture, however it came: no redraw of the last one's page, no label of its outcome, and no time
+        # known for its pages.
         self._redraw_timer.stop()
+        self._auto_timer.stop()
+        self._last_full_s = None
         self._outcome = None
         self._show_freshness()
 
@@ -786,13 +794,52 @@ class MainWindow(QMainWindow):
         changed = self.controls.snapshot().changed_entries(basis)
         return bool(changed) and registry.update_policy(changed) == registry.DEBOUNCED
 
+    def _explicit_change(self) -> bool:
+        """Whether the settings changed since the preview's page (or the one being made) in a way that makes it
+        again: the registry's explicit policy."""
+        basis = self._preview_basis()
+        if basis is None or self.current_image_bgr is None:
+            return False
+        changed = self.controls.snapshot().changed_entries(basis)
+        return bool(changed) and registry.update_policy(changed) == registry.EXPLICIT
+
+    def _auto_pending(self) -> bool:
+        """Whether the settings changed in a way that makes the page again, and the preferences have that done by
+        itself (always, or while the picture's last page was quick): it then is, in a second."""
+        mode = self.preferences.auto_generate() if hasattr(self, "preferences") else preferences.OFF
+        if mode == preferences.OFF or not self._explicit_change():
+            return False
+        return mode == preferences.ALWAYS or self._quick()
+
+    def _quick(self) -> bool:
+        """Whether the picture's last page made afresh took under ``preferences.QUICK_S``."""
+        return self._last_full_s is not None and self._last_full_s < preferences.QUICK_S
+
+    def _waits_for_slow_page(self) -> bool:
+        """Whether a change that makes the page again waits for Generate Preview only because the picture's last page
+        was slow (When it's quick)."""
+        return (hasattr(self, "preferences") and self.preferences.auto_generate() == preferences.QUICK
+                and self._last_full_s is not None and not self._quick() and self._explicit_change())
+
     def _schedule_redraw(self) -> None:
         """Draw the preview again a moment after the last change, if it only draws it again (see
-        ``_redraw_pending``); otherwise forget any redraw waiting: Generate Preview makes the page."""
+        ``_redraw_pending``), or make it again a second after, if the preferences have that done by itself (see
+        ``_auto_pending``); otherwise forget what waited: Generate Preview makes the page."""
         if self._redraw_pending():
             self._redraw_timer.start(self.preferences.redraw_after_ms())
         else:
             self._redraw_timer.stop()
+        if self._auto_pending():
+            self._auto_timer.start(preferences.AUTO_AFTER_MS)
+        else:
+            self._auto_timer.stop()
+
+    def _auto_generate(self) -> None:
+        """The page made by itself, a second after the last change that makes it again. It supersedes a preview
+        being made; it waits for an export to finish (which schedules it again)."""
+        if not self._auto_pending() or self._exporting() or self.jobs.is_running(EXPORT):
+            return
+        self._start_preview(auto=True)
 
     def _redraw(self) -> None:
         """The redraw due: the preview made again with the settings as they are, the stage cache keeping its regions
@@ -811,11 +858,14 @@ class MainWindow(QMainWindow):
         now = self.controls.snapshot()
         changed = now.changes_from(made_with) if has_page else ()
         state = freshness.preview_state(has_page, self.jobs.is_running(PREVIEW), changed, self._outcome)
-        redraw = self._redraw_pending()
+        redraw, auto, slow = self._redraw_pending(), self._auto_pending(), self._waits_for_slow_page()
         names = ", ".join(changed[:STALE_NAMED])
         if len(changed) > STALE_NAMED:
             names += f" and {len(changed) - STALE_NAMED} more"
-        then = "It is drawn again in a moment." if redraw else "Generate Preview (F5) makes it again."
+        took = f"the last page took {self._last_full_s:.1f} s, too long to make by itself" if slow else ""
+        then = ("It is drawn again in a moment." if redraw else "It is made again in a moment." if auto
+                else f"Generate Preview (F5) makes it again: {took}." if slow
+                else "Generate Preview (F5) makes it again.")
         detail = {
             freshness.NO_PREVIEW: "No page made yet: Generate Preview (F5) makes one of the picture."
             if self.current_image_bgr is not None else "Open a picture to make a page of it.",
@@ -832,8 +882,9 @@ class MainWindow(QMainWindow):
             return
         if changed:
             self._stale = True
-            then = ("it is drawn again in a moment" if redraw
-                    else f"Generate Preview to see the page with {'them' if len(changed) > 1 else 'it'}")
+            then = ("it is drawn again in a moment" if redraw else "it is made again in a moment" if auto
+                    else f"Generate Preview to see the page with {'them' if len(changed) > 1 else 'it'}"
+                    + (f" ({took})" if slow else ""))
             self._say(f"The preview is out of date ({names} changed): {then}.")
         elif self._stale:
             self._stale = False
@@ -959,18 +1010,20 @@ class MainWindow(QMainWindow):
             return
         self._start_preview()
 
-    def _start_preview(self, redraw: bool = False, again: bool = False) -> None:
+    def _start_preview(self, redraw: bool = False, again: bool = False, auto: bool = False) -> None:
         """Make the preview with the settings as the panel shows them: asked for (Generate Preview); with ``redraw``,
         by itself after a change that only draws the page again; with ``again``, a state put back whose page is no
-        longer kept. Either of those supersedes a preview being made."""
+        longer kept; with ``auto``, by itself after a change that makes it again (Preferences). Any of those supersedes
+        a preview being made."""
         self._redraw_timer.stop()
+        self._auto_timer.stop()
         self._outcome = None
         self._drop_print_page()  # the zoom asks for the new page's
         self.document.set_settings(self.controls.snapshot())  # as the panel shows them, to the last edit
         settings = self.document.settings()
         self.controls.set_busy(True)
         self._say("Drawing the preview again…" if redraw else "Making the page again: it is no longer kept…" if again
-                  else "Generating preview…", BUSY)
+                  else "Generating the preview by itself…" if auto else "Generating preview…", BUSY)
 
         # The page at its working size, where its level's brush is a few pixels across: what an export draws larger.
         image = self.current_image_bgr
@@ -978,7 +1031,9 @@ class MainWindow(QMainWindow):
         long_edge = pipeline.working_long_edge(image, params, handling, style.paper_format)
         self.jobs.start(
             PREVIEW, page_task(image, params, long_edge, style, handling, versions=tuple(Version)),
-            label=f"{'Redraw' if redraw else 'Made again' if again else 'Preview'} at {long_edge} px",
+            label=f"{'Redraw' if redraw else 'Made again' if again else 'Automatic preview' if auto else 'Preview'} "
+                  f"at {long_edge} px",
+            context=None if redraw else "full",  # a page made afresh: its time says whether the next is quick
         )
         self._show_freshness()
 
@@ -996,6 +1051,8 @@ class MainWindow(QMainWindow):
     # -- What the jobs come to ------------------------------------------------
     def _on_job_succeeded(self, job: Job, result) -> None:
         if job.kind == PREVIEW:
+            if job.context == "full" and job.seconds() is not None:
+                self._last_full_s = job.seconds()
             self._on_preview_ready(result, job.settings)
         elif job.kind == EXPORT:
             self._on_export_ready(result)

@@ -36,7 +36,10 @@ The window follows your system's light or dark appearance, and changes with it w
   - the **legend**'s detail: at once, as it changes nothing but the legend;
   - the **lines, numbers and tone** (Document page): the page is drawn again by itself, 0.4 s after the last change
     (a slider dragged draws once, when it stops), from the regions already found, in about a second;
-  - **everything else** makes the page again, which takes longer, so it waits for **Generate Preview**.
+  - **everything else** makes the page again, which takes longer, so it waits for **Generate Preview**, unless
+    Preferences > Performance > **Generate automatically** says otherwise: **When it's quick** (while the picture's last
+    page took under 2 s) or **Always** make it by itself a second after the last change;
+  - a change back to settings whose page is kept shows that page at once, whatever the setting.
 - **Inspector** (right): the page's colors, numbered as on its legend, with their names; hover one for its hex and
   RGB, and, for a mixed color, its recipe.
 - **Status bar** (bottom): what the app is doing, step by step while a page is made ("Choosing the colors… 42%",
@@ -201,7 +204,7 @@ and it is kept between runs. Each change applies at once.
 | Appearance | **Theme** (System, Light, Dark) and **Motion** (System, Reduced, Full), as in View > Appearance. **Interface scale**, Automatic (the system's) or 90% to 200%: applied when Tessellatum next starts, as the dialog says. The page's zoom is apart from it, so 100% stays a pixel of the page to a pixel of the screen. **Canvas background**: the theme's, a neutral gray to judge the page's colors against, white or black. |
 | Units | **Lengths in** millimeters or inches: how lengths and areas are shown and typed. The page's values are kept in millimeters, so switching never changes them. |
 | Workspace | **Reset Layout**, as in View. |
-| Performance | **Memory for pages made**: how much memory the pages made may take, kept so that Undo, Redo and a setting put back show their page at once (Automatic: a quarter of the memory, at most 2 GB; the page shown and the ones Undo and Redo go to are always kept). **Results kept**: how many pages' intermediate results are kept, so that trying one setting after another makes the next preview faster (Automatic keeps two, a few tens of MB each). **Clear Now** frees both. **Redraw lines and numbers**: how soon a change to the lines, numbers or tone draws the preview again by itself (after 0.2, 0.4 or 1 s), or **Only with Generate**. |
+| Performance | **Memory for pages made**: how much memory the pages made may take, kept so that Undo, Redo and a setting put back show their page at once (Automatic: a quarter of the memory, at most 2 GB; the page shown and the ones Undo and Redo go to are always kept). **Results kept**: how many pages' intermediate results are kept, so that trying one setting after another makes the next preview faster (Automatic keeps two, a few tens of MB each). **Clear Now** frees both. **Redraw lines and numbers**: how soon a change to the lines, numbers or tone draws the preview again by itself (after 0.2, 0.4 or 1 s), or **Only with Generate**. **Generate automatically**: whether a change to the colors, the difficulty, the paper or what is done with line art, faces and text makes the page by itself, a second after the last change: **Off** (the default; it waits for Generate Preview), **When it's quick** (while the picture's last page took under 2 s), or **Always**. |
 | Shortcuts | Every command's keys. |
 
 ## Difficulty

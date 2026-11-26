@@ -12,7 +12,8 @@ A preview is in one of these states:
 
 How soon a change is applied follows the registry's policy (``core.settings.update_policy``): the legend at once, the
 lines, numbers and tone a moment after the last change (the window redraws the page by itself), everything else with
-Generate Preview. A preview's state is apart from whether the document has unsaved changes (``app.history``).
+Generate Preview, or a second after the last change if the preferences have it made by itself (Generate automatically:
+always, or while the picture's last page was quick). A preview's state is apart from whether the document has unsaved changes (``app.history``).
 """
 
 from __future__ import annotations

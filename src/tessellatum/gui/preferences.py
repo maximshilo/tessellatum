@@ -11,8 +11,10 @@ same ``QSettings`` as the window, under ``preferences/``; the theme and motion u
 - **Workspace:** the panels put back where they start.
 - **Performance:** how much memory the pages made may take, kept so that undo, redo and a setting put back show them
   at once (``app.results``; Automatic: a quarter of the memory, at most 2 GB); how many pages' intermediate results the
-  generator keeps to make the next preview faster; clearing both; and how soon a change to the lines, the numbers or the tone draws the preview again by itself, or
-  whether it waits for Generate Preview as every other change does.
+  generator keeps to make the next preview faster; clearing both; how soon a change to the lines, the numbers or the
+  tone draws the preview again by itself, or whether it waits for Generate Preview; and whether a change that makes the
+  page again (the colors, the difficulty, the paper, what is done with line art, faces and text) makes it by itself:
+  never (the default), when the last page of the picture took under 2 s, or always.
 - **Shortcuts:** every command's keys.
 
 The dialog applies each change at once; Close closes it.
@@ -53,6 +55,7 @@ UNITS_KEY = "preferences/units"
 CACHE_KEY = "preferences/cache_pages"
 REDRAW_KEY = "preferences/redraw"
 RESULTS_KEY = "preferences/result_memory"
+AUTO_KEY = "preferences/auto_generate"
 
 AUTOMATIC = "Automatic"
 SCALES = {AUTOMATIC: None, "90%": 0.9, "100%": 1.0, "110%": 1.1, "125%": 1.25, "150%": 1.5, "175%": 1.75, "200%": 2.0}
@@ -69,6 +72,12 @@ RESULT_MEMORY = {AUTOMATIC: None, "256 MB": 256 * MB, "512 MB": 512 * MB, "1 GB"
 REDRAW_AFTER_MS = 400
 REDRAW = {"After 0.4 s": REDRAW_AFTER_MS, "After 0.2 s": 200, "After 1 s": 1000, "Only with Generate": None}
 DEFAULT_REDRAW = "After 0.4 s"
+# Whether a change that makes the page again (the registry's explicit policy) makes it by itself, a second after the
+# last change: never, when the picture's last page took under ``QUICK_S``, or always.
+OFF, QUICK, ALWAYS = "Off", "When it's quick", "Always"
+AUTO_GENERATE = {OFF: OFF, QUICK: QUICK, ALWAYS: ALWAYS}
+QUICK_S = 2.0
+AUTO_AFTER_MS = 1000
 RESTART_NOTE = "The new scale applies when Tessellatum is started again."
 
 
@@ -94,7 +103,7 @@ class Preferences(QObject):
         super().__init__(parent)
         self._store = store
         self._values = {SCALE_KEY: AUTOMATIC, CANVAS_KEY: THEME_CANVAS, UNITS_KEY: "Millimeters", CACHE_KEY: AUTOMATIC,
-                        REDRAW_KEY: DEFAULT_REDRAW, RESULTS_KEY: AUTOMATIC}
+                        REDRAW_KEY: DEFAULT_REDRAW, RESULTS_KEY: AUTOMATIC, AUTO_KEY: OFF}
         if store is not None:
             for key, choices in _CHOICES.items():
                 kept = store.value(key)
@@ -135,12 +144,16 @@ class Preferences(QObject):
         Generate Preview."""
         return REDRAW[self._values[REDRAW_KEY]]
 
+    def auto_generate(self) -> str:
+        """Whether a change that makes the page again makes it by itself: ``OFF``, ``QUICK`` or ``ALWAYS``."""
+        return AUTO_GENERATE[self._values[AUTO_KEY]]
+
     def restart_needed(self) -> bool:
         return self._values[SCALE_KEY] != self.started_scale
 
 
 _CHOICES = {SCALE_KEY: SCALES, CANVAS_KEY: CANVASES, UNITS_KEY: UNITS, CACHE_KEY: CACHE_PAGES, REDRAW_KEY: REDRAW,
-            RESULTS_KEY: RESULT_MEMORY}
+            RESULTS_KEY: RESULT_MEMORY, AUTO_KEY: AUTO_GENERATE}
 
 
 def apply_canvas(view: QWidget, color: str | None) -> None:
@@ -267,6 +280,17 @@ class PreferencesDialog(QDialog):
         redraw_note.setWordWrap(True)
         form.addRow("Redraw lines and numbers", self.redraw_combo)
         form.addRow("", redraw_note)
+        self.auto_combo = self._choice(AUTO_KEY, AUTO_GENERATE)
+        self.auto_combo.setToolTip(
+            "Whether a change to the colors, the difficulty, the paper or what is done with line art, faces and text "
+            "makes the page by itself")
+        auto_note = QLabel(f"A change to the colors, the difficulty or the paper makes the page again, in seconds, so "
+                           f"by default it waits for Generate Preview. When it's quick: only while the picture's last "
+                           f"page took under {QUICK_S:g} s.")
+        auto_note.setProperty("role", "hint")
+        auto_note.setWordWrap(True)
+        form.addRow("Generate automatically", self.auto_combo)
+        form.addRow("", auto_note)
 
         # Shortcuts
         self.shortcuts = QTableWidget(0, 2)
@@ -306,7 +330,7 @@ class PreferencesDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addLayout(body, 1)
         layout.addWidget(buttons)
-        self.resize(600, 460)
+        self.resize(620, 520)
         preferences.changed.connect(self._show_restart)
         self._show_restart()
 

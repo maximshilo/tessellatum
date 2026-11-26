@@ -91,7 +91,9 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
   from, paints, mixing, tone, legend and the three handling switches), each with its category and section, level
   (intent, precise, advanced), unit kind, aliases for search, update policy (`update_policy`: the legend applies at
   once; the page's style but for its paper, the lines, numbers and tone, a moment after the last change, as the stage
-  cache keeps the regions and only the drawing runs again; the rest with Generate), an enablement predicate over the document's choices that returns the reason to show, and its
+  cache keeps the regions and only the drawing runs again; the rest with Generate, or a second after the last change
+  if Preferences > Generate automatically says so: always, or while the picture's last page made afresh took under
+  2 s, timed from its job), an enablement predicate over the document's choices that returns the reason to show, and its
   persistence key (unchanged from earlier versions). Validation (`check`) refuses a value with a reason and never
   clamps. Tests check that every field of `DifficultyParams`, `PageStyle` and `Handling` is covered once (two
   internal fields named as such), that the presets' values match `difficulty.py`, that every entry has a control in

@@ -4,6 +4,21 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.22] - 2026-11-26
+
+### Added
+
+- Preferences > Performance > **Generate automatically**: whether a change that makes the page again (the colors, the
+  difficulty, the paper, what is done with line art, faces and text) makes it by itself, a second after the last change.
+  - **Off**, the default: such a change waits for Generate Preview, as before.
+  - **When it's quick**: only while the picture's last page took under 2 s. After a slower one, changes wait for
+    Generate Preview, and the preview's state says why and how long the last page took.
+  - **Always**.
+
+  A slider dragged makes one page, when it stops. The page replaces one still being made, waits for an export to
+  finish, and is called off if the change is put back. A change back to a page kept is shown at once, whatever the
+  setting.
+
 ## [1.1.21] - 2026-11-26
 
 ### Added
