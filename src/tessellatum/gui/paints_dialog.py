@@ -139,7 +139,8 @@ class PaintsDialog(QDialog):
         self.kit_button.setText(translate("paints_dialog", "Start from a kit…"))
         self.kit_button.setPopupMode(QToolButton.InstantPopup)
         self.kit_button.setToolTip(
-            translate("paints_dialog", "A sample set of paints or pencils, to start from. ") + KIT_NOTE
+            translate("paints_dialog", "A sample set of paints or pencils, to start from. ")
+            + translate("paints_dialog", KIT_NOTE)
         )
         kit_menu = QMenu(self.kit_button)
         for kit in KITS:

@@ -4,6 +4,29 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.41] - 2026-11-27
+
+### Fixed
+
+- A project, an undo step or recovered work made with a preset of your own now keeps the settings it was made with,
+  even if that preset was saved again since with other values (or has other values on another computer): it shows as
+  Custom from that preset, rather than quietly taking the preset's values now.
+- A wheel or a plain `pip install .` now carries the interface's font, icons and window icons; it left them out.
+- Tessellatum now asks for PySide6 6.8 or newer: choosing Light or Dark crashed on 6.6 and 6.7, which it allowed.
+- Exporting a palette in several files (Procreate's, past 30 colors) asks about the files already there for the
+  palette actually written. When the settings had changed since the preview, it counted the preview's colors, and
+  could replace files without asking.
+- A picture too large to keep in a project (over 200 megapixels, or a file over 512 MB) is refused when it is opened,
+  saying why. It used to open and then fail at every save, and its recovered work couldn't be restored.
+- Two presets of your own can no longer have names that differ only in capitals: saving or renaming onto one asks
+  first, as for the same name.
+- Recovery no longer fails to offer crashed work when another Tessellatum window removes a file in its folder at the
+  same moment.
+- While a large page is drawn for an export, the status bar says "Finding text" while it looks for text, rather than
+  "Drawing the regions larger", and the diagnostics time it as its own step. The page drawn is the same.
+- The recovery list's "kept today at 14:05" and the paint kits' tooltip note are translated, the date and time in the
+  system's formats.
+
 ## [1.1.40] - 2026-11-27
 
 ### Added

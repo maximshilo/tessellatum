@@ -678,8 +678,8 @@ def draw_page(
     a dot of line goes on it, so that every region stays closed. The letters in the lines of text are taken again from
     the picture's own pixels at this size, and the numbers placed again, as small as the page's style lets them print
     here (see ``render.render_page``). ``progress_callback``, ``should_cancel``, ``collect_analysis``, ``vector`` and
-    ``stage_callback`` are as for ``generate``, the analysis at this size; its stages are "resize", "scale" and
-    "render".
+    ``stage_callback`` are as for ``generate``, the analysis at this size; its stages are "resize", "text" (if the
+    page looks for text), "scale" and "render".
 
     At the size ``page`` was made at, it is drawn from its own regions, lines and ink as they are, with its numbers
     placed again: for vectors, or as they are.
@@ -709,7 +709,13 @@ def draw_page(
     paper = style.paper_format
     min_area_px, min_width_px = _paintable_limits(model.params, (w, h), paper)
     same_size = (w, h) == (w1, h1)
+    found_text = []
+    if handling.text:  # the picture's own at this size, before the regions are drawn larger (it needs nothing of them)
+        check_cancelled()
+        stages.start("text")
+        found_text = detect_text(image_bgr, resized, handling.text_max_height_mm)
 
+    check_cancelled()
     stages.start("scale")
     if same_size:
         region_id_map, printed_ink, clearable = model.region_id_map, model.printed_ink, model.clearable
@@ -722,7 +728,6 @@ def draw_page(
         thin_px = print_scale((w, h), paper).mm_to_px(handling.thin_ink_mm)
         clearable = detail_ink(region_id_map, printed_ink, thin_px / 2, style.line_width_px((w, h)))
     check_cancelled()
-    found_text = detect_text(image_bgr, resized, handling.text_max_height_mm) if handling.text else []
     letters = text.lettering(resized, found_text) if found_text else None
     if letters is not None and not same_size:  # the page drawn from has them so already
         # As ``generate`` prints them: inside a line of text, the letters in place of the ink lying in a region.

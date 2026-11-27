@@ -179,7 +179,7 @@ The page, its versions and its legend are never themed: the canvas shows their o
 
 ## Packaging
 
-`pyproject.toml` declares the package and its dependencies (PySide6, OpenCV, NumPy, Pillow, Numba, ONNX Runtime).
+`pyproject.toml` declares the package and its dependencies (PySide6 6.8 or newer, OpenCV, NumPy, Pillow, Numba, ONNX Runtime).
 PyInstaller builds a standalone "onedir" app from `packaging/tessellatum.spec`, bundling the models, the font and
 the icons (the self-test checks the last two are there, and the app's icons). The app's icons are rendered from the
 logo's two SVG masters by `packaging/icons/make_icons.py` (the masters themselves by `make_logo.py`, from the

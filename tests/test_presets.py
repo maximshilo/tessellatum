@@ -54,6 +54,19 @@ def test_rename_and_delete(tmp_path):
     assert PresetStore(path).names() == ["Zebra"]
 
 
+def test_two_presets_never_differ_only_in_capitals(tmp_path):
+    store = PresetStore(tmp_path / FILE_NAME)
+    store.save("Fur", _values(num_colors=30))
+    assert store.find(" fur ") == "Fur" and store.find("Feathers") is None
+    assert store.save("fur", _values(num_colors=20)) == "fur"  # replaces it, in the new spelling
+    assert store.names() == ["fur"] and store.params("fur").num_colors == 20
+    store.save("Feathers", _values())
+    with pytest.raises(ValueError):
+        store.rename("Feathers", "FUR")  # taken, but for capitals
+    assert store.rename("fur", "FUR") == "FUR"  # its own name in other capitals
+    assert store.names() == ["Feathers", "FUR"]
+
+
 def test_built_in_names_are_reserved(tmp_path):
     store = PresetStore(tmp_path / FILE_NAME)
     for name in (*difficulty.preset_names(), "medium", "  HARD ", ""):
@@ -163,6 +176,23 @@ def test_saving_a_preset_keeps_the_difficulty_and_chooses_it(tmp_path):
     assert "Fine fur" in ControlsPanel(presets=PresetStore(tmp_path / FILE_NAME)).presets
 
 
+def test_saving_or_renaming_onto_a_name_in_other_capitals_asks_first(tmp_path):
+    panel = ControlsPanel(presets=PresetStore(tmp_path / FILE_NAME))
+    panel.save_preset("Fur")
+    panel.controls["num_colors"].step(2)
+    asked = []
+    panel.ask_name = lambda *a, **k: "fur"
+    panel.ask_yes = lambda title, text: asked.append(text) or False
+    assert panel.save_preset() is None and "Fur" in asked[-1] and panel.presets.names() == ["Fur"]
+    panel.ask_yes = lambda title, text: True
+    assert panel.save_preset() == "fur" and panel.presets.names() == ["fur"]
+    panel.save_preset("Feathers")
+    panel.ask_name = lambda *a, **k: "FUR"
+    panel.ask_yes = lambda title, text: asked.append(text) or False
+    assert panel.rename_preset() is None and "fur" in asked[-1]
+    assert panel.presets.names() == ["Feathers", "fur"]
+
+
 def test_a_built_in_name_is_asked_again_and_cancel_saves_nothing():
     panel = ControlsPanel()
     asked = []
@@ -193,6 +223,26 @@ def test_the_modified_indicator_and_back_to_the_preset():
     panel.revert_preset_action.trigger()
     assert panel.preset_combo.currentText() == "Hard" and panel.snapshot().values == hard
     assert not panel.revert_preset_action.isEnabled()
+
+
+def test_a_snapshot_of_ones_own_preset_keeps_its_values_when_the_preset_has_changed_since(tmp_path):
+    panel = ControlsPanel(presets=PresetStore(tmp_path / FILE_NAME))
+    panel.controls["num_colors"].step(6)  # 30 colors
+    _answers(panel, "Fine fur")
+    panel.save_preset()
+    saved = panel.snapshot()
+    assert saved.preset == "Fine fur" and saved.values["num_colors"] == 30
+    # The preset saved again with other values (or the project opened where it has others).
+    panel.presets.save("Fine fur", {**saved.values, "num_colors": 20})
+    panel.preset_combo.setCurrentText("Easy")
+    panel.show_settings(saved)
+    assert panel.controls["num_colors"].value() == 30  # the snapshot's, not the preset's 20
+    assert panel.preset_combo.currentText() == CUSTOM and panel.snapshot().values == saved.values
+    assert panel.snapshot().difficulty_params() == saved.difficulty_params()
+    # Unchanged, it shows as the preset.
+    panel.presets.save("Fine fur", saved.values)
+    panel.show_settings(saved)
+    assert panel.preset_combo.currentText() == "Fine fur" and panel.snapshot().values == saved.values
 
 
 def test_rename_and_delete_in_the_panel(tmp_path):

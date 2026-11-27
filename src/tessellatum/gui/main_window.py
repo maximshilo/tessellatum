@@ -964,8 +964,12 @@ class MainWindow(QMainWindow):
                                                f"projects ({projects.SUFFIX})"))
             return
         try:
+            if path.stat().st_size > projects.MAX_SOURCE:  # refused before it is read
+                raise projects.ProjectError("it is larger than Tessellatum opens")
             data = path.read_bytes()
-            image = pipeline.load_image_bgr(io.BytesIO(data))  # as from the file itself, its bytes kept for a project
+            # As from the file itself, its bytes kept for a project, and checked as a project's picture is: whatever
+            # opens can be saved and recovered.
+            image = projects.decode_image(data, "it")
         except Exception as exc:  # noqa: BLE001
             self._open_failed(path, exc)
             return
@@ -2536,12 +2540,6 @@ class MainWindow(QMainWindow):
         path = Path(path_str)
         if path.suffix.lower() != suffix:
             path = path.with_suffix(suffix)
-        # A palette written as several files: the save dialog asked about the name chosen, not about them.
-        page = self.current_page
-        if fmt == PALETTE and page is not None:
-            others = [p for p in swatches.palette_files(path, len(page.palette_rgb)) if p != path and p.exists()]
-            if others and not self._confirm_replace(others):
-                return
         self._start_export(path, fmt, version, self.controls.get_export_resolution(), previewed)
 
     def _confirm_reset(self) -> bool:
@@ -2629,6 +2627,14 @@ class MainWindow(QMainWindow):
         def legend_recipes():
             return mix_recipes(*key) if recipes is _NOT_MIXED else recipes
 
+        # A palette written as several files: the save dialog asked about the name chosen, not about the others. Asked
+        # here, of the page written: made again with the settings now, it can have more colors than the one shown.
+        if fmt == PALETTE:
+            others = [p for p in swatches.palette_files(path, len(page.palette_rgb)) if p != path and p.exists()]
+            if others and not self._confirm_replace(others):
+                self.controls.set_busy(False)
+                self._say(translate("main_window", "Not exported: no file was replaced."), CANCELLED)
+                return
         # Written in the background, and not stopped once started: at 600 dpi on A2 the PNG takes seconds.
         self.controls.set_busy(True, cancellable=False)
         if fmt == PALETTE:

@@ -136,7 +136,10 @@ class RecoveryStore:
                 name = str(meta.get("name") or "Untitled")
                 project = Path(meta["project"]) if meta.get("project") else None
             except (OSError, ValueError, KeyError, TypeError):
-                saved_at, name, project = snapshot.stat().st_mtime, "Untitled", None
+                try:
+                    saved_at, name, project = snapshot.stat().st_mtime, "Untitled", None
+                except OSError:  # removed meanwhile, by another window discarding or pruning it
+                    continue
             found.append(Snapshot(snapshot, session, saved_at, name, project))
         return sorted(found, key=lambda s: s.saved_at, reverse=True)
 
@@ -166,11 +169,11 @@ class RecoveryStore:
                 except FileNotFoundError:
                     pass
         for temp in self.folder.glob(".*.tmp"):
-            if now - temp.stat().st_mtime > 3600:
-                try:
+            try:  # another window may remove it between the listing and here
+                if now - temp.stat().st_mtime > 3600:
                     temp.unlink()
-                except OSError:
-                    pass
+            except OSError:
+                pass
         return gone
 
     def _remove(self, session: str, lock: bool) -> None:

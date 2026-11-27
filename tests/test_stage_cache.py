@@ -178,8 +178,13 @@ def test_a_page_drawn_larger_announces_its_own_stages_after_the_page_it_is_drawn
     page = generate(sample_image_bgr, MIDDLE, long_edge=300)
     events: list[StageEvent] = []
     pipeline.draw_page(page, sample_image_bgr, 600, stage_callback=events.append)
-    assert [e.stage for e in events if not e.done] == ["resize", "scale", "render"]
+    assert [e.stage for e in events if not e.done] == ["resize", "text", "scale", "render"]
     assert events[-1].done and events[-1].stage == "render"
+    # Without text, no stage for it.
+    page = generate(sample_image_bgr, MIDDLE, long_edge=300, handling=Handling(text=False))
+    events.clear()
+    pipeline.draw_page(page, sample_image_bgr, 600, stage_callback=events.append)
+    assert [e.stage for e in events if not e.done] == ["resize", "scale", "render"]
 
 
 def test_the_stages_change_nothing_on_the_page(sample_image_bgr):

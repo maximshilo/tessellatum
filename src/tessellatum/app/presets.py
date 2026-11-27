@@ -95,6 +95,12 @@ class PresetStore:
     def __contains__(self, name: str) -> bool:
         return name in self._presets
 
+    def find(self, name: str) -> str | None:
+        """The preset whose name is ``name`` but for capitals (and spaces around it), as it is kept, or None: two
+        presets never differ only in capitals."""
+        key = name.strip().casefold()
+        return next((kept for kept in self._presets if kept.casefold() == key), None)
+
     def values(self, name: str) -> dict[str, float]:
         return dict(self._presets[name])
 
@@ -104,16 +110,22 @@ class PresetStore:
     # -- Changing it ------------------------------------------------------------------
     def save(self, name: str, values: dict[str, float]) -> str:
         """Keep ``values`` (the preset-owned settings among them) as the preset ``name``, replacing one of that name.
-        Returns the name as kept. Raises ``ValueError`` for a name a user preset can't have."""
+        Returns the name as kept. A preset whose name differs only in capitals is replaced too, the name taking the new
+        spelling. Raises ``ValueError`` for a name a user preset can't have."""
         name = self._checked_name(name)
-        self._presets[name] = self._checked_values({s.name: values[s.name] for s in owned()})
+        checked = self._checked_values({s.name: values[s.name] for s in owned()})
+        same = self.find(name)
+        if same is not None and same != name:
+            del self._presets[same]
+        self._presets[name] = checked
         self._write()
         return name
 
     def rename(self, old: str, new: str) -> str:
         new = self._checked_name(new)
-        if new != old and new in self._presets:
-            raise ValueError(f"there is a preset called {new} already")
+        taken = self.find(new)
+        if taken is not None and taken != old:  # another's name, but for capitals; its own in other capitals is fine
+            raise ValueError(f"there is a preset called {taken} already")
         self._presets = {(new if name == old else name): values for name, values in self._presets.items()}
         self._write()
         return new

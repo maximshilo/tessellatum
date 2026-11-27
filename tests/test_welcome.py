@@ -211,6 +211,24 @@ def test_a_file_that_can_t_be_opened_says_why_and_leaves_the_work(win, name, con
     assert win.window.document.source().path == win.picture and win.window.controls.snapshot() == before
 
 
+def test_a_picture_too_large_for_a_project_is_refused_at_open_so_whatever_opens_can_be_saved(win, monkeypatch):
+    win.window.open_path(win.picture)
+    before = win.window.document.source()
+    monkeypatch.setattr(projects, "MAX_PIXELS", 100)  # the second picture is 80 × 100 px
+    win.window.open_path(win.other)
+    text = win.window.notification.text.text()
+    assert "Could not open second.png" in text and "larger than Tessellatum opens" in text
+    assert win.window.document.source() is before
+    monkeypatch.setattr(projects, "MAX_PIXELS", 10_000)
+    monkeypatch.setattr(projects, "MAX_SOURCE", 10)  # its file, refused before it is read
+    win.window.open_path(win.other)
+    assert win.window.document.source() is before
+    monkeypatch.undo()
+    win.window.open_path(win.other)  # within the limits, it opens
+    assert win.window.document.source().path == win.other
+    assert win.window._write_project(win.tmp / "second.tessellatum")  # and saves
+
+
 def test_what_isn_t_a_file_or_a_picture_isn_t_taken(win):
     mime = QMimeData()
     mime.setText("just words")

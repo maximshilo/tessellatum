@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QDateTime, QLocale, QSize, Qt
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
@@ -27,10 +27,15 @@ from tessellatum.gui.i18n import translate
 
 
 def when(seconds: float) -> str:
-    """When a snapshot was written, as the list says it: "today at 14:05", or "12 Nov 2026 at 14:05"."""
-    at = time.localtime(seconds)
-    day = "today" if time.strftime("%Y-%m-%d", at) == time.strftime("%Y-%m-%d") else time.strftime("%d %b %Y", at)
-    return f"{day} at {time.strftime('%H:%M', at)}"
+    """When a snapshot was written, as the list says it, in the language and the date and time formats of the
+    system's locale: "today at 14:05", or "12 Nov 2026 at 14:05"."""
+    locale = QLocale()
+    at = QDateTime.fromSecsSinceEpoch(int(seconds))
+    clock = locale.toString(at.time(), QLocale.ShortFormat)
+    if time.strftime("%Y-%m-%d", time.localtime(seconds)) == time.strftime("%Y-%m-%d"):
+        return translate("recovery_dialog", "today at {time}").format(time=clock)
+    day = locale.toString(at.date(), QLocale.ShortFormat)
+    return translate("recovery_dialog", "{day} at {time}").format(day=day, time=clock)
 
 
 class RecoveryDialog(QDialog):
@@ -51,7 +56,8 @@ class RecoveryDialog(QDialog):
         self.list.setIconSize(QSize(self.THUMBNAIL, self.THUMBNAIL))
         self.list.setAccessibleName(translate("recovery_dialog", "Unsaved work"))
         for snapshot in pending:
-            item = QListWidgetItem(f"{snapshot.name}\nkept {when(snapshot.saved_at)}")
+            item = QListWidgetItem(translate("recovery_dialog", "{name}\nkept {when}").format(
+                name=snapshot.name, when=when(snapshot.saved_at)))
             item.setData(Qt.UserRole, snapshot)
             thumbnail = snapshot.thumbnail()
             if thumbnail:

@@ -818,10 +818,11 @@ class ControlsPanel(QWidget):
             name = self._ask_preset_name(translate("controls_panel", "Save as Preset"), suggestion)
             if name is None:
                 return None
-            if name in self.presets and not self.ask_yes(
+            same = self.presets.find(name)  # the same name, but for capitals: replaced too
+            if same is not None and not self.ask_yes(
                 translate("controls_panel", "Replace Preset"),
                 translate("controls_panel", "There is a preset called {name} already. Replace it?").format(
-                    name=name
+                    name=same
                 ),
             ):
                 return None
@@ -842,13 +843,14 @@ class ControlsPanel(QWidget):
             new = self._ask_preset_name(translate("controls_panel", "Rename Preset"), old)
             if new is None or new == old:
                 return None
-        if new != old and new in self.presets:
+        taken = self.presets.find(new)  # another preset's name, but for capitals
+        if taken is not None and taken != old:
             if not self.ask_yes(
                 translate("controls_panel", "Replace Preset"),
-                translate("controls_panel", "There is a preset called {new} already. Replace it?").format(new=new),
+                translate("controls_panel", "There is a preset called {new} already. Replace it?").format(new=taken),
             ):
                 return None
-            self.presets.delete(new)
+            self.presets.delete(taken)
         new = self.presets.rename(old, new)
         self.edit_label = translate("controls_panel", "Rename Preset {old}").format(old=old)
         self._base_preset = new
@@ -1205,8 +1207,16 @@ class ControlsPanel(QWidget):
             self.tone_combo.setCurrentText(snapshot.tone)
             for name, control in self.controls.items():
                 control.set_value(snapshot.values[name])
-            if preset != CUSTOM:
+            if preset in difficulty.PRESETS:
                 self._show_preset(preset)
+            elif preset != CUSTOM:
+                # One's own preset may hold other values now (saved again since, or another computer's): the snapshot's
+                # own values stand, and if they differ it is Custom, from that preset, as after moving a slider.
+                params = self.preset_params(preset)
+                if not all(same_value(c.setting, c.value(), getattr(params, f))
+                           for f, c in self._difficulty_controls().items()):
+                    self._base_preset = preset
+                    self.preset_combo.setCurrentText(CUSTOM)
             if snapshot.tone != CUSTOM_TONE:
                 self._show_tone(snapshot.tone)
             self.paper_combo.setCurrentText(snapshot.paper)

@@ -232,7 +232,8 @@ While no picture is open, the canvas shows the welcome page:
 A picture or a project can also be dropped anywhere on the window, or pasted with **Edit > Paste Picture** (Ctrl+V): a
 picture copied from another app, or a file (or its path) copied. A picture dropped or pasted into the work replaces the
 one there as one step to undo, and the settings stay; a project asks first if the work has unsaved changes. A file that
-can't be opened says why, and the work stays as it was. Ctrl+V in a text field pastes text there, as always.
+can't be opened says why, and the work stays as it was. A picture opens up to 200 megapixels, in a file up to 512 MB:
+what opens can always be saved in a project and recovered. Ctrl+V in a text field pastes text there, as always.
 
 ## Projects
 
@@ -408,14 +409,17 @@ smaller ones.
 
 - **Back to Hard** (the level it was changed from): its settings again, as one step to undo.
 - **Save as Preset…**: the difficulty's settings as they are, under a name of your own, listed after the built-in
-  levels from then on. A built-in level's name can't be taken; saving under a name already used asks first.
+  levels from then on. A built-in level's name can't be taken; saving under a name already used asks first, as does
+  one that differs only in capitals (two presets are never "Fur" and "fur").
 - **Rename Preset…** and **Delete Preset…**, for one of your own while it is chosen. Deleting it leaves the settings
   as they are, as Custom.
 
 A preset, built-in or your own, sets only the difficulty's settings, as one step to undo: the paper, what the page is
 colored on, the paints and the page's style stay as they are. Your presets are kept in `presets.json` in the app's
 preferences folder; a file that can't be read is left out (the log says why) and kept as `presets.json.bak` when a
-preset is next saved. A page set up with a preset since deleted keeps its settings, as Custom.
+preset is next saved. A page set up with a preset since deleted keeps its settings, as Custom; so does a project
+or an undo step of a preset saved again since with other values (or one opened on a computer where that preset has
+other values): the settings are the ones it was made with, shown as Custom from that preset.
 
 ## Settings
 
