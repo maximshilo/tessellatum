@@ -129,7 +129,7 @@ What makes it fast:
 ## Responsiveness
 
 `benchmarks/ui_bench.py` times the app through its real window (see `benchmarks/README.md`). Before is version 1.0.21,
-measured before the workspace was rebuilt; after is 1.1.34. Both on the same 16-thread Windows 11 desktop
+measured before the workspace was rebuilt; after is 2.0's development build 1.1.34. Both on the same 16-thread Windows 11 desktop
 (Python 3.12, Qt 6.11.2), a 1920×1080 window at 100%, the lion at Medium (1,583 × 1,056, 1,457 regions) unless said;
 median, with the 95th percentile, of 5 to 30 repetitions.
 
@@ -150,7 +150,7 @@ median, with the 95th percentile, of 5 to 30 repetitions.
 | Startup, until the window is shown | 1.11 s | 1.64 s |
 | Memory over 50 pages with other settings, then 50 undo/redo steps | — | levels off at 1.14 GB after 16 pages; flat over the undo/redo steps |
 
-The pipeline itself, timed alone the same day on 1.0.21 and 1.1.34: the same regions on every page; a page made from
+The pipeline itself, timed alone the same day on 1.0.21 and 2.0's development build 1.1.34: the same regions on every page; a page made from
 scratch takes as long (lion at Medium, 2.31 and 2.28 s); a page made again with the stage cache full is 35 to 50%
 faster, since the regions are kept (0.94 s rather than 1.64 s for the lion at Medium, 1.97 s rather than 3.19 s for
 the pig); exports and stopping take as long as before.
