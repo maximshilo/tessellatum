@@ -18,12 +18,13 @@ always, or while the picture's last page was quick). A preview's state is apart 
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QT_TRANSLATE_NOOP, Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 
 from tessellatum.gui import theme
 from tessellatum.gui.theme import icons
 from tessellatum.gui.theme.tokens import COLORS, LIGHT
+from tessellatum.gui.i18n import translate
 
 NO_PREVIEW, CURRENT, MODIFIED, PROCESSING, CANCELLED, FAILED = (
     "none", "current", "modified", "processing", "cancelled", "failed"
@@ -32,12 +33,12 @@ STATES = (NO_PREVIEW, CURRENT, MODIFIED, PROCESSING, CANCELLED, FAILED)
 
 # Each state's icon, the color role it is drawn in, and its words on the canvas's bar.
 _LOOK = {
-    NO_PREVIEW: ("info", "text_secondary", "No preview"),
-    CURRENT: ("success", "success", "Up to date"),
-    MODIFIED: ("warning", "warning", "Out of date"),
-    PROCESSING: ("busy", "accent", "Generating…"),
-    CANCELLED: ("info", "text_secondary", "Cancelled"),
-    FAILED: ("error", "error", "Failed"),
+    NO_PREVIEW: ("info", "text_secondary", QT_TRANSLATE_NOOP("freshness", "No preview")),
+    CURRENT: ("success", "success", QT_TRANSLATE_NOOP("freshness", "Up to date")),
+    MODIFIED: ("warning", "warning", QT_TRANSLATE_NOOP("freshness", "Out of date")),
+    PROCESSING: ("busy", "accent", QT_TRANSLATE_NOOP("freshness", "Generating…")),
+    CANCELLED: ("info", "text_secondary", QT_TRANSLATE_NOOP("freshness", "Cancelled")),
+    FAILED: ("error", "error", QT_TRANSLATE_NOOP("freshness", "Failed")),
 }
 
 
@@ -57,9 +58,9 @@ def preview_state(has_page: bool, making: bool, changed: tuple, outcome: str | N
 def state_text(state: str, has_page: bool = True) -> str:
     """The words for ``state`` on the canvas's bar: a cancelled or failed page says that the one shown is from
     before."""
-    text = _LOOK[state][2]
+    text = translate("freshness", _LOOK[state][2])
     if state in (CANCELLED, FAILED) and has_page:
-        text += " · earlier preview"
+        text += translate("freshness", " · earlier preview")
     return text
 
 
@@ -82,7 +83,7 @@ class FreshnessBadge(QWidget):
         layout.setSpacing(4)
         layout.addWidget(self.icon)
         layout.addWidget(self.label)
-        self.setAccessibleName("Preview")
+        self.setAccessibleName(translate("freshness", "Preview"))
         self.setFocusPolicy(Qt.NoFocus)
         self._state = NO_PREVIEW
         self.set_state(NO_PREVIEW)

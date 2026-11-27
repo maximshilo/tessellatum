@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QLabel, QProgressBar, QStatusBar, QToolButton, QWi
 from tessellatum.gui import theme
 from tessellatum.gui.theme import icons
 from tessellatum.gui.theme.tokens import COLORS, LIGHT
+from tessellatum.gui.i18n import translate
 
 IDLE, BUSY, DONE, CANCELLED, FAILED = "idle", "busy", "done", "cancelled", "failed"
 STATES = (IDLE, BUSY, DONE, CANCELLED, FAILED)
@@ -35,26 +36,27 @@ class StatusBar(QStatusBar):
         self.state_icon = QLabel()
         self.state_label = QLabel()
         self.state_label.setObjectName("statusText")
-        self.state_label.setAccessibleName("Status")
+        self.state_label.setAccessibleName(translate("status", "Status"))
         self.state_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.progress = QProgressBar()
         self.progress.setObjectName("statusProgress")
         self.progress.setTextVisible(False)
         self.progress.setFixedWidth(120)
-        self.progress.setAccessibleName("Progress")
+        self.progress.setAccessibleName(translate("status", "Progress"))
         self.progress.hide()
         self.page_label = QLabel()
-        self.page_label.setAccessibleName("The page")
+        self.page_label.setAccessibleName(translate("status", "The page"))
         self.size_label = QLabel()
-        self.size_label.setAccessibleName("The page's size")
+        self.size_label.setAccessibleName(translate("status", "The page's size"))
         self.zoom_label = QLabel()
-        self.zoom_label.setAccessibleName("Zoom")
-        self.zoom_label.setToolTip("How far in: 100% shows a pixel of the page as it prints on a pixel of the screen")
+        self.zoom_label.setAccessibleName(translate("status", "Zoom"))
+        self.zoom_label.setToolTip(translate("status", "How far in: 100% shows a pixel of the page as it prints "
+                                                       "on a pixel of the screen"))
         self.diagnostics_button = QToolButton()
         self.diagnostics_button.setObjectName("diagnosticsButton")
         self.diagnostics_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.diagnostics_button.setAutoRaise(True)
-        self.diagnostics_button.setAccessibleName("Diagnostics")
+        self.diagnostics_button.setAccessibleName(translate("status", "Diagnostics"))
         self.diagnostics_button.clicked.connect(self.diagnostics_requested)
         self.addWidget(self.state_icon)
         self.addWidget(self.state_label, 1)
@@ -110,15 +112,18 @@ class StatusBar(QStatusBar):
 
     # -- The page and the view ----------------------------------------------------------
     def set_page(self, colors: int | None, regions: int | None) -> None:
-        self.page_label.setText("" if colors is None else f"{colors} colors · {regions:,} regions")
+        self.page_label.setText("" if colors is None else translate("status", "{colors} colors · {regions:,} "
+                                                                              "regions").format(colors=colors, regions=regions))
 
     def set_size(self, pixels: tuple[int, int] | None, printed_mm: tuple[float, float] | None, paper: str = "") -> None:
         if pixels is None:
             self.size_label.setText("")
             return
-        text = f"{pixels[0]:,} × {pixels[1]:,} px"
+        text = translate("status", "{0:,} × {1:,} px").format(pixels[0], pixels[1])
         if printed_mm is not None:
-            text += f" · {printed_mm[0]:.0f} × {printed_mm[1]:.0f} mm on {paper}"
+            text += " " + translate("status", "· {0:.0f} × {1:.0f} mm on {paper}").format(
+                printed_mm[0], printed_mm[1], paper=paper
+            )
         self.size_label.setText(text)
 
     def set_zoom(self, printed_zoom: float | None) -> None:
@@ -138,6 +143,10 @@ class StatusBar(QStatusBar):
         else:
             button.setIcon(icons.icon("info", colors, role="text_secondary"))
             button.setText("")
-        what = f"{errors} errors, {warnings} warnings" if errors or warnings else "no warnings or errors"
-        button.setToolTip(f"Diagnostics: {what}. Click to show the log (Ctrl+Shift+D).")
+        if errors or warnings:
+            what = translate("status", "{errors} errors, {warnings} warnings").format(errors=errors, warnings=warnings)
+        else:
+            what = translate("status", "no warnings or errors")
+        button.setToolTip(translate("status", "Diagnostics: {what}. Click to show the log (Ctrl+Shift+D).")
+                          .format(what=what))
         button.setAccessibleDescription(what)

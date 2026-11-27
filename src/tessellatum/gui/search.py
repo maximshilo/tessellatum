@@ -14,13 +14,14 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import QT_TRANSLATE_NOOP, QEvent, Qt, Signal
 from PySide6.QtWidgets import QLineEdit, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
 from tessellatum.core import settings
+from tessellatum.gui.i18n import term, translate
 
 MAX_RESULTS = 12
-PLACEHOLDER = "Search settings"
+PLACEHOLDER = QT_TRANSLATE_NOOP("search", "Search settings")
 
 
 @dataclass(frozen=True)
@@ -40,7 +41,12 @@ def _score(entry, needle: str) -> int:
 
 
 def _score_one(entry, needle: str) -> int:
-    label = entry.label.lower()
+    return max(_score_words(entry, needle, entry.label, entry.tooltip),
+               _score_words(entry, needle, term(entry.label), term(entry.tooltip)))  # English, or as shown
+
+
+def _score_words(entry, needle: str, label: str, tooltip: str) -> int:
+    label = label.lower()
     if label == needle:
         return 100
     if label.startswith(needle):
@@ -56,7 +62,7 @@ def _score_one(entry, needle: str) -> int:
         return 50
     if any(needle in alias for alias in aliases):
         return 40
-    if needle in entry.tooltip.lower():
+    if needle in tooltip.lower():
         return 20
     if needle in entry.section.lower().replace("advanced · ", "") or needle in entry.category.lower():
         return 10
@@ -79,8 +85,9 @@ def search(text: str, entries: Sequence | None = None) -> list[Match]:
 def where(entry) -> str:
     """Where ``entry`` is: its page, and its section, or the page's Advanced group and its part of it."""
     if entry.level == settings.ADVANCED:
-        return f"{entry.category} · Advanced · {entry.section.replace('Advanced · ', '')}"
-    return f"{entry.category} · {entry.section}"
+        section = term(entry.section.replace("Advanced · ", ""))
+        return f"{term(entry.category)} · {translate('search', 'Advanced')} · {section}"
+    return f"{term(entry.category)} · {term(entry.section)}"
 
 
 class SettingsSearch(QWidget):
@@ -94,12 +101,12 @@ class SettingsSearch(QWidget):
         self._value_of = value_of
         self.field = QLineEdit()
         self.field.setObjectName("settingsSearch")
-        self.field.setPlaceholderText(PLACEHOLDER)
+        self.field.setPlaceholderText(translate("search", PLACEHOLDER))
         self.field.setClearButtonEnabled(True)
-        self.field.setAccessibleName("Search settings")
+        self.field.setAccessibleName(translate("search", "Search settings"))
         self.results = QListWidget()
         self.results.setObjectName("searchResults")
-        self.results.setAccessibleName("Settings found")
+        self.results.setAccessibleName(translate("search", "Settings found"))
         self.results.setFocusPolicy(Qt.NoFocus)  # the field keeps the focus: Up and Down move in the list from it
         self.results.hide()
         layout = QVBoxLayout(self)
@@ -118,14 +125,14 @@ class SettingsSearch(QWidget):
         for match in matches:
             entry = match.entry
             value = self._value_of(entry)
-            item = QListWidgetItem(f"{entry.label}    {value}\n{where(entry)}")
+            item = QListWidgetItem(f"{term(entry.label)}    {value}\n{where(entry)}")
             item.setData(Qt.UserRole, entry.name)
-            item.setToolTip(entry.tooltip)
+            item.setToolTip(term(entry.tooltip))
             self.results.addItem(item)
         if matches:
             self.results.setCurrentRow(0)
         elif text.strip():
-            item = QListWidgetItem("No setting matches.")
+            item = QListWidgetItem(translate("search", "No setting matches."))
             item.setFlags(Qt.NoItemFlags)
             self.results.addItem(item)
         self.results.setVisible(bool(text.strip()))

@@ -30,12 +30,11 @@ from PySide6.QtWidgets import (
 )
 
 from tessellatum.core import swatches
+from tessellatum.gui.i18n import translate
 
 THUMBNAIL = 220  # px, the thumbnail's box
 LOW_DPI = 150  # under this, a PNG's lines and numbers print soft
 SMALL_NUMBER_PT = 3.0  # under this, numbers are for a screen, zoomed in, rather than for paper
-EXPORT_NOW = "Generate and export"
-EXPORT_PREVIEWED = "Export the previewed page"
 
 
 @dataclass(frozen=True)
@@ -57,17 +56,19 @@ def warnings_for(fmt: str, dpi: float | None, palette_format: str, colors: int, 
     ``colors`` colors whose numbers print down to ``smallest_pt``, colored on a screen or on paper."""
     found = []
     if fmt == "PNG" and dpi is not None and dpi < LOW_DPI:
-        found.append(f"Under {LOW_DPI} dpi, the lines and numbers print soft: {dpi:.0f} dpi is for a screen.")
+        found.append(translate("export_dialog", "Under {LOW_DPI} dpi, the lines and numbers print soft: {dpi:.0f} "
+                                                "dpi is for a screen.").format(LOW_DPI=LOW_DPI, dpi=dpi))
     if fmt == "Palette" and palette_format == swatches.PROCREATE and colors > swatches.PROCREATE_MAX_SWATCHES:
         files = -(-colors // swatches.PROCREATE_MAX_SWATCHES)
         found.append(
-            f"Procreate holds {swatches.PROCREATE_MAX_SWATCHES} colors a palette: the {colors} colors are written as "
-            f"{files} files, each named for the colors it holds."
+            translate("export_dialog", "Procreate holds {0} colors a palette: the {colors} colors are written as "
+                                       "{files} files, each named for the colors it holds.").format(swatches.PROCREATE_MAX_SWATCHES, colors=colors, files=files)
         )
     if fmt != "Palette" and not on_screen and smallest_pt < SMALL_NUMBER_PT:
         found.append(
-            f"Numbers as small as {smallest_pt:g} pt are hard to read on paper; {SMALL_NUMBER_PT:g} pt or more reads "
-            "well (Smallest number, on the Document page)."
+            translate("export_dialog", "Numbers as small as {smallest_pt:g} pt are hard to read on paper; "
+                                       "{SMALL_NUMBER_PT:g} pt or more reads well (Smallest number, on the "
+                                       "Document page).").format(smallest_pt=smallest_pt, SMALL_NUMBER_PT=SMALL_NUMBER_PT)
         )
     return tuple(found)
 
@@ -104,12 +105,12 @@ class ExportDialog(QDialog):
     def __init__(self, options: QWidget, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("exportDialog")
-        self.setWindowTitle("Export")
+        self.setWindowTitle(translate("export_dialog", "Export"))
         self.thumbnail = QLabel()
         self.thumbnail.setObjectName("exportThumbnail")
         self.thumbnail.setFixedSize(THUMBNAIL, THUMBNAIL)
         self.thumbnail.setAlignment(Qt.AlignCenter)
-        self.thumbnail.setAccessibleName("What will be exported")
+        self.thumbnail.setAccessibleName(translate("export_dialog", "What will be exported"))
         self.options = options
         self.summary = QLabel()
         self.summary.setObjectName("exportSummary")
@@ -124,8 +125,10 @@ class ExportDialog(QDialog):
         self.stale.setObjectName("exportStale")
         self.stale_text = QLabel()
         self.stale_text.setWordWrap(True)
-        self.export_now = QRadioButton(f"{EXPORT_NOW}: make the page again with the settings as they are now")
-        self.export_previewed = QRadioButton(f"{EXPORT_PREVIEWED}, made with the settings it was previewed with")
+        self.export_now = QRadioButton(translate("export_dialog", "Generate and export: make the page again with the "
+                                                                  "settings as they are now"))
+        self.export_previewed = QRadioButton(translate("export_dialog", "Export the previewed page, made with the "
+                                                                        "settings it was previewed with"))
         self.export_now.setChecked(True)
         stale_layout = QVBoxLayout(self.stale)
         stale_layout.addWidget(self.stale_text)
@@ -133,7 +136,7 @@ class ExportDialog(QDialog):
         stale_layout.addWidget(self.export_previewed)
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.Cancel)
-        self.export_button = self.buttons.addButton("Export…", QDialogButtonBox.AcceptRole)
+        self.export_button = self.buttons.addButton(translate("export_dialog", "Export…"), QDialogButtonBox.AcceptRole)
         self.export_button.setDefault(True)
         self.export_button.setProperty("primary", True)
         self.export_button.setAutoDefault(True)
@@ -154,19 +157,21 @@ class ExportDialog(QDialog):
         layout.addWidget(self.buttons)
         self.export_button.setDefault(True)  # once laid out: the button box picks its own default when added
         self._blocked: str | None = None
-        self.show_state(ExportState("", blocked="Generate a preview first."))
+        self.show_state(ExportState("", blocked=translate("export_dialog", "Generate a preview first.")))
 
     def show_state(self, state: ExportState) -> None:
         self.summary.setText(state.summary)
         self.warnings.setText("\n".join(f"⚠ {text}" for text in state.warnings))
         self.warnings.setVisible(bool(state.warnings))
         if state.changed:
-            named = ", ".join(state.changed[:4]) + (f" and {len(state.changed) - 4} more" if len(state.changed) > 4 else "")
-            self.stale_text.setText(f"The preview is out of date. Changed since it was made: {named}.")
+            named = ", ".join(state.changed[:4]) + (" " + translate("export_dialog", "and {0} more")
+                                                          .format(len(state.changed) - 4) if len(state.changed) > 4 else "")
+            self.stale_text.setText(translate("export_dialog", "The preview is out of date. Changed since it was "
+                                                               "made: {named}.").format(named=named))
         self.stale.setVisible(bool(state.changed))
         if state.thumbnail is None:
             self.thumbnail.setPixmap(QPixmap())
-            self.thumbnail.setText("Nothing to export yet")
+            self.thumbnail.setText(translate("export_dialog", "Nothing to export yet"))
         else:
             self.thumbnail.setText("")
             self.thumbnail.setPixmap(

@@ -82,8 +82,9 @@ tinted painting guide; export a PNG at the resolution you choose (600 dpi by def
   scores every version on speed and image quality (ΔE00, SSIM, OCR error rate, edge F1); its paintability measures
   are also the app's live analysis of each page.
 - Desktop delivery: cross-platform Qt 6 interface with background workers and a token-based light/dark design
-  system (WCAG AA contrast, measured on the rendered window), full keyboard and screen-reader access, and a
-  color-vision simulation of the page; undo and redo served from a content-addressed result cache; versioned project
+  system (WCAG AA contrast, measured on the rendered window), full keyboard and screen-reader access, a
+  color-vision simulation of the page, and an interface ready to translate (Qt Linguist catalogs, locale-aware
+  numbers, right-to-left layout); undo and redo served from a content-addressed result cache; versioned project
   files saved atomically and validated on read; standalone builds for Windows, macOS and Linux, each made,
   self-tested and released by GitHub Actions.
 

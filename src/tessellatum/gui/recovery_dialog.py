@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from tessellatum.app.recovery import RecoveryStore, Snapshot
+from tessellatum.gui.i18n import translate
 
 
 def when(seconds: float) -> str:
@@ -39,15 +40,16 @@ class RecoveryDialog(QDialog):
 
     def __init__(self, pending: list[Snapshot], store: RecoveryStore, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Recover Unsaved Work")
+        self.setWindowTitle(translate("recovery_dialog", "Recover Unsaved Work"))
         self.setObjectName("recovery")
         self.store = store
         self.chosen: Snapshot | None = None
-        intro = QLabel("Tessellatum didn't close properly last time. This work had changes that weren't saved:")
+        intro = QLabel(translate("recovery_dialog", "Tessellatum didn't close properly last time. This work had "
+                                                    "changes that weren't saved:"))
         intro.setWordWrap(True)
         self.list = QListWidget()
         self.list.setIconSize(QSize(self.THUMBNAIL, self.THUMBNAIL))
-        self.list.setAccessibleName("Unsaved work")
+        self.list.setAccessibleName(translate("recovery_dialog", "Unsaved work"))
         for snapshot in pending:
             item = QListWidgetItem(f"{snapshot.name}\nkept {when(snapshot.saved_at)}")
             item.setData(Qt.UserRole, snapshot)
@@ -60,14 +62,16 @@ class RecoveryDialog(QDialog):
         self.list.setCurrentRow(0)
         self.list.itemDoubleClicked.connect(lambda _item: self.restore())
         buttons = QDialogButtonBox()
-        self.restore_button = buttons.addButton("Restore", QDialogButtonBox.AcceptRole)
-        self.discard_button = buttons.addButton("Discard", QDialogButtonBox.DestructiveRole)
-        self.later_button = QPushButton("Keep for Later")
+        self.restore_button = buttons.addButton(translate("recovery_dialog", "Restore"), QDialogButtonBox.AcceptRole)
+        self.discard_button = buttons.addButton(translate("recovery_dialog", "Discard"),
+                                                QDialogButtonBox.DestructiveRole)
+        self.later_button = QPushButton(translate("recovery_dialog", "Keep for Later"))
         buttons.addButton(self.later_button, QDialogButtonBox.RejectRole)
         self.restore_button.setDefault(True)
-        self.restore_button.setToolTip("Open the work selected as it was, unsaved")
-        self.discard_button.setToolTip("Remove the work selected for good")
-        self.later_button.setToolTip("Leave it all for the next time Tessellatum starts")
+        self.restore_button.setToolTip(translate("recovery_dialog", "Open the work selected as it was, unsaved"))
+        self.discard_button.setToolTip(translate("recovery_dialog", "Remove the work selected for good"))
+        self.later_button.setToolTip(translate("recovery_dialog", "Leave it all for the next time Tessellatum "
+                                                                  "starts"))
         self.restore_button.clicked.connect(self.restore)
         self.discard_button.clicked.connect(self.discard)
         self.later_button.clicked.connect(self.reject)

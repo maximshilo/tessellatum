@@ -4,6 +4,29 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.33] - 2026-11-27
+
+### Added
+
+- The interface is ready to be translated; no translation ships yet:
+  - Every string it shows goes through Qt's translation system: the menus and commands, the settings' names, tooltips
+    and choices, the descriptions of the difficulty, the messages and the dialogs.
+  - A choice is known by its value, whatever its words, so projects, presets and preferences read the same in any
+    language.
+  - `packaging/update_translations.py` collects the strings into a Qt translation file per language and compiles them;
+    the app loads the system language's translation, and Qt's own with it.
+- Numbers are written the system's way everywhere, as the settings' fields already typed them: the status bar, the
+  difficulty's description, the analysis, the palette's coverage, the export's summary ("1.448 × 1.086 px" in
+  German).
+- Right to left: the window mirrors (Qt's `-reverse`, or a right-to-left language), and the page, a click on it and
+  the exports are the same as left to right.
+
+### Fixed
+
+- The welcome page's example pictures go two by two, or one under another, when the canvas is narrow, rather than
+  making the page scroll sideways.
+- The Preferences' list of pages is as wide as its longest name needs.
+
 ## [1.1.32] - 2026-11-27
 
 ### Added

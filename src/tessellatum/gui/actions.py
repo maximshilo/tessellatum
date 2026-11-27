@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QT_TRANSLATE_NOOP, QObject
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import QMenuBar, QWidget
 
@@ -30,6 +30,7 @@ from tessellatum.gui.preview_widget import (
     view_name,
 )
 from tessellatum.gui.theme.tokens import COLORS, LIGHT
+from tessellatum.gui.i18n import translate
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,7 @@ class Command:
 FILE, EDIT, VIEW, GENERATE, HELP = "&File", "&Edit", "&View", "&Generate", "&Help"
 MENUS = (FILE, EDIT, VIEW, GENERATE, HELP)
 COMPARE_MENU = "Co&mpare"
-VISION_MENU = "Color &Vision"
+VISION_MENU = QT_TRANSLATE_NOOP("actions", "Color &Vision")
 # The views a comparison can be with, by the key of their command.
 COMPARE_WITH = {**{v.name.lower(): v for v in Version}, "original": ORIGINAL, "previous": PREVIOUS}
 
@@ -133,7 +134,7 @@ COMPARE_WITH_ACTIONS = {view: f"compare_with_{key}" for key, view in COMPARE_WIT
 VISION_ACTIONS = {mode: f"vision_{mode}" for mode in vision.MODES}
 THEME_ACTIONS = {mode: f"theme_{mode.lower()}" for mode in theme.MODES}
 ZOOM_ACTIONS = ("zoom_in", "zoom_out", "fit", "actual_pixels", "print_size")
-ANALYSIS = "Analysis"  # the sidebar's page that isn't settings: the page measured (see ``gui.analysis``)
+ANALYSIS = QT_TRANSLATE_NOOP("settings", "Analysis")  # the sidebar's page that isn't settings: the page measured (see ``gui.analysis``)
 ACTIVITIES = (*settings.CATEGORIES, ANALYSIS)
 ACTIVITY_ACTIONS = {category: f"activity_{category.lower()}" for category in ACTIVITIES}
 
@@ -146,10 +147,14 @@ class Actions(QObject):
         super().__init__(parent)
         self._by_id: dict[str, QAction] = {}
         for command in COMMANDS:
-            action = QAction(command.text, parent)
+            # The commands are data, translated as they are shown (``packaging/update_translations.py`` collects them).
+            text, command_tip = translate("actions", command.text), (
+                translate("actions", command.tip) if command.tip else ""
+            )
+            action = QAction(text, parent)
             action.setObjectName(command.id)
-            tip = command.tip or command.text.replace("&", "").rstrip("…")
-            action.setStatusTip(command.tip)
+            tip = command_tip or text.replace("&", "").rstrip("…")
+            action.setStatusTip(command_tip)
             if command.keys:
                 # Each once: a platform's standard key may be one also named (Redo is Ctrl+Shift+Z on Linux and macOS),
                 # or none (Quit and Preferences have none on Windows).
@@ -214,7 +219,7 @@ class Actions(QObject):
 
     def build_menus(self, bar: QMenuBar) -> dict[str, object]:
         """The menu bar's menus, every command in its own; the menus by title."""
-        menus = {title: bar.addMenu(title) for title in MENUS}
+        menus = {title: bar.addMenu(translate("actions", title)) for title in MENUS}
         by_menu: dict[str, list[Command]] = {title: [] for title in MENUS}
         for command in COMMANDS:
             by_menu[command.menu].append(command)
@@ -226,7 +231,7 @@ class Actions(QObject):
                 if command.submenu:
                     if command.submenu not in self.submenus:
                         menu.addSeparator()
-                        self.submenus[command.submenu] = menu.addMenu(command.submenu)
+                        self.submenus[command.submenu] = menu.addMenu(translate("actions", command.submenu))
                     submenu = self.submenus[command.submenu]
                     if command.id == COMPARE_WITH_ACTIONS[Version.PAGE]:
                         submenu.addSeparator()
@@ -237,7 +242,7 @@ class Actions(QObject):
                 if command.id.startswith("theme_"):
                     if appearance is None:
                         menu.addSeparator()
-                        appearance = menu.addMenu("&Appearance")
+                        appearance = menu.addMenu(translate("actions", "&Appearance"))
                     appearance.addAction(action)
                     continue
                 if command.id in ("save", "export", "quit", "find", "preferences", "zoom_in", "cancel", "rulers",

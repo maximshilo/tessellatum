@@ -18,12 +18,11 @@ import math
 from dataclasses import dataclass
 
 import numpy as np
-from PySide6.QtCore import QEvent, QSize, Qt, Signal
+from PySide6.QtCore import QT_TRANSLATE_NOOP, QEvent, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
-    QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -39,8 +38,14 @@ from PySide6.QtWidgets import (
 
 from tessellatum.core.color import bgr_to_lab
 from tessellatum.core.measures import ColorCoverage
+from tessellatum.gui.fields import ChoiceCombo
+from tessellatum.gui.i18n import number, translate
 
-NUMBER, COVERAGE, LIGHTNESS, HUE, NAME = "Number", "Coverage", "Lightness", "Hue", "Name"
+NUMBER, COVERAGE, LIGHTNESS, HUE, NAME = (  # the sorts, shown translated by the combo box (``ChoiceCombo``)
+    QT_TRANSLATE_NOOP("palette_inspector", "Number"), QT_TRANSLATE_NOOP("palette_inspector", "Coverage"),
+    QT_TRANSLATE_NOOP("palette_inspector", "Lightness"), QT_TRANSLATE_NOOP("palette_inspector", "Hue"),
+    QT_TRANSLATE_NOOP("palette_inspector", "Name"),
+)
 SORTS = (NUMBER, COVERAGE, LIGHTNESS, HUE, NAME)
 LIST, GRID = "list", "grid"
 GRAY_CHROMA = 6.0  # a color less colorful than this (CIELAB chroma) has no hue to sort by: the grays go first
@@ -121,12 +126,12 @@ def matches(color: PaletteColor, text: str) -> bool:
 
 def describe(color: PaletteColor, coverage: ColorCoverage | None, px_per_mm: float | None) -> str:
     """The color in words, for its accessible name and tooltip."""
-    parts = [f"Color {color.number}"]
+    parts = [translate("palette_inspector", "Color {0}").format(color.number)]
     if color.name:
         parts.append(color.name)
     parts.append(color.hex)
     if coverage is not None and color.index < len(coverage.pixels):
-        parts.append(f"{coverage.share(color.index) * 100:.1f}% of the page")
+        parts.append(translate("palette_inspector", "{0:.1f}% of the page").format(coverage.share(color.index) * 100))
         regions = int(coverage.regions[color.index])
         parts.append(f"{regions} region" + ("" if regions == 1 else "s"))
     return ", ".join(parts)
@@ -134,12 +139,14 @@ def describe(color: PaletteColor, coverage: ColorCoverage | None, px_per_mm: flo
 
 def coverage_text(color: PaletteColor, coverage: ColorCoverage | None, px_per_mm: float | None) -> str:
     if coverage is None or color.index >= len(coverage.pixels):
-        return "Coverage: measuring…"
+        return translate("palette_inspector", "Coverage: measuring…")
     regions = int(coverage.regions[color.index])
-    text = f"{coverage.share(color.index) * 100:.1f}% of the page"
+    text = translate("palette_inspector", "{0:.1f}% of the page").format(coverage.share(color.index) * 100)
     if px_per_mm:
-        text += f" · {coverage.area_mm2(color.index, px_per_mm):,.0f} mm²"
-    return text + f" · {regions:,} region" + ("" if regions == 1 else "s")
+        text += translate("palette_inspector", " · {0:,.0f} mm²").format(coverage.area_mm2(color.index, px_per_mm))
+    count = (translate("palette_inspector", "1 region") if regions == 1
+             else translate("palette_inspector", "{regions:,} regions").format(regions=regions))
+    return f"{text} · {count}"
 
 
 def swatch(color: QColor, size: int, outline: QColor | None = None) -> QIcon:
@@ -170,29 +177,31 @@ class PaletteInspector(QWidget):
         self._coverage: ColorCoverage | None = None
         self._px_per_mm: float | None = None
         self._regions = 0
-        self.title = QLabel("Palette")
+        self.title = QLabel(translate("palette_inspector", "Palette"))
         self.title.setObjectName("panelTitle")
         self.summary = QLabel()
         self.summary.setProperty("role", "secondary")
         self.summary.setWordWrap(True)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Find a color: number or name")
-        self.search.setAccessibleName("Find a color")
+        self.search.setPlaceholderText(translate("palette_inspector", "Find a color: number or name"))
+        self.search.setAccessibleName(translate("palette_inspector", "Find a color"))
         self.search.setClearButtonEnabled(True)
-        self.sort_combo = QComboBox()
+        self.sort_combo = ChoiceCombo("palette_inspector")
         self.sort_combo.addItems(SORTS)
-        self.sort_combo.setAccessibleName("Sort colors by")
-        self.sort_combo.setToolTip("The order the colors are shown in. Their numbers never change.")
-        self.grid_button = QPushButton("Grid")
+        self.sort_combo.setAccessibleName(translate("palette_inspector", "Sort colors by"))
+        self.sort_combo.setToolTip(translate("palette_inspector", "The order the colors are shown in. Their "
+                                                                  "numbers never change."))
+        self.grid_button = QPushButton(translate("palette_inspector", "Grid"))
         self.grid_button.setCheckable(True)
-        self.grid_button.setAccessibleName("Show the colors as a grid")
-        self.grid_button.setToolTip("Show the colors as a grid of swatches, or as a list")
+        self.grid_button.setAccessibleName(translate("palette_inspector", "Show the colors as a grid"))
+        self.grid_button.setToolTip(translate("palette_inspector", "Show the colors as a grid of swatches, or as "
+                                                                   "a list"))
         self.list = QListWidget()
         self.list.setObjectName("paletteList")
         self.list.setIconSize(QSize(self.SWATCH, self.SWATCH))
         self.list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.list.setFocusPolicy(Qt.StrongFocus)
-        self.list.setAccessibleName("Palette")
+        self.list.setAccessibleName(translate("palette_inspector", "Palette"))
         self.list.setUniformItemSizes(True)
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.installEventFilter(self)
@@ -215,19 +224,26 @@ class PaletteInspector(QWidget):
         # Copy: the hex at a click, the RGB or the name from its menu.
         self.copy_button = QToolButton()
         self.copy_button.setPopupMode(QToolButton.MenuButtonPopup)
-        self.copy_button.setAccessibleName("Copy the color")
+        self.copy_button.setAccessibleName(translate("palette_inspector", "Copy the color"))
         copy_menu = QMenu(self.copy_button)
         self.copy_actions = {}
-        for label, what in (("Copy Hex", "hex"), ("Copy RGB", "rgb"), ("Copy Name", "name")):
+        for label, what in (
+            (translate("palette_inspector", "Copy Hex"), "hex"),
+            (translate("palette_inspector", "Copy RGB"), "rgb"),
+            (translate("palette_inspector", "Copy Name"), "name"),
+        ):
             action = copy_menu.addAction(label)
             action.triggered.connect(lambda _checked=False, w=what: self.copy(w))
             self.copy_actions[what] = action
         self.copy_button.setMenu(copy_menu)
         self.copy_button.setDefaultAction(self.copy_actions["hex"])
-        self.copy_button.setToolTip("Copy the hex (Ctrl+C); its menu copies the RGB or the name")
-        self.isolate_check = QCheckBox("Isolate")
-        self.isolate_check.setToolTip("On the canvas, dim every region but this color's")
-        self.isolate_check.setAccessibleDescription("Dim the other colors on the canvas")
+        self.copy_button.setToolTip(translate("palette_inspector", "Copy the hex (Ctrl+C); its menu copies the "
+                                                                   "RGB or the name"))
+        self.isolate_check = QCheckBox(translate("palette_inspector", "Isolate"))
+        self.isolate_check.setToolTip(translate("palette_inspector", "On the canvas, dim every region but this "
+                                                                     "color's"))
+        self.isolate_check.setAccessibleDescription(translate("palette_inspector", "Dim the other colors on the "
+                                                                                   "canvas"))
         top = QHBoxLayout()
         top.addWidget(self.detail_swatch)
         top.addWidget(self.detail_title, 1)
@@ -287,11 +303,12 @@ class PaletteInspector(QWidget):
         self.isolate_check.blockSignals(blocked)
         self._fill(keep=None)
         if page is None:
-            self.summary.setText("Generate a preview to see its colors here.")
+            self.summary.setText(translate("palette_inspector", "Generate a preview to see its colors here."))
             self.list.setVisible(False)
             self.tools.setVisible(False)
             return
-        self.summary.setText(f"{len(self._colors)} colors, {page.num_regions:,} regions")
+        self.summary.setText(translate("palette_inspector", "{0} colors, {1:,} regions")
+                             .format(len(self._colors), page.num_regions))
         self.list.setVisible(True)
         self.tools.setVisible(True)
 
@@ -407,7 +424,11 @@ class PaletteInspector(QWidget):
             return
         index = item.data(INDEX_ROLE)
         menu = QMenu(self.list)
-        for label, what in (("Copy Hex", "hex"), ("Copy RGB", "rgb"), ("Copy Name", "name")):
+        for label, what in (
+            (translate("palette_inspector", "Copy Hex"), "hex"),
+            (translate("palette_inspector", "Copy RGB"), "rgb"),
+            (translate("palette_inspector", "Copy Name"), "name"),
+        ):
             menu.addAction(label, lambda w=what: self.copy(w, index))
         menu.exec(self.list.viewport().mapToGlobal(position))
 
@@ -431,14 +452,14 @@ class PaletteInspector(QWidget):
         for color in sort_colors(self._colors, self.sort_combo.currentText(), self._coverage):
             share = ""
             if self._coverage is not None and color.index < len(self._coverage.pixels):
-                share = f"   {self._coverage.share(color.index) * 100:.1f}%"
+                share = f"   {number(self._coverage.share(color.index) * 100, 1)}%"
             text = str(color.number) if grid else f"{color.number}   {color.name}".rstrip() + share
             item = QListWidgetItem(swatch(QColor(*color.rgb), size, outline), text)
             item.setData(INDEX_ROLE, color.index)
             words = describe(color, self._coverage, self._px_per_mm)
             tip = f"{color.number} {color.name}: {color.hex}, RGB {color.rgb_text}".replace(" :", ":")
             if color.recipe:
-                tip += "\nMixed: " + " + ".join(color.recipe)
+                tip += translate("palette_inspector", "\nMixed: ") + " + ".join(color.recipe)
             if self._coverage is not None:
                 tip += "\n" + coverage_text(color, self._coverage, self._px_per_mm)
             item.setToolTip(tip)
@@ -476,8 +497,10 @@ class PaletteInspector(QWidget):
         color = self._colors[index]
         self.detail_swatch.setPixmap(swatch(QColor(*color.rgb), 40, QColor(0, 0, 0, 60)).pixmap(40, 40))
         self.detail_title.setText(f"{color.number}  {color.name}".rstrip())
-        self.detail_values.setText(f"{color.hex} · RGB {color.rgb_text}")
-        self.detail_recipe.setText("Mixed: " + " + ".join(color.recipe) if color.recipe else "")
+        self.detail_values.setText(translate("palette_inspector", "{0} · RGB {1}").format(color.hex, color.rgb_text))
+        self.detail_recipe.setText(
+            translate("palette_inspector", "Mixed: ") + " + ".join(color.recipe) if color.recipe else ""
+        )
         self.detail_recipe.setVisible(bool(color.recipe))
         self.detail_coverage.setText(coverage_text(color, self._coverage, self._px_per_mm))
         self.detail.setAccessibleName(describe(color, self._coverage, self._px_per_mm))

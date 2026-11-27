@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication
 from tessellatum.app import jobs, recovery
 from tessellatum.app.presets import FILE_NAME as PRESETS_FILE
 from tessellatum.app.presets import PresetStore
-from tessellatum.gui import preferences, theme
+from tessellatum.gui import i18n, preferences, theme
 from tessellatum.gui.main_window import MainWindow
 
 RESOURCES_DIR = Path(__file__).resolve().parent / "resources"
@@ -44,6 +44,8 @@ def main() -> None:
     preferences.apply_scale_at_start(QSettings())
     app = QApplication(sys.argv)
     app.setWindowIcon(window_icon())
+    # The interface's language: the system's, where a translation ships (or the pseudo-locale, if asked for).
+    i18n.install(app)
 
     # The panel's settings and the theme picked are kept between runs, under the organization and application names
     # above.

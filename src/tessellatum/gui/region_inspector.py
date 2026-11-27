@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
+from tessellatum.gui.i18n import translate
 
 MM_PER_POINT = 25.4 / 72.0
 
@@ -35,25 +36,31 @@ class RegionInfo:
     sides: int  # the other sides of the region its number is also written on
 
     def lines(self) -> list[str]:
-        color = f"Color {self.color_number}" + (f", {self.color_name}" if self.color_name else "")
+        color = translate("region_inspector", "Color {0}").format(self.color_number) + (
+            f", {self.color_name}" if self.color_name else ""
+        )
         lines = [
             color,
-            f"Area: {self.area_mm2:,.1f} mm²",
-            f"Size: {self.width_mm:.1f} × {self.height_mm:.1f} mm",
-            f"Widest brush: {self.widest_brush_mm:.1f} mm",
+            translate("region_inspector", "Area: {0:,.1f} mm²").format(self.area_mm2),
+            translate("region_inspector", "Size: {0:.1f} × {1:.1f} mm").format(self.width_mm, self.height_mm),
+            translate("region_inspector", "Widest brush: {0:.1f} mm").format(self.widest_brush_mm),
         ]
         if self.placement == "none":
-            lines.append("Number: none (too small to write it in)")
+            lines.append(translate("region_inspector", "Number: none (too small to write it in)"))
         else:
-            where = {"inside": "inside", "on a leader": "outside, on a leader line",
-                     "cramped": "cramped: lines may run through it"}[self.placement]
-            lines.append(f"Number: {where}, {self.number_pt:.1f} pt")
+            where = {"inside": translate("region_inspector", "inside"),
+                     "on a leader": translate("region_inspector", "outside, on a leader line"),
+                     "cramped": translate("region_inspector", "cramped: lines may run through it")}[self.placement]
+            lines.append(
+                translate("region_inspector", "Number: {where}, {0:.1f} pt").format(self.number_pt, where=where)
+            )
         if self.sides:
-            lines.append(f"Also written on {self.sides} other side" + ("" if self.sides == 1 else "s"))
+            lines.append(translate("region_inspector", "Also written on 1 other side") if self.sides == 1
+                         else translate("region_inspector", "Also written on {0} other sides").format(self.sides))
         return lines
 
     def describe(self) -> str:
-        return f"Region {self.region_id}: " + "; ".join(self.lines())
+        return translate("region_inspector", "Region {0}: ").format(self.region_id) + "; ".join(self.lines())
 
 
 def region_info(model, region_id: int, stats, px_per_mm: float, color_names, widest_px: float) -> RegionInfo:
@@ -87,7 +94,7 @@ class RegionInspector(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("regionInspector")
-        self.title = QLabel("Region")
+        self.title = QLabel(translate("region_inspector", "Region"))
         self.title.setObjectName("detailTitle")
         self.details = QLabel()
         self.details.setWordWrap(True)
@@ -96,7 +103,7 @@ class RegionInspector(QWidget):
         self.list_title.setProperty("role", "secondary")
         self.list = QListWidget()
         self.list.setObjectName("paletteList")
-        self.list.setAccessibleName("Regions of the color")
+        self.list.setAccessibleName(translate("region_inspector", "Regions of the color"))
         self.list.setMaximumHeight(140)
         self.list.installEventFilter(self)
         layout = QVBoxLayout(self)
@@ -118,7 +125,7 @@ class RegionInspector(QWidget):
             self.details.clear()
             self.setVisible(self.list.count() > 0)
             return
-        self.title.setText(f"Region {info.region_id}")
+        self.title.setText(translate("region_inspector", "Region {0}").format(info.region_id))
         self.details.setText("\n".join(info.lines()))
         self.details.setAccessibleName(info.describe())
         self.setVisible(True)
@@ -133,12 +140,17 @@ class RegionInspector(QWidget):
         blocked = self.list.blockSignals(True)
         self.list.clear()
         for region_id, area in regions:
-            item = QListWidgetItem(f"Region {region_id}   {area:,.1f} mm²")
+            item = QListWidgetItem(
+                translate("region_inspector", "Region {region_id}   {area:,.1f} mm²").format(
+                    region_id=region_id, area=area
+                )
+            )
             item.setData(Qt.UserRole, region_id)
             self.list.addItem(item)
         self.list.blockSignals(blocked)
         listed = color_number is not None and bool(regions)
-        self.list_title.setText(f"The {len(regions):,} regions of color {color_number}, largest first" if listed else "")
+        self.list_title.setText(translate("region_inspector", "The {0:,} regions of color {color_number}, largest "
+                                                              "first").format(len(regions), color_number=color_number) if listed else "")
         self.list_title.setVisible(listed)
         self.list.setVisible(listed)
         self.setVisible(listed or self._info is not None)
