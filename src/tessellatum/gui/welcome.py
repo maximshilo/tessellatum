@@ -13,7 +13,7 @@ from importlib import resources
 from pathlib import Path
 
 from PySide6.QtCore import QT_TRANSLATE_NOOP, QSize, Qt, Signal
-from PySide6.QtGui import QFont, QIcon, QPixmap
+from PySide6.QtGui import QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -28,6 +28,18 @@ from PySide6.QtWidgets import (
 from tessellatum.gui.i18n import translate
 
 THUMBNAIL = 112
+
+
+def _square_thumbnail(pixmap: QPixmap) -> QPixmap:
+    """``pixmap`` scaled to fit a ``THUMBNAIL`` square and centred in it, on transparency: every example's icon the same
+    size, so their names line up under them whether the picture is wide or tall."""
+    scaled = pixmap.scaled(THUMBNAIL, THUMBNAIL, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    square = QPixmap(THUMBNAIL, THUMBNAIL)
+    square.fill(Qt.transparent)
+    painter = QPainter(square)
+    painter.drawPixmap((THUMBNAIL - scaled.width()) // 2, (THUMBNAIL - scaled.height()) // 2, scaled)
+    painter.end()
+    return square
 
 
 @dataclass(frozen=True)
@@ -143,8 +155,7 @@ class WelcomePage(QScrollArea):
                                          .format(translate("welcome", example.title)))
                 pixmap = QPixmap(str(example.path))
                 if not pixmap.isNull():
-                    button.setIcon(QIcon(pixmap.scaled(THUMBNAIL, THUMBNAIL, Qt.KeepAspectRatio,
-                                                       Qt.SmoothTransformation)))
+                    button.setIcon(QIcon(_square_thumbnail(pixmap)))
                     button.setIconSize(QSize(THUMBNAIL, THUMBNAIL))
                 button.clicked.connect(lambda _checked=False, p=example.path: self.example_requested.emit(p))
                 self.example_buttons.append(button)

@@ -164,7 +164,8 @@ canvas, the palette, a field), and finds one by its name or its keys:
 | File > Open (a picture or a project) | Ctrl+O |
 | File > Save Project, Save Project As | Ctrl+S, Ctrl+Shift+S |
 | File > Export | Ctrl+E |
-| File > Close | Ctrl+W |
+| File > Close | Ctrl+W (Windows: also Ctrl+F4) |
+| File > Quit | Ctrl+Q on macOS and Linux (Windows: Alt+F4) |
 | Edit > Undo, Redo | Ctrl+Z; Ctrl+Y or Ctrl+Shift+Z |
 | Edit > Paste Picture | Ctrl+V |
 | Edit > Find Setting | Ctrl+F |
@@ -241,8 +242,9 @@ can't be opened says why, and the work stays as it was. Ctrl+V in a text field p
 - every setting, the paints listed and the export's options;
 - a small thumbnail.
 
-Pages aren't kept in it. Opening a project makes its page again from the picture and the settings, and since making a
-page is deterministic, it is the page that was saved.
+Pages aren't kept in it. Opening a project makes its page again from the picture and the settings: on the computer
+it was saved on, with the same version, that is the page that was saved; on another platform (Windows, macOS, Linux)
+it can differ slightly ([why](Quality-and-Performance#platforms-and-scaling)). To keep a page exactly, export it.
 
 **File > Open…** opens a project or a picture. A picture opened into the work replaces the one there as one step to
 undo, and the settings stay. A project replaces the work, so if the work has changes that aren't saved, it asks first

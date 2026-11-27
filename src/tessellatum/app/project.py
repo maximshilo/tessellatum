@@ -9,8 +9,9 @@ A project (``.tessellatum``) is a zip archive holding:
   itself, wherever it came from;
 - ``thumbnail.png``: the picture, small, for the lists of recent work.
 
-Pages are not stored: they are made again from the picture and the settings when the project is opened, and making a
-page is deterministic, so the page is the one that was saved.
+Pages are not stored: they are made again from the picture and the settings when the project is opened. Making a
+page is deterministic on a platform, so with the same version there the page is the one that was saved; on another
+platform the numeric libraries can make it differ slightly (the wiki's Quality and performance page).
 
 **Saving** is atomic: the project is written to a temporary file in the same folder, read back and checked, and only
 then put in the place of the file, so the file saved before stays whole until the new one is complete, and a save that

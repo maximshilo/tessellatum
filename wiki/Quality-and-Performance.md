@@ -70,6 +70,15 @@ In the pseudo-locale, nothing is cut on Windows at any screen and scale checked 
 buttons doesn't fit the sidebar's width, it stacks instead: the button under the choices, then the choices one under
 another, each whole. The sidebar starts as wide as its rows need side by side, so English at 100% looks as it did.
 
+**The same page on every platform is not a goal.** On one platform, with the same version of the app and its
+libraries, a picture and its settings make the same page every time, bit for bit (a test computes it three times
+afresh). On another platform it can differ: the lion at Medium has 1,457 regions on Windows, 1,589 on Linux and 1,569
+on macOS. Where the difference starts hasn't been traced; the numeric libraries (OpenCV, NumPy, ONNX Runtime) are
+built differently for each platform. A page is judged by what it is (every region numbered, no number on ink, regions
+large enough to paint), and those guarantees are tested on all three platforms; the quality benchmark runs on Windows.
+A project keeps the picture and the settings, not the page, so a project opened on another platform makes a page
+that can differ from the one seen where it was saved; the exported PNG or PDF is the page itself.
+
 ## Speed
 
 Median preview time and region count over 12 benchmark images (before the dark portrait was added), at each level's working size:

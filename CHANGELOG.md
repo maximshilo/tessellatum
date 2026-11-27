@@ -4,6 +4,30 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.38] - 2026-11-27
+
+### Added
+
+- `docs/make_screenshot.py --set OUT_DIR` draws the window's main views (the welcome, the Generation and Colors pages,
+  a region selected, the analysis, two comparisons, the export dialog, the Preferences) in both themes at 1280×720 and
+  1920×1080, and `--compare REF_DIR OUT_DIR` checks a set against its references: it fails where more than 1% of a
+  shot's pixels differ by more than a few levels. References are kept per platform, since fonts differ.
+- A test that the same picture and settings make the same page, bit for bit, every time it is computed afresh.
+
+### Changed
+
+- A page fitted to the window keeps a margin from the canvas's edges, rather than touching the bars above and below.
+- The README screenshot is the current window.
+
+### Fixed
+
+- A button with a menu (Compare, the color's Copy) leaves room for its arrow, which overlapped its word.
+- The examples on the welcome page have their names on one line, whether the picture is wide or tall.
+- The docs said a project opened on any computer shows the page that was saved. It does on the platform it was saved
+  on; on another platform (Windows, macOS, Linux) the page made again can differ slightly, so the wiki now says to
+  export a page to keep it exactly. The same page on every platform is not a goal, and the wiki says why.
+- The User guide's shortcut table, checked against the menus, gains Close's Ctrl+F4 on Windows and Quit's Ctrl+Q.
+
 ## [1.1.37] - 2026-11-27
 
 ### Fixed

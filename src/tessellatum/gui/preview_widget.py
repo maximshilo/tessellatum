@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QWidget,
 )
 
@@ -137,6 +138,9 @@ def ruler_steps(px_per_unit: float, unit: str) -> tuple[float, float | None]:
             break
     return label, tick
 
+
+# Around the page when it is fitted to the window, in logical pixels a side: the page on the canvas, not against its bars.
+FIT_MARGIN = 16
 
 class PreviewWidget(QGraphicsView):
     """The page above its legend, zoomed in and out about the point under the cursor, and dragged to pan.
@@ -771,7 +775,7 @@ class PreviewWidget(QGraphicsView):
     def _fit_zoom(self) -> float:
         rect = self._fit_rect()
         size = self.maximumViewportSize()  # the viewport without its scroll bars
-        margin = 4  # as ``fitInView`` leaves
+        margin = 2 * FIT_MARGIN
         fit = min((size.width() - margin) / rect.width(), (size.height() - margin) / rect.height())
         return max(fit, 1e-3) * self.devicePixelRatioF()
 
@@ -1276,7 +1280,8 @@ class VersionBar(QWidget):
             button.toggled.connect(lambda down, view=view: down and self._on_chosen(view))
             self.compact.addItem(view_name(view), view)
             self.compact.setItemData(self.compact.count() - 1, view_description(view), Qt.ToolTipRole)
-        layout.addStretch(1)
+        # No stretch at its end: the bar would take a share of the toolbar's spare room, and push what follows away.
+        self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
         self.compact.activated.connect(lambda index: self.buttons[self.compact.itemData(index)].setChecked(True))
         self.buttons[Version.PAGE].setChecked(True)
 
