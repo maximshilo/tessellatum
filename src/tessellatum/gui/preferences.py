@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
 
 from tessellatum.app import results
 from tessellatum.core import pipeline
-from tessellatum.gui import theme
+from tessellatum.gui import accessibility, theme
 from tessellatum.gui.fields import INCH, MM
 
 SCALE_KEY = "preferences/ui_scale"
@@ -315,6 +315,7 @@ class PreferencesDialog(QDialog):
         # Shortcuts
         self.shortcuts = QTableWidget(0, 2)
         self.shortcuts.setObjectName("shortcutTable")
+        self.shortcuts.setAccessibleName("Keyboard shortcuts")
         self.shortcuts.setHorizontalHeaderLabels(["Command", "Keys"])
         self.shortcuts.verticalHeader().hide()
         self.shortcuts.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -333,7 +334,7 @@ class PreferencesDialog(QDialog):
 
         for page in (appearance, units, workspace, performance):
             # Each scrolls if it is taller than the dialog (a large interface scale), rather than being cut off.
-            scroll = QScrollArea()
+            scroll = accessibility.no_tab_stop(QScrollArea())
             scroll.setWidget(page)
             scroll.setWidgetResizable(True)
             scroll.setFrameShape(QScrollArea.NoFrame)
@@ -350,6 +351,7 @@ class PreferencesDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addLayout(body, 1)
         layout.addWidget(buttons)
+        accessibility.name_parts(self)
         self.resize(620, 520)
         preferences.changed.connect(self._show_restart)
         self._show_restart()

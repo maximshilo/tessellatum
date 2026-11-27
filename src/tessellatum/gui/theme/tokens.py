@@ -132,6 +132,7 @@ CONTRAST_PAIRS = (
     ("tooltip_text", "tooltip", TEXT),
     *((status, bg, TEXT) for status in ("info", "success", "warning", "error") for bg in ("window", "field", "chrome")),
     *(("accent", bg, NON_TEXT) for bg in ("window", "chrome", "sidebar", "field", "raised")),
+    ("accent", "selected", NON_TEXT),  # a checked toggle's icon (the panel toggles)
     *(("border_strong", bg, NON_TEXT) for bg in ("field", "sidebar", "window")),
     ("text", "canvas", TEXT),
 )

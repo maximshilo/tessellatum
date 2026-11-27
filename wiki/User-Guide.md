@@ -94,6 +94,21 @@ same picture, in the version shown, named by what changed since ("Previous versi
 the pages kept for undo (Preferences > Performance > **Memory for pages made**), so it may be gone; it is never made
 again. Comparing makes nothing: every view is of the page shown, or kept.
 
+### Color vision
+
+**View > Color Vision** shows the canvas as seen with another color vision, to check that two colors a painter must
+tell apart still look different to them:
+
+- **Protanopia** and **Deuteranopia**: without red- or green-sensitive cones (each about 1 in 100 men), where reds
+  and greens of a similar lightness look alike.
+- **Tritanopia**: without blue-sensitive cones (rare).
+- **Grayscale**: no color at all, whether the page reads in light and dark alone.
+
+The page, the view compared with and the legend are shown simulated (Machado, Oliveira and Fernandes, 2009, at full
+severity: the strongest form of each); the Page view, black on white, looks the same. It is on the screen only: the
+inspector's swatches and every export keep the page's colors. While it is on, the bar under the page names it; click
+it, or pick **Normal**, to see the page's own colors.
+
 ## The palette
 
 The inspector lists the page's colors by their legend numbers, with their names and how much of the page each
@@ -173,6 +188,24 @@ by hand. A page no longer kept (memory is limited, see Preferences) is made agai
 kept and labeled out of date until it is ready. Settings that never had a page wait for Generate Preview, as any other
 change does: the status bar says the preview is out of date. Whether the preview is up to date is apart from whether the settings have changed since they were last saved. **Edit > Reset All Settings** is the Difficulty section's Reset, and asks first; **Help > About Tessellatum** shows
 the version and the licenses.
+
+## Keyboard and screen readers
+
+Everything works from the keyboard. **Tab** goes round the window's areas in order: the toolbar's Generate button,
+the activity bar, the sidebar, the canvas (its views, the page, the zoom), the inspector, and the status bar's
+Diagnostics button. **Shift+Tab** goes the other way. A row of which one is down (the activity bar, the views
+above the page) is one stop, and the arrow keys move along it. A control reached in a scrolled page scrolls into
+view. The toolbar's other buttons aren't stops: their commands are in the menu bar (**Alt**, or **F10**) and have
+shortcuts. In the canvas, the arrow keys scroll the page, and on the palette **Enter** lists a color's regions.
+
+Every control has a name and a description for a screen reader (Narrator, NVDA, VoiceOver, Orca). A color is read
+with its number, name, hex value, share of the page and regions. Nothing is said by color alone:
+- the preview's state is a word beside its icon;
+- a changed setting is marked by a sign, read as "Reset … to …";
+- a notification says its level.
+
+**Preferences > Appearance > Motion** turns animations off. The interface has none of its own, so it changes
+nothing yet.
 
 ## Getting a picture in
 
