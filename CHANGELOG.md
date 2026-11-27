@@ -17,6 +17,8 @@ Each release's notes on GitHub are its section below.
 
 ### Fixed
 
+- The zoom field wrote a zoom under 10% with a dot whatever the system's language ("7.5%"); it uses the system's
+  decimal point now, as the other readouts do ("7,5%" in German).
 - `TESSELLATUM_PSEUDO_LOCALE=0` turned the pseudo-locale on; only a value other than 0 does now.
 
 ## [1.1.33] - 2026-11-27

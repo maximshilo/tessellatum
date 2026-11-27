@@ -27,7 +27,7 @@ from tessellatum.app import project as projects  # noqa: E402
 from tessellatum.app.recovery import RecoveryStore  # noqa: E402
 from tessellatum.app.snapshot import DocumentSettings  # noqa: E402
 from tessellatum.core import pipeline  # noqa: E402
-from tessellatum.gui import i18n, main_window  # noqa: E402
+from tessellatum.gui import i18n, main_window, preview_widget  # noqa: E402
 from tessellatum.gui.fields import ChoiceCombo, SegmentedControl  # noqa: E402
 from tessellatum.gui.main_window import MainWindow  # noqa: E402
 
@@ -289,6 +289,9 @@ def test_numbers_are_written_the_locale_s_way():
     QLocale.setDefault(GERMAN)
     try:
         assert text.format(1448, 1086, mm=2.25, g=0.5, hex=255) == "1.448 × 1.086 px · 2,2 mm · 0,5 pt · FF"
+        # The zoom field too, and what it shows reads back as the same zoom.
+        assert preview_widget.zoom_text(0.075) == "7,5%" and preview_widget.zoom_text(1.5) == "150%"
+        assert preview_widget.parse_zoom(preview_widget.zoom_text(0.075)) == pytest.approx(0.075)
     finally:
         QLocale.setDefault(US)
 

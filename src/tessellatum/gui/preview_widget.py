@@ -51,7 +51,7 @@ from PySide6.QtWidgets import (
 from tessellatum.core.painting import Version
 from tessellatum.core.print_size import A4, MM_PER_INCH, PaperFormat, print_scale
 from tessellatum.gui import vision
-from tessellatum.gui.i18n import term, translate
+from tessellatum.gui.i18n import number, term, translate
 
 # One notch of a mouse wheel, or one press of + or -, zooms in or out this far.
 ZOOM_STEP = 1.25
@@ -1142,9 +1142,9 @@ def _show_at(
 
 
 def zoom_text(printed_zoom: float) -> str:
-    """A zoom as the field shows it: a whole percentage, to a tenth under 10%."""
+    """A zoom as the field shows it: a whole percentage, to a tenth under 10% ("7,5%" in German)."""
     percent = printed_zoom * 100
-    return f"{round(percent)}%" if percent >= 9.95 else f"{percent:.1f}%"
+    return f"{round(percent)}%" if percent >= 9.95 else f"{number(percent, 1, grouped=False)}%"
 
 
 def parse_zoom(text: str) -> float | None:
