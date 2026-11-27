@@ -107,6 +107,26 @@ def test_a_window_still_open_is_never_offered(tmp_path):
     running.close()
 
 
+def test_the_lock_of_a_session_that_ended_with_nothing_to_offer_is_pruned(tmp_path):
+    folder = tmp_path / "recovery"
+    # An unclean exit before any snapshot was written: its lock is left behind, its process gone.
+    src = Path(__file__).resolve().parents[1] / "src"
+    script = ("import os, sys; sys.path.insert(0, sys.argv[2]); from tessellatum.app.recovery import RecoveryStore; "
+              "store = RecoveryStore(sys.argv[1]); print(store.session, flush=True); os._exit(3)")
+    done = subprocess.run([sys.executable, "-c", script, str(folder), str(src)], capture_output=True, text=True,
+                          timeout=120)
+    assert done.returncode == 3, done.stderr
+    orphan = folder / f"{done.stdout.strip()}.lock"
+    assert orphan.exists()
+    running = RecoveryStore(folder)  # a window still open, with no snapshot either
+    store = RecoveryStore(folder)
+    assert store.prune() == 0
+    assert not orphan.exists()
+    assert (folder / f"{running.session}.lock").exists() and (folder / f"{store.session}.lock").exists()
+    running.close()
+    store.close()
+
+
 def test_snapshots_are_written_atomically_and_replace_the_last(tmp_path, monkeypatch):
     store = RecoveryStore(tmp_path)
     _write(store, settings=DocumentSettings())

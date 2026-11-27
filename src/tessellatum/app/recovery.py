@@ -146,8 +146,9 @@ class RecoveryStore:
             self._remove(snapshot.session, lock=True)
 
     def prune(self, now: float | None = None) -> int:
-        """Remove the snapshots older than ``KEEP_DAYS`` and past the newest ``KEEP``, and what failed writes left;
-        how many snapshots went."""
+        """Remove the snapshots older than ``KEEP_DAYS`` and past the newest ``KEEP``, what failed writes left, and the
+        locks of sessions that ended without a snapshot to offer (an unclean exit before any was written); how many
+        snapshots went."""
         now = time.time() if now is None else now
         pending = self.pending()
         gone = 0
@@ -155,6 +156,15 @@ class RecoveryStore:
             if index >= KEEP or now - snapshot.saved_at > KEEP_DAYS * 86400:
                 self.discard(snapshot)
                 gone += 1
+        for lock in self.folder.glob(f"*{_LOCK}"):
+            session = lock.stem
+            if session == self.session or (self.folder / f"{session}{projects.SUFFIX}").exists():
+                continue  # this session's, or one whose snapshot is offered: it goes with the snapshot
+            if not self._alive(session):  # the session is gone: trying its lock took it over and let it go
+                try:
+                    lock.unlink()
+                except FileNotFoundError:
+                    pass
         for temp in self.folder.glob(".*.tmp"):
             if now - temp.stat().st_mtime > 3600:
                 try:
