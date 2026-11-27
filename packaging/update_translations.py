@@ -195,9 +195,12 @@ def release() -> int:
     """Compile every ``translations/*.ts`` into ``resources/translations``; how many."""
     QM_DIR.mkdir(parents=True, exist_ok=True)
     count = 0
+    # PySide6's lrelease, through this Python: its pyside6-lrelease script is next to python.exe in a virtual
+    # environment but in Scripts/ (or bin/) beside a system Python, and not always on the PATH.
+    lrelease = [sys.executable, "-c",
+                "import sys; from PySide6.scripts.pyside_tool import lrelease; sys.exit(lrelease())"]
     for ts in sorted(TS_DIR.glob("tessellatum_*.ts")):
-        tool = Path(sys.executable).with_name("pyside6-lrelease")
-        subprocess.run([str(tool), str(ts), "-qm", str(QM_DIR / ts.with_suffix(".qm").name)], check=True)
+        subprocess.run([*lrelease, str(ts), "-qm", str(QM_DIR / ts.with_suffix(".qm").name)], check=True)
         count += 1
     return count
 
