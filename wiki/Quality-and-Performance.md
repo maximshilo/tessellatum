@@ -60,12 +60,13 @@ It reports any text cut, by its own width or by the panel around it. The **layou
 macOS (Cocoa) and Linux (X11 under Xvfb) for every pull request that touches the interface, and keeps the
 screenshots.
 
-On Windows, in English, nothing is cut at any of the 16 screens and scales, in either theme, but one: a 1280×720
-screen at 200%, a 640×360 window, where the view buttons above the page are squeezed. On a narrow window the inspector folds away and the canvas bar
+In English, nothing is cut at any screen and scale checked (to 3840×2160 on Windows, to 2560×1440 on macOS and
+Linux), in either theme, but one: a 1280×720 screen at 200%, a 640×360 window, where the view buttons above the page are squeezed. On a narrow window the inspector folds away and the canvas bar
 moves what doesn't fit into its menu. The canvas's 100% stays a pixel of the page to a pixel of the screen at any
 interface scale (tested at 100% and 150%).
 
-In the pseudo-locale, nothing is cut on a 1280×720 screen at 100%, nor in any window 1,700 px wide or more. In a
+In the pseudo-locale, nothing is cut on a 1280×720 screen at 100% on Windows (macOS's and Linux's wider fonts cut
+**Paints…** there), nor in any window 1,700 px wide or more. In a
 window of 1,280 px or less at 125% to 200%, the sidebar's **Paints…** is cut by a few pixels, and under about
 1,000 px the view buttons are squeezed too: a language that much longer than English will need those to give way.
 
