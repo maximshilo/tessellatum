@@ -20,6 +20,13 @@ Qt's offscreen platform) and the benchmark harness itself. The region and render
 pixel-identical output against the original implementations kept in `tests/reference_impl.py` and
 `tests/reference_line_art.py`; a change meant to alter their output updates the reference deliberately.
 
+**Interface tests.** They build the real window on Qt's offscreen platform and drive it as a user would: clicks, keys,
+menu commands, jobs run to the end or held mid-way by a fake pipeline, file dialogs answered by the test. A window
+gets no settings store (`MainWindow()` keeps nothing), so a test never reads or writes the user's settings; one that
+needs a store uses a throwaway `.ini` file in a temporary folder. Offscreen fonts are about 40% wider than native ones,
+so a test checks layout by relation (a row stacks where it doesn't fit; the inspector folds away below a width), never
+by pixels; what the window looks like is checked on a desktop session, below.
+
 ## Translations
 
 Every string the interface shows goes through `gui.i18n.translate(context, text)` (Qt's
@@ -56,11 +63,40 @@ It draws the window, the export dialog and the Preferences at each interface sca
 text is cut. It needs a desktop session (Qt's offscreen platform has no fonts); the **layout** workflow runs it on
 the three platforms.
 
+## Screenshots
+
+```
+.venv\Scripts\python docs\make_screenshot.py --set OUT_DIR                 # 9 views x 2 themes x 2 sizes
+.venv\Scripts\python docs\make_screenshot.py --compare REF_DIR OUT_DIR     # a set against its references
+```
+
+The set is the welcome, the Generation and Colors pages, a region selected, the analysis, two comparisons, the export
+dialog and the Preferences, in the light and dark themes, at 1280×720 and 1920×1080. `--compare` fails when more than
+1% of a shot's pixels differ by more than a few levels. Fonts and anti-aliasing differ by platform, so references are
+kept per platform and display, and the comparison runs locally, not in CI: it checks that a change meant to leave the
+window alone did.
+
+## Verification matrix
+
+What has been checked where:
+
+| | Windows 11 | macOS (CI, Apple silicon) | Linux (CI, X11 under Xvfb) |
+|---|---|---|---|
+| Test suite | every pull request | every pull request | every pull request |
+| Standalone build and self-test | every release, and every pull request touching the packaging | same | same |
+| Layout at 100-200%, both themes | `check_layout.py`, 1280×720 to 3840×2160 | the **layout** workflow, to 2560×1440 | the **layout** workflow, to 2560×1440 |
+| Pseudo-locale (strings 40% longer) | locally and in CI | in CI | in CI |
+| Keyboard-only use; names and roles for assistive technology | tested; the UI Automation tree walked once | tested headless | tested headless |
+| Screen readers (Narrator, NVDA, VoiceOver, Orca) | not yet | not yet | not yet |
+| Real display scaling, mixed-DPI monitors | not yet (scales set with `QT_SCALE_FACTOR`) | Retina not checked | not yet |
+| Native file dialogs, the app menu | by hand | menu roles tested; not by hand | not by hand; Wayland not checked |
+
 ## Benchmarks
 
 ```
 .venv\Scripts\python benchmarks\bench.py run main WORKTREE
 .venv\Scripts\python benchmarks\bench.py compare main-<commit> worktree-<commit>-dirty
+.venv\Scripts\python benchmarks\ui_bench.py OUT_DIR       # the app's responsiveness, through the real window
 ```
 
 See [Quality and performance](Quality-and-Performance) for what is measured, and `benchmarks/README.md` for every
@@ -91,8 +127,9 @@ The README, these wiki pages and the gallery describe the project as it is, so t
   describe; edits made in GitHub's wiki editor are overwritten.
 - **README:** the landing page; brief, with the details here.
 - **Images:** `docs/make_assets.py` regenerates the gallery, the README banner and the social preview with the current
-  pipeline, and `docs/make_screenshot.py` the app screenshot. Run them when the pages change visibly, and before a
-  release. The social preview is uploaded by hand in the repository's settings.
+  pipeline, and `docs/make_screenshot.py` the app screenshot (and, with `--set`, the screenshots above). Run them
+  when the pages change visibly, and before a release. The social preview is uploaded by hand in the repository's
+  settings.
 - **Logo and icons:** edit the logo in `packaging/icons/make_logo.py`, then run it and `make_icons.py` (both in
   `packaging/icons/`) to write the SVG masters and every platform's icon into `src/tessellatum/resources/`, and
   `docs/make_assets.py` for the banner.

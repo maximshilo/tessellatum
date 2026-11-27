@@ -132,6 +132,16 @@ def test_the_examples_are_bundled_small_clean_and_credited():
     assert total < 1_500_000
 
 
+def test_the_examples_icons_are_one_square_so_their_names_line_up(win):
+    buttons = win.window.welcome.example_buttons
+    assert len(buttons) >= 2
+    sizes = {b.icon().availableSizes()[0].toTuple() for b in buttons}
+    assert sizes == {(welcome.THUMBNAIL, welcome.THUMBNAIL)}  # a tall picture and a wide one alike
+    image = buttons[-1].icon().pixmap(welcome.THUMBNAIL).toImage()
+    corners = [image.pixelColor(x, y).alpha() for x in (0, image.width() - 1) for y in (0, image.height() - 1)]
+    assert 0 in corners  # the picture on transparency, not stretched to the square
+
+
 def test_an_example_opens_and_makes_its_page(win):
     button = win.window.welcome.example_buttons[0]
     assert not button.icon().isNull()

@@ -157,6 +157,10 @@ QToolButton:pressed {{ background: {c.pressed}; }}
 QToolButton:checked {{ background: {c.selected}; }}
 QToolButton:focus {{ border: 1px solid {c.accent}; }}
 QToolButton:disabled {{ color: {c.text_disabled}; }}
+QToolButton[popupMode="2"] {{ padding-right: 15px; }}
+QToolButton[popupMode="2"]::menu-indicator {{ subcontrol-origin: padding; subcontrol-position: right center; right: 4px; }}
+QToolButton[popupMode="1"] {{ padding-right: 17px; }}
+QToolButton[popupMode="1"]::menu-button {{ width: 14px; border-left: 1px solid {c.border}; }}
 QToolButton#sectionHeader {{ background: transparent; border: 1px solid transparent; color: {c.text};
     font-weight: 600; padding: 3px 2px; }}
 QToolButton#sectionHeader:hover {{ background: {c.hover}; }}
