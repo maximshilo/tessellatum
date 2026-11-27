@@ -83,7 +83,7 @@ CHECKS = {
     "FP-22": lambda w: _in_menu(w, "reset") and w.controls.reset_button is not None,
     "FP-23": lambda w: len(w.controls.controls) >= 30,
     "FP-24": lambda w: len(w.controls.sections) >= 5,
-    "FP-25": lambda w: _items(w.controls.paper_combo) == ["A4", "A3", "A2"],
+    "FP-25": lambda w: _items(w.controls.paper_combo)[:3] == ["A4", "A3", "A2"],
     "FP-26": lambda w: len(_items(w.controls.medium_combo)) == 2 and w.controls.medium_hint is not None,
     "FP-27": lambda w: w.controls.colors_from_combo.count() == 2,
     "FP-28": lambda w: w.controls.paints_button is not None,

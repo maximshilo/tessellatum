@@ -28,7 +28,7 @@ from tessellatum.core import difficulty
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import DEFAULT_LEGEND_DETAIL, LEGEND_DETAILS, NAME, NAME_HEX_RGB, NAME_RECIPE, NUMBER_ONLY
 from tessellatum.core.pipeline import Handling
-from tessellatum.core.print_size import PAPERS
+from tessellatum.core.print_size import MM_PER_INCH, PAPERS, US_PAPERS
 from tessellatum.core.render import (
     DEFAULT_TONE,
     LINE_WIDTH_MM_RANGE,
@@ -463,6 +463,22 @@ PAPER_TOOLTIP = (
     "applies on it. A larger sheet prints the picture larger, so it makes a finer page, with more and smaller regions, "
     "and takes longer; the PDF's sheets are this size."
 )
+
+
+def _paper_tip(name: str) -> str:
+    """A paper's size, in inches first for a US sheet."""
+    paper = PAPERS[name]
+    mm = f"{paper.width_mm:.0f} × {paper.height_mm:.0f} mm"
+    if name in US_PAPERS:
+        return f"{paper.width_mm / MM_PER_INCH:g} × {paper.height_mm / MM_PER_INCH:g} in ({mm})."
+    return f"{mm}."
+
+
+# A1 peaks at 5.8 GB at Medium and 8.7 GB at Realistic on the benchmark's lion (3.4 GB on A2 at Realistic; measured
+# for 2.0.2): allowed, and said.
+A1_MEMORY = "A page this large needs a lot of memory: about 6 GB at Medium and 9 GB at Realistic."
+PAPER_TOOLTIPS = {name: _paper_tip(name) for name in PAPERS}
+PAPER_TOOLTIPS["A1"] += " " + A1_MEMORY
 LEGEND_TOOLTIPS = {
     NUMBER_ONLY: "Each color's swatch with its number in it, and nothing beside it.",
     NAME: "Each color's everyday name beside its swatch (\"dusty rose\", \"olive green\"): the nearest of about 800 names, every color a different one.",
@@ -544,7 +560,8 @@ CHOICES: tuple[Choice, ...] = (
            options=tuple(difficulty.preset_names()), option_tips={CUSTOM: CUSTOM_TOOLTIP},
            aliases=("level", "difficulty", "preset")),
     Choice("paper", "Paper", ENUM, DEFAULT_PAPER, "style/paper", DOCUMENT, "Page", INTENT, PAPER_TOOLTIP,
-           options=tuple(PAPERS), field="PageStyle.paper", aliases=("sheet", "page size", "A3", "A2")),
+           options=tuple(PAPERS), option_tips=PAPER_TOOLTIPS, field="PageStyle.paper",
+           aliases=("sheet", "page size", "A3", "A2", "A1", "letter", "legal", "tabloid", "ledger", "US")),
     Choice("medium", "Coloring on", ENUM, difficulty.DEFAULT_MEDIUM, "difficulty/medium", COLORS, "Medium", INTENT,
            MEDIUM_TOOLTIP, options=tuple(difficulty.MEDIA), option_tips=MEDIUM_TOOLTIPS,
            aliases=("screen", "procreate", "digital", "paper")),

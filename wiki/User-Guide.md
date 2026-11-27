@@ -296,15 +296,20 @@ place, to compare settings there.
 
 ## Paper
 
-**Paper** (A4 by default, A3 or A2, at the top of the region settings) is the sheet the page is made for. Every size
+**Paper** (A4 by default; A3, A2 or A1; or the US sizes Letter, Legal and Tabloid, at the top of the region settings,
+each paper's size in its tooltip) is the sheet the page is made for. Every size
 on paper -- the brush, the smallest region, the lines, the numbers -- applies on that sheet, so a larger one prints the
 picture larger and makes a finer page of it: more and smaller regions, each still as wide as the brush. The page is
 made at more pixels on a larger sheet, the picture scaled up where it has fewer, so that every region still has room
 for the brush and its number; scaling up adds no detail the picture doesn't have, so a larger picture still makes a
 better page on a larger sheet. A page takes longer to make there: a Medium preview of a 2048 px photograph takes 1.5
-to 2 times as long on A3 and 2.3 to 4 times on A2 (the benchmark's lion: 2 s on A4, 4 s on A3 and 9 s on A2; at
-Realistic, 7 s, 15 s and 34 s). The PDF's sheets are this paper, the page landscape when the picture is wider than
-tall and the legend on a portrait sheet of its own, and a PNG records the resolution that prints it on this paper.
+to 2 times as long on A3 and 2.3 to 4 times on A2 (the benchmark's lion: 2 s on A4, 4 s on A3, 9 s on A2 and 29 s on
+A1; at Realistic, 7 s, 15 s, 34 s and 110 s). Letter takes about as long as A4, Legal a quarter longer, and Tabloid as long as A3.
+A1 needs a lot of memory: a page of the lion peaks at 5.8 GB at Medium and 8.7 GB at Realistic (3.4 GB on A2 at
+Realistic), so it wants a computer with
+16 GB or more, and its PNG is at most 507 dpi (16,384 px along a side). The PDF's sheets are this paper, the page
+landscape when the picture is wider than tall and the legend on a portrait sheet of its own, and a PNG records the
+resolution that prints it on this paper.
 
 ## Coloring on
 
@@ -386,7 +391,7 @@ and it is kept between runs. Each change applies at once.
 
 Beginner, Easy, Medium (the default), Hard and Realistic fill in the settings below them; moving any of them picks
 **Custom**. Under the choice, a line says what the level makes: about how many regions it gives on the paper chosen
-(measured on the benchmark's pictures on A4, and in proportion to the printable area on A3 and A2; a busy picture
+(measured on the benchmark's pictures on A4, and in proportion to the printable area on the other papers; a busy picture
 gives more, a plain one fewer), how many colors, how large and how wide its regions, and its corners. For Custom it
 names the level it was moved from and what was changed, e.g. "Hard (modified, 2 changes): Colors 26, Smoothing 0.9."
 The five levels differ in four settings:

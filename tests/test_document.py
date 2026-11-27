@@ -84,7 +84,7 @@ def test_snapshots_are_values():
     with pytest.raises(KeyError):
         a.with_values(no_such_setting=1)
     with pytest.raises(ValueError):
-        a.replace(paper="Letter")
+        a.replace(paper="A0")
     with pytest.raises(ValueError):
         DocumentSettings(values={"num_colors": 3})
 
