@@ -15,6 +15,10 @@ Each release's notes on GitHub are its section below.
   that touches the interface.
 - A test that Quit, Preferences and About carry the menu roles macOS uses to place them in the application menu.
 
+### Fixed
+
+- `TESSELLATUM_PSEUDO_LOCALE=0` turned the pseudo-locale on; only a value other than 0 does now.
+
 ## [1.1.33] - 2026-11-27
 
 ### Added

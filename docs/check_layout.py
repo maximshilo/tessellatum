@@ -11,8 +11,8 @@ the window off screen, makes the lion's page, and at each window size (in logica
 - the window on each of the sidebar's pages, in the light and the dark theme;
 - the export dialog and the Preferences' pages.
 In each, a label or button narrower than the least its text needs (its ``minimumSizeHint``), or cut at the side by
-the panel it is in, is reported: its text is cut. A window size smaller than the window's own minimum there is reported too (the window can't be made that small,
-or its panels are cut).
+the panel it is in, is reported: its text is cut. A window size smaller than the window's own minimum there is
+reported too (the window can't be made that small, or its panels are cut).
 ``--pseudo`` runs in the pseudo-locale (``gui.i18n``), every string about 40% longer. The PNGs and ``layout.md``, the
 results by cell, go to OUT_DIR; the exit status is 1 if any text is cut.
 """

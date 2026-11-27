@@ -128,7 +128,8 @@ def test_a_pseudo_translation_is_longer_and_keeps_what_a_translation_keeps():
 
 # What a widget may show untranslated: numbers with their units and signs, file names, and the symbols the
 # interface draws with (a dot for a change, a color's hex code).
-DATA = re.compile(r"^[\d\s.,:;×x%#()+\-−/–·*●…|]*(mm|cm|in|px|dpi|pt|mm²|in²|°|L\*|ΔE00|Mpx|s|×|%)?[\d\s.,]*$")
+UNITS = r"(mm|cm|in|px|dpi|pt|mm²|in²|°|L\*|ΔE00|Mpx|s|×|%)"
+DATA = re.compile(r"^[\d\s.,:;×x%#()+\-−/–·*●…|]*" + UNITS + r"?[\d\s.,]*$")
 FILE = re.compile(r"\S+\.(png|jpg|tessellatum|pdf|swatches|ase|gpl)$", re.I)
 
 
@@ -152,7 +153,11 @@ def _shown(root: QWidget):
     """(what, where, text) for every string ``root`` and its children show or say."""
     for widget in [root, *root.findChildren(QWidget)]:
         where = f"{type(widget).__name__}:{widget.objectName()}"
-        texts = {"tip": widget.toolTip(), "name": widget.accessibleName(), "description": widget.accessibleDescription()}
+        texts = {
+            "tip": widget.toolTip(),
+            "name": widget.accessibleName(),
+            "description": widget.accessibleDescription(),
+        }
         if isinstance(widget, (QLabel, QAbstractButton, QLineEdit)):
             texts["text"] = widget.text()
         if isinstance(widget, QLineEdit):
@@ -306,7 +311,7 @@ def test_a_german_window_shows_and_takes_numbers_the_german_way(monkeypatch):
         QLocale.setDefault(US)
 
 
-# -- Paths with any characters ------------------------------------------------------------------------------------------
+# -- Paths with any characters -----------------------------------------------------------------------------------
 def _save_to(monkeypatch, path):
     monkeypatch.setattr(main_window.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(path), "")))
 

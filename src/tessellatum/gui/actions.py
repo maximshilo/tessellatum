@@ -134,7 +134,9 @@ COMPARE_WITH_ACTIONS = {view: f"compare_with_{key}" for key, view in COMPARE_WIT
 VISION_ACTIONS = {mode: f"vision_{mode}" for mode in vision.MODES}
 THEME_ACTIONS = {mode: f"theme_{mode.lower()}" for mode in theme.MODES}
 ZOOM_ACTIONS = ("zoom_in", "zoom_out", "fit", "actual_pixels", "print_size")
-ANALYSIS = QT_TRANSLATE_NOOP("settings", "Analysis")  # the sidebar's page that isn't settings: the page measured (see ``gui.analysis``)
+ANALYSIS = QT_TRANSLATE_NOOP(
+    "settings", "Analysis"
+)  # the sidebar's page that isn't settings: the page measured (see ``gui.analysis``)
 ACTIVITIES = (*settings.CATEGORIES, ANALYSIS)
 ACTIVITY_ACTIONS = {category: f"activity_{category.lower()}" for category in ACTIVITIES}
 

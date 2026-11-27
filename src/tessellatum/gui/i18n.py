@@ -47,14 +47,15 @@ class Text(str):
 
 
 class LocaleFormatter(string.Formatter):
-    """``str.format`` with numbers written by the default ``QLocale``: ``{0:,}``, ``{0:.1f}``, ``{0:,.0f}`` and ``{0:g}``
-    give "1.448", "2,5" and "0,5" in German where Python gives "1,448", "2.5" and "0.5". A comma in the spec asks for
-    the locale's group separator, as it asks for Python's; any other spec is Python's."""
+    """``str.format`` with numbers written by the default ``QLocale``: ``{0:,}``, ``{0:.1f}``, ``{0:,.0f}`` and
+    ``{0:g}`` give "1.448", "2,5" and "0,5" in German where Python gives "1,448", "2.5" and "0.5". A comma in the spec
+    asks for the locale's group separator, as it asks for Python's; any other spec is Python's."""
 
     _SPEC = re.compile(r",?(?:\.\d+)?[fgd]?")
 
     def format_field(self, value, format_spec: str) -> str:
-        if not format_spec or isinstance(value, bool) or not isinstance(value, (int, float))                 or not self._SPEC.fullmatch(format_spec):
+        numeric = isinstance(value, (int, float)) and not isinstance(value, bool)
+        if not format_spec or not numeric or not self._SPEC.fullmatch(format_spec):
             return super().format_field(value, format_spec)
         return _localized(format(value, format_spec))
 
@@ -126,7 +127,7 @@ def install(app: QCoreApplication | None = None, locale: QLocale | None = None) 
     app = app or QCoreApplication.instance()
     if app is None:
         return None
-    if os.environ.get(PSEUDO_ENV):
+    if os.environ.get(PSEUDO_ENV, "") not in ("", "0"):
         translator = PseudoTranslator(app)
         app.installTranslator(translator)
         _installed.append(translator)

@@ -149,8 +149,8 @@ class RegionInspector(QWidget):
             self.list.addItem(item)
         self.list.blockSignals(blocked)
         listed = color_number is not None and bool(regions)
-        self.list_title.setText(translate("region_inspector", "The {0:,} regions of color {color_number}, largest "
-                                                              "first").format(len(regions), color_number=color_number) if listed else "")
+        title = translate("region_inspector", "The {0:,} regions of color {color_number}, largest first")
+        self.list_title.setText(title.format(len(regions), color_number=color_number) if listed else "")
         self.list_title.setVisible(listed)
         self.list.setVisible(listed)
         self.setVisible(listed or self._info is not None)

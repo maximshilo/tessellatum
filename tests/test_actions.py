@@ -85,8 +85,8 @@ def test_no_command_has_a_key_twice(window):
 
 
 def test_the_application_menu_commands_have_their_roles(window):
-    # On macOS, Qt moves these into the application menu (Tessellatum > About, Settings…, Quit) by their role; elsewhere
-    # they stay in the menus they are in. Every other command keeps its place.
+    # On macOS, Qt moves these into the application menu (Tessellatum > About, Settings…, Quit) by their role;
+    # elsewhere they stay in the menus they are in. Every other command keeps its place.
     roles = {"quit": QAction.QuitRole, "preferences": QAction.PreferencesRole, "about": QAction.AboutRole}
     for command in actions.COMMANDS:
         assert window.commands[command.id].menuRole() == roles.get(command.id, QAction.NoRole), command.id

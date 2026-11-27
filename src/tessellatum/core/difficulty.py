@@ -281,8 +281,15 @@ def describe(params: DifficultyParams, tr: Callable[[str], str] = _same) -> str:
         else tr("corners rounded to the brush")
     )
     return tr(
-        "Up to {colors} colors, at least {margin:g} ΔE00 apart. Regions of at least {area:.0f} mm² (about {side:.0f} × "
-        "{side:.0f} mm; {detail} on a photograph's or painting's subject and faces) and {width:g} mm wide on the "
-        "printed page, {corners}."
-    ).format(colors=params.num_colors, margin=params.palette_margin_de00, area=params.min_region_area_mm2,
-             side=side_mm, detail=detail, width=params.min_width_mm, corners=corners)
+        "Up to {colors} colors, at least {margin:g} ΔE00 apart. Regions of at least {area:.0f} mm² "
+        "(about {side:.0f} × {side:.0f} mm; {detail} on a photograph's or painting's subject and faces) and "
+        "{width:g} mm wide on the printed page, {corners}."
+    ).format(
+        colors=params.num_colors,
+        margin=params.palette_margin_de00,
+        area=params.min_region_area_mm2,
+        side=side_mm,
+        detail=detail,
+        width=params.min_width_mm,
+        corners=corners,
+    )

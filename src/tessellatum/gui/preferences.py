@@ -68,9 +68,14 @@ CACHE_PAGES = {AUTOMATIC: pipeline.DEFAULT_CACHE_PAGES, QT_TRANSLATE_NOOP("prefe
                QT_TRANSLATE_NOOP("preferences", "4 pages"): 4, QT_TRANSLATE_NOOP("preferences", "8 pages"): 8}
 # The memory the pages made may take, in bytes; None: automatic (``results.automatic_budget``).
 MB = 1024 ** 2
-RESULT_MEMORY = {AUTOMATIC: None, QT_TRANSLATE_NOOP("preferences", "256 MB"): 256 * MB,
-                 QT_TRANSLATE_NOOP("preferences", "512 MB"): 512 * MB, QT_TRANSLATE_NOOP("preferences", "1 GB"): 1024 * MB,
-                 QT_TRANSLATE_NOOP("preferences", "2 GB"): 2048 * MB, QT_TRANSLATE_NOOP("preferences", "4 GB"): 4096 * MB}
+RESULT_MEMORY = {
+    AUTOMATIC: None,
+    QT_TRANSLATE_NOOP("preferences", "256 MB"): 256 * MB,
+    QT_TRANSLATE_NOOP("preferences", "512 MB"): 512 * MB,
+    QT_TRANSLATE_NOOP("preferences", "1 GB"): 1024 * MB,
+    QT_TRANSLATE_NOOP("preferences", "2 GB"): 2048 * MB,
+    QT_TRANSLATE_NOOP("preferences", "4 GB"): 4096 * MB,
+}
 # How long after the last change to the lines, the numbers or the tone the preview is drawn again by itself, in ms;
 # None: only with Generate Preview. Long enough that a slider dragged draws once, when it stops.
 REDRAW_AFTER_MS = 400

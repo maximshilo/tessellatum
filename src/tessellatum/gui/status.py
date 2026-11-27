@@ -112,8 +112,8 @@ class StatusBar(QStatusBar):
 
     # -- The page and the view ----------------------------------------------------------
     def set_page(self, colors: int | None, regions: int | None) -> None:
-        self.page_label.setText("" if colors is None else translate("status", "{colors} colors · {regions:,} "
-                                                                              "regions").format(colors=colors, regions=regions))
+        text = translate("status", "{colors} colors · {regions:,} regions")
+        self.page_label.setText("" if colors is None else text.format(colors=colors, regions=regions))
 
     def set_size(self, pixels: tuple[int, int] | None, printed_mm: tuple[float, float] | None, paper: str = "") -> None:
         if pixels is None:

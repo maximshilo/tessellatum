@@ -43,8 +43,12 @@ from tessellatum.gui.i18n import number, term, translate
 
 INFO, SUCCESS, WARNING, ERROR = "info", "success", "warning", "error"
 # Each level as the log writes it, translated where it is shown.
-LEVEL_NAMES = {INFO: QT_TRANSLATE_NOOP("notifications", "INFO"), SUCCESS: QT_TRANSLATE_NOOP("notifications", "SUCCESS"),
-               WARNING: QT_TRANSLATE_NOOP("notifications", "WARNING"), ERROR: QT_TRANSLATE_NOOP("notifications", "ERROR")}
+LEVEL_NAMES = {
+    INFO: QT_TRANSLATE_NOOP("notifications", "INFO"),
+    SUCCESS: QT_TRANSLATE_NOOP("notifications", "SUCCESS"),
+    WARNING: QT_TRANSLATE_NOOP("notifications", "WARNING"),
+    ERROR: QT_TRANSLATE_NOOP("notifications", "ERROR"),
+}
 LEVELS = (INFO, SUCCESS, WARNING, ERROR)
 SUCCESS_MS = 6000  # how long a notification that needs nothing of the user stays: time to read it twice
 _ICONS = {INFO: "info", SUCCESS: "success", WARNING: "warning", ERROR: "error"}
@@ -165,7 +169,9 @@ class Entry:
 
     def copy_text(self) -> str:
         stamp = time.strftime("%H:%M:%S", time.localtime(self.when))
-        return f"{stamp} {translate('notifications', LEVEL_NAMES[self.level])} {self.text}" + (f"\n{self.details}" if self.details else "")
+        return f"{stamp} {translate('notifications', LEVEL_NAMES[self.level])} {self.text}" + (
+            f"\n{self.details}" if self.details else ""
+        )
 
 
 class DiagnosticsPanel(QWidget):
@@ -313,8 +319,13 @@ class DiagnosticsPanel(QWidget):
                 details,
             )
         else:
-            self.add(INFO, translate("notifications", "{0}: dropped{took}{stop} (superseded, or of a picture "
-                                                      "since replaced)").format(term(job.label), took=took, stop=stop), details)
+            self.add(
+                INFO,
+                translate(
+                    "notifications", "{0}: dropped{took}{stop} (superseded, or of a picture " "since replaced)"
+                ).format(term(job.label), took=took, stop=stop),
+                details,
+            )
 
 
 def stage_times(stages) -> str:
