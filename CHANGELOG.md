@@ -4,6 +4,12 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [2.0.1] - 2026-11-27
+
+### Changed
+- The README, the wiki and the package metadata describe the page as a paint-by-numbers (color-by-number) page, to
+  print and fill with paints, pencils or markers, or to color in your digital art app.
+
 ## [2.0.0] - 2026-11-27
 
 A new workspace around the same pages. The window is rebuilt from the ground up: a design of its own in light and

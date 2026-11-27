@@ -1,13 +1,13 @@
 [project]
 name = "tessellatum"
-version = "2.0.0"
-description = "Turn any picture into a printable paint-by-numbers page, with computer vision and on-device neural networks."
+version = "2.0.1"
+description = "Turn any picture into a paint-by-numbers (color-by-number) page for paints, pencils, markers or digital art, with computer vision and on-device neural networks."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Maxim Shilo" }]
 keywords = [
-    "paint-by-numbers", "computer-vision", "image-processing", "image-segmentation", "color-quantization",
-    "face-detection", "text-detection", "saliency", "opencv", "onnxruntime", "numba", "pyside6",
+    "paint-by-numbers", "color-by-number", "computer-vision", "image-processing", "image-segmentation",
+    "color-quantization", "face-detection", "text-detection", "saliency", "opencv", "onnxruntime", "numba", "pyside6",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",

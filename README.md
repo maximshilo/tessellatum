@@ -17,8 +17,9 @@
   <img alt="pytest" src="https://img.shields.io/badge/pytest-0A9EDC?style=flat-square&logo=pytest&logoColor=white">
 </p>
 
-**Tessellatum** turns any picture (a photograph, a painting, a cartoon or a comic) into a printable
-paint-by-numbers page: flat, outlined regions, each with a number, and a matching color legend that names every
+**Tessellatum** turns any picture (a photograph, a painting, a cartoon or a comic) into a
+paint-by-numbers (color-by-number) page, to print and fill with paints, pencils or markers, or to color in your
+digital art app: flat, outlined regions, each with a number, and a matching color legend that names every
 color and gives its hex code and RGB values, or how to mix it from your own paints; or a page made from just the
 paints you own and the colors they mix. It pairs classical
 image analysis with compact neural networks that run entirely on-device, and holds every page to physical rules of
