@@ -115,3 +115,39 @@ What makes it fast:
   measures its widest brush in 0.07 ms at the median (0.9 ms for the largest) and outlines it over its box alone; a
   color's highlight over the whole page is built in 9 ms. The canvas pans in 2 ms a frame at the median at any zoom.
 - **Gated inference.** The text detector's fine look runs only where a cheap first look finds text.
+
+## Responsiveness
+
+`benchmarks/ui_bench.py` times the app through its real window (see `benchmarks/README.md`). Before is version 1.0.21,
+measured before the workspace was rebuilt; after is 1.1.34. Both on the same 16-thread Windows 11 desktop
+(Python 3.12, Qt 6.11.2), a 1920×1080 window at 100%, the lion at Medium (1,583 × 1,056, 1,457 regions) unless said;
+median, with the 95th percentile, of 5 to 30 repetitions.
+
+| | Before | After |
+|---|---|---|
+| Generate Preview, caches empty: lion / pearl / line-art pig | 2.6 s (lion) | 2.58 / 1.94 / 4.58 s |
+| Generate Preview again, the stage cache full | 1.91 s | 1.21 / 0.55 / 2.34 s |
+| A line width changed, until its page is shown (after the 0.4 s redraw delay) | a full remake, 1.6-2.0 s | 1.21 s (p95 1.24) |
+| Undo or redo to a page kept | — (no undo) | 142 ms (p95 146) |
+| Undo to a page no longer kept | — | answered in 70 ms; made again in 1.3 s |
+| Legend's detail changed | 26 ms | 23 ms |
+| Switching a settings page or the analysis | — | 10 ms (p95 12) |
+| Switching the view (Page, Completed, Tinted) | 6.2 ms | 8.4 ms (p95 8.9) |
+| Zoom frame / pan frame | 1.7 / 1.1 ms (p95 2.3 / 1.6) | 1.0 / 0.5 ms (p95 2.4 / 0.8) |
+| The page as it prints, for a zoom past the preview's pixels | 3.30 s | 2.59 s |
+| Stop pressed, until the window says it is stopping | — | 2 ms (p95 3) |
+| Stop pressed, until the window is idle (lion at Realistic) | 0.65-1.73 s | 1.11 s (p95 1.77) |
+| Startup, until the window is shown | 1.11 s | 1.64 s |
+| Memory over 50 pages with other settings, then 50 undo/redo steps | — | levels off at 1.14 GB after 16 pages; flat over the undo/redo steps |
+
+The pipeline itself, timed alone the same day on 1.0.21 and 1.1.34: the same regions on every page; a page made from
+scratch takes as long (lion at Medium, 2.31 and 2.28 s); a page made again with the stage cache full is 35 to 50%
+faster, since the regions are kept (0.94 s rather than 1.64 s for the lion at Medium, 1.97 s rather than 3.19 s for
+the pig); exports and stopping take as long as before.
+
+Where it misses the aims it was built to: a page stops at the end of the step it is in, up to 1.8 s on the lion at
+Realistic, as the region step doesn't check for a stop inside it (the window says so at once and stays usable). A page
+drawn again after a line width takes about a second, as the numbers are placed again on the new lines. Startup is half
+a second longer, for the font, the icons and the panels the window builds. What memory grows by is the pages kept
+for undo, bounded by the results cache's budget (Preferences > Performance: a quarter of the RAM, at most 2 GB, by
+default).
