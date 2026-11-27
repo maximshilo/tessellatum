@@ -25,7 +25,8 @@ menu commands, jobs run to the end or held mid-way by a fake pipeline, file dial
 gets no settings store (`MainWindow()` keeps nothing), so a test never reads or writes the user's settings; one that
 needs a store uses a throwaway `.ini` file in a temporary folder. Offscreen fonts are about 40% wider than native ones,
 so a test checks layout by relation (a row stacks where it doesn't fit; the inspector folds away below a width), never
-by pixels; what the window looks like is checked on a desktop session, below.
+by pixels; what the window looks like is checked on a desktop session, below. `tests/test_parity.py` holds the
+window to every capability the app had before its workspace was rebuilt (1.0.21): each is still reachable.
 
 ## Translations
 
