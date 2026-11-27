@@ -35,6 +35,12 @@ images x presets x output sizes:
 - `--warmup` unmeasured runs (default 1), then `--repeats` measured runs
   (default 3); the median is reported. Every run gets a fresh copy of the
   image, so caching inside the pipeline can't turn repeats into cache hits.
+  That includes the region stage, cached from 1.1.16 (`_page_regions`, keyed by
+  the page's size, the difficulty, the handling and the paper): a timed run
+  always builds its regions, and `build_regions` and the stages after it are
+  still called from `pipeline`'s module, where the wrappers below find them.
+  The app's own stage timings come from `generate(..., stage_callback=...)`
+  (`StageEvent`), not from this harness.
 - Per-stage timings come from wrapping the stage functions that
   `tessellatum.core.pipeline.generate` calls: `resize_to_long_edge`,
   `detect_ink` (from 0.1.28), `quantize`, `build_regions`, `smooth_regions` (from
@@ -257,7 +263,10 @@ millimeters and points, and converted to pixels for each output image by the
 print-size model in `src/tessellatum/core/print_size.py`. The harness loads that
 file from its own checkout (`bench_metrics.print_size`), not from the version
 being measured, so every version is judged at the same scale, including
-versions older than the model.
+versions older than the model. It loads `src/tessellatum/core/measures.py` the
+same way (`bench_metrics.measures`): the slivers, corners' tips, undersized and
+unnumbered regions and the numbers' sizes are measured there, by the functions
+the app's Analysis page shows, so the app and the benchmark judge a page alike.
 
 - **Paper:** A4, 210 × 297 mm, with 10 mm margins, leaving a 190 × 277 mm
   printable area. Print resolution 300 dpi.
@@ -1168,3 +1177,27 @@ own — and pass that result set alone:
 
 Timings are wall-clock: close heavy apps while benchmarking, and only compare
 result sets recorded on the same machine (the report warns when they're not).
+
+## The app's responsiveness (`ui_bench.py`)
+
+`bench.py` measures the pipeline. `ui_bench.py` measures the app around it, through the real window, drawn with the
+platform's fonts but kept off screen, and with no settings kept (the user's are never read or changed):
+
+```
+.venv\Scripts\python benchmarks\ui_bench.py OUT_DIR [--reps 5] [--cycles 50]
+```
+
+It writes `OUT_DIR/ui.json`, every sample with its median, 95th percentile and maximum:
+
+| measure | what is timed |
+|---|---|
+| `generation` | Generate Preview at Medium on the lion, the pearl portrait and the line-art pig, until the page is shown and until the window is idle: *cold* with both caches empty, *warm* with the stage cache full |
+| `redraw_edit` | a line width changed, until its page is shown: in all, and after the redraw delay (Preferences) |
+| `legend_detail_change` | the legend's detail, drawn at once |
+| `cached_undo_redo` | undo and redo between two kept pages: until shown, the restore itself, and until idle; `uncached_undo` is one whose page was let go |
+| `switching` | each activity, each view of the page, and focus mode, with a repaint |
+| `pan_zoom` | one zoom or pan step and its repaint, on the preview's pixels and past them (the page as it prints) |
+| `cancel` | Stop while the lion's Realistic page is made: until the window says so, and until it is idle |
+| `memory` | resident memory over 50 generations with other settings each, then 50 undo/redo steps |
+
+Run it alone, like `bench.py`: the numbers are wall-clock.

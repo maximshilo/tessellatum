@@ -5,9 +5,8 @@
 # The release workflow (.github/workflows/release.yml) makes the same build on every
 # release and checks it with `--self-test`; run the result from a terminal to see
 # any error.
-# To get a proper Dock icon, generate src/tessellatum/resources/icon.icns first
-# (e.g. via `iconutil -c icns icon.iconset`); the spec falls back to no custom
-# icon if it's missing.
+# The Dock icon is src/tessellatum/resources/icon.icns, rendered with the other
+# platforms' icons from the logo's SVG masters by packaging/icons/make_icons.py.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

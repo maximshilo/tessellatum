@@ -108,6 +108,20 @@ def test_generate_reuses_quantization_across_region_size_changes(sample_image_bg
     assert len(quantize_calls) == 2
 
 
+def test_the_same_picture_and_settings_make_the_same_page_every_time(sample_image_bgr):
+    """Computed afresh each time (no cache): the page, its numbers and its palette, bit for bit. (Across platforms
+    they may differ; see the wiki's Quality and performance page.)"""
+    pages = []
+    for _ in range(3):
+        pipeline.clear_cache()
+        result = generate(sample_image_bgr.copy(), MIDDLE, long_edge=240, collect_analysis=True)
+        pages.append((np.asarray(result.page), result.num_regions, result.palette_rgb, result.analysis.region_id_map))
+    for page, regions, palette, region_labels in pages[1:]:
+        assert np.array_equal(page, pages[0][0]) and regions == pages[0][1]
+        assert np.array_equal(np.asarray(palette), np.asarray(pages[0][2]))
+        assert np.array_equal(region_labels, pages[0][3])
+
+
 def test_warm_up_runs_the_pipeline_without_error():
     pipeline.warm_up()
 

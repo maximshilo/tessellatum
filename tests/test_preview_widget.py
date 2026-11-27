@@ -16,11 +16,13 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tessellatum.core.painting import Version  # noqa: E402
 from tessellatum.gui.preview_widget import (  # noqa: E402
+    FIT_MARGIN,
     MAX_ZOOM_PRINTED,
     ZOOM_STEP,
     PreviewWidget,
     ZoomBar,
     pil_to_qimage,
+    zoom_text,
 )
 
 _app = QApplication.instance() or QApplication([])
@@ -74,9 +76,12 @@ def test_a_new_page_is_fitted_to_the_window_and_the_bar_shows_how_far_in(preview
     rect = preview.mapFromScene(preview.sceneRect()).boundingRect()
     viewport = preview.viewport().rect()
     assert viewport.contains(rect)  # the page and its legend, whole
-    assert rect.width() >= viewport.width() - 6 or rect.height() >= viewport.height() - 6  # and as large as fits
+    room = viewport.adjusted(FIT_MARGIN - 1, FIT_MARGIN - 1, 1 - FIT_MARGIN, 1 - FIT_MARGIN)
+    assert room.contains(rect)  # on the canvas, a margin from its edges
+    full = 2 * FIT_MARGIN + 6
+    assert rect.width() >= viewport.width() - full or rect.height() >= viewport.height() - full  # and as large as fits
     assert preview.zoom() < 1 and preview.printed_zoom() == pytest.approx(preview.zoom() / PRINTS_AT)
-    assert bar.isEnabled() and bar.zoom_label.text() == f"{preview.printed_zoom() * 100:.0f}%"
+    assert bar.isEnabled() and bar.zoom_text() == zoom_text(preview.printed_zoom())
 
 
 @pytest.mark.parametrize("anchor", [(40.0, 30.0), (250.0, 200.0), (470.5, 380.25)])
@@ -178,7 +183,7 @@ def test_the_fit_follows_the_window_until_zoomed(preview):
     fit = preview.zoom()
     rect = preview.mapFromScene(preview.sceneRect()).boundingRect()
     viewport = preview.viewport().rect()
-    assert viewport.contains(rect) and rect.height() >= viewport.height() - 6
+    assert viewport.contains(rect) and rect.height() >= viewport.height() - 2 * FIT_MARGIN - 6
 
     preview.zoom_to(1.2)
     preview.resize(600, 450)
@@ -294,9 +299,9 @@ def test_the_bar_s_buttons_zoom(preview):
     assert preview.zoom() == pytest.approx(ZOOM_STEP)
     bar.out_button.click()
     assert preview.zoom() == pytest.approx(1.0)
-    bar.pixels_button.click()
-    assert preview.printed_zoom() == pytest.approx(1.0) and bar.zoom_label.text() == "100%"
+    bar.zoom_field.activated.emit(bar.zoom_field.findText("100%"))
+    assert preview.printed_zoom() == pytest.approx(1.0) and bar.zoom_text() == "100%"
     bar.fit_button.click()
     assert preview.zoom() < 1
-    bar.paper_button.click()
+    bar.zoom_field.activated.emit(bar.zoom_field.findText("Print size"))
     assert preview.transform().m11() * PAGE[0] == pytest.approx(277 / 25.4 * preview.screen().physicalDotsPerInch())

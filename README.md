@@ -44,10 +44,12 @@ domain ([sources](tests/sample_images/SOURCES.md)).
 
 ## The app
 
-![Tessellatum's window: settings on the left, the coloring page and its legend on the right](docs/assets/screenshot.png)
+![Tessellatum's window: the settings by category on the left, the coloring page and its legend in the middle, its palette on the right](docs/assets/screenshot.png)
 
 Pick a difficulty from Beginner to Realistic, or tune any of 30 settings; preview the page, its painted version and a
 tinted painting guide; export a PNG at the resolution you choose (600 dpi by default) or a PDF of vector art, on A4, A3 or A2.
+Compare two pages side by side, inspect a color or a single region on paper, check the page's paintability measures, and
+keep the work as a project, recovered if the app closes unexpectedly.
 
 ## Highlights
 
@@ -78,10 +80,16 @@ tinted painting guide; export a PNG at the resolution you choose (600 dpi by def
 - Interactive speed: Numba-compiled kernels and multithreading, a preview in about 1–4 seconds.
 - Print output: a purpose-built vector PDF writer, and PNGs at any resolution rendered from the same vector page
   (QtPdf).
-- Quality assurance: 1,300+ automated tests, including pixel-exact equivalence tests, and a benchmark harness that
-  scores every version on speed and image quality (ΔE00, SSIM, OCR error rate, edge F1).
-- Desktop delivery: cross-platform Qt 6 interface with background workers, standalone builds for Windows, macOS and
-  Linux, each made, self-tested and released by GitHub Actions.
+- Quality assurance: 2,000+ automated tests, including pixel-exact equivalence tests, and a benchmark harness that
+  scores every version on speed and image quality (ΔE00, SSIM, OCR error rate, edge F1); its paintability measures
+  are also the app's live analysis of each page. The interface has its own benchmark (latency percentiles and
+  memory, driven through the real window) and a screenshot regression check across themes and screen sizes.
+- Desktop delivery: cross-platform Qt 6 interface with background workers and a token-based light/dark design
+  system (WCAG AA contrast, measured on the rendered window), full keyboard and screen-reader access, a
+  color-vision simulation of the page, and an interface ready to translate (Qt Linguist catalogs, locale-aware
+  numbers, right-to-left layout); undo and redo served from a content-addressed result cache; versioned project
+  files saved atomically and validated on read, with crash recovery; standalone builds for Windows, macOS and Linux, each made,
+  self-tested and released by GitHub Actions.
 
 ## How it works
 
@@ -144,4 +152,6 @@ python3 -m venv .venv
 ## License
 
 [Apache License 2.0](LICENSE). The bundled detection models are MIT or Apache 2.0 licensed
-([details](src/tessellatum/resources/MODELS.md)).
+([details](src/tessellatum/resources/MODELS.md)); the Inter typeface is under the SIL Open Font License 1.1
+([text](src/tessellatum/resources/fonts/OFL.txt)) and the Lucide icons under the ISC license
+([text](src/tessellatum/resources/icons/LICENSE)).

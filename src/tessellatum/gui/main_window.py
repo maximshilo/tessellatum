@@ -1,194 +1,1997 @@
-"""Top-level application window."""
+"""Top-level application window: the workspace around the canvas.
+
+From the top: the menu bar; the global toolbar (Open, Generate/Cancel, Export, the panel toggles); then the activity
+bar, the settings sidebar (``ControlsPanel``), the canvas with its own toolbar (the version shown, the zoom), and the
+inspector (the page's colors), side by side in a splitter; the status bar. The sidebar and the inspector can be
+resized, folded away (View menu, or the toolbar), or all hidden at once in focus mode; on a narrow window the inspector
+and then the sidebar fold away by themselves. The arrangement is kept between runs (see ``workspace.LayoutStore``).
+"""
 
 from __future__ import annotations
 
 import dataclasses
+import io
+import logging
+import math
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QSettings, Qt, QThread
-from PySide6.QtGui import QImage, QPixmap
+from PIL import Image
+from PySide6.QtCore import QT_TRANSLATE_NOOP, QEvent, QObject, QPointF, QRectF, QSettings, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QImage, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
-    QFrame,
     QHBoxLayout,
     QMainWindow,
+    QMenu,
     QMessageBox,
-    QScrollArea,
+    QStackedWidget,
+    QSizePolicy,
     QSplitter,
+    QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import isValid
 
-from tessellatum.core import export, mixing, pipeline, swatches
+from tessellatum import __version__
+from tessellatum.app import errors
+from tessellatum.app import project as projects
+from tessellatum.app.document import Document
+from tessellatum.app.history import SETTINGS, History
+from tessellatum.app.jobs import ANALYSIS as ANALYSIS_JOB
+from tessellatum.app.jobs import (
+    EXPORT, INSPECTION, PREVIEW, PRINT_LAYOUT, RECIPES, SAVE, Job, JobManager, page_task,
+)
+from tessellatum.app.recovery import RecoveryStore, Snapshot
+from tessellatum.app.results import ResultCache, ResultKey
+from tessellatum.app.snapshot import DocumentSettings
+from tessellatum.core import export, measures, mixing, pipeline, swatches
+from tessellatum.core.difficulty import SCREEN_MEDIUM
 from tessellatum.core.legend import NAME_RECIPE, render_legend
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import GeneratedPage
 from tessellatum.core.print_size import MM_PER_INCH, print_scale
+from tessellatum.gui import accessibility, freshness, preferences, shortcuts, theme, vision
+from tessellatum.core import settings as registry
+from tessellatum.gui.actions import (
+    ACTIVITY_ACTIONS, ANALYSIS, COMPARE_ACTIONS, COMPARE_MENU, COMPARE_WITH_ACTIONS, GUIDE_ACTIONS, THEME_ACTIONS,
+    VERSION_ACTIONS, VISION_ACTIONS, ZOOM_ACTIONS, Actions,
+)
+from tessellatum.gui.actions import FILE as FILE_MENU
+from tessellatum.gui.welcome import WelcomePage
+from tessellatum.app.presets import PresetStore
 from tessellatum.gui.controls_panel import DPI, PALETTE, ControlsPanel
-from tessellatum.gui.preview_widget import PreviewWidget, VersionBar, ZoomBar
-from tessellatum.gui.worker import PipelineWorker, TaskWorker
+from tessellatum.gui.export_dialog import ExportDialog, ExportState, palette_pixmap, pixmap_of, warnings_for
+from tessellatum.gui.notifications import (
+    ERROR, INFO, SUCCESS, WARNING, DiagnosticsPanel, NotificationBar, install_log_handler, remove_log_handler,
+    show_in_folder,
+)
+from tessellatum.gui.preview_widget import (
+    ANNOTATION, COMPARE_OFF, DIAGNOSTICS, ORIGINAL, PREVIOUS, SIDE_BY_SIDE, SPLIT_HORIZONTAL, SPLIT_VERTICAL, PreviewWidget, SideBySide,
+    VersionBar, ZoomBar, view_name,
+)
+from tessellatum.gui.status import BUSY, CANCELLED, DONE, FAILED, IDLE, StatusBar
+from tessellatum.gui import analysis
+from tessellatum.gui.theme.tokens import COLORS, LIGHT
+from tessellatum.gui.palette_inspector import PaletteInspector
+from tessellatum.gui.region_inspector import RegionInspector, region_info
+from tessellatum.gui.workspace import ActivityBar, LayoutStore
+from tessellatum.gui.i18n import term, translate
 
-OPEN_IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.gif)"
+IMAGE_PATTERNS = "*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.gif"
+
+
+def image_filter() -> str:
+    """The file dialogs' filters, in the interface's language."""
+    return translate("main_window", "Images ({patterns})").format(patterns=IMAGE_PATTERNS)
+
+
+def project_filter() -> str:
+    return translate("main_window", "Tessellatum projects ({patterns})").format(patterns=f"*{projects.SUFFIX}")
+
+
+def open_filter() -> str:
+    both = translate("main_window", "Pictures and projects ({patterns})").format(
+        patterns=f"*{projects.SUFFIX} {IMAGE_PATTERNS}")
+    return f"{both};;{image_filter()};;{project_filter()}"
+
+
+RECENT_KEY = "recent/projects"
+RECENT_PICTURES_KEY = "recent/pictures"
+PASTED_NAME = "Pasted picture.png"
+PICTURE_SUFFIXES = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tiff", ".tif", ".gif")
+RECENT_MAX = 10
+SAVE_CHANGES, DISCARD_CHANGES, KEEP_WORKING = "save", "discard", "cancel"  # unsaved work (see _settle_unsaved)
 # The preview's legend is drawn at least this many pixels a millimeter on paper (300 dpi), finer than a preview's
 # page, so that its names and codes stay sharp zoomed in.
 PREVIEW_LEGEND_PX_PER_MM = 300 / MM_PER_INCH
 
+# The workspace's layout. Below these window widths (logical pixels) the inspector, then the sidebar, fold away by
+# themselves, and come back as the window widens again: 1280 x 720 at 125% scaling is 1024 px wide, where the canvas
+# keeps the room the inspector would take.
+INSPECTOR_MIN_WINDOW = 1100
+SIDEBAR_MIN_WINDOW = 760
+MIN_WINDOW = QSize(720, 480)  # nothing clips at this size: the canvas's toolbar folds what doesn't fit into a menu
+SCROLL_RESTORE_MS = 1000  # how long a kept scroll position waits for its page's layout
+DEFAULT_SPLIT = (340, 700, 240)  # the sidebar, the canvas, the inspector
+DEFAULT_ACTIVITY = registry.GENERATION
+_NOT_MIXED = object()  # recipes asked for but not mixed yet (see MainWindow._recipes)
+
+log = logging.getLogger(__name__)
+
+
+def mix_recipes(palette_rgb, paints) -> list[list[str]]:
+    """How to mix each of the colors ``palette_rgb`` from ``paints`` ((name, RGB) each), as the legend writes it: up to
+    a second with many paints, so run off the GUI thread."""
+    found = mixing.recipes(palette_rgb, [rgb for _name, rgb in paints])
+    return [mixing.recipe_lines(recipe, paints) for recipe in found]
+
+def highlight_image(mask: np.ndarray, accent: tuple[int, int, int], isolate: bool, tint: int | None = None,
+                    edge: int = 1) -> QImage:
+    """An image over the page (ARGB, its size) that highlights the pixels of ``mask``: tinted in ``accent`` (at
+    ``tint``'s alpha) and outlined in it ``edge`` pixels in, so the regions show on any page; with ``isolate``, every
+    other pixel dimmed toward white."""
+    height, width = mask.shape
+
+    def argb(rgb, alpha) -> np.uint32:  # a pixel of Qt's ARGB32: a native 32-bit 0xAARRGGBB
+        return np.uint32((alpha << 24) | (rgb[0] << 16) | (rgb[1] << 8) | rgb[2])
+
+    pixels = np.zeros((height, width), dtype=np.uint32)
+    pixels[mask] = argb(accent, HIGHLIGHT_ALPHA if tint is None else tint)
+    inner = mask.copy()
+    for _ in range(edge):
+        shrunk = inner.copy()
+        shrunk[1:, :] &= inner[:-1, :]
+        shrunk[:-1, :] &= inner[1:, :]
+        shrunk[:, 1:] &= inner[:, :-1]
+        shrunk[:, :-1] &= inner[:, 1:]
+        shrunk[0, :] = shrunk[-1, :] = False
+        shrunk[:, 0] = shrunk[:, -1] = False
+        inner = shrunk
+    pixels[mask & ~inner] = argb(accent, 255)
+    if isolate:
+        pixels[~mask] = argb((255, 255, 255), ISOLATE_ALPHA)
+    return QImage(pixels.data, width, height, width * 4, QImage.Format_ARGB32).copy()
+
+
+def diagnostic_image(mask: np.ndarray, color: str, alpha: int, outline: bool = False) -> QImage:
+    """An overlay (ARGB, the mask's size) of ``mask`` in ``color`` (a hex) at ``alpha``; with ``outline``, edged in it
+    too, so that small regions show at any zoom."""
+    rgb = QColor(color)
+    accent = (rgb.red(), rgb.green(), rgb.blue())
+    if outline:
+        return highlight_image(mask, accent, False, tint=alpha)
+    pixels = np.zeros(mask.shape, dtype=np.uint32)
+    pixels[mask] = np.uint32((alpha << 24) | (accent[0] << 16) | (accent[1] << 8) | accent[2])
+    height, width = mask.shape
+    return QImage(pixels.data, width, height, width * 4, QImage.Format_ARGB32).copy()
+
+
+def leader_image(shape: tuple[int, int], leaders, color: str) -> QImage:
+    """An overlay (the region map's size) that draws each number's leader line, and a box round its number."""
+    height, width = shape
+    image = QImage(width, height, QImage.Format_ARGB32_Premultiplied)
+    image.fill(Qt.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor(color), 2)
+    painter.setPen(pen)
+    for (start, end), box in leaders:
+        painter.drawLine(QPointF(*start), QPointF(*end))
+        x0, y0, x1, y1 = box
+        painter.drawRect(QRectF(x0 - 1, y0 - 1, x1 - x0 + 2, y1 - y0 + 2))
+    painter.end()
+    return image
+
+
+DIAGNOSTIC_ALPHA = 150  # the analysis's overlays over the page
+HIGHLIGHT_ALPHA = 90  # the highlight's tint over the regions of the color picked
+ISOLATE_ALPHA = 190  # how far the other regions are dimmed toward white, with Isolate
+REGION_ALPHA = 160  # the tint over the region picked, under its outline: darker than its color's other regions
+
+FOCUS_HINT = QT_TRANSLATE_NOOP("main_window", "Focus mode: the panels are hidden. Press Esc, or Exit Focus Mode "
+                                              "above the page, to bring them back.")
+STALE_NAMED = 3  # how many changed settings the out-of-date status names
+
 
 class MainWindow(QMainWindow):
-    def __init__(self, store: QSettings | None = None):
-        """``store``, if given, is where the panel keeps its settings between runs (see ``ControlsPanel``)."""
+    def __init__(self, store: QSettings | None = None, presets: PresetStore | None = None,
+                 recovery: RecoveryStore | None = None):
+        """``store``, if given, is where the panel keeps its settings between runs (see ``ControlsPanel``);
+        ``recovery``, where unsaved work is kept to be recovered after a crash (see ``app.recovery``)."""
         super().__init__()
-        self.setWindowTitle("Tessellatum")
+        self.recovery = recovery
+        self._recovery_revision: int | None = None  # the document's revision the last snapshot was of
+        self._recovery_timer = QTimer(self)
+        self._recovery_timer.timeout.connect(self._keep_for_recovery)
+        self.setWindowTitle(translate("main_window", "Tessellatum"))
 
-        self.controls = ControlsPanel(store=store)
+        self._layout = LayoutStore(store)
+        self._store = store  # the preferences read it too (see ``_build_commands``), and the recent projects
+        self._recent_kept: dict[str, list[str]] = {}  # the recent projects and pictures, without a store
+        self.controls = ControlsPanel(store=store, presets=presets)  # the settings sidebar: its pages scroll on a short window
+        # The export's options, kept by the panel, shown in the export dialog beside what they will write.
+        self.export_dialog = ExportDialog(self.controls.export_options, self)
+        self.controls.resolution_readout.hide()  # the dialog's summary says it, and more
+        self.export_dialog.export_requested.connect(self.export_page)
+        self.controls.export_options_changed.connect(
+            lambda: self.export_dialog.isVisible() and self._show_export_state()  # only while it is shown
+        )
         self.preview = PreviewWidget()
+        self.preview.setObjectName("canvas")  # the theme's canvas surface; the page keeps its own pixels
         # Every version of a page is drawn with it, so the bar switches between them at once.
         self.version_bar = VersionBar()
         self.version_bar.setEnabled(False)
         self.zoom_bar = ZoomBar(self.preview)
-        bars = QHBoxLayout()
-        bars.addWidget(self.version_bar, 1)
-        bars.addWidget(self.zoom_bar)
-        preview_pane = QWidget()
-        preview_layout = QVBoxLayout(preview_pane)
-        preview_layout.setContentsMargins(0, 0, 0, 0)
-        preview_layout.addLayout(bars)
-        preview_layout.addWidget(self.preview)
+        # Comparing: the second canvas, side by side with the first and moving with it (or the first split in two),
+        # and the button that picks how and with what.
+        self.compare_view = PreviewWidget()
+        self.compare_view.setObjectName("canvas")
+        self.compare_view.setAccessibleName(translate("main_window", "Canvas compared with"))
+        self.compare_button = QToolButton()
+        self.compare_button.setObjectName("compareButton")
+        self.compare_button.setText(translate("main_window", "Compare"))
+        self.compare_button.setAccessibleName(translate("main_window", "Compare"))
+        self.compare_button.setToolTip(translate("main_window", "Compare two views of the page: side by side, or "
+                                                                "split by a divider"))
+        self.compare_button.setPopupMode(QToolButton.InstantPopup)
+        self.compare_button.setCheckable(True)
+        self._compare_mode = COMPARE_OFF
+        self._compare_with = ORIGINAL
+        self._syncing = False  # a view following the other, not to be followed back
+        # The page made before the one shown, of the same picture: its key in the results kept, and its settings.
+        self._previous: tuple | None = None
+        # The canvas's own toolbar: a toolbar, so that on a narrow window what doesn't fit goes into its overflow menu
+        # rather than being cut off.
+        self.canvas_bar = QToolBar(translate("main_window", "Canvas"))
+        self.canvas_bar.setObjectName("canvasToolbar")
+        self.canvas_bar.setMovable(False)
+        self.canvas_bar.addWidget(self.version_bar)
+        self.canvas_bar.addWidget(self.compare_button)
+        # Whether the page shown is what the settings make (see ``gui.freshness``).
+        self.freshness = freshness.FreshnessBadge()
+        self.canvas_bar.addWidget(self.freshness)
+        gap = QWidget()
+        gap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.canvas_bar.addWidget(gap)
+        # The zoom, under the page: the bar above it keeps the views, the comparison and the page's freshness, which fit
+        # on the default window with both panels open, and the zoom has the canvas's whole width.
+        self.canvas_footer = QToolBar(translate("main_window", "Zoom"))
+        self.canvas_footer.setObjectName("canvasFooter")
+        self.canvas_footer.setMovable(False)
+        # While the canvas is shown as seen with another color vision, it says so, at the footer's start (the bar
+        # above is full on the default window), and a click shows the page's own colors.
+        self.vision_badge = QToolButton()
+        self.vision_badge.setObjectName("visionBadge")
+        self.vision_badge.clicked.connect(lambda: self.set_vision(vision.NORMAL))
+        self._vision_badge_action = self.canvas_footer.addWidget(self.vision_badge)
+        self._vision_badge_action.setVisible(False)
+        footer_gap = QWidget()
+        footer_gap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.canvas_footer.addWidget(footer_gap)
+        self.canvas_footer.addWidget(self.zoom_bar)
+        # In focus mode the toolbar and its Focus Mode button are hidden: this is the way back, on the canvas's own bar.
+        self.exit_focus_action = self.canvas_bar.addAction(translate("main_window", "Exit Focus Mode"))
+        self.exit_focus_action.setToolTip(translate("main_window", "Show the panels again (Esc)"))
+        self.exit_focus_action.setVisible(False)
+        self.exit_focus_action.triggered.connect(lambda: self.set_focus_mode(False))
+        canvas_pane = QWidget()
+        canvas_layout = QVBoxLayout(canvas_pane)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+        canvas_layout.setSpacing(0)
+        canvas_layout.addWidget(self.canvas_bar)
+        # What just happened, over the page: never a dialog in the way (see ``gui.notifications``).
+        self.notification = NotificationBar()
+        canvas_layout.addWidget(self.notification)
+        # The page, or the welcome page while no picture is open (see ``gui.welcome``).
+        self.welcome = WelcomePage()
+        self.canvas_stack = QStackedWidget()
+        self.canvas_stack.addWidget(self.welcome)
+        self.canvas_views = SideBySide(self.preview, self.compare_view)
+        self.canvas_stack.addWidget(self.canvas_views)
+        canvas_layout.addWidget(self.canvas_stack, 1)
+        canvas_layout.addWidget(self.canvas_footer)
+        # A picture or a project dropped anywhere on the window opens; the canvas lets the window take it.
+        self.setAcceptDrops(True)
+        for view in (self.preview, self.compare_view):
+            view.setAcceptDrops(False)
+            view.viewport().setAcceptDrops(False)
 
-        # The panel scrolls rather than holding the window taller than a small screen.
-        controls_scroll = QScrollArea()
-        controls_scroll.setWidget(self.controls)
-        controls_scroll.setWidgetResizable(True)
-        controls_scroll.setFrameShape(QFrame.NoFrame)
-        controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        # As wide as the panel needs with the scroll bar beside it, so that nothing is cut off when it shows.
-        controls_scroll.setMinimumWidth(
-            self.controls.minimumSizeHint().width() + controls_scroll.verticalScrollBar().sizeHint().width()
-        )
+        self.inspector = PaletteInspector()
+        self.analysis = analysis.AnalysisPanel()
+        self.controls.add_page(ANALYSIS, self.analysis)
+        self._analyzed = None  # the page the analysis shown is of
+        self.region_inspector = RegionInspector()
+        self.inspector.add_section(self.region_inspector)
+        self._region: int | None = None  # the region picked on the canvas, by its id in the page's region map
+        self._stats: tuple[object, measures.RegionStats] | None = None  # (page, its regions' areas and boxes)
+        self._picking_color = False
+        self.activity_bar = ActivityBar()
+        self.splitter = QSplitter()
+        self.splitter.setObjectName("workspaceSplitter")
+        self.splitter.setChildrenCollapsible(False)  # folded away with the View menu, never squeezed to nothing
+        for widget in (self.controls, canvas_pane, self.inspector):
+            self.splitter.addWidget(widget)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setStretchFactor(2, 0)
+        self.splitter.setSizes(self._default_split())
+        central = QWidget()
+        central_layout = QHBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self.activity_bar)
+        central_layout.addWidget(self.splitter, 1)
+        # The diagnostics under it all: closed until asked for, and never opened by itself.
+        self.diagnostics = DiagnosticsPanel()
+        self.diagnostics.hide()
+        self.bottom_splitter = QSplitter(Qt.Vertical)
+        self.bottom_splitter.setObjectName("diagnosticsSplitter")
+        self.bottom_splitter.setChildrenCollapsible(False)
+        self.bottom_splitter.addWidget(central)
+        self.bottom_splitter.addWidget(self.diagnostics)
+        self.bottom_splitter.setStretchFactor(0, 1)
+        self.bottom_splitter.setStretchFactor(1, 0)
+        self.bottom_splitter.setSizes([640, 180])
+        self.setCentralWidget(self.bottom_splitter)
+        self.setMinimumSize(MIN_WINDOW)
+        self._focus: dict | None = None  # in focus mode: what showed before it, to put back exactly
+        self._auto_hidden: set[str] = set()  # the panels folded away by a narrow window, not by the user
+        self._scroll_restored = False
+        self._scroll_pending: dict[str, int] = {}  # pages whose kept scroll position waits for their layout
 
-        splitter = QSplitter()
-        splitter.addWidget(controls_scroll)
-        splitter.addWidget(preview_pane)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([320, 880])
-        self.setCentralWidget(splitter)
+        self.status = StatusBar()
+        self.setStatusBar(self.status)
+        self._say(translate("main_window", "Open an image to get started."))
 
-        self.statusBar().showMessage("Open an image to get started.")
-
-        self.current_image_bgr: np.ndarray | None = None
-        self.current_page: GeneratedPage | None = None
         self._previewed_image: np.ndarray | None = None  # the picture current_page is of
-        self._worker: PipelineWorker | None = None
+        self._original_kept: tuple | None = None  # the picture, the long edge and its Original view (_original_view)
         self._pending_export_path: Path | None = None
         self._pending_export_format: str | None = None
         self._pending_export_version: Version | None = None
         self._pending_export_resolution: tuple[str, int] | None = None  # the PNG's, as the panel asked for it
-        self._raster_worker: TaskWorker | None = None  # drawing the PNG in pixels
         self._pending_export_drawn = False  # whether the export waits for the preview's page drawn at print size
+        self._last_export: tuple | None = None  # the last export's file and options, for Retry
         self._ready_message = ""  # the status of the preview shown
-        # Whether _worker is making a page whose end the window hasn't handled yet. (Its last signal can come while Qt
-        # still reports it running.)
-        self._making = False
+        self._stale = False  # whether the status bar says the preview is out of date
+        # How the last preview asked for ended, if it was cancelled or failed and nothing has changed since.
+        self._outcome: str | None = None
+        self._step = ""  # what the page being made is doing now: its stage, as the status bar says it
+        self._percent = 0
+        # A change to the lines, numbers or tone draws the preview again by itself, this long after the last one.
+        self._redraw_timer = QTimer(self)
+        self._redraw_timer.setSingleShot(True)
+        self._redraw_timer.timeout.connect(self._redraw)
+        # A change that makes the page again makes it by itself, if the preferences say so, a second after the last.
+        self._auto_timer = QTimer(self)
+        self._auto_timer.setSingleShot(True)
+        self._auto_timer.timeout.connect(self._auto_generate)
+        self._last_full_s: float | None = None  # how long the picture's last page made afresh took (not a redraw)
         # The preview's page drawn at print size: what the zoom shows past the preview's own pixels, and what the
         # export saves. Drawn in the background when either first asks for it, and dropped with the preview.
         self._print_page: GeneratedPage | None = None
-        self._print_worker: PipelineWorker | None = None
-        self._retired: list[QThread] = []  # workers stopped but maybe not finished yet: kept until they are
 
-        self.controls.open_image_requested.connect(self.open_image)
-        self.controls.generate_requested.connect(self.generate_preview)
-        self.controls.export_requested.connect(self.export_page)
-        self.controls.abort_requested.connect(self.abort_generation)
         self.controls.legend_detail_changed.connect(self._show_legend)
         self.controls.paints_changed.connect(self._show_legend)
         self._recipes_for: tuple | None = None  # what the recipes kept were mixed for, and them (see _recipes)
         self.version_bar.version_changed.connect(self.preview.show_version)
+        self.version_bar.version_changed.connect(self._on_view_changed)
+        # Two views side by side move together: each follows the other's zoom and place.
+        self.preview.view_moved.connect(lambda: self._sync_views(self.preview, self.compare_view))
+        self.compare_view.view_moved.connect(lambda: self._sync_views(self.compare_view, self.preview))
+        self.canvas_views.resized.connect(lambda: self._sync_views(self.preview, self.compare_view))
+        self.compare_view.detail_wanted.connect(self._draw_print_page)
         self.preview.detail_wanted.connect(self._draw_print_page)
 
+        # The document: the picture, its settings and the page made of them. The panel writes its edits into it.
+        self.document = Document(self.controls.snapshot(), self)
+        self.controls.settings_changed.connect(self.document.set_settings)
+        # Undo and redo (see ``app.history``): each change to the settings or the picture, its states kept whole. The
+        # edits made in one go (a preset, a reset) are one change; a slider dragged is one from press to release.
+        self.history = History(self._restore_settings, self._restore_source, self)
+        self._recorded = self.controls.snapshot()  # the settings as the history last saw them
+        self._record_scheduled = False
+        self._restoring = False
+        self._moving = False  # an undo or redo under way: what the cache protects waits for its end
+        self.controls.settings_changed.connect(self._on_settings_edited)
+        self.controls.settings_changed.connect(self._on_settings_changed_for_preview)
+        self.controls.edit_started.connect(self.history.begin_merge)
+        # After the drag's last edit is recorded, which waits for the event loop too.
+        self.controls.edit_finished.connect(lambda: QTimer.singleShot(0, self.history.end_merge))
+
+        # The pages made, kept so that undo, redo and a setting put back show theirs at once (see ``app.results``);
+        # its budget is the preferences' (see _apply_preference).
+        self.results = ResultCache()
+        self.last_restore_ms: float | None = None  # how long the last page shown from it took to show
+        # Everything slow runs as a job (see ``app.jobs``): one of each kind at a time, its result delivered only if
+        # still wanted.
+        self.jobs = JobManager(self.document, self)
+        self.jobs.succeeded.connect(self._on_job_succeeded)
+        self.jobs.failed.connect(self._on_job_failed)
+        self.jobs.cancelled.connect(self._on_job_cancelled)
+        self.jobs.dropped.connect(self._on_job_dropped)
+        self.jobs.progress.connect(self._on_job_progress)
+        self.jobs.stage.connect(self._on_job_stage)
+        self.jobs.started.connect(self._on_job_started)
+        # A page kept or a redraw that waited for an export goes ahead once it is done.
+        self.jobs.finished.connect(self._on_job_finished)
+        # Each job, and the app's own warnings and errors, in the diagnostics; the status bar counts them.
+        self.diagnostics.watch(self.jobs)
+        self._log_handler = install_log_handler(self.diagnostics)
+        self.diagnostics.counts_changed.connect(self.status.set_counts)
+        self.diagnostics.close_requested.connect(lambda: self.set_diagnostics_visible(False))
+        self.status.diagnostics_requested.connect(lambda: self.set_diagnostics_visible(True))
+        self.preview.zoom_changed.connect(self.status.set_zoom)
+
+        self._build_commands()
+
         self.resize(1280, 840)
+        self.document.result_changed.connect(self._inspect_page)
+        self.document.result_changed.connect(self._analyze_page)
+        self.analysis.region_activated.connect(lambda region: self.select_region(region, center=True))
+        self.analysis.overlays_changed.connect(self._show_analysis_overlays)
+        self.analysis.issue_chosen.connect(lambda _regions: self._show_issue_highlight())
+        self.inspector.color_selected.connect(self._on_color_selected)
+        self.inspector.regions_requested.connect(self.list_regions)
+        self.region_inspector.region_chosen.connect(lambda region: self.select_region(region, center=True))
+        self.region_inspector.back.connect(self.inspector.list.setFocus)
+        for view in (self.preview, self.compare_view):
+            view.clicked.connect(self.pick_at)
+        self.inspector.isolate_changed.connect(lambda _isolated: self._show_color_highlight())
+        self.document.result_changed.connect(self._show_page_status)
+        self.document.result_changed.connect(self._show_freshness)
+        self.document.source_changed.connect(self._on_source_changed_for_preview)
+        self.document.source_identified.connect(self._on_source_identified)
+        # The window's title: the project's name (or the picture's), and whether it has unsaved changes.
+        self.document.source_changed.connect(self._show_title)
+        self.document.source_changed.connect(self._show_canvas)
+        self.document.source_changed.connect(self._sync_commands)  # Save and Close need a picture
+        self.document.project_changed.connect(self._show_title)
+        self.history.changed.connect(self._show_title)
+        # The page shown and the ones undo and redo go to next are kept whatever the cache's budget.
+        self.document.result_changed.connect(self._protect_results)
+        self.history.changed.connect(self._protect_results)
+        self._restore_layout()
 
         # Get one-time costs (loading/compiling the compiled kernels, first
         # OpenCV/Pillow calls) out of the way while the user picks an image,
         # so the first preview is as fast as later ones.
         threading.Thread(target=_warm_up_pipeline, name="pipeline-warm-up", daemon=True).start()
 
+    # -- The document's picture and page ---------------------------------------
+    @property
+    def current_image_bgr(self) -> np.ndarray | None:
+        """The picture (BGR) the document holds, or None."""
+        source = self.document.source()
+        return None if source is None else source.image
+
+    @current_image_bgr.setter
+    def current_image_bgr(self, image: np.ndarray | None) -> None:
+        self.document.set_source(image)
+
+    @property
+    def current_page(self) -> GeneratedPage | None:
+        """The page last made of the picture (the preview), or None."""
+        return self.document.result()
+
+    @current_page.setter
+    def current_page(self, page: GeneratedPage | None) -> None:
+        self.document.set_result(page)
+
+    # -- Commands: the menu bar, the keyboard and the buttons -------------------
+    def _build_commands(self) -> None:
+        """Every command as one action (see ``gui.actions``): in the menu bar, on its shortcut, and behind its button,
+        enabled as its button is."""
+        self.commands = Actions(self)
+        self.menus = self.commands.build_menus(self.menuBar())
+        # File > Open Recent, under Open: the projects opened or saved last, the ones still there.
+        self.recent_menu = QMenu(translate("main_window", "Open &Recent"), self)
+        file_menu = self.menus[FILE_MENU]
+        after_open = file_menu.actions()[file_menu.actions().index(self.commands["open"]) + 1]
+        file_menu.insertMenu(after_open, self.recent_menu)
+        self.recent_menu.aboutToShow.connect(self._show_recent)
+        c, commands = self.controls, self.commands
+        for command_id, method, button in (
+            ("open", self.open_image, c.open_button),
+            ("generate", self.generate_preview, c.generate_button),
+            ("export", self.open_export_dialog, c.export_button),
+        ):
+            commands[command_id].triggered.connect(method)
+            button.setToolTip(commands[command_id].toolTip())
+        # The panel's buttons ask for the commands, so that each one works one way, from wherever it is asked.
+        c.open_image_requested.connect(commands["open"].trigger)
+        c.generate_requested.connect(commands["generate"].trigger)
+        c.export_requested.connect(commands["export"].trigger)
+        c.abort_requested.connect(commands["cancel"].trigger)
+        commands["cancel"].triggered.connect(self.abort_generation)
+        c.abort_button.setToolTip(commands["cancel"].toolTip())
+        commands["reset"].triggered.connect(c.request_reset)
+        c.confirm_reset = self._confirm_reset
+        commands["undo"].triggered.connect(self.undo)
+        commands["find"].triggered.connect(self.find_setting)
+        commands["redo"].triggered.connect(self.redo)
+        self.history.changed.connect(self._show_history)
+        self._show_history()
+        commands["quit"].triggered.connect(self.close)
+        commands["save"].triggered.connect(self.save_project)
+        commands["save_as"].triggered.connect(self.save_project_as)
+        commands["close"].triggered.connect(self.close_document)
+        commands["paste"].triggered.connect(self.paste)
+        self.welcome.open_picture_requested.connect(self.open_picture_dialog)
+        self.welcome.open_project_requested.connect(self.open_project_dialog)
+        self.welcome.open_requested.connect(self.open_path)
+        self.welcome.example_requested.connect(self.open_example)
+        self.welcome.remove_requested.connect(self.forget_recent)
+        commands["about"].triggered.connect(self.show_about)
+        commands["shortcuts"].triggered.connect(self.open_shortcuts)
+        self.shortcuts_dialog: shortcuts.ShortcutsDialog | None = None
+        for version, command_id in VERSION_ACTIONS.items():
+            commands[command_id].triggered.connect(lambda _checked=False, v=version: self.version_bar.buttons[v].click())
+        self.version_bar.version_changed.connect(lambda v: commands[VERSION_ACTIONS[v]].setChecked(True))
+        for command_id, method in zip(ZOOM_ACTIONS, (
+            self.preview.zoom_in, self.preview.zoom_out, self.preview.fit_to_window,
+            self.preview.zoom_to_printed_pixels, self.preview.zoom_to_print_size,
+        )):
+            commands[command_id].triggered.connect(method)
+        # The rulers, the grid and the sheet's bounds: hidden at first, then as they were left.
+        for command_id, method in zip(GUIDE_ACTIONS, (self.preview.set_rulers, self.preview.set_grid,
+                                                      self.preview.set_bounds)):
+            shown = self._layout.get_bool(command_id, False)
+            commands[command_id].setChecked(shown)
+            method(shown)
+            commands[command_id].toggled.connect(method)
+            commands[command_id].toggled.connect(lambda _shown: self._refresh_compare())
+        # Comparing: how, and with what.
+        for mode, command_id in COMPARE_ACTIONS.items():
+            commands[command_id].triggered.connect(lambda _checked=False, m=mode: self.set_compare(m))
+        for view, command_id in COMPARE_WITH_ACTIONS.items():
+            commands[command_id].triggered.connect(lambda _checked=False, v=view: self.set_compare_with(v))
+        self.compare_button.setMenu(commands.submenus[COMPARE_MENU])
+        for mode, command_id in VISION_ACTIONS.items():
+            commands[command_id].triggered.connect(lambda _checked=False, m=mode: self.set_vision(m))
+        self.set_vision(vision.NORMAL)  # the badge's text and name, hidden
+        self._show_previous_state()
+        manager = theme.current()
+        for mode, command_id in THEME_ACTIONS.items():
+            action = commands[command_id]
+            action.setEnabled(manager is not None)
+            if manager is not None:
+                action.triggered.connect(lambda _checked=False, m=mode: self._set_theme_mode(m))
+        if manager is not None:
+            commands[THEME_ACTIONS[manager.mode()]].setChecked(True)
+            manager.mode_changed.connect(self._show_theme_mode)  # a method: it stops with the window
+        self._build_toolbar()
+        self.activity_bar.activity_chosen.connect(self._on_activity_chosen)
+        for category, command_id in ACTIVITY_ACTIONS.items():
+            commands[command_id].triggered.connect(lambda _checked=False, c=category: self.show_activity(c))
+        commands["toggle_sidebar"].triggered.connect(self.set_sidebar_visible)
+        commands["toggle_inspector"].triggered.connect(self.set_inspector_visible)
+        commands["focus_mode"].triggered.connect(self.set_focus_mode)
+        commands["reset_layout"].triggered.connect(self.reset_layout)
+        commands["preferences"].triggered.connect(self.open_preferences)
+        self.preferences = preferences.Preferences(self._store, self)
+        self.preferences_dialog: preferences.PreferencesDialog | None = None
+        self.preferences.changed.connect(self._apply_preference)
+        self._apply_preference()
+        commands["toggle_diagnostics"].triggered.connect(self.set_diagnostics_visible)
+        # Enabled as the buttons are: whatever turns one on or off turns its command with it.
+        self._enablement = _Watcher(self._sync_commands, self)
+        for widget in (c.open_button, c.generate_button, c.export_button, c.abort_button, c.progress_row,
+                       self.version_bar, self.zoom_bar):
+            widget.installEventFilter(self._enablement)
+        self._sync_commands()
+        self._show_canvas()
+        accessibility.name_parts(self)  # the toolbars' overflow buttons and the search fields' clear buttons
+        accessibility.follow_focus()  # a control reached with the keyboard scrolls into view
+
+    def _sync_commands(self) -> None:
+        if not all(isValid(widget) for widget in (self.version_bar, self.zoom_bar, self.controls)):
+            return  # the window torn down: its bars are deleted one by one, each hidden as it goes
+        c, commands = self.controls, self.commands
+        commands["open"].setEnabled(c.open_button.isEnabled())
+        commands["generate"].setEnabled(c.generate_button.isEnabled())
+        commands["export"].setEnabled(c.export_button.isEnabled())
+        picture = self.current_image_bgr is not None
+        for command_id in ("save", "save_as", "close"):
+            commands[command_id].setEnabled(picture)
+        commands["cancel"].setEnabled(not c.progress_row.isHidden() and c.abort_button.isEnabled())
+        for command_id in VERSION_ACTIONS.values():
+            commands[command_id].setEnabled(self.version_bar.isEnabled())
+        for command_id in ZOOM_ACTIONS:
+            commands[command_id].setEnabled(self.zoom_bar.isEnabled())
+        # One button starts the page or stops it, whichever can be done.
+        if hasattr(self, "run_button"):
+            busy = not c.progress_row.isHidden()
+            wanted = commands["cancel"] if busy else commands["generate"]
+            if self.run_button.defaultAction() is not wanted:
+                self.run_button.setDefaultAction(wanted)
+
+    def _build_toolbar(self) -> None:
+        """The global toolbar: Open, Generate (Cancel while a page is made), Export; the panel toggles at its end."""
+        commands = self.commands
+        bar = QToolBar(translate("main_window", "Main"))
+        bar.setObjectName("mainToolbar")
+        bar.setMovable(False)
+        bar.setFloatable(False)
+        bar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        bar.setIconSize(QSize(18, 18))
+        self.addToolBar(Qt.TopToolBarArea, bar)
+        bar.addAction(commands["open"])
+        self.run_button = QToolButton()
+        self.run_button.setObjectName("runButton")
+        self.run_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.run_button.setDefaultAction(commands["generate"])
+        bar.addWidget(self.run_button)
+        bar.addAction(commands["export"])
+        gap = QWidget()
+        gap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        bar.addWidget(gap)
+        for command_id in ("toggle_sidebar", "toggle_inspector", "focus_mode"):
+            bar.addAction(commands[command_id])
+            button = bar.widgetForAction(commands[command_id])
+            button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.toolbar = bar
+
+    # -- The workspace's layout ---------------------------------------------------
+    def show_activity(self, category: str) -> None:
+        """Show ``category``'s settings in the sidebar (or the analysis), unfolding it if it was folded away."""
+        self.controls.show_category(category)
+        self.activity_bar.set_current(category)
+        self.commands[ACTIVITY_ACTIONS[category]].setChecked(True)
+        self.set_sidebar_visible(True)
+        self._analyze_page()
+
+    def _on_activity_chosen(self, category: str) -> None:
+        # The page already shown, clicked: the sidebar folds away; clicked again, it comes back.
+        if category == self.controls.category() and self.sidebar_visible():
+            self.set_sidebar_visible(False)
+        else:
+            self.show_activity(category)
+
+    def sidebar_visible(self) -> bool:
+        return not self.controls.isHidden()
+
+    def inspector_visible(self) -> bool:
+        return not self.inspector.isHidden()
+
+    def set_sidebar_visible(self, visible: bool) -> None:
+        self._set_panel_visible("sidebar", self.controls, visible)
+        if visible and hasattr(self, "analysis"):
+            self._analyze_page()  # the analysis shown again: measured, if this page isn't yet
+
+    def set_inspector_visible(self, visible: bool) -> None:
+        self._set_panel_visible("inspector", self.inspector, visible)
+
+    def _set_panel_visible(self, name: str, widget: QWidget, visible: bool) -> None:
+        if self._focus is not None:
+            self.set_focus_mode(False)  # asking for a panel ends focus mode
+        self._auto_hidden.discard(name)  # the user's choice now, whatever the window's width
+        widget.setVisible(visible)
+        self._show_panel_state()
+
+    def _show_panel_state(self) -> None:
+        self.commands["toggle_sidebar"].setChecked(self.sidebar_visible())
+        self.commands["toggle_inspector"].setChecked(self.inspector_visible())
+        self.commands["focus_mode"].setChecked(self._focus is not None)
+        self.commands["toggle_diagnostics"].setChecked(not self.diagnostics.isHidden())
+
+    def in_focus_mode(self) -> bool:
+        return self._focus is not None
+
+    def set_vision(self, mode: str) -> None:
+        """Show the canvas as seen with ``mode``'s color vision (``gui.vision``): both canvases, never an export."""
+        for view in (self.preview, self.compare_view):
+            view.set_vision(mode)
+        self.commands[VISION_ACTIONS[mode]].setChecked(True)
+        name = translate("vision", vision.NAMES[mode])
+        description = translate("vision", vision.DESCRIPTIONS[mode])
+        self.vision_badge.setText(translate("main_window", "{name} simulation").format(name=name))
+        self.vision_badge.setToolTip(translate("main_window", "{description}, on the screen only: the exports keep "
+                                               "the page's colors. Click to show its own colors.")
+                                     .format(description=description))
+        self.vision_badge.setAccessibleName(translate("main_window", "{name} simulation: show the page's own "
+                                                                     "colors").format(name=name))
+        self._vision_badge_action.setVisible(mode != vision.NORMAL)
+
+    def set_focus_mode(self, on: bool) -> None:
+        """Hide every panel around the page (the toolbar, the activity bar, the sidebar, the inspector, the
+        diagnostics and the status bar), or put them back exactly as they were."""
+        if on == (self._focus is not None):
+            self._show_panel_state()
+            return
+        panels = (self.toolbar, self.activity_bar, self.controls, self.inspector, self.diagnostics, self.statusBar())
+        if on:
+            self._focus = {"shown": [not panel.isHidden() for panel in panels], "sizes": self.splitter.sizes()}
+            for panel in panels:
+                panel.hide()
+            self.notify(INFO, translate("main_window", FOCUS_HINT))
+        else:
+            focus, self._focus = self._focus, None
+            for panel, shown in zip(panels, focus["shown"]):
+                panel.setVisible(shown)
+            self.splitter.setSizes(focus["sizes"])
+            self._reflow()
+            if self.notification.isVisible() and self.notification.text.text() == translate("main_window", FOCUS_HINT):
+                self.notification.dismiss()
+        self.exit_focus_action.setVisible(on)
+        self._show_panel_state()
+
+    def keyPressEvent(self, event) -> None:
+        # Esc leaves focus mode (when it isn't cancelling a page: Cancel's shortcut takes it first).
+        if event.key() == Qt.Key_Escape and self._focus is not None:
+            self.set_focus_mode(False)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._reflow()
+
+    def _reflow(self) -> None:
+        """On a narrow window fold the inspector away, then the sidebar; bring back what was folded so as the window
+        widens. What the user folded stays folded."""
+        if not hasattr(self, "inspector"):
+            return  # still being built
+        if self._focus is None:
+            width = self.width()
+            for name, threshold, widget in (
+                ("inspector", INSPECTOR_MIN_WINDOW, self.inspector), ("sidebar", SIDEBAR_MIN_WINDOW, self.controls),
+            ):
+                if width < threshold and not widget.isHidden():
+                    widget.hide()
+                    self._auto_hidden.add(name)
+                elif width >= threshold and name in self._auto_hidden:
+                    widget.show()
+                    self._auto_hidden.discard(name)
+        if hasattr(self, "commands"):
+            self._show_panel_state()
+
+    def _wanted(self, name: str, widget: QWidget) -> bool:
+        """Whether the user wants the panel ``name`` shown: shown, or folded away only by the window's width or by
+        focus mode."""
+        if self._focus is not None:
+            index = {"sidebar": 2, "inspector": 3}[name]
+            return self._focus["shown"][index] or name in self._auto_hidden
+        return not widget.isHidden() or name in self._auto_hidden
+
+    def _default_split(self) -> list[int]:
+        """The panels' widths as the window starts: the sidebar as wide as its rows need side by side."""
+        sidebar, canvas, inspector = DEFAULT_SPLIT
+        return [max(sidebar, self.controls.preferred_width()), canvas, inspector]
+
+    def _restore_layout(self) -> None:
+        """The arrangement kept from the last run, where there is one."""
+        self._default_expanded = {name: section.is_expanded() for name, section in self.controls.sections.items()}
+        layout = self._layout
+        geometry = layout.get_bytes("geometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        split = layout.get_bytes("splitter")
+        if split is not None:
+            self.splitter.restoreState(split)
+        activity = layout.get("activity", DEFAULT_ACTIVITY)
+        self.controls.show_category(activity if activity in ACTIVITY_ACTIONS else DEFAULT_ACTIVITY)
+        self.activity_bar.set_current(self.controls.category())
+        self.commands[ACTIVITY_ACTIONS[self.controls.category()]].setChecked(True)
+        for name, section in self.controls.sections.items():
+            section.toggle.setChecked(layout.get_bool(f"expanded/{name}", self._default_expanded[name]))
+        self.controls.setVisible(layout.get_bool("sidebar", True))
+        self.inspector.setVisible(layout.get_bool("inspector", True))
+        self._reflow()
+        self._show_panel_state()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._scroll_restored:
+            self._scroll_restored = True
+            # Once the pages are laid out, so that their scroll ranges reach the positions kept.
+            QTimer.singleShot(0, self._restore_scroll)
+
+    def _restore_scroll(self) -> None:
+        """Each page's scroll position as kept. A page whose layout hasn't reached its full height yet (its rows'
+        heights depend on its width, settled over more than one pass) gets its position as its range grows to it, for
+        up to ``SCROLL_RESTORE_MS``, so that a section unfolded later never moves it."""
+        self._scroll_pending = {}
+        for category, scroll in self.controls.scrolls.items():
+            bar = scroll.verticalScrollBar()
+            wanted = self._layout.get_int(f"scroll/{category}", 0)
+            bar.setValue(wanted)
+            if bar.value() != wanted:
+                self._scroll_pending[category] = wanted
+                bar.rangeChanged.connect(self._on_scroll_range)
+        if self._scroll_pending:
+            QTimer.singleShot(SCROLL_RESTORE_MS, self._end_scroll_restore)
+
+    def _on_scroll_range(self, _minimum: int, _maximum: int) -> None:
+        for category, wanted in list(self._scroll_pending.items()):
+            bar = self.controls.scrolls[category].verticalScrollBar()
+            bar.setValue(wanted)
+            if bar.value() == wanted:
+                del self._scroll_pending[category]
+                bar.rangeChanged.disconnect(self._on_scroll_range)
+
+    def _end_scroll_restore(self) -> None:
+        for category in self._scroll_pending:
+            self.controls.scrolls[category].verticalScrollBar().rangeChanged.disconnect(self._on_scroll_range)
+        self._scroll_pending = {}
+
+    def save_layout(self) -> None:
+        """Keep the arrangement for the next run."""
+        layout = self._layout
+        layout.set("geometry", self.saveGeometry())
+        layout.set("splitter", self.splitter.saveState() if self._focus is None else layout.get_bytes("splitter"))
+        layout.set("activity", self.controls.category())
+        layout.set("sidebar", self._wanted("sidebar", self.controls))
+        layout.set("inspector", self._wanted("inspector", self.inspector))
+        for command_id in GUIDE_ACTIONS:
+            layout.set(command_id, self.commands[command_id].isChecked())
+        for category, scroll in self.controls.scrolls.items():
+            layout.set(f"scroll/{category}", scroll.verticalScrollBar().value())
+        for name, section in self.controls.sections.items():
+            layout.set(f"expanded/{name}", section.is_expanded())
+
+    def reset_layout(self) -> None:
+        """Put the panels back where they start: both shown, at their first sizes, the Generation page at its top
+        with its sections folded as they start. The window's own size stays."""
+        if self._focus is not None:
+            self.set_focus_mode(False)
+        self._layout.clear()
+        self._auto_hidden.clear()
+        for command_id in GUIDE_ACTIONS:
+            self.commands[command_id].setChecked(False)
+        self._end_scroll_restore()
+        self.controls.show()
+        self.inspector.show()
+        self.splitter.setSizes(self._default_split())
+        for name, section in self.controls.sections.items():
+            section.toggle.setChecked(self._default_expanded[name])
+        for scroll in self.controls.scrolls.values():
+            scroll.verticalScrollBar().setValue(0)
+        self.show_activity(DEFAULT_ACTIVITY)
+        self._reflow()
+
+    # -- Preferences: how the app looks and works, apart from the page's settings and their undo -------------
+    def _apply_preference(self, key: str | None = None) -> None:
+        prefs = self.preferences
+        if key in (None, preferences.UNITS_KEY):
+            self.controls.set_length_units(prefs.units())
+            self.preview.set_units(prefs.units())
+            self._refresh_compare()
+        if key in (None, preferences.CANVAS_KEY):
+            preferences.apply_canvas(self.preview, prefs.canvas_color())
+            preferences.apply_canvas(self.compare_view, prefs.canvas_color())
+        if key in (None, preferences.CACHE_KEY):
+            pipeline.set_cache_pages(prefs.cache_pages())
+        if key in (None, preferences.RESULTS_KEY):
+            self.results.set_budget(prefs.result_memory())
+        if key in (None, preferences.RECOVERY_KEY):
+            every = prefs.recovery_every_ms()
+            if every is None or self.recovery is None:
+                self._recovery_timer.stop()
+            else:
+                self._recovery_timer.start(every)
+        if key in (preferences.REDRAW_KEY, preferences.AUTO_KEY):
+            self._schedule_redraw()
+            self._show_freshness()
+
+    def open_shortcuts(self) -> None:
+        """Help > Keyboard Shortcuts, made the first time; beside the window, not in its way."""
+        if self.shortcuts_dialog is None:
+            self.shortcuts_dialog = shortcuts.ShortcutsDialog(self.commands, self)
+            accessibility.name_parts(self.shortcuts_dialog)
+        self.shortcuts_dialog.show()
+        self.shortcuts_dialog.raise_()
+        self.shortcuts_dialog.activateWindow()
+
+    def open_preferences(self) -> None:
+        """The Preferences dialog, made the first time."""
+        if self.preferences_dialog is None:
+            self.preferences_dialog = preferences.PreferencesDialog(self.preferences, self.commands, self)
+            self.preferences_dialog.reset_layout_requested.connect(self.reset_layout)
+            self.preferences_dialog.clear_requested.connect(self.results.clear)
+        self.preferences_dialog.show()
+        self.preferences_dialog.raise_()
+        self.preferences_dialog.activateWindow()
+
+    def _show_theme_mode(self, mode: str) -> None:
+        self.commands[THEME_ACTIONS[mode]].setChecked(True)
+
+    def _set_theme_mode(self, mode: str) -> None:
+        manager = theme.current()
+        if manager is not None:
+            manager.set_mode(mode)  # its mode_changed checks the mode's command
+
+    # -- Feedback: the status bar, notifications and the diagnostics ------------------
+    def _say(self, text: str, state: str = IDLE) -> None:
+        """Say ``text`` in the status bar, in ``state`` (see ``gui.status``)."""
+        self.status.set_state(text, state)
+
+    def notify(self, level: str, text: str, actions=()) -> None:
+        """Tell ``text`` in the banner over the page (see ``NotificationBar.notify``)."""
+        self.notification.notify(level, text, tuple(actions))
+
+    def _details(self) -> tuple[str, object]:
+        """A notification's action that shows the last error in the diagnostics, with its details."""
+        return (translate("main_window", "Details"), self.show_last_error)
+
+    def show_last_error(self) -> None:
+        self.set_diagnostics_visible(True)
+        errors = [entry for entry in self.diagnostics.entries if entry.level == ERROR]
+        if errors:
+            self.diagnostics.select(errors[-1])
+
+    def set_diagnostics_visible(self, on: bool) -> None:
+        self.diagnostics.setVisible(bool(on))
+        self._show_panel_state()
+
+    def _show_page_status(self) -> None:
+        """The page's colors, regions and size in the status bar."""
+        page = self.current_page
+        if page is None or page.drawing is None:
+            self.status.set_page(None, None)
+            self.status.set_size(None, None)
+            return
+        paper = page.drawing.style.paper_format
+        self.status.set_page(page.num_colors_used, page.num_regions)
+        self.status.set_size(page.page.size, print_scale(page.page.size, paper).printed_size_mm, paper.name)
+
+    def show_about(self) -> None:
+        QMessageBox.about(self, translate("main_window", "About Tessellatum"), about_text())
+
     # -- Open -----------------------------------------------------------
     def open_image(self) -> None:
-        path_str, _ = QFileDialog.getOpenFileName(self, "Open Image", "", OPEN_IMAGE_FILTER)
-        if not path_str:
-            return
-        path = Path(path_str)
-        try:
-            self.current_image_bgr = pipeline.load_image_bgr(path)
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.critical(self, "Could not open image", str(exc))
-            return
+        """File > Open: a picture, or a project saved before."""
+        path_str, _ = QFileDialog.getOpenFileName(self, translate("main_window", "Open"), self._folder(),
+                                                  open_filter())
+        if path_str:
+            self.open_path(Path(path_str))
 
-        self.controls.set_thumbnail(_bgr_to_pixmap(self.current_image_bgr))
-        height, width = self.current_image_bgr.shape[:2]
-        self.controls.set_picture_size((width, height))
-        self.current_page = None
+    def open_path(self, path: Path) -> None:
+        """Open ``path``: a project (``.tessellatum``) in place of the document, or a picture into it, as one step
+        to undo. A file that can't be read says why and leaves the work as it was."""
+        path = Path(path)
+        if path.suffix.lower() == projects.SUFFIX:
+            self.open_project(path)
+            return
+        if path.suffix.lower() not in PICTURE_SUFFIXES:
+            self._open_failed(path, ValueError("Tessellatum opens pictures (PNG, JPEG, BMP, WebP, TIFF, GIF) and "
+                                               f"projects ({projects.SUFFIX})"))
+            return
+        try:
+            if path.stat().st_size > projects.MAX_SOURCE:  # refused before it is read
+                raise projects.ProjectError("it is larger than Tessellatum opens")
+            data = path.read_bytes()
+            # As from the file itself, its bytes kept for a project, and checked as a project's picture is: whatever
+            # opens can be saved and recovered.
+            image = projects.decode_image(data, "it")
+        except Exception as exc:  # noqa: BLE001
+            self._open_failed(path, exc)
+            return
+        self._open_picture(image, path, data, None)
+        self._remember_recent(path, RECENT_PICTURES_KEY)
+
+    def _open_failed(self, path: Path, exc: Exception) -> None:
+        text = translate("main_window", "Could not open {0}: {exc}").format(path.name, exc=exc)
+        self.diagnostics.add(ERROR, text)
+        self._say(text, FAILED)
+        self.notify(ERROR, text)
+
+    def _show_source(self, image: np.ndarray | None, path: Path | None, data: bytes | None = None,
+                     name: str | None = None) -> None:
+        """Work on ``image``, read from ``path`` (or a file named ``name``, its bytes ``data``), or on no picture: the
+        last picture's page dropped."""
+        self.document.set_source(image, path, data=data, name=name)  # drops the last picture's page
+        self._source_shown()
+
+    def _source_shown(self) -> None:
+        """Show the document's picture, just set, in the panel and the status bar."""
+        source = self.document.source()
+        image, path = (None, None) if source is None else (source.image, source.path)
         self._drop_print_page()
         self.controls.set_export_enabled(False)
         self.version_bar.setEnabled(False)  # the preview left showing is the last picture's, until the next one
-        self.statusBar().showMessage(f"Loaded {path.name}. Click \"Generate Preview\".")
+        if image is None:
+            self.controls.set_picture_size(None)
+            self._say(translate("main_window", "No picture open."))
+            self._sync_commands()
+            return
+        self.controls.set_thumbnail(_bgr_to_pixmap(image))
+        height, width = image.shape[:2]
+        name = source.name or translate("main_window", "the picture")
+        self.controls.set_picture_size((width, height), source.name or "")
+        self._say(translate("main_window", "Loaded {name}. Click \"Generate Preview\".").format(name=name))
+        self._sync_commands()
+
+    def find_setting(self) -> None:
+        """The focus in the settings search, the sidebar shown for it (out of focus mode, if in it)."""
+        if self._focus is not None:
+            self.set_focus_mode(False)
+        if not self.sidebar_visible():
+            self.set_sidebar_visible(True)
+        self.controls.search.start()
+
+    # -- Undo and redo ------------------------------------------------------
+    def _on_settings_edited(self, _settings: DocumentSettings) -> None:
+        # Recorded once the edits made in one go are all in: a preset sets many settings, each announced.
+        if self._restoring or self._record_scheduled:
+            return
+        self._record_scheduled = True
+        QTimer.singleShot(0, self._record_settings)
+
+    def _record_settings(self) -> None:
+        self._record_scheduled = False
+        label, self.controls.edit_label = self.controls.edit_label, None
+        if self._restoring:
+            return
+        before, after = self._recorded, self.controls.snapshot()
+        if after == before:
+            return
+        self._recorded = after
+        self.history.record_settings(before, after, label or after.change_text(before))
+
+    def undo(self) -> None:
+        if self._record_scheduled:
+            self._record_settings()  # an edit not recorded yet is the one to undo
+        self._move(self.history.undo)
+
+    def redo(self) -> None:
+        if self._record_scheduled:
+            self._record_settings()
+        self._move(self.history.redo)
+
+    def _move(self, step) -> None:
+        # The state is put back before the history's place moves: the pages kept are protected for the new place
+        # once both are done, so that the page left, a neighbor still, is never evicted in between.
+        self._moving = True
+        try:
+            step()
+        finally:
+            self._moving = False
+        self._protect_results()
+
+    def _restore_settings(self, settings: DocumentSettings) -> None:
+        self._restoring = True
+        try:
+            self.controls.show_settings(settings)
+        finally:
+            self._restoring = False
+        self.controls.edit_label = None
+        self._recorded = self.controls.snapshot()
+        self._on_settings_changed_for_preview()
+        self._regenerate_if_made()
+
+    # -- Whether the preview is the page the settings make (see ``gui.freshness``) ------------
+    def _on_settings_changed_for_preview(self, _settings=None) -> None:
+        if self._restoring:
+            return  # once the settings restored are all shown (see _restore_settings)
+        self._outcome = None  # a cancelled or failed preview's label holds until something changes
+        self._restore_cached()
+        self._schedule_redraw()
+        self._show_freshness()
+
+    def _on_source_changed_for_preview(self) -> None:
+        # Another picture, however it came: no redraw of the last one's page, no label of its outcome, and no time
+        # known for its pages.
+        self._redraw_timer.stop()
+        self._auto_timer.stop()
+        self._last_full_s = None
+        self._outcome = None
+        self._show_freshness()
+
+    def _preview_basis(self) -> DocumentSettings | None:
+        """The settings of the page the preview shows or is about to: the one being made, else the one shown; None
+        with neither."""
+        job = self.jobs.current(PREVIEW)
+        if job is not None:
+            return job.settings
+        return self.document.result_settings() if self.current_page is not None else None
+
+    def _redraw_pending(self) -> bool:
+        """Whether the settings changed since the preview's page only in ways that draw it again (the lines, the
+        numbers, the tone), and the preferences have that done by itself: it then is, in a moment."""
+        delay = self.preferences.redraw_after_ms() if hasattr(self, "preferences") else None
+        basis = self._preview_basis()
+        if delay is None or basis is None or self.current_image_bgr is None:
+            return False
+        changed = self.controls.snapshot().changed_entries(basis)
+        return bool(changed) and registry.update_policy(changed) == registry.DEBOUNCED
+
+    def _explicit_change(self) -> bool:
+        """Whether the settings changed since the preview's page (or the one being made) in a way that makes it
+        again: the registry's explicit policy."""
+        basis = self._preview_basis()
+        if basis is None or self.current_image_bgr is None:
+            return False
+        changed = self.controls.snapshot().changed_entries(basis)
+        return bool(changed) and registry.update_policy(changed) == registry.EXPLICIT
+
+    def _auto_pending(self) -> bool:
+        """Whether the settings changed in a way that makes the page again, and the preferences have that done by
+        itself (always, or while the picture's last page was quick): it then is, in a second."""
+        mode = self.preferences.auto_generate() if hasattr(self, "preferences") else preferences.OFF
+        if mode == preferences.OFF or not self._explicit_change():
+            return False
+        return mode == preferences.ALWAYS or self._quick()
+
+    def _quick(self) -> bool:
+        """Whether the picture's last page made afresh took under ``preferences.QUICK_S``."""
+        return self._last_full_s is not None and self._last_full_s < preferences.QUICK_S
+
+    def _waits_for_slow_page(self) -> bool:
+        """Whether a change that makes the page again waits for Generate Preview only because the picture's last page
+        was slow (When it's quick)."""
+        return (hasattr(self, "preferences") and self.preferences.auto_generate() == preferences.QUICK
+                and self._last_full_s is not None and not self._quick() and self._explicit_change())
+
+    def _schedule_redraw(self) -> None:
+        """Draw the preview again a moment after the last change, if it only draws it again (see
+        ``_redraw_pending``), or make it again a second after, if the preferences have that done by itself (see
+        ``_auto_pending``); otherwise forget what waited: Generate Preview makes the page."""
+        if self._redraw_pending():
+            self._redraw_timer.start(self.preferences.redraw_after_ms())
+        else:
+            self._redraw_timer.stop()
+        if self._auto_pending():
+            self._auto_timer.start(preferences.AUTO_AFTER_MS)
+        else:
+            self._auto_timer.stop()
+
+    def _auto_generate(self) -> None:
+        """The page made by itself, a second after the last change that makes it again. It supersedes a preview
+        being made; it waits for an export to finish (which schedules it again)."""
+        if not self._auto_pending() or self._exporting() or self.jobs.is_running(EXPORT):
+            return
+        self._start_preview(auto=True)
+
+    def _redraw(self) -> None:
+        """The redraw due: the preview made again with the settings as they are, the stage cache keeping its regions
+        (see ``pipeline``). It supersedes a preview being made; it waits for an export to finish."""
+        if not self._redraw_pending() or self._exporting() or self.jobs.is_running(EXPORT):
+            return
+        self._start_preview(redraw=True)
+
+    def _show_freshness(self) -> None:
+        """Show the preview's state on the canvas's bar (see ``gui.freshness``), and say in the status bar when the
+        preview shown isn't made with the settings as they are, naming what changed, and that it is ready again once
+        they are back. The status bar is left alone while a page is being made, or after one was cancelled or failed,
+        which it says."""
+        made_with = self.document.result_settings()
+        has_page = self.current_page is not None and made_with is not None
+        now = self.controls.snapshot()
+        changed = now.changes_from(made_with) if has_page else ()
+        state = freshness.preview_state(has_page, self.jobs.is_running(PREVIEW), changed, self._outcome)
+        redraw, auto, slow = self._redraw_pending(), self._auto_pending(), self._waits_for_slow_page()
+        names = ", ".join(changed[:STALE_NAMED])
+        if len(changed) > STALE_NAMED:
+            names += translate("main_window", " and {0} more").format(len(changed) - STALE_NAMED)
+        took = (
+            translate("main_window", "the last page took {0:.1f} s, too long to make by itself").format(
+                self._last_full_s
+            )
+            if slow
+            else ""
+        )
+        then = (
+            translate("main_window", "It is drawn again in a moment.")
+            if redraw
+            else (
+                translate("main_window", "It is made again in a moment.")
+                if auto
+                else (
+                    translate("main_window", "Generate Preview (F5) makes it again: {took}.").format(took=took)
+                    if slow
+                    else translate("main_window", "Generate Preview (F5) makes it again.")
+                )
+            )
+        )
+        detail = {
+            freshness.NO_PREVIEW: (
+                translate("main_window", "No page made yet: Generate Preview (F5) makes one of the picture.")
+                if self.current_image_bgr is not None
+                else translate("main_window", "Open a picture to make a page of it.")
+            ),
+            freshness.CURRENT: translate("main_window", "The page shown is the one the settings make."),
+            freshness.MODIFIED: translate(
+                "main_window", "Changed since the page shown was made: {names}. {then}"
+            ).format(names=names, then=then),
+            freshness.PROCESSING: translate(
+                "main_window", "A page is being made; the one shown stays until it is ready."
+            ),
+            freshness.CANCELLED: (
+                translate("main_window", "The last preview was cancelled; the page shown is the one made before it.")
+                if has_page
+                else translate("main_window", "The last preview was cancelled.")
+            ),
+            freshness.FAILED: (
+                translate(
+                    "main_window",
+                    "The last preview failed (see View > Diagnostics); the page shown is the one made before it.",
+                )
+                if has_page
+                else translate("main_window", "The last preview failed (see View > Diagnostics).")
+            ),
+        }[state]
+        self.freshness.set_state(state, detail, has_page)
+        if self._making() or state not in (freshness.MODIFIED, freshness.CURRENT):
+            return
+        if changed:
+            self._stale = True
+            then = (
+                translate("main_window", "it is drawn again in a moment")
+                if redraw
+                else (
+                    translate("main_window", "it is made again in a moment")
+                    if auto
+                    else (
+                        translate("main_window", "Generate Preview to see the page with them")
+                        if len(changed) > 1
+                        else translate("main_window", "Generate Preview to see the page with it")
+                    )
+                    + (f" ({took})" if slow else "")
+                )
+            )
+            self._say(
+                translate("main_window", "The preview is out of date ({names} changed): {then}.").format(
+                    names=names, then=then
+                )
+            )
+        elif self._stale:
+            self._stale = False
+            self._say(self._ready_message, DONE)
+
+    def _restore_source(self, source) -> None:
+        """Work on ``source`` again (a ``Source``, or None), an Open undone or redone: its page shown at once if it is
+        kept for the settings as they are, else made again in the background if it had one."""
+        self.document.restore_source(source)
+        self._source_shown()
+        self._restore_cached()
+        self._regenerate_if_made()
+
+    # -- Pages kept (see ``app.results``) ------------------------------------------
+    def _result_key(self, settings: DocumentSettings | None = None) -> ResultKey | None:
+        """The key of the page ``settings`` (by default the panel's) make of the picture; None without a picture or
+        before its hash is known."""
+        source = self.document.source()
+        if source is None:
+            return None
+        return ResultKey.of(source.content_hash, settings if settings is not None else self.controls.snapshot())
+
+    def _shown_is_current(self, now: DocumentSettings) -> bool:
+        made = self.document.result_settings()
+        return self.current_page is not None and made is not None and made.generation_key() == now.generation_key()
+
+    def _restore_cached(self) -> bool:
+        """Show the page the settings as they are make, if it is kept: at once, with no page made. A preview being
+        made with other settings is dropped (as it is when the page shown is already the one they make). Not while an
+        export waits for its page or is written: it goes ahead after. True if a page kept was shown."""
+        if self.current_image_bgr is None or self._exporting() or self.jobs.is_running(EXPORT):
+            return False
+        now = self.controls.snapshot()
+        job = self.jobs.current(PREVIEW)
+        stale_job = job is not None and job.settings.generation_key() != now.generation_key()
+        if self._shown_is_current(now):
+            if stale_job:
+                self.jobs.drop(PREVIEW)
+                self.controls.set_busy(False)
+                self._say(self._ready_message or translate("main_window", "Preview ready."), DONE)
+            return False
+        entry = self.results.get(self._result_key(now))
+        if entry is None:
+            return False
+        started = time.perf_counter()
+        if job is not None:
+            self.jobs.drop(PREVIEW)
+        self._redraw_timer.stop()
+        self._outcome = None
+        self.document.set_settings(now)
+        self._show_result(entry.page, now, translate("main_window", "Preview ready: the page made before with "
+                                                                    "these settings."), entry.print_page)
+        self.last_restore_ms = (time.perf_counter() - started) * 1000
+        return True
+
+    def _regenerate_if_made(self) -> None:
+        """A state put back that had a page, no longer kept: make it again in the background, the page shown kept
+        and labeled out of date meanwhile."""
+        if self.current_image_bgr is None or self._exporting() or self.jobs.is_running(EXPORT):
+            return
+        now = self.controls.snapshot()
+        job = self.jobs.current(PREVIEW)
+        if self._shown_is_current(now) or (job is not None and job.settings.generation_key() == now.generation_key()):
+            return
+        if self.results.was_made(self._result_key(now)):
+            self._start_preview(again=True)
+
+    def _protect_results(self) -> None:
+        """Keep the page shown and the pages of the states undo and redo go to, whatever the cache's budget."""
+        if self._moving:
+            return
+        source = self.document.source()
+        digest = source.content_hash if source is not None else None
+        keys = []
+        made = self.document.result_settings()
+        if self.current_page is not None and made is not None:
+            keys.append(ResultKey.of(digest, made))
+        if self.history.count():
+            now = self.controls.snapshot()
+            for kind, state in self.history.neighbors():
+                if kind == SETTINGS:
+                    keys.append(ResultKey.of(digest, state))
+                elif state is not None:
+                    keys.append(ResultKey.of(state.content_hash, now))
+        self.results.protect(keys)
+
+    def _on_source_identified(self, _digest: str) -> None:
+        """The picture's hash, worked out: a page made before it was is kept now, and a page kept for it shown."""
+        if self.current_page is not None:
+            self.results.put(self._result_key(self.document.result_settings()), self.current_page, self._print_page)
+        self._protect_results()
+        self._restore_cached()
+
+    def _on_job_finished(self, job: Job) -> None:
+        if job.kind in (EXPORT, SAVE) and not self._exporting() and not self.jobs.is_running(EXPORT):
+            self._restore_cached()  # a page kept, asked for while the export was under way
+            self._schedule_redraw()
+
+    def _show_history(self) -> None:
+        """Edit > Undo and Redo, named for what they would do ("Undo Brush width"), on when there is something."""
+        history, commands = self.history, self.commands
+        commands["undo"].setEnabled(history.can_undo())
+        commands["redo"].setEnabled(history.can_redo())
+        commands["undo"].setText(translate("main_window", "&Undo {change}").format(change=history.undo_text())
+                                 if history.can_undo() else translate("actions", "&Undo"))
+        commands["redo"].setText(translate("main_window", "&Redo {change}").format(change=history.redo_text())
+                                 if history.can_redo() else translate("actions", "&Redo"))
+
+    # -- Projects (see ``app.project``) ---------------------------------------------------
+    def _folder(self) -> str:
+        """Where a file dialog starts: the project's folder, else the picture's; empty for the dialog's own."""
+        project = self.document.project_path()
+        source = self.document.source()
+        if project is not None:
+            return str(project.parent)
+        if source is not None and source.path is not None:
+            return str(source.path.parent)
+        return ""
+
+    def has_unsaved_work(self) -> bool:
+        """Whether closing the picture would lose changes: it changed since it was opened or saved."""
+        if self._record_scheduled:
+            self._record_settings()
+        return self.current_image_bgr is not None and not self.history.is_clean()
+
+    def _document_name(self) -> str:
+        project = self.document.project_path()
+        if project is not None:
+            return project.name
+        source = self.document.source()
+        return source.name if source is not None and source.name else translate("main_window", "Untitled")
+
+    def _ask_unsaved(self, name: str) -> str:
+        """Ask what to do with the unsaved changes to ``name``: ``SAVE_CHANGES``, ``DISCARD_CHANGES`` or
+        ``KEEP_WORKING``."""
+        answer = QMessageBox.question(
+            self, translate("main_window", "Unsaved Changes"),
+            translate("main_window", "{name} has changes that aren't saved. Save them as a project first?\n\nIf "
+                                     "you don't, they are lost.").format(name=name),
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel, QMessageBox.Save,
+        )
+        return {QMessageBox.Save: SAVE_CHANGES, QMessageBox.Discard: DISCARD_CHANGES}.get(answer, KEEP_WORKING)
+
+    def _settle_unsaved(self) -> bool:
+        """Before the work is replaced or closed: True if it may be (nothing unsaved, saved now, or let go), False if
+        the user cancelled or the save didn't happen."""
+        if not self.has_unsaved_work():
+            return True
+        answer = self._ask_unsaved(self._document_name())
+        if answer == SAVE_CHANGES:
+            return self.save_project()
+        return answer == DISCARD_CHANGES
+
+    def _busy_with_file(self) -> bool:
+        if self._exporting():
+            self.notify(INFO, translate("main_window", "Wait for the export to finish first."))
+            return True
+        return False
+
+    def open_project(self, path: Path) -> bool:
+        """Open the project at ``path`` in place of the document (asking first about unsaved changes) and make its
+        page. A project that can't be read says why and leaves the work as it was. True if it was opened."""
+        path = Path(path)
+        if self._busy_with_file() or not self._settle_unsaved():
+            return False
+        try:
+            loaded = projects.read_project(path)
+        except (projects.ProjectError, OSError) as exc:
+            self._open_failed(path, exc)
+            return False
+        self._load_project(loaded, path)
+        self._remember_recent(path)
+        self._say(translate("main_window", "Opened {0}.").format(path.name))
+        self.generate_preview()  # its page, made again: projects keep the picture and the settings, not pages
+        return True
+
+    def _load_project(self, loaded: projects.Project, path: Path | None) -> None:
+        """Make ``loaded`` the work, saved in ``path``: its settings shown, its picture open, nothing to undo."""
+        self._restoring = True
+        try:
+            self.controls.show_settings(loaded.settings)
+        finally:
+            self._restoring = False
+        self.controls.edit_label = None
+        self._show_source(loaded.image, None, loaded.source_bytes, loaded.source_name)
+        self.preview.clear_page()
+        self._original_kept = None
+        self._previous = None
+        self._show_previous_state()
+        self._refresh_compare()
+        self._recorded = self.controls.snapshot()
+        self.history.clear()
+        self.history.set_clean()
+        self.document.mark_saved()
+        self.document.set_project_path(path)
+        if self.recovery is not None:
+            self.recovery.clear()  # the work now is what the project holds
+
+    def save_project(self) -> bool:
+        """Save the document in its project, or ask where (Save As) if it has none. True if it was saved."""
+        path = self.document.project_path()
+        if path is None:
+            return self.save_project_as()
+        return self._write_project(path)
+
+    def save_project_as(self) -> bool:
+        """Ask where, and save the document there as a project; the one it was in stays as it is."""
+        if self.current_image_bgr is None:
+            self._no_picture()
+            return False
+        stem = Path(self._document_name()).stem
+        start = f"{stem}{projects.SUFFIX}"
+        if self._folder():
+            start = str(Path(self._folder()) / start)
+        path_str, _ = QFileDialog.getSaveFileName(self, translate("main_window", "Save Project"), start,
+                                                  project_filter())
+        if not path_str:
+            return False
+        path = Path(path_str)
+        if path.suffix.lower() != projects.SUFFIX:
+            path = path.with_name(path.name + projects.SUFFIX)
+        return self._write_project(path)
+
+    def _write_project(self, path: Path) -> bool:
+        source = self.document.source()
+        if source is None:
+            self._no_picture()
+            return False
+        if self._record_scheduled:
+            self._record_settings()
+        _keep_bytes(source)
+        try:
+            projects.save_project(path, self.controls.snapshot(), source.name or "picture.png", source.data,
+                                  source.image)
+        except (OSError, projects.ProjectError) as exc:
+            text = errors.explain(errors.WRITING, type(exc), str(exc), file_name=path.name)
+            self.diagnostics.add(
+                ERROR, translate("main_window", "Saving {path} failed: {exc}").format(path=path, exc=exc)
+            )
+            self._say(translate("main_window", "Couldn't save {0}.").format(path.name), FAILED)
+            self.notify(
+                ERROR, text, [(translate("main_window", "Retry"), lambda: self._write_project(path)), self._details()]
+            )
+            return False
+        self.history.set_clean()
+        self.document.mark_saved()
+        self.document.set_project_path(path)
+        self._remember_recent(path)
+        if self.recovery is not None:
+            self.recovery.clear()  # saved: nothing to recover
+        self._say(translate("main_window", "Saved {0}.").format(path.name), DONE)
+        return True
+
+    def close_document(self) -> bool:
+        """Close the picture and its project (asking first about unsaved changes): the window as it starts, the
+        settings kept. True if it was closed."""
+        if self._busy_with_file() or not self._settle_unsaved():
+            return False
+        self.jobs.drop(PREVIEW)
+        self._show_source(None, None)
+        self.preview.clear_page()
+        self._original_kept = None
+        self._previous = None
+        self._show_previous_state()
+        self._refresh_compare()
+        self.history.clear()
+        self.history.set_clean()
+        self._recorded = self.controls.snapshot()
+        self.document.mark_saved()
+        self.document.set_project_path(None)
+        self.controls.set_busy(False)
+        if self.recovery is not None:
+            self.recovery.clear()  # closed: let go
+        return True
+
+    # -- Recovery (see ``app.recovery``) -------------------------------------------------------------
+    def _keep_for_recovery(self, force: bool = False) -> bool:
+        """Write the work's snapshot if it has unsaved changes not kept yet (or with ``force``); remove it once there
+        are none. True if one was written."""
+        if self.recovery is None:
+            return False
+        if not self.has_unsaved_work():
+            if self.recovery.has_snapshot():
+                self.recovery.clear()
+            self._recovery_revision = None
+            return False
+        revision = self.document.revision()
+        if revision == self._recovery_revision and not force:
+            return False
+        source = self.document.source()
+        _keep_bytes(source)
+        try:
+            self.recovery.write(self.controls.snapshot(), source.name or "picture.png", source.data, source.image,
+                                self._document_name(), self.document.project_path())
+        except OSError as exc:
+            log.warning("keeping the work for recovery failed: %s", exc)
+            return False
+        self._recovery_revision = revision
+        return True
+
+    def _run_recovery_dialog(self, dialog) -> bool:
+        return dialog.exec() == dialog.DialogCode.Accepted
+
+    def offer_recovery(self) -> None:
+        """As the app starts: the work a crash left, if any, offered back (see ``gui.recovery_dialog``)."""
+        if self.recovery is None:
+            return
+        self.recovery.prune()
+        pending = self.recovery.pending()
+        if not pending:
+            return
+        from tessellatum.gui.recovery_dialog import RecoveryDialog
+
+        dialog = RecoveryDialog(pending, self.recovery, self)
+        if self._run_recovery_dialog(dialog) and dialog.chosen is not None:
+            self.restore_snapshot(dialog.chosen)
+
+    def restore_snapshot(self, snapshot: Snapshot) -> bool:
+        """Make ``snapshot`` the work: unsaved, saying where it came from, kept again as this session's before the
+        snapshot is let go. True if it was restored."""
+        if self._busy_with_file() or not self._settle_unsaved():
+            return False
+        try:
+            loaded = projects.read_project(snapshot.path)
+        except (projects.ProjectError, OSError) as exc:
+            self._open_failed(snapshot.path, exc)
+            return False
+        self._load_project(loaded, snapshot.project)
+        self.history.mark_unsaved()
+        self._keep_for_recovery(force=True)
+        self.recovery.discard(snapshot)
+        from tessellatum.gui.recovery_dialog import when
+
+        text = translate("main_window", "Recovered {0} as it was {1}. It isn't saved: Save Project keeps it.").format(
+            snapshot.name, when(snapshot.saved_at)
+        )
+        self._say(text)
+        self.notify(INFO, text)
+        self.generate_preview()
+        return True
+
+    def _show_title(self) -> None:
+        if self.current_image_bgr is None and self.document.project_path() is None:
+            self.setWindowTitle(translate("main_window", "Tessellatum"))
+            self.setWindowModified(False)
+            return
+        self.setWindowTitle(translate("main_window", "{0}[*] — Tessellatum").format(self._document_name()))
+        self.setWindowModified(self.current_image_bgr is not None and not self.history.is_clean())
+
+    # -- Recent projects and pictures ------------------------------------------------------
+    def _recent(self, key: str) -> list[Path]:
+        if self._store is None:
+            kept = self._recent_kept.get(key, [])
+        else:
+            kept = self._store.value(key, [])
+            kept = [kept] if isinstance(kept, str) else list(kept or [])
+        return [Path(p) for p in kept if isinstance(p, str) and p]
+
+    def _set_recent_list(self, key: str, paths: list[Path]) -> None:
+        kept = [str(p) for p in paths[:RECENT_MAX]]
+        if self._store is None:
+            self._recent_kept[key] = kept
+        else:
+            self._store.setValue(key, kept)
+        self._show_welcome_recent()
+
+    def recent_projects(self) -> list[Path]:
+        """The projects opened or saved last, the latest first (whether or not they are still there)."""
+        return self._recent(RECENT_KEY)
+
+    def recent_pictures(self) -> list[Path]:
+        """The pictures opened last, the latest first (whether or not they are still there)."""
+        return self._recent(RECENT_PICTURES_KEY)
+
+    def _set_recent(self, paths: list[Path]) -> None:
+        self._set_recent_list(RECENT_KEY, paths)
+
+    def _remember_recent(self, path: Path, key: str = RECENT_KEY) -> None:
+        path = Path(path).absolute()
+        self._set_recent_list(key, [path] + [p for p in self._recent(key) if p != path])
+
+    def forget_recent(self, path: Path) -> None:
+        """Take ``path`` off the recent lists (Remove, on the welcome page)."""
+        for key in (RECENT_KEY, RECENT_PICTURES_KEY):
+            self._set_recent_list(key, [p for p in self._recent(key) if p != path])
+
+    def clear_recent(self) -> None:
+        for key in (RECENT_KEY, RECENT_PICTURES_KEY):
+            self._set_recent_list(key, [])
+
+    def _show_recent(self) -> None:
+        """File > Open Recent as it opens: the recent projects, then the pictures, still there; and Clear."""
+        menu = self.recent_menu
+        menu.clear()
+        shown = 0
+        for paths, open_one in ((self.recent_projects(), self.open_project), (self.recent_pictures(), self.open_path)):
+            there = [p for p in paths if p.is_file()]
+            if there and shown:
+                menu.addSeparator()
+            for path in there:
+                action = menu.addAction(path.name)
+                action.setToolTip(str(path))
+                action.setStatusTip(str(path))
+                action.triggered.connect(lambda _checked=False, p=path, o=open_one: o(p))
+            shown += len(there)
+        if not shown:
+            menu.addAction(translate("main_window", "No recent files")).setEnabled(False)
+        menu.addSeparator()
+        clear = menu.addAction(translate("main_window", "&Clear Recent"))
+        clear.setEnabled(bool(self.recent_projects() or self.recent_pictures()))
+        clear.triggered.connect(self.clear_recent)
+
+    # -- The welcome page, drag and drop, paste ----------------------------------------------------
+    def _show_canvas(self) -> None:
+        """The welcome page while no picture is open, else the page."""
+        welcome = self.current_image_bgr is None
+        self.canvas_stack.setCurrentWidget(self.welcome if welcome else self.canvas_views)
+        self.canvas_footer.setVisible(not welcome)
+        if welcome:
+            self._show_welcome_recent()
+
+    def _show_welcome_recent(self) -> None:
+        if getattr(self, "welcome", None) is not None:
+            self.welcome.set_recent(self.recent_projects(), self.recent_pictures())
+
+    def open_picture_dialog(self) -> None:
+        path_str, _ = QFileDialog.getOpenFileName(self, translate("main_window", "Open Picture"), self._folder(),
+                                                  image_filter())
+        if path_str:
+            self.open_path(Path(path_str))
+
+    def open_project_dialog(self) -> None:
+        path_str, _ = QFileDialog.getOpenFileName(self, translate("main_window", "Open Project"), self._folder(),
+                                                  project_filter())
+        if path_str:
+            self.open_project(Path(path_str))
+
+    def open_example(self, path: Path) -> bool:
+        """Open the example picture ``path`` (``gui.welcome``) and make its page: as a picture from no folder, so
+        that saving and exporting never suggest the app's own."""
+        try:
+            data = Path(path).read_bytes()
+            image = projects.decode_image(data)
+        except (OSError, projects.ProjectError) as exc:
+            self._open_failed(Path(path), exc)
+            return False
+        self._open_picture(image, None, data, Path(path).name)
+        self.generate_preview()
+        return True
+
+    def _open_picture(self, image: np.ndarray, path: Path | None, data: bytes | None, name: str | None) -> None:
+        """Make ``image`` the picture: into the work open as one step to undo, the settings kept."""
+        old = self.document.source()
+        self._show_source(image, path, data, name)
+        if old is not None:  # a picture replaced in an open document: undoable, the loads kept with their hashes
+            self.history.record_source(
+                old, self.document.source(), translate("main_window", "Open {0}").format(self.document.source().name)
+            )
+
+    def open_image_data(self, image: QImage, name: str = PASTED_NAME) -> bool:
+        """Open a picture handed over as an image (pasted, or dropped from another app): on white where it is
+        transparent, kept as a PNG. True if it was opened."""
+        if image.isNull() or image.width() * image.height() > projects.MAX_PIXELS:
+            self.notify(ERROR, translate("main_window", "That picture can't be opened: it is empty, or larger "
+                                                        "than Tessellatum opens."))
+            return False
+        flat = QImage(image.size(), QImage.Format_RGB888)
+        flat.fill(Qt.white)
+        painter = QPainter(flat)
+        painter.drawImage(0, 0, image)
+        painter.end()
+        width, height, line = flat.width(), flat.height(), flat.bytesPerLine()
+        rows = np.frombuffer(flat.constBits(), np.uint8, count=line * height).reshape(height, line)
+        rgb = rows[:, : width * 3].reshape(height, width, 3)
+        out = io.BytesIO()
+        Image.fromarray(rgb).save(out, "PNG")
+        self._open_picture(np.ascontiguousarray(rgb[:, :, ::-1]), None, out.getvalue(), name)
+        return True
+
+    @staticmethod
+    def _handed_over(mime, text_paths: bool = False):
+        """What a drop or the clipboard holds: ("file", path), ("image", QImage), or None. A file named in text counts
+        only with ``text_paths`` (a path copied as text, then pasted)."""
+        for url in mime.urls() if mime.hasUrls() else ():
+            if url.isLocalFile():
+                return "file", Path(url.toLocalFile())
+        if mime.hasImage():
+            image = mime.imageData()
+            if isinstance(image, QImage) and not image.isNull():
+                return "image", image
+            if isinstance(image, QPixmap) and not image.isNull():
+                return "image", image.toImage()
+        if text_paths and mime.hasText():
+            text = mime.text().strip().strip('"').strip("'")
+            if text and "\n" not in text:
+                path = Path(text[7:] if text.startswith("file://") else text)
+                if path.is_file():
+                    return "file", path
+        return None
+
+    def _take(self, handed) -> None:
+        kind, value = handed
+        if kind == "file":
+            self.open_path(value)
+        else:
+            self.open_image_data(value)
+
+    def paste(self) -> None:
+        """Edit > Paste Picture: the picture copied, or the picture or project whose file (or path) was copied."""
+        handed = self._handed_over(QApplication.clipboard().mimeData(), text_paths=True)
+        if handed is None:
+            self.notify(INFO, translate("main_window", "There's no picture to paste: copy a picture, or a "
+                                                       "picture's file, then paste."))
+            return
+        self._take(handed)
+
+    def dragEnterEvent(self, event) -> None:
+        if self._handed_over(event.mimeData()) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event) -> None:
+        handed = self._handed_over(event.mimeData())
+        if handed is None:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        # After the drop has returned to the system: a project may ask about unsaved work in a dialog.
+        QTimer.singleShot(0, lambda: self._take(handed))
 
     # -- Preview ----------------------------------------------------------
+    def _making(self) -> bool:
+        """Whether a page is being made: a preview, or a page to export made afresh."""
+        return self.jobs.is_running(PREVIEW) or self.jobs.is_running(EXPORT)
+
+    def _exporting(self) -> bool:
+        """Whether an export is under way: waiting for its page, or writing its file."""
+        return self._pending_export_path is not None or self.jobs.is_running(SAVE)
+
+    def _no_picture(self) -> None:
+        self.notify(INFO, translate("main_window", "Open a picture first."),
+                    [(translate("main_window", "Open Image…"), self.commands["open"].trigger)])
+
     def generate_preview(self) -> None:
         if self.current_image_bgr is None:
-            QMessageBox.warning(self, "No image", "Open an image first.")
+            self._no_picture()
             return
-        if (self._worker is not None and self._worker.isRunning()) or self._pending_export_path is not None:
+        if self._making() or self._exporting():
             return
-        if self._raster_worker is not None:
-            return
+        self._start_preview()
 
+    def _start_preview(self, redraw: bool = False, again: bool = False, auto: bool = False) -> None:
+        """Make the preview with the settings as the panel shows them: asked for (Generate Preview); with ``redraw``,
+        by itself after a change that only draws the page again; with ``again``, a state put back whose page is no
+        longer kept; with ``auto``, by itself after a change that makes it again (Preferences). Any of those supersedes
+        a preview being made."""
+        self._redraw_timer.stop()
+        self._auto_timer.stop()
+        self._outcome = None
         self._drop_print_page()  # the zoom asks for the new page's
-        self._making = True
+        self.document.set_settings(self.controls.snapshot())  # as the panel shows them, to the last edit
+        settings = self.document.settings()
         self.controls.set_busy(True)
-        self.statusBar().showMessage("Generating preview…")
+        self._say(
+            (
+                translate("main_window", "Drawing the preview again…")
+                if redraw
+                else (
+                    translate("main_window", "Making the page again: it is no longer kept…")
+                    if again
+                    else (
+                        translate("main_window", "Generating the preview by itself…")
+                        if auto
+                        else translate("main_window", "Generating preview…")
+                    )
+                )
+            ),
+            BUSY,
+        )
 
         # The page at its working size, where its level's brush is a few pixels across: what an export draws larger.
-        long_edge = pipeline.working_long_edge(
-            self.current_image_bgr, self.controls.get_difficulty_params(), self.controls.get_handling(),
-            self.controls.get_page_style().paper_format,
+        image = self.current_image_bgr
+        params, style, handling = settings.difficulty_params(), settings.page_style(), settings.handling()
+        long_edge = pipeline.working_long_edge(image, params, handling, style.paper_format)
+        self.jobs.start(
+            PREVIEW, page_task(image, params, long_edge, style, handling, versions=tuple(Version)),
+            label=(translate("main_window", "Redraw at {long_edge} px") if redraw
+                   else translate("main_window", "Made again at {long_edge} px") if again
+                   else translate("main_window", "Automatic preview at {long_edge} px") if auto
+                   else translate("main_window", "Preview at {long_edge} px")).format(long_edge=long_edge),
+            context=None if redraw else "full",  # a page made afresh: its time says whether the next is quick
         )
-        self._worker = self._make_worker(long_edge, versions=tuple(Version))
-        self._worker.succeeded.connect(self._on_preview_ready)
-        self._worker.start()
+        self._show_freshness()
 
     def abort_generation(self) -> None:
         # An export of the preview's page waits for it to be drawn at print size.
-        worker = self._print_worker if self._pending_export_drawn else self._worker
-        if worker is not None and worker.isRunning():
-            worker.requestInterruption()
-            self.statusBar().showMessage("Cancelling…")
+        kind = PRINT_LAYOUT if self._pending_export_drawn else EXPORT if self.jobs.is_running(EXPORT) else PREVIEW
+        job = self.jobs.current(kind)
+        if job is not None and job.cancellable and self.jobs.cancel(kind):
+            # It stops at the pipeline's next stage: the button stays off meanwhile, against a second press. Said at
+            # once, in this turn of the event loop, with what it is finishing.
+            self.controls.abort_button.setEnabled(False)
+            step = f" ({self._step.lower()})" if self._step else ""
+            self._say(
+                translate("main_window", "Cancelling: it stops after the current step{step}…").format(step=step), BUSY
+            )
+
+    # -- What the jobs come to ------------------------------------------------
+    def _on_job_succeeded(self, job: Job, result) -> None:
+        if job.kind == PREVIEW:
+            if job.context == "full" and job.seconds() is not None:
+                self._last_full_s = job.seconds()
+            self._on_preview_ready(result, job.settings)
+        elif job.kind == EXPORT:
+            self._on_export_ready(result)
+        elif job.kind == PRINT_LAYOUT:
+            self._on_print_page_ready(result)
+        elif job.kind == SAVE:
+            job.context(result)  # what the file written reports
+        elif job.kind == RECIPES:
+            self._recipes_for = (job.context, result)
+            self._show_legend()
+        elif job.kind == ANALYSIS_JOB:
+            if job.context is self.current_page:
+                self._analyzed = job.context
+                self.analysis.show_measures(result)
+                self._show_analysis_overlays()
+        elif job.kind == INSPECTION:
+            if job.context is self.current_page:
+                coverage, stats = result
+                self._stats = (job.context, stats)
+                self.inspector.set_coverage(coverage, self._page_px_per_mm())
+
+    def _explain(self, job: Job) -> str:
+        """``job``'s failure in words that say what to try (see ``app.errors``)."""
+        paper = job.settings.paper if job.settings is not None else registry.DEFAULT_PAPER
+        if job.kind == SAVE:
+            path, fmt = (self._last_export[0], self._last_export[1]) if self._last_export else (None, None)
+            return errors.explain(errors.WRITING, job.error_type, job.error, paper, fmt,
+                                  path.name if path is not None else "")
+        return errors.explain(errors.MAKING, job.error_type, job.error, paper)
+
+    def _on_job_failed(self, job: Job, _message: str) -> None:
+        if job.kind == PREVIEW:
+            self._outcome = freshness.FAILED
+        text = self._explain(job)
+        if job.kind in (PREVIEW, EXPORT):
+            self._on_worker_failed(text)
+        elif job.kind == PRINT_LAYOUT:
+            self._on_print_page_failed(text)
+        elif job.kind == SAVE:
+            self._on_export_failed(text)
+        elif job.kind == ANALYSIS_JOB and job.context is self.current_page:
+            self.analysis.show_measures(None, empty=translate("main_window", "The page couldn't be measured: "
+                                                                             "{_message}").format(_message=_message))
+        # Recipes that couldn't be mixed: the legend stays without them (the job's details are logged). Nor could the
+        # palette's coverage be: its colors stay listed without it, and the region inspector measures for itself.
+
+    def _on_job_cancelled(self, job: Job) -> None:
+        if job.kind == PREVIEW:
+            self._outcome = freshness.CANCELLED
+        if job.kind in (PREVIEW, EXPORT):
+            self._on_worker_cancelled()
+        if job.kind == PREVIEW:
+            self._show_freshness()
+        elif job.kind == PRINT_LAYOUT:
+            self._on_print_page_cancelled()
+
+    def _on_job_dropped(self, job: Job) -> None:
+        # Superseded, or made of a picture since replaced: whatever waited for it alone is over. An export waits for
+        # its page made afresh, or for the preview's laid out to print: either dropped, the export ends with it.
+        waited = job.kind == EXPORT or (job.kind == PRINT_LAYOUT and self._pending_export_drawn)
+        if waited:
+            if self._pending_export_path is not None:
+                self._say(translate("main_window", "Export stopped."), CANCELLED)
+                self.notify(WARNING, translate("main_window", "The export was stopped: another picture was opened "
+                                                              "before its page was ready. "
+                                                              "Export again to write the new picture's page."))
+            self._clear_pending_export()
+        if (job.kind in (PREVIEW, EXPORT) or waited) and not self._making() and not self._exporting():
+            self.controls.set_busy(False)
+        if job.kind == PREVIEW:
+            self._show_freshness()
+
+    def _tells_progress(self, job: Job) -> bool:
+        # The zoom's drawing tells nothing, unless an export waits for it.
+        return job.kind in (PREVIEW, EXPORT) or (job.kind == PRINT_LAYOUT and self._pending_export_drawn)
+
+    def _on_job_started(self, job: Job) -> None:
+        if self._tells_progress(job):
+            self._step, self._percent = "", 0
+
+    def _on_job_progress(self, job: Job, percent: int) -> None:
+        if self._tells_progress(job):
+            self._percent = percent
+            self.controls.set_progress(percent)
+            self.status.set_progress(percent)
+            self._say_step()
+
+    def _on_job_stage(self, job: Job, event) -> None:
+        """A stage of the page being made starting: the status bar says what it is doing ("Finding faces and the
+        subject… 42%")."""
+        if self._tells_progress(job) and not event.done:
+            self._step = term(event.label)
+            self.controls.progress_bar.setToolTip(self._step)
+            self._say_step()
+
+    def _say_step(self) -> None:
+        if self._step and self.status.state() == BUSY:
+            self.status.set_text(f"{self._step}… {self._percent}%")
 
     def _on_worker_cancelled(self) -> None:
-        self._making = False
         self.controls.set_busy(False)
         self._clear_pending_export()
-        self.statusBar().showMessage("Cancelled.")
+        self._say(translate("main_window", "Cancelled."), CANCELLED)
 
-    def _on_preview_ready(self, page: GeneratedPage) -> None:
-        self._making = False
+    def _on_preview_ready(self, page: GeneratedPage, made_with: DocumentSettings) -> None:
+        self._show_result(page, made_with, translate("main_window", "Preview ready."))
+        self.results.put(self._result_key(made_with), page)  # kept for undo, redo and a setting put back
+
+    def _show_result(self, page: GeneratedPage, made_with: DocumentSettings, message: str, print_page=None) -> None:
+        """Show ``page``, made with ``made_with``: just made, or kept (with its print layout, if drawn)."""
         # A new page of the picture shown is shown as far in and in the same place, to compare the two.
         same_picture = self.current_page is not None and self._previewed_image is self.current_image_bgr
+        # The page shown until now, kept as the previous version, to compare with: another picture's isn't.
+        before = self.document.result_settings() if same_picture else None
+        if before is not None and before.generation_key() != made_with.generation_key():
+            self._previous = (self._result_key(before), before)
+        elif not same_picture:
+            self._previous = None
         self._drop_print_page()  # any drawn of the last page, for a zoom while this one was made
-        self.current_page = page
+        self.document.set_result(page, made_with)
         self._previewed_image = self.current_image_bgr
         self.controls.set_busy(False)
         self.controls.set_export_enabled(True)
-        width, height = page.page.size
-        self._ready_message = (
-            f"Preview ready: {page.num_colors_used} colors, {page.num_regions} regions, made at {width} × {height} px."
-        )
-        self.statusBar().showMessage(self._ready_message)
+        if page.model is not None:
+            self.controls.set_picture_reading(page.model.line_art.is_line_art)
+        # Its colors, regions and size are in the status bar's own fields (see _show_page_status).
+        self._ready_message = message
+        self._stale = False
+        self._outcome = None
+        self._say(self._ready_message, DONE)
+        self._show_freshness()  # out of date at once if the settings moved on while it was made
         versions = {version: page.image(version) for version in Version}
         long_edge = self._print_long_edge()
+        original = self._original_view(page, long_edge)
+        if original is not None:
+            versions[ORIGINAL] = original
         print_scale = 1.0 if long_edge is None else long_edge / max(page.page.size)
         legend, legend_scale = self._preview_legend(page)
         self.preview.show_page(
@@ -196,83 +1999,595 @@ class MainWindow(QMainWindow):
             paper=page.drawing.style.paper_format, legend_scale=legend_scale,
         )
         self.version_bar.setEnabled(True)
+        if print_page is not None:
+            self._print_page = print_page
+            self.preview.show_detail({version: print_page.image(version) for version in Version})
+        self._show_previous_state()
+        self._refresh_compare()
+
+    # -- Inspecting the page: its colors ---------------------------------------------------------------
+    def _inspect_page(self) -> None:
+        """List the page shown's colors in the inspector, and measure how much of it each paints, in the background."""
+        page = self.current_page
+        kept = self._kept_region(page)
+        self._region, self._stats = None, None
+        self.inspector.show_page(page)
+        self.region_inspector.show_regions(None, [])
+        self.region_inspector.show_region(None)
+        self._show_color_highlight()
+        self._show_region_highlight()
+        if page is None or page.model is None:
+            self.jobs.drop(INSPECTION)
+            return
+        model = page.model
+
+        def inspect(_progress, _should_cancel):
+            coverage = measures.color_coverage(model.region_id_map, model.region_color, len(page.palette_rgb))
+            return coverage, measures.region_stats(model.region_id_map)
+
+        self.jobs.start(INSPECTION, inspect, context=page, label=translate("main_window", "Measuring the page for "
+                                                                                          "the inspectors"))
+        if kept is not None:
+            self.select_region(kept)
+
+    def _kept_region(self, page) -> int | None:
+        """The region picked, if ``page`` (the new page) has the same regions as the page it was picked on: else a
+        region of that id is another region, and the pick is dropped."""
+        old = self._stats[0] if self._stats is not None else self._region_page
+        if self._region is None or page is None or page.model is None or old is None or old.model is None:
+            return None
+        same = old is page or np.array_equal(old.model.region_id_map, page.model.region_id_map)
+        return self._region if same else None
+
+    def _page_px_per_mm(self) -> float | None:
+        """The pixels of the page's region map to a millimeter on paper: what its measures are counted in."""
+        page = self.current_page
+        if page is None or page.drawing is None or page.model is None:
+            return None
+        height, width = page.model.region_id_map.shape
+        return print_scale((width, height), page.drawing.style.paper_format).px_per_mm
+
+    # -- The analysis -----------------------------------------------------------------------------------------
+    def analysis_shown(self) -> bool:
+        return self.controls.category() == ANALYSIS and self.sidebar_visible()
+
+    def _analyze_page(self) -> None:
+        """Measure the page shown for the Analysis page, in the background, if that page is shown and hasn't measured
+        it yet; a new page puts the measures away (and their overlays) until then."""
+        page = self.current_page
+        running = self.jobs.current(ANALYSIS_JOB)
+        measuring = running is not None and running.context is page
+        if self._analyzed is not page and self._analyzed is not None or running is not None and not measuring:
+            self._analyzed = None
+            self.jobs.drop(ANALYSIS_JOB)
+            self.analysis.show_measures(None)
+            self._show_analysis_overlays()
+        if page is None or page.model is None or self._analyzed is page or measuring or not self.analysis_shown():
+            return
+        model, paper = page.model, page.drawing.style.paper_format
+        height, width = model.region_id_map.shape
+        scale = print_scale((width, height), paper)
+        params = model.params
+
+        def measure(_progress, _should_cancel):
+            return measures.measure_page(
+                model.region_id_map, model.labels, model.legend_size, scale.px_per_mm, params.min_width_mm,
+                params.min_region_area_mm2 / max(params.detail_weight, 1), model.style.min_label_pt, scale.px_per_pt)
+
+        self.analysis.set_measuring()
+        self.jobs.start(ANALYSIS_JOB, measure, context=page, label=translate("main_window", "Analyzing the page"))
+
+    def _show_analysis_overlays(self) -> None:
+        """The overlays asked for on the Analysis page, in the canvas's diagnostics layer (and the one compared with).
+        Never exported: an export draws the page from its own data."""
+        found = self.analysis.measures() if self._analyzed is self.current_page else None
+        page = self.current_page
+        wanted = self.analysis.overlays() if found is not None and page is not None else set()
+        images = {key: None for key in analysis.OVERLAYS}
+        if wanted:
+            ids = page.model.region_id_map
+            manager = theme.current()
+            colors = manager.colors() if manager is not None else COLORS[LIGHT]
+            if analysis.NARROW_PARTS in wanted:
+                images[analysis.NARROW_PARTS] = diagnostic_image(found.slivers, colors.error, DIAGNOSTIC_ALPHA)
+            if analysis.SMALL_REGIONS in wanted:
+                small = np.zeros(int(ids.max()) + 1, dtype=bool)
+                small[found.small] = True
+                mask = np.zeros(ids.shape, dtype=bool)
+                inside = ids >= 0
+                mask[inside] = small[ids[inside]]
+                images[analysis.SMALL_REGIONS] = diagnostic_image(mask, colors.warning, DIAGNOSTIC_ALPHA, outline=True)
+            if analysis.LEADERS in wanted:
+                images[analysis.LEADERS] = leader_image(ids.shape, found.leaders, colors.info)
+        for view in (self.preview, self.compare_view):
+            for key, image in images.items():
+                view.set_overlay(DIAGNOSTICS, key, image)
+        self._show_issue_highlight()
+
+    def _show_issue_highlight(self) -> None:
+        """Highlight the regions of the issue chosen on the Analysis page, on the canvas (the annotation layer)."""
+        page = self.current_page
+        regions = self.analysis.chosen_issue() if self._analyzed is page and page is not None else None
+        image = None
+        if regions:
+            ids = page.model.region_id_map
+            chosen = np.zeros(int(ids.max()) + 1, dtype=bool)
+            chosen[regions] = True
+            mask = np.zeros(ids.shape, dtype=bool)
+            inside = ids >= 0
+            mask[inside] = chosen[ids[inside]]
+            accent = self.palette().color(QPalette.Highlight)
+            image = highlight_image(mask, (accent.red(), accent.green(), accent.blue()), False)
+        for view in (self.preview, self.compare_view):
+            view.set_overlay(ANNOTATION, "issue", image)
+
+    # -- Inspecting the page: its regions ----------------------------------------------------------------
+    _region_page = None  # the page the region was picked on, until its stats are measured
+
+    def _region_stats(self) -> measures.RegionStats | None:
+        """The page shown's regions' areas and boxes: measured in the background with the coverage, or now if that
+        isn't done yet."""
+        page = self.current_page
+        if page is None or page.model is None:
+            return None
+        if self._stats is None or self._stats[0] is not page:
+            self._stats = (page, measures.region_stats(page.model.region_id_map))
+        return self._stats[1]
+
+    def region_at(self, point) -> int | None:
+        """The region at ``point`` (in the page's pixels, as the canvas's ``clicked`` gives it), or None: the region
+        map's pixel under it, whatever size the map is made at."""
+        page = self.current_page
+        size = self.preview.page_size()
+        if page is None or page.model is None or size is None:
+            return None
+        ids = page.model.region_id_map
+        x = math.floor(point.x() * ids.shape[1] / size[0])
+        y = math.floor(point.y() * ids.shape[0] / size[1])
+        if not (0 <= x < ids.shape[1] and 0 <= y < ids.shape[0]):
+            return None
+        region = int(ids[y, x])
+        return region if region >= 0 else None
+
+    def pick_at(self, point) -> None:
+        """A click on the canvas: pick the region there (or let go, off the regions)."""
+        self.select_region(self.region_at(point))
+
+    def selected_region(self) -> int | None:
+        return self._region
+
+    def select_region(self, region: int | None, center: bool = False) -> None:
+        """Pick ``region`` (its id; None lets go): its color in the palette, its measures in the region inspector,
+        its outline on the canvas; with ``center``, the canvas centered on it."""
+        page = self.current_page
+        stats = self._region_stats() if region is not None else None
+        if region is None or stats is None or region not in stats:
+            self._region = None
+            self.region_inspector.show_region(None)
+            self._show_region_highlight()
+            return
+        self._region, self._region_page = region, page
+        model = page.model
+        color = int(model.region_color[region])
+        if self.inspector.selected() != color:
+            self._picking_color = True
+            try:
+                self.inspector.select(color if color < self.inspector.color_count() else None)
+            finally:
+                self._picking_color = False
+        px_per_mm = self._page_px_per_mm() or 1.0
+        box = stats.box(region)
+        info = region_info(model, region, stats, px_per_mm, page.color_names,
+                           measures.widest_brush_px(model.region_id_map, region, box))
+        self.region_inspector.show_region(info)
+        self._show_region_highlight()
+        if center:
+            for view in (self.preview, self.compare_view):
+                if view.has_page():
+                    view.center_on_rect(self._page_rect(box))
+
+    def _page_rect(self, box) -> QRectF:
+        """``box`` (x0, y0, x1, y1 in the region map's pixels) in the page's pixels, as the canvas shows it."""
+        ids = self.current_page.model.region_id_map
+        width, height = self.preview.page_size()
+        sx, sy = width / ids.shape[1], height / ids.shape[0]
+        x0, y0, x1, y1 = box
+        return QRectF(x0 * sx, y0 * sy, (x1 - x0) * sx, (y1 - y0) * sy)
+
+    def list_regions(self, color: int) -> None:
+        """Enter on a color: list its regions in the region inspector, largest first, pick the first and center it,
+        and give that list the keyboard (Up and Down go through them; Esc goes back)."""
+        page = self.current_page
+        stats = self._region_stats()
+        if stats is None:
+            return
+        ids = page.model.region_id_map
+        region_color = np.asarray(page.model.region_color)
+        present = np.flatnonzero(stats.areas)
+        regions = present[region_color[present] == color]
+        regions = regions[np.lexsort((regions, -stats.areas[regions]))]
+        px_per_mm = self._page_px_per_mm() or 1.0
+        self.region_inspector.show_regions(
+            color + 1, [(int(r), float(stats.areas[r]) / px_per_mm ** 2) for r in regions])
+        del ids
+        if regions.size:
+            self.select_region(int(regions[0]), center=True)
+            self.region_inspector.list.setCurrentRow(0)
+            self.region_inspector.list.setFocus()
+
+    def _on_color_selected(self, index) -> None:
+        if not self._picking_color and self._region is not None and self.current_page is not None:
+            if index is None or int(self.current_page.model.region_color[self._region]) != index:
+                self.select_region(None)  # another color picked: the region goes
+            if self.region_inspector.list.count():
+                self.region_inspector.show_regions(None, [])
+        self._show_color_highlight()
+
+    def _show_region_highlight(self) -> None:
+        """Outline the region picked on the canvas (and the one compared with), over the color's highlight."""
+        page = self.current_page
+        image = None
+        rect = None
+        if self._region is not None and page is not None and page.model is not None:
+            # Drawn over the region's box alone (a pixel more round it, for its outline): a pick builds no page-sized image.
+            ids = page.model.region_id_map
+            x0, y0, x1, y1 = self._region_stats().box(self._region)
+            x0, y0 = max(x0 - 1, 0), max(y0 - 1, 0)
+            x1, y1 = min(x1 + 1, ids.shape[1]), min(y1 + 1, ids.shape[0])
+            mask = measures.region_mask(ids[y0:y1, x0:x1], self._region)
+            accent = self.palette().color(QPalette.Highlight)
+            image = highlight_image(mask, (accent.red(), accent.green(), accent.blue()), False,
+                                    tint=REGION_ALPHA, edge=2)
+            rect = self._page_rect((x0, y0, x1, y1))
+        for view in (self.preview, self.compare_view):
+            view.set_overlay(ANNOTATION, "region", image, rect=rect)
+
+    def _show_color_highlight(self) -> None:
+        """Highlight the regions of the color picked in the inspector, on the canvas (and the one compared with); with
+        Isolate, dim the others. Drawn over the page in the annotation layer: the page isn't drawn again, and no export
+        sees it."""
+        index = self.inspector.selected()
+        page = self.current_page
+        image = None
+        if index is not None and page is not None and page.model is not None:
+            mask = measures.color_mask(page.model.region_id_map, page.model.region_color, index)
+            accent = self.palette().color(QPalette.Highlight)
+            image = highlight_image(mask, (accent.red(), accent.green(), accent.blue()), self.inspector.isolated())
+        for view in (self.preview, self.compare_view):
+            view.set_overlay(ANNOTATION, "color", image)
+
+    # -- Comparing two views ------------------------------------------------------------------------------
+    def set_compare(self, mode: str) -> None:
+        """Compare the view shown with another (``set_compare_with``): ``SIDE_BY_SIDE``, split by a divider up the page
+        (``SPLIT_VERTICAL``) or across it (``SPLIT_HORIZONTAL``), or not at all (``COMPARE_OFF``). Nothing is made:
+        every view is of the page shown, or kept."""
+        self._compare_mode = mode
+        self.commands[COMPARE_ACTIONS[mode]].setChecked(True)
+        self.compare_button.setChecked(mode != COMPARE_OFF)
+        self._refresh_compare()
+
+    def compare_mode(self) -> str:
+        return self._compare_mode
+
+    def set_compare_with(self, view) -> None:
+        """Compare with ``view``: a version of the page, the picture (``ORIGINAL``), or the page made before
+        (``PREVIOUS``), if it is kept. Choosing it with no comparison shows the two side by side."""
+        if view == PREVIOUS and self._previous_page() is None:
+            view = ORIGINAL
+        self._compare_with = view
+        self.commands[COMPARE_WITH_ACTIONS[view]].setChecked(True)
+        if self._compare_mode == COMPARE_OFF:
+            self.set_compare(SIDE_BY_SIDE)
+        else:
+            self._refresh_compare()
+
+    def compare_with(self):
+        return self._compare_with
+
+    def _previous_page(self):
+        """The page made before the one shown, if it is still kept with the results; None if not."""
+        if self._previous is None or self.current_page is None:
+            return None
+        entry = self.results.peek(self._previous[0])
+        return None if entry is None else entry.page
+
+    def previous_label(self) -> str:
+        """What the previous version is, by the change made since, as Edit > Undo names it: "Previous version (before:
+        Colors)", "(before: Difficulty: Hard)", "(before: 3 settings)"."""
+        made = self.document.result_settings()
+        if self._previous is None or made is None:
+            return view_name(PREVIOUS)
+        return translate("main_window", "{0} (before: {1})").format(
+            view_name(PREVIOUS), made.change_text(self._previous[1])
+        )
+
+    def _show_previous_state(self) -> None:
+        """Give the canvas the previous version, in the version shown (the page, for the picture), or take it away."""
+        page = self._previous_page()
+        action = self.commands[COMPARE_WITH_ACTIONS[PREVIOUS]]
+        action.setEnabled(page is not None)
+        action.setToolTip(self.previous_label() if page is not None else translate("main_window", "No page made "
+                                                                                                  "before this "
+                                                                                                  "one is kept"))
+        if page is None:
+            self.preview.set_view_image(PREVIOUS, None)
+            if self._compare_with == PREVIOUS:
+                self._compare_with = ORIGINAL
+                self.commands[COMPARE_WITH_ACTIONS[ORIGINAL]].setChecked(True)
+            return
+        shown = self.version_bar.version()
+        self.preview.set_view_image(PREVIOUS, page.image(shown if isinstance(shown, Version) else Version.PAGE))
+
+    def _on_view_changed(self, _view) -> None:
+        if self._previous is not None:
+            self._show_previous_state()
+        self._refresh_compare()
+
+    def _refresh_compare(self) -> None:
+        """Show the comparison chosen, of the page shown: the second canvas mirroring the first, or the first split,
+        each view named."""
+        if not hasattr(self, "compare_view"):
+            return
+        mode, other = self._compare_mode, self._compare_with
+        has_page = self.preview.has_page()
+        shown = view_name(self.version_bar.version())
+        other_name = self.previous_label() if other == PREVIOUS else view_name(other)
+        side = mode == SIDE_BY_SIDE and has_page
+        self.canvas_views.set_both(side)
+        if side:
+            self.compare_view.mirror(self.preview)
+            self.compare_view.show_version(other)
+            self.compare_view.set_captions(other_name)
+            self.preview.set_captions(shown)
+        else:
+            self.compare_view.clear_page()
+            self.preview.set_captions(None)
+        split = mode in (SPLIT_VERTICAL, SPLIT_HORIZONTAL) and has_page
+        self.preview.set_split(other if split else None, horizontal=mode == SPLIT_HORIZONTAL)
+        if split:
+            self.preview.set_captions(shown, other_name)
+        if side and hasattr(self, "inspector"):
+            self._show_color_highlight()  # the second canvas's highlights and overlays, which a mirror doesn't carry
+            self._show_region_highlight()
+            self._show_analysis_overlays()
+
+    def _sync_views(self, leader: PreviewWidget, follower: PreviewWidget) -> None:
+        """Put ``follower`` as far in and in the same place as ``leader``, while the two are side by side."""
+        if self._syncing or self._compare_mode != SIDE_BY_SIDE or not follower.has_page():
+            return
+        self._syncing = True
+        try:
+            follower.set_view_state(leader.view_state())
+        finally:
+            self._syncing = False
+
+    def _original_view(self, page: GeneratedPage, long_edge: int | None) -> Image.Image | None:
+        """The picture ``page`` is made of, for the canvas's Original view: its own pixels, no more of them than the
+        page has as it prints, since the canvas shows nothing finer (see ``PreviewWidget``). Kept for the next page of
+        the same picture."""
+        image = self.current_image_bgr
+        if image is None:
+            return None
+        most = max(long_edge or 0, *page.page.size)
+        kept = self._original_kept
+        if kept is not None and kept[0] is image and kept[1] == most:
+            return kept[2]
+        smaller = pipeline.resize_to_long_edge(image, most) if max(image.shape[:2]) > most else image
+        original = Image.fromarray(np.ascontiguousarray(smaller[:, :, 2::-1]))
+        self._original_kept = (image, most, original)
+        return original
 
     def _preview_legend(self, page: GeneratedPage):
         """The legend of ``page`` as the panel asks for it now, drawn finer than the page, and how many of its pixels go
-        to one of the page's (see ``PreviewWidget.show_page``)."""
+        to one of the page's (see ``PreviewWidget.show_page``). Recipes not mixed yet are mixed in the background, and
+        the legend drawn again with them."""
         paper = page.drawing.style.paper_format
         page_px_per_mm = print_scale(page.page.size, paper).px_per_mm
         legend_scale = max(1.0, PREVIEW_LEGEND_PX_PER_MM / page_px_per_mm)
         palette_bgr = np.asarray(page.palette_rgb, dtype=np.uint8).reshape(-1, 3)[:, ::-1]
+        key, recipes = self._recipes(page)
+        if recipes is _NOT_MIXED:
+            recipes = None
+            self._mix_recipes(key)
         legend = render_legend(
             palette_bgr, round(page.page.width * legend_scale), page_px_per_mm * legend_scale,
-            self.controls.get_legend_detail(), names=page.color_names or None, recipes=self._recipes(page),
+            self.controls.get_legend_detail(), names=page.color_names or None, recipes=recipes,
             mixes=page.mixes or None,
         )
         return legend, legend_scale
 
-    def _recipes(self, page: GeneratedPage) -> list[list[str]] | None:
-        """How to mix each of ``page``'s legend colors from the paints listed, as the legend writes it, if the legend
-        shows recipes; the last ones found are kept, as the legend is drawn again and again."""
+    def _recipes(self, page: GeneratedPage):
+        """What ``page``'s legend recipes are mixed for, and them: (None, None) if the legend shows none; the mixed
+        ones kept, as the legend is drawn again and again; or ``_NOT_MIXED`` if they aren't yet."""
         paints = self.controls.listed_paints()
         if self.controls.get_legend_detail() != NAME_RECIPE or not paints:
-            return None
+            return None, None
         key = (tuple(page.palette_rgb), paints)
-        if self._recipes_for is None or self._recipes_for[0] != key:
-            found = mixing.recipes(page.palette_rgb, [rgb for _name, rgb in paints])
-            self._recipes_for = (key, [mixing.recipe_lines(recipe, paints) for recipe in found])
-        return self._recipes_for[1]
+        if self._recipes_for is not None and self._recipes_for[0] == key:
+            return key, self._recipes_for[1]
+        return key, _NOT_MIXED
+
+    def _mix_recipes(self, key: tuple) -> None:
+        """Mix the recipes for ``key`` (the palette and the paints) in the background: up to a second with many
+        paints."""
+        job = self.jobs.current(RECIPES)
+        if job is not None and job.context == key:
+            return
+        palette, paints = key
+        self.jobs.start(RECIPES, lambda _progress, _should_cancel: mix_recipes(palette, paints), context=key,
+                        label=translate("main_window", "Recipes from {0} paints").format(len(paints)))
 
     def _show_legend(self, _detail: str = "") -> None:
         """Show the page's legend as the panel now asks for it: the page itself is the same."""
         if self.current_page is not None and self.current_page.drawing is not None:
             self.preview.set_legend(*self._preview_legend(self.current_page))
+            self._refresh_compare()
 
     def _on_worker_failed(self, message: str) -> None:
-        self._making = False
         self.controls.set_busy(False)
         self._clear_pending_export()
-        QMessageBox.critical(self, "Generation failed", message)
-        self.statusBar().showMessage("Generation failed.")
+        self._say(translate("main_window", "Generation failed."), FAILED)
+        self.notify(ERROR, message, [self._details()])
+        self._show_freshness()
 
     # -- Export -----------------------------------------------------------
-    def export_page(self) -> None:
+    def open_export_dialog(self) -> None:
+        """The export's options beside what they will write (see ``export_dialog``); Export there asks for the file."""
         if self.current_image_bgr is None:
-            QMessageBox.warning(self, "No image", "Open an image first.")
+            self._no_picture()
             return
-        if (self._worker is not None and self._worker.isRunning()) or self._raster_worker is not None:
+        if self._making() or self.jobs.is_running(SAVE):
+            return
+        self._show_export_state()
+        self.export_dialog.open_for_export()
+
+    def _show_export_state(self) -> None:
+        if hasattr(self, "export_dialog"):
+            self.export_dialog.show_state(self.export_state())
+
+    def export_state(self) -> ExportState:
+        """What the export dialog shows for the options as they are: what will be written, its warnings, whether the
+        preview is out of date, and its thumbnail."""
+        page = self.current_page
+        if page is None or self.current_image_bgr is None:
+            return ExportState(translate("main_window", "Generate a preview first: the export writes the page it "
+                                                        "shows."),
+                               blocked=translate("main_window", "Generate a preview first."))
+        now = self.controls.snapshot()
+        fmt = now.export.format
+        version = now.export.version
+        made_with = self.document.result_settings()
+        changed = () if made_with is None else now.changes_from(made_with)
+        height, width = self.current_image_bgr.shape[:2]
+        paper = self.controls.get_page_style().paper_format
+        width_mm, height_mm = print_scale((width, height), paper).printed_size_mm
+        on_paper = translate("main_window", "{width_mm:.0f} × {height_mm:.0f} mm on {0}").format(
+            paper.name, width_mm=width_mm, height_mm=height_mm
+        )
+        dpi = None
+        if fmt == PALETTE:
+            suffix = now.export.palette_format
+            title = swatches.FORMATS[suffix].split(" (")[0]
+            summary = translate("main_window", "The legend's {0} colors as a {title} palette, named as on the "
+                                               "legend.").format(len(page.palette_rgb), title=title)
+            thumbnail = palette_pixmap(page.palette_rgb)
+        else:
+            what = {
+                Version.PAGE: translate("main_window", "page"),
+                Version.COMPLETED: translate("main_window", "completed"),
+                Version.TINTED: translate("main_window", "tinted"),
+            }[version]
+            if fmt == "PNG":
+                dpi = self.controls.get_export_dpi(max(width_mm, height_mm))
+                pixels = tuple(max(1, round(mm * dpi / MM_PER_INCH)) for mm in (width_mm, height_mm))
+                summary = translate(
+                    "main_window",
+                    "A PNG of the {what}: {0:,} × {1:,} px at {dpi:.0f} dpi, "
+                    "printing {on_paper}, with its legend under it.",
+                ).format(pixels[0], pixels[1], what=what, dpi=dpi, on_paper=on_paper)
+                if self.controls.resolution_capped():
+                    summary += " " + translate("main_window", "The most a PNG takes is {0:,} px along a side.").format(
+                        export.MAX_RASTER_LONG_EDGE
+                    )
+
+            else:
+                summary = translate(
+                    "main_window",
+                    "A PDF of the {what}: vector art printing {on_paper}, sharp "
+                    "at any size, with its legend on a sheet of its own.",
+                ).format(what=what, on_paper=on_paper)
+            thumbnail = pixmap_of(page.image(version))
+        warnings = warnings_for(
+            fmt, dpi, now.export.palette_format, len(page.palette_rgb), now.values["min_label_pt"],
+            now.medium == SCREEN_MEDIUM,
+        )
+        return ExportState(summary, warnings, changed, thumbnail)
+
+    def export_page(self, previewed: bool = False) -> None:
+        """Ask for the file, and write the page to it with the export's options: the page as previewed if
+        ``previewed``, else made with the settings as they are now (the preview's own page when they are the same)."""
+        if self.current_image_bgr is None:
+            self._no_picture()
+            return
+        if self._making() or self.jobs.is_running(SAVE):
             return
 
         fmt = self.controls.get_output_format()
         version = self.controls.get_export_version()
+        source = self.document.source()
+        stem = Path(source.name).stem if source is not None and source.name else "coloring_page"
         if fmt == PALETTE:
             suffix = self.controls.get_palette_format()
             file_filter = swatches.FORMATS[suffix]
-            name = "coloring_page_palette"
+            name = f"{stem}_palette"
         else:
             suffix = ".png" if fmt == "PNG" else ".pdf"
-            file_filter = "PNG image (*.png)" if fmt == "PNG" else "PDF document (*.pdf)"
-            name = "coloring_page" if version is Version.PAGE else f"coloring_page_{version.value.lower()}"
-        path_str, _ = QFileDialog.getSaveFileName(self, "Export Coloring Page", f"{name}{suffix}", file_filter)
+            file_filter = (
+                translate("main_window", "PNG image (*.png)")
+                if fmt == "PNG"
+                else translate("main_window", "PDF document (*.pdf)")
+            )
+            name = f"{stem}_page" if version is Version.PAGE else f"{stem}_{version.value.lower()}"
+        start = f"{name}{suffix}"
+        folder = self._folder()
+        if folder:
+            start = str(Path(folder) / start)  # beside the project, or the picture
+        path_str, _ = QFileDialog.getSaveFileName(
+            self, translate("main_window", "Export Coloring Page"), start, file_filter
+        )
         if not path_str:
             return
         path = Path(path_str)
         if path.suffix.lower() != suffix:
             path = path.with_suffix(suffix)
+        self._start_export(path, fmt, version, self.controls.get_export_resolution(), previewed)
 
+    def _confirm_reset(self) -> bool:
+        answer = QMessageBox.question(
+            self, translate("main_window", "Reset All Settings"),
+            translate("main_window", "Put every setting back to its default, and the difficulty to Medium? The paints "
+                                     "listed are kept, and "
+                                     "Edit > Undo takes it back."),
+            QMessageBox.Reset | QMessageBox.Cancel, QMessageBox.Cancel,
+        )
+        return answer == QMessageBox.Reset
+
+    def _confirm_replace(self, paths: list[Path]) -> bool:
+        names = "\n".join(path.name for path in paths)
+        answer = QMessageBox.question(
+            self, translate("main_window", "Replace Files"),
+            (translate("main_window", "The palette is written as a file that already exists:\n\n{names}\n\n"
+                                      "Replace them?") if len(paths) == 1 else
+             translate("main_window", "The palette is written as {count} files that already exist:\n\n{names}\n\n"
+                                      "Replace them?")).format(count=len(paths), names=names),
+            QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel,
+        )
+        return answer == QMessageBox.Yes
+
+    def retry_export(self) -> None:
+        """The last export again, to the same file with the same options."""
+        if self._last_export is not None and not (self._making() or self.jobs.is_running(SAVE)):
+            self._start_export(*self._last_export)
+
+    def _start_export(self, path: Path, fmt: str, version: Version, resolution: tuple[str, int],
+                      previewed: bool) -> None:
+        self._last_export = (path, fmt, version, resolution, previewed)
         self._pending_export_path = path
         self._pending_export_format = fmt
         self._pending_export_version = version
-        self._pending_export_resolution = self.controls.get_export_resolution()
+        self._pending_export_resolution = resolution
         self.controls.set_busy(True)
-        self.statusBar().showMessage(f"Rendering the {fmt} at print resolution…")
+        self._say(translate("main_window", "Rendering the {fmt} at print resolution…").format(fmt=fmt), BUSY)
 
         # Every export is drawn from the page's print layout: the preview's page laid out at 300 dpi on its paper, its
         # numbers placed once, as small as the style asks (see ``pipeline.draw_page``), drawn once for the zoom and
-        # the export alike; made first if the settings changed since. The PDF draws it as vectors, the PNG draws the
-        # same vectors in pixels.
-        long_edge = pipeline.export_long_edge(self.current_image_bgr, self.controls.get_page_style().paper_format)
-        preview = self._preview_to_draw(long_edge)
+        # the export alike; made first if the settings changed since, unless the page as previewed was asked for.
+        # The PDF draws it as vectors, the PNG draws the same vectors in pixels.
+        if previewed and self.current_page is not None and self.current_page.model is not None:
+            preview = self.current_page
+        else:
+            long_edge = pipeline.export_long_edge(self.current_image_bgr, self.controls.get_page_style().paper_format)
+            preview = self._preview_to_draw(long_edge)
         if preview is not None and fmt == PALETTE:
             self._on_export_ready(preview)  # the preview's legend: nothing to draw
             return
@@ -283,97 +2598,131 @@ class MainWindow(QMainWindow):
                 self._pending_export_drawn = True
                 self._draw_print_page()  # saved once drawn (see _on_print_page_ready)
             return
-        self._making = True
-        self._worker = self._make_worker(long_edge, vector=True)
-        self._worker.succeeded.connect(self._on_export_ready)
-        self._worker.start()
+        settings = self.controls.snapshot()
+        long_edge = pipeline.export_long_edge(self.current_image_bgr, settings.page_style().paper_format)
+        self.jobs.start(
+            EXPORT, page_task(
+                self.current_image_bgr, settings.difficulty_params(), long_edge, settings.page_style(),
+                settings.handling(), vector=True,
+            ),
+            label=translate("main_window", "Page to export at {long_edge} px").format(long_edge=long_edge),
+        )
 
     def _on_export_ready(self, page: GeneratedPage) -> None:
-        self._making = False
-        self.controls.set_busy(False)
         path = self._pending_export_path
         fmt = self._pending_export_format
         version = self._pending_export_version
         resolution = self._pending_export_resolution
         self._clear_pending_export()
         if path is None or fmt is None or version is None:
+            self.controls.set_busy(False)
             return
         # The legend as the panel asks for it now: changing it doesn't make the page again (see _preview_to_draw).
         drawing = page.drawing
         style = dataclasses.replace(drawing.style, legend_detail=self.controls.get_legend_detail())
         page = dataclasses.replace(page, drawing=dataclasses.replace(drawing, style=style))
+        # Its recipes, as kept, or mixed as the file is written, off the GUI thread.
+        key, recipes = self._recipes(page)
+
+        def legend_recipes():
+            return mix_recipes(*key) if recipes is _NOT_MIXED else recipes
+
+        # A palette written as several files: the save dialog asked about the name chosen, not about the others. Asked
+        # here, of the page written: made again with the settings now, it can have more colors than the one shown.
         if fmt == PALETTE:
-            try:
-                written = swatches.save_palette(path, page.palette_rgb, names=_palette_names(page))
-            except Exception as exc:  # noqa: BLE001
-                self._on_export_failed(str(exc))
+            others = [p for p in swatches.palette_files(path, len(page.palette_rgb)) if p != path and p.exists()]
+            if others and not self._confirm_replace(others):
+                self.controls.set_busy(False)
+                self._say(translate("main_window", "Not exported: no file was replaced."), CANCELLED)
                 return
-            self._on_palette_saved(written)
+        # Written in the background, and not stopped once started: at 600 dpi on A2 the PNG takes seconds.
+        self.controls.set_busy(True, cancellable=False)
+        if fmt == PALETTE:
+            names = _palette_names(page)
+            self._say(translate("main_window", "Writing the palette…"), BUSY)
+            self.jobs.start(
+                SAVE,
+                lambda _p, _c: swatches.save_palette(path, page.palette_rgb, names=names),
+                cancellable=False,
+                context=self._on_palette_saved,
+                label=translate("main_window", "Palette {0}").format(path.name),
+            )
             return
         if fmt == "PDF":
-            try:
+            self._say(translate("main_window", "Writing the PDF…"), BUSY)
+
+            def save_pdf(_progress, _should_cancel):
                 export.save_pdf(
                     page.drawing, page.palette_rgb, path, version=version, painting=page.painting,
-                    names=page.color_names or None, recipes=self._recipes(page), mixes=page.mixes or None,
+                    names=page.color_names or None, recipes=legend_recipes(), mixes=page.mixes or None,
                 )
-            except Exception as exc:  # noqa: BLE001
-                self._on_export_failed(str(exc))
-                return
-            self._on_export_saved(page, path, page.page.size)
+                return page.page.size
+
+            self.jobs.start(
+                SAVE, save_pdf, cancellable=False, label=translate("main_window", "PDF {0}").format(path.name),
+                context=lambda size: self._on_export_saved(page, path, size),
+            )
             return
 
         # The vector page drawn in pixels, as the PDF prints it (see ``export.rasterize``), at the resolution asked
-        # for: in the background, since at 600 dpi on A2 it takes seconds. It can't be stopped once started.
+        # for.
         unit, value = resolution
         printed_long_mm = max(print_scale(page.page.size, page.drawing.style.paper_format).printed_size_mm)
         dpi = value if unit == DPI else value * MM_PER_INCH / printed_long_mm
-        self.controls.set_busy(True, cancellable=False)
-        self.statusBar().showMessage(f"Drawing the PNG at {dpi:.0f} dpi…")
-        recipes = self._recipes(page)
-        worker = TaskWorker(
-            lambda: export.export_png(
+        self._say(translate("main_window", "Drawing the PNG at {dpi:.0f} dpi…").format(dpi=dpi), BUSY)
+        self.jobs.start(
+            SAVE,
+            lambda _p, _c: export.export_png(
                 page.drawing, page.palette_rgb, path, dpi, version, page.painting, names=page.color_names or None,
-                recipes=recipes, mixes=page.mixes or None,
-            )
+                recipes=legend_recipes(), mixes=page.mixes or None,
+            ),
+            cancellable=False, label=translate("main_window", "PNG {0} at {dpi:.0f} dpi").format(path.name, dpi=dpi),
+            context=lambda size: self._on_export_saved(page, path, size),
         )
-        worker.succeeded.connect(lambda size: self._on_export_saved(page, path, size))
-        worker.failed.connect(self._on_export_failed)
-        self._raster_worker = worker
-        worker.start()
-
-    def _retire_raster_worker(self) -> None:
-        # Its signal can come before its thread ends: kept until it has, so it isn't destroyed while running.
-        worker, self._raster_worker = self._raster_worker, None
-        self._retired = [retired for retired in self._retired if not retired.isFinished()]
-        if worker is not None and not worker.isFinished():
-            self._retired.append(worker)
 
     def _on_export_saved(self, page: GeneratedPage, path: Path, size: tuple[int, int]) -> None:
-        self._retire_raster_worker()
         self.controls.set_busy(False)
         if self.preview.wants_detail():
             self._draw_print_page()  # asked for by a zoom while the export was made
         paper = page.drawing.style.paper_format
         width, height = size
         dpi = print_scale(size, paper).dpi
-        printed = f"{width:,} × {height:,} px, {dpi:.0f} dpi on {paper.name}"
-        self.statusBar().showMessage(f"Exported to {path} ({printed})")
-        QMessageBox.information(self, "Export complete", f"Saved to:\n{path}\n\n{printed}")
+        printed = translate("main_window", "{width:,} × {height:,} px, {dpi:.0f} dpi on {0}").format(
+            paper.name, width=width, height=height, dpi=dpi
+        )
+        self._say(translate("main_window", "Exported to {path} ({printed})").format(path=path, printed=printed), DONE)
+        self.notify(
+            SUCCESS,
+            translate("main_window", "Exported {0}: {printed}.").format(path.name, printed=printed),
+            [(translate("main_window", "Show in Folder"), lambda: show_in_folder(path))],
+        )
 
     def _on_palette_saved(self, written: list[Path]) -> None:
         self.controls.set_busy(False)
         if self.preview.wants_detail():
             self._draw_print_page()  # asked for by a zoom while the export was made
-        files = "\n".join(str(path) for path in written)
-        note = f"{len(written)} palettes of at most {swatches.PROCREATE_MAX_SWATCHES} colors" if len(written) > 1 else ""
-        self.statusBar().showMessage(f"Exported the palette to {written[0]}" + (f" ({note})" if note else ""))
-        QMessageBox.information(self, "Export complete", f"Saved to:\n{files}" + (f"\n\n{note}" if note else ""))
+        note = (
+            translate("main_window", "{0} palettes of at most {1} colors").format(
+                len(written), swatches.PROCREATE_MAX_SWATCHES
+            )
+            if len(written) > 1
+            else ""
+        )
+        self._say(
+            translate("main_window", "Exported the palette to {0}").format(written[0]) + (f" ({note})" if note else ""),
+            DONE,
+        )
+        names = ", ".join(path.name for path in written)
+        self.notify(
+            SUCCESS,
+            translate("main_window", "Exported {names}").format(names=names) + (f": {note}." if note else "."),
+            [(translate("main_window", "Show in Folder"), lambda: show_in_folder(written[0]))],
+        )
 
     def _on_export_failed(self, message: str) -> None:
-        self._retire_raster_worker()
         self.controls.set_busy(False)
-        QMessageBox.critical(self, "Export failed", message)
-        self.statusBar().showMessage("Export failed.")
+        self._say(translate("main_window", "Export failed."), FAILED)
+        self.notify(ERROR, message, [(translate("main_window", "Retry"), self.retry_export), self._details()])
 
     def _clear_pending_export(self) -> None:
         self._pending_export_path = None
@@ -394,31 +2743,6 @@ class MainWindow(QMainWindow):
         current = (self.controls.get_difficulty_params(), style, self.controls.get_handling())
         return page if (model.params, model.style, model.handling) == current else None
 
-    def _make_worker(
-        self,
-        long_edge: int,
-        versions: tuple[Version, ...] = (),
-        drawn_from: GeneratedPage | None = None,
-        vector: bool = False,
-    ) -> PipelineWorker:
-        """A worker generating the current image at ``long_edge`` with the panel's settings, wired to its progress, and
-        drawing ``versions`` of the page too: drawing ``drawn_from`` there, the preview made with those settings, if
-        given; with ``vector``, laid out to print (see ``PipelineWorker``)."""
-        worker = PipelineWorker(
-            self.current_image_bgr,
-            self.controls.get_difficulty_params(),
-            long_edge,
-            style=self.controls.get_page_style(),
-            handling=self.controls.get_handling(),
-            versions=versions,
-            drawn_from=drawn_from,
-            vector=vector,
-        )
-        worker.failed.connect(self._on_worker_failed)
-        worker.cancelled.connect(self._on_worker_cancelled)
-        worker.progress.connect(self.controls.set_progress)
-        return worker
-
     # -- The preview's page at print size -------------------------------------
     def _print_long_edge(self) -> int | None:
         """The long edge the preview's page is laid out at to print (see ``pipeline.export_long_edge``); None if there
@@ -433,87 +2757,108 @@ class MainWindow(QMainWindow):
         which shows it past the preview's own pixels, and for the export, which draws it. Not while a page is being
         made: a preview, which will replace this one, or an export with other settings."""
         long_edge = self._print_long_edge()
-        running = self._print_worker is not None and self._print_worker.isRunning()
-        if long_edge is None or self._print_page is not None or running or self._making:
+        if long_edge is None or self._print_page is not None or self.jobs.is_running(PRINT_LAYOUT) or self._making():
             return
         page = self.current_page
         model = page.model
-        worker = PipelineWorker(
-            self._previewed_image,
-            model.params,
-            long_edge,
-            style=model.style,
-            handling=model.handling,
-            versions=tuple(Version),
-            drawn_from=page,
-            vector=True,
+        self.jobs.start(
+            PRINT_LAYOUT,
+            page_task(self._previewed_image, model.params, long_edge, model.style, model.handling,
+                      versions=tuple(Version), drawn_from=page, vector=True),
+            accept=lambda _job, page=page: self.current_page is page,  # not of a preview since replaced
+            label=translate("main_window", "Print layout at {long_edge} px").format(long_edge=long_edge),
         )
-        worker.succeeded.connect(self._on_print_page_ready)
-        worker.failed.connect(self._on_print_page_failed)
-        worker.cancelled.connect(self._on_print_page_cancelled)
-        worker.progress.connect(self._on_print_page_progress)
-        self._print_worker = worker
         if self._pending_export_path is None:
-            self.statusBar().showMessage("Drawing the page as it prints, for the zoom…")
-        worker.start()
+            self._say(translate("main_window", "Drawing the page as it prints, for the zoom…"), BUSY)
 
     def _drop_print_page(self) -> None:
         """Forget the preview's page at print size, and stop drawing it: the preview is about to change."""
         self._print_page = None
-        worker = self._print_worker
-        self._print_worker = None
-        self._retired = [retired for retired in self._retired if not retired.isFinished()]
-        if worker is not None and not worker.isFinished():
-            worker.requestInterruption()
-            self._retired.append(worker)
+        self.jobs.drop(PRINT_LAYOUT)
 
     # Each of these is the export's, if it waits for the page; else the zoom's alone, telling nothing over an export
     # with other settings that may be under way.
-    def _on_print_page_progress(self, percent: int) -> None:
-        if self.sender() is self._print_worker and self._pending_export_drawn:
-            self.controls.set_progress(percent)
-
     def _on_print_page_ready(self, drawn: GeneratedPage) -> None:
-        page = self.current_page
-        if self.sender() is not self._print_worker or page is None or drawn.model is not page.model:
-            return  # drawn from a preview since replaced
         self._print_page = drawn
+        self.results.attach_print_page(self._result_key(self.document.result_settings()), self.current_page, drawn)
         self.preview.show_detail({version: drawn.image(version) for version in Version})
+        self._refresh_compare()
         if self._pending_export_drawn:
             self._on_export_ready(drawn)
         elif self._pending_export_path is None:
-            self.statusBar().showMessage(self._ready_message)
+            self._say(self._ready_message, DONE)
 
     def _on_print_page_failed(self, message: str) -> None:
-        if self.sender() is not self._print_worker:
-            return
         if self._pending_export_drawn:
             self._on_worker_failed(message)
         elif self._pending_export_path is None:
-            self.statusBar().showMessage(f"The page could not be drawn as it prints: {message}")
+            self._say(message, FAILED)
 
     def _on_print_page_cancelled(self) -> None:
-        if self.sender() is not self._print_worker:
-            return
         if self._pending_export_drawn:
             self._on_worker_cancelled()
         elif self._pending_export_path is None:
-            self.statusBar().showMessage(self._ready_message)
+            self._say(self._ready_message, DONE)
 
     def closeEvent(self, event) -> None:
-        # Stop what is still running, rather than leave a thread to be destroyed with the window.
-        for worker in (self._worker, self._print_worker, self._raster_worker, *self._retired):
-            if worker is not None and worker.isRunning():
-                worker.requestInterruption()
-                worker.wait()
+        if not self._settle_unsaved():
+            event.ignore()
+            return
+        self._recovery_timer.stop()
+        if self.recovery is not None:
+            self.recovery.close()  # a clean exit: nothing to recover
+        self.save_layout()
+        # Stop what is still running, without waiting for it: the threads outlive the window, and the application
+        # waits for them, bounded, when it quits (see ``app.jobs.wait_for_all``).
+        self.jobs.shutdown()
+        remove_log_handler(self._log_handler)
         super().closeEvent(event)
+
+
+class _Watcher(QObject):
+    """Calls ``changed`` whenever a widget it watches is turned on or off, shown or hidden."""
+
+    EVENTS = (QEvent.EnabledChange, QEvent.ShowToParent, QEvent.HideToParent)
+
+    def __init__(self, changed, parent: QObject | None = None):
+        super().__init__(parent)
+        self._changed = changed
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() in self.EVENTS:
+            self._changed()
+        return False
+
+
+def about_text() -> str:
+    """The About box: the version, what the app is, and the licenses of what it bundles."""
+    return (
+        translate("main_window", "<h3>Tessellatum {__version__}</h3><p>Turns a picture into a paint-by-numbers "
+                                 "page: regions to paint, numbered, with a legend of their colors.</p><p>Apache "
+                                 "License 2.0.</p><p>It bundles the Inter typeface (SIL Open Font License 1.1), "
+                                 "the Lucide icons (ISC license), Qt through PySide6 (LGPL 3), and its detection "
+                                 "models (MIT or Apache 2.0); their license texts are in its <i>resources</i> "
+                                 "folder.</p>").format(__version__=__version__)
+    )
 
 
 def _warm_up_pipeline() -> None:
     try:
         pipeline.warm_up()
+    except RuntimeError as exc:
+        if "after shutdown" not in str(exc):  # the app quit while it ran: nothing to tell
+            log.warning("warming up the pipeline failed", exc_info=True)
     except Exception:  # noqa: BLE001 - best effort; a real failure resurfaces on Generate
-        pass
+        log.warning("warming up the pipeline failed", exc_info=True)
+
+
+def _keep_bytes(source) -> None:
+    """Give a picture that came from no file (pasted, say) bytes to keep in a project: a PNG, lossless."""
+    if source.data is None:
+        out = io.BytesIO()
+        Image.fromarray(np.ascontiguousarray(source.image[:, :, ::-1])).save(out, "PNG")
+        source.data = out.getvalue()
+        source.name = f"{Path(source.name or 'picture').stem}.png"
 
 
 def _bgr_to_pixmap(image_bgr: np.ndarray) -> QPixmap:

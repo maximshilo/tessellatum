@@ -60,17 +60,56 @@ def test_the_region_slider_moves_in_equal_ratios():
 def test_every_setting_has_a_slider_in_its_section_with_its_tooltip_and_unit(panel):
     for s in settings.SETTINGS:
         control = panel.controls[s.name]
-        assert control.setting is s and control.toolTip() == s.tooltip
-        assert control.value_label.text() == s.text(control.value())
-        assert panel.sections[s.group].body.isAncestorOf(control)
-    # The tone sits with the lines; the faces', line art's and text's own settings start folded away.
-    assert panel.sections[settings.LINES].body.isAncestorOf(panel.tone_combo)
-    assert {group: section.is_expanded() for group, section in panel.sections.items()} == {
-        settings.REGIONS: True, settings.FACES: False, settings.LINES: True, settings.LINE_ART: False,
-        settings.TEXT: False,
-    }
-    panel.sections[settings.TEXT].toggle.click()
-    assert panel.sections[settings.TEXT].is_expanded() and not panel.sections[settings.TEXT].body.isHidden()
+        # One that means nothing yet (the mixing settings, without My paints) is off, and says why first.
+        reason = s.disabled_reason(panel.snapshot().chosen())
+        assert control.setting is s and control.isEnabled() == (reason is None)
+        assert control.toolTip() == (s.tooltip if reason is None else f"{reason} {s.tooltip}")
+        assert control.text() == s.text(control.value())
+        # On its category's page, in its section, or in the page's Advanced group if it is advanced (W1, W4).
+        section = panel.sections[panel.section_key(s)]
+        assert section.body.isAncestorOf(control) and panel.pages[s.category].isAncestorOf(control)
+        # An advanced one in its subsection of the page's Advanced group.
+        group = panel.sections[controls_panel.advanced_key(s.category)] if s.level == settings.ADVANCED else None
+        assert (s.level == settings.ADVANCED) == section.nested, s.name
+        assert group is None or group.body.isAncestorOf(section), s.name
+    for name, widget in panel.choice_widgets.items():
+        choice = settings.choice(name)
+        assert panel.sections[panel.section_key(choice)].body.isAncestorOf(widget), name
+        assert panel.pages[choice.category].isAncestorOf(widget), name
+    # The tone on top, its grays in Advanced; only the Advanced groups and their subsections start folded away.
+    assert panel.sections["Tone"].body.isAncestorOf(panel.tone_combo)
+    folded = {name for name, section in panel.sections.items() if not section.is_expanded()}
+    groups = {controls_panel.advanced_key(c) for c in (settings.GENERATION, settings.COLORS, settings.DOCUMENT)}
+    assert folded == groups | {name for name, section in panel.sections.items() if section.nested}
+    group = panel.sections[controls_panel.advanced_key(settings.GENERATION)]
+    group.toggle.click()
+    assert group.is_expanded() and not group.body.isHidden()
+
+
+def test_every_section_of_the_registry_has_its_place_on_its_category_s_page():
+    for entry in settings.entries():
+        if entry.level == settings.ADVANCED:
+            assert entry.section in controls_panel.ADVANCED_SECTIONS[entry.category], entry.name
+        else:
+            assert entry.section in controls_panel.PAGE_SECTIONS[entry.category], entry.name
+    named = [name for names in controls_panel.PAGE_SECTIONS.values() for name in names]
+    assert len(named) == len(set(named))
+    # No section on top that is empty, nor one in Advanced.
+    for category, names in controls_panel.ADVANCED_SECTIONS.items():
+        for name in names:
+            assert any(e.category == category and e.section == name and e.level == settings.ADVANCED
+                       for e in settings.entries()), name
+
+
+def test_the_sidebar_shows_one_category_s_page_at_a_time(panel):
+    assert panel.category() == settings.GENERATION and panel.title.text() == settings.GENERATION
+    panel.show_category(settings.COLORS)
+    assert panel.category() == settings.COLORS and panel.stack.currentWidget() is panel.scrolls[settings.COLORS]
+    assert panel.pages[settings.SOURCE].isAncestorOf(panel.open_button)
+    # The export's options are in the export dialog, on no page (W5).
+    assert not any(page.isAncestorOf(panel.png_radio) for page in panel.pages.values())
+    # The primary action stays in the footer, whatever page shows.
+    assert not any(page.isAncestorOf(panel.generate_button) for page in panel.pages.values())
 
 
 def test_the_panel_starts_at_the_defaults(panel):
@@ -92,7 +131,7 @@ def test_a_preset_shows_its_values_and_is_passed_as_it_is(panel):
         if control.setting.owner == settings.DIFFICULTY:
             assert control.value() == getattr(hard, name)  # exactly, wherever the slider's steps fall
     tooltip = panel.preset_combo.itemData(panel.preset_combo.findText("Hard"), Qt.ToolTipRole)
-    assert tooltip == difficulty.describe(hard) and "4 mm²" in tooltip
+    assert tooltip.endswith(difficulty.describe(hard)) and "4 mm²" in tooltip and "regions to paint" in tooltip
     assert panel.preset_combo.itemData(panel.preset_combo.findText("Custom"), Qt.ToolTipRole)
 
 
@@ -108,7 +147,7 @@ def test_moving_a_difficulty_setting_picks_custom_and_keeps_the_preset_s_others(
     assert (params.num_colors, params.min_region_area_mm2, params.blur_sigma) == (
         hard.num_colors, hard.min_region_area_mm2, hard.blur_sigma
     )
-    assert panel.controls["min_width_mm"].value_label.text() == "1.5 mm"
+    assert panel.controls["min_width_mm"].text() == "1.5 mm"
     # Picking a preset again shows the preset's values.
     panel.preset_combo.setCurrentText("Easy")
     assert panel.get_difficulty_params() == difficulty.params_for_preset("Easy")
@@ -150,7 +189,7 @@ def test_the_pixels_across_the_brush_sit_by_the_brush_and_leave_the_preset_alone
     assert first.preset_combo.currentText() == "Realistic"
     assert first.get_difficulty_params() == difficulty.params_for_preset("Realistic")
     assert first.get_handling() == Handling(brush_px=6.0)
-    assert first.controls["brush_px"].value_label.text() == "6.0 px"
+    assert first.controls["brush_px"].text() == "6.0 px"
     first.deleteLater()
     _app.processEvents()
 
@@ -166,7 +205,7 @@ def test_line_widths_from_0_1_to_1_mm(panel):
     slider = panel.controls["line_width_mm"].slider
     widths = [controls_panel.slider_value(settings.setting("line_width_mm"), p) for p in range(slider.maximum() + 1)]
     assert widths[0] == 0.1 and widths[-1] == 1.0 and 0.2 in widths and len(widths) == 19
-    assert panel.controls["line_width_mm"].value_label.text() == "0.20 mm"
+    assert panel.controls["line_width_mm"].text() == "0.20 mm"
 
 
 def test_a_tone_sets_all_three_grays(panel):
@@ -184,13 +223,13 @@ def test_a_tone_sets_all_three_grays(panel):
 
 def test_medium_shows_its_grays_as_34_34_and_70_fresh_or_kept_between_runs(panel, tmp_path):
     fields = ("line_gray", "label_gray", "leader_gray")
-    assert [panel.controls[field].value_label.text() for field in fields] == ["34 L*", "34 L*", "70 L*"]
+    assert [panel.controls[field].text() for field in fields] == ["34 L*", "34 L*", "70 L*"]
     store = _store(tmp_path)
     store.setValue("style/tone", "Medium")
     store.setValue("settings/label_gray", 0x81)  # kept by an older version, as Medium was: the tone's grays win
     kept = ControlsPanel(store=store)
     assert kept.tone_combo.currentText() == "Medium"
-    assert [kept.controls[field].value_label.text() for field in fields] == ["34 L*", "34 L*", "70 L*"]
+    assert [kept.controls[field].text() for field in fields] == ["34 L*", "34 L*", "70 L*"]
 
 
 def test_moving_a_gray_picks_a_custom_tone_starting_from_the_tone(panel):
@@ -302,17 +341,21 @@ def test_at_its_narrowest_every_slider_has_room_and_the_sliders_line_up(panel):
     for section in panel.sections.values():
         section.toggle.setChecked(True)
     panel.show()  # laid out only once shown
-    panel.resize(panel.minimumSizeHint().width(), panel.sizeHint().height())
-    _app.processEvents()
-    for s in settings.SETTINGS:
-        control = panel.controls[s.name]
-        assert control.slider.width() >= controls_panel.MIN_SLIDER_WIDTH, s.name
-        # A setting's label explains it too.
-        assert panel.sections[s.group].form.labelForField(control).toolTip() == s.tooltip
-    # Every section's labels are as wide as the widest, so the sliders start in one column.
-    lefts = {panel.controls[s.name].slider.mapTo(panel, panel.controls[s.name].slider.rect().topLeft()).x()
-             for s in settings.SETTINGS}
-    assert len(lefts) == 1
+    for category in controls_panel.PAGE_SECTIONS:
+        panel.show_category(category)
+        panel.resize(panel.minimumSizeHint().width(), 2000)
+        _app.processEvents()
+        on_page = [s for s in settings.SETTINGS if s.category == category]
+        for s in on_page:
+            control = panel.controls[s.name]
+            assert control.slider.width() >= controls_panel.MIN_SLIDER_WIDTH, s.name
+            # A setting's label explains it too, and names it to a screen reader (its buddy).
+            label = panel.sections[panel.section_key(s)].form.labelForField(control)
+            assert label.toolTip() == s.tooltip and label.buddy() is control.slider
+        # A page's labels are as wide as its widest, so its sliders start in one column.
+        lefts = {panel.controls[s.name].slider.mapTo(panel, panel.controls[s.name].slider.rect().topLeft()).x()
+                 for s in on_page}
+        assert len(lefts) <= 1, category
 
 
 def test_any_version_of_the_page_can_be_exported_and_the_page_itself_is_the_default(panel):
@@ -404,7 +447,7 @@ def test_the_coloring_medium_drops_the_paper_black_and_caps_the_margin_on_a_scre
     # The margin's and the levels' tooltips say what the page keeps on a screen.
     assert "at most 2.5" in first.controls["palette_margin_de00"].toolTip()
     medium = first.preset_combo.findText("Medium")
-    assert first.preset_combo.itemData(medium, Qt.ToolTipRole) == difficulty.describe(screen)
+    assert first.preset_combo.itemData(medium, Qt.ToolTipRole).endswith(difficulty.describe(screen))
     again = ControlsPanel(store=_store(tmp_path))
     assert again.medium_combo.currentText() == "Screen"
     again.reset()

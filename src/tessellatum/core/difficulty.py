@@ -16,10 +16,11 @@ pixels: see ``pipeline.working_long_edge``.)
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from tessellatum.core.color import MIN_PALETTE_DE00
-from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM
+from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, PAPERS
 from tessellatum.core.regions import CORNER_CONTRAST_DE00, SHARPEST_CORNER_DEG
 
 
@@ -229,18 +230,66 @@ def finest_params() -> DifficultyParams:
     )
 
 
-def describe(params: DifficultyParams) -> str:
+# The regions each built-in preset made on an A4 page, measured with the quality benchmark (``benchmarks/``) on its
+# thirteen pictures (photographs, paintings, faces, line art, lettering): the median, and the middle half of them.
+# How many a picture gives depends on how busy it is, which the range says. On a larger sheet they are counted in
+# proportion to its printable area, as the presets' limits are in millimeters: an approximation, not a measurement.
+TYPICAL_REGIONS: dict[str, tuple[int, int, int]] = {
+    "Beginner": (257, 152, 569),
+    "Easy": (339, 197, 836),
+    "Medium": (456, 208, 1258),
+    "Hard": (620, 346, 1588),
+    "Realistic": (931, 602, 2388),
+}
+
+
+def _same(text: str) -> str:
+    return text
+
+
+# ``practical`` and ``describe`` phrase their sentences through ``tr``: the interface passes its translation (the core
+# has no Qt), and ``packaging/update_translations.py`` collects every ``tr("...")`` here. A sentence is a template
+# filled after it is translated, so a language can order it its own way.
+def _about(count: float) -> int:
+    return round(count / 50) * 50
+
+
+def practical(name: str, paper: str = "A4", tr: Callable[[str], str] = _same) -> str | None:
+    """What the built-in preset ``name`` gives on a ``paper`` page, in regions to paint; None for any other."""
+    if name not in TYPICAL_REGIONS:
+        return None
+    width, height = PAPERS[paper].printable_mm()
+    a4_width, a4_height = PAPERS["A4"].printable_mm()
+    scale = width * height / (a4_width * a4_height)
+    median, low, high = (_about(count * scale) for count in TYPICAL_REGIONS[name])
+    return tr("About {median:,} regions to paint on an {paper} page ({low:,} to {high:,} on most pictures).").format(
+        median=median, paper=paper, low=low, high=high)
+
+
+def describe(params: DifficultyParams, tr: Callable[[str], str] = _same) -> str:
     """The settings in words, in the printed page's units, e.g. for a tooltip."""
     side_mm = math.sqrt(params.min_region_area_mm2)
-    detail = {1: "as much", 2: "half that"}.get(params.detail_weight, f"1/{params.detail_weight} of that")
+    if params.detail_weight == 1:
+        detail = tr("as much")
+    elif params.detail_weight == 2:
+        detail = tr("half that")
+    else:
+        detail = tr("1/{weight} of that").format(weight=params.detail_weight)
     corners = (
-        f"corners down to {params.sharpest_corner_deg:g}° kept sharp"
+        tr("corners down to {degrees:g}° kept sharp").format(degrees=params.sharpest_corner_deg)
         if params.sharpest_corner_deg < 180
-        else "corners rounded to the brush"
+        else tr("corners rounded to the brush")
     )
-    return (
-        f"Up to {params.num_colors} colors, at least {params.palette_margin_de00:g} ΔE00 apart. "
-        f"Regions of at least {params.min_region_area_mm2:.0f} mm² "
-        f"(about {side_mm:.0f} × {side_mm:.0f} mm; {detail} on a photograph's or painting's subject and faces) "
-        f"and {params.min_width_mm:g} mm wide on the printed A4 page, {corners}."
+    return tr(
+        "Up to {colors} colors, at least {margin:g} ΔE00 apart. Regions of at least {area:.0f} mm² "
+        "(about {side:.0f} × {side:.0f} mm; {detail} on a photograph's or painting's subject and faces) and "
+        "{width:g} mm wide on the printed page, {corners}."
+    ).format(
+        colors=params.num_colors,
+        margin=params.palette_margin_de00,
+        area=params.min_region_area_mm2,
+        side=side_mm,
+        detail=detail,
+        width=params.min_width_mm,
+        corners=corners,
     )

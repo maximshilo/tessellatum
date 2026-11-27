@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import threading
+import time
 import weakref
 from collections import OrderedDict
 from dataclasses import dataclass, field, replace
@@ -68,7 +69,65 @@ _STAGE_PROGRESS = {
     "render": 100,
 }
 
+# What each stage does, as ``StageEvent`` names it: a page made (``generate``) goes through them in this order, the ones
+# a picture doesn't need skipped; a page drawn larger (``draw_page``) through "scale" and "render".
+STAGES = {
+    "resize": "Sizing the picture",
+    "ink": "Looking for line art",
+    "detect": "Finding faces and the subject",
+    "quantize": "Choosing the colors",
+    "text": "Finding text",
+    "regions": "Building the regions",
+    "contours": "Outlining the regions",
+    "render": "Placing the numbers and drawing the page",
+    "scale": "Drawing the regions larger",
+}
+
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class StageEvent:
+    """A stage of making a page starting, or done (see ``generate``'s ``stage_callback``).
+
+    ``stage`` is its key in ``STAGES`` and ``label`` what it does. Done, ``seconds`` is how long it took, and
+    ``cached`` whether everything it needed was in the stage cache (see ``_StageCache``), so that it took next to no
+    time.
+    """
+
+    stage: str
+    label: str
+    done: bool = False
+    seconds: float = 0.0
+    cached: bool = False
+
+
+class _Stages:
+    """Tells ``callback``, if given, as each stage of a page starts and ends (see ``StageEvent``)."""
+
+    def __init__(self, callback: Callable[[StageEvent], None] | None) -> None:
+        self._callback = callback
+        self._open: tuple[str, float, tuple[int, int]] | None = None
+
+    def start(self, stage: str) -> None:
+        """``stage`` starts, and the stage before it, if any, is done."""
+        self.end()
+        if self._callback is None:
+            return
+        self._open = (stage, time.perf_counter(), _cache.counts())
+        self._callback(StageEvent(stage, STAGES[stage]))
+
+    def end(self) -> None:
+        """The stage under way, if any, is done."""
+        if self._open is None:
+            return
+        stage, started, (hits, misses) = self._open
+        self._open = None
+        now_hits, now_misses = _cache.counts()
+        self._callback(StageEvent(
+            stage, STAGES[stage], done=True, seconds=time.perf_counter() - started,
+            cached=now_misses == misses and now_hits > hits,
+        ))
 
 
 class PipelineCancelled(Exception):
@@ -274,15 +333,33 @@ class _StageCache:
         self._image_ref: weakref.ref | None = None
         self._entries: OrderedDict[Hashable, object] = OrderedDict()
         self._max_entries = max_entries
+        self._counts = threading.local()  # this thread's hits and misses (see ``counts``)
+
+    def counts(self) -> tuple[int, int]:
+        """How many lookups the calling thread has made that found their entry, and how many that didn't."""
+        return getattr(self._counts, "hits", 0), getattr(self._counts, "misses", 0)
+
+    def set_bypassed(self, bypassed: bool) -> None:
+        """Whether the calling thread's lookups go past the cache: computed every time, nothing kept, and the
+        entries kept for another image left as they are (see ``warm_up``)."""
+        self._counts.bypassed = bypassed
+
+    def _count(self, hit: bool) -> None:
+        name = "hits" if hit else "misses"
+        setattr(self._counts, name, getattr(self._counts, name, 0) + 1)
 
     def get_or_compute(self, image: np.ndarray, key: Hashable, compute: Callable[[], T]) -> T:
+        if getattr(self._counts, "bypassed", False):
+            return compute()
         with self._lock:
             if self._image_ref is None or self._image_ref() is not image:
                 self._image_ref = weakref.ref(image)
                 self._entries.clear()
             if key in self._entries:
                 self._entries.move_to_end(key)
+                self._count(True)
                 return self._entries[key]  # type: ignore[return-value]
+        self._count(False)
 
         value = compute()  # outside the lock: this is the slow part
 
@@ -299,15 +376,38 @@ class _StageCache:
             self._image_ref = None
             self._entries.clear()
 
+    @property
+    def max_entries(self) -> int:
+        return self._max_entries
 
-# One page touches 8 entries (two sizes of the picture, the line-art decision, its ink, its colors, its faces, subject
-# and text), so twice that keeps a page's stages while one setting at a time is tried, at a few tens of MB a preview.
-_cache = _StageCache(max_entries=16)
+    def set_max_entries(self, max_entries: int) -> None:
+        with self._lock:
+            self._max_entries = max_entries
+            while len(self._entries) > max_entries:
+                self._entries.popitem(last=False)
+
+
+# One page touches 9 entries (two sizes of the picture, the line-art decision, its ink, its colors, its faces, subject
+# and text, and its regions), so twice that keeps a page's stages while one setting at a time is tried, at a few tens of
+# MB a preview.
+ENTRIES_PER_PAGE = 9
+DEFAULT_CACHE_PAGES = 2
+_cache = _StageCache(max_entries=ENTRIES_PER_PAGE * DEFAULT_CACHE_PAGES)
 
 
 def clear_cache() -> None:
     """Forget cached intermediate results (see ``_StageCache``)."""
     _cache.clear()
+
+
+def cache_pages() -> int:
+    """How many pages' intermediate results are kept."""
+    return _cache.max_entries // ENTRIES_PER_PAGE
+
+
+def set_cache_pages(pages: int) -> None:
+    """Keep ``pages`` pages' intermediate results (at least one), forgetting the oldest beyond them now."""
+    _cache.set_max_entries(ENTRIES_PER_PAGE * max(1, int(pages)))
 
 
 def _mix_lines(recipe, paints: tuple[tuple[str, tuple[int, int, int]], ...]) -> list[str] | None:
@@ -472,12 +572,19 @@ def warm_up() -> None:
     Loads the compiled region kernels (compiling them if this is the first run
     since install, which takes a few seconds) and runs the whole pipeline once
     on a tiny synthetic image. Meant for a background thread at app start.
+
+    It goes past the stage cache, which keeps one image's stages: a picture
+    opened and previewed while it runs keeps its own, for the next preview.
     """
     kernels.warm_up()
     tiny = np.zeros((48, 64, 3), dtype=np.uint8)
     tiny[:, 32:] = (40, 160, 220)
     tiny[12:36, 8:24] = (200, 60, 60)
-    generate(tiny, DifficultyParams(num_colors=4, min_region_area_mm2=500.0, blur_sigma=1.0), long_edge=64)
+    _cache.set_bypassed(True)
+    try:
+        generate(tiny, DifficultyParams(num_colors=4, min_region_area_mm2=500.0, blur_sigma=1.0), long_edge=64)
+    finally:
+        _cache.set_bypassed(False)
 
 
 def _scaled_label(label: Label, sx: float, sy: float, size: tuple[int, int], exact: bool = False) -> Label:
@@ -560,6 +667,7 @@ def draw_page(
     should_cancel: Callable[[], bool] | None = None,
     collect_analysis: bool = False,
     vector: bool = False,
+    stage_callback: Callable[[StageEvent], None] | None = None,
 ) -> GeneratedPage:
     """``page``, made of ``image_bgr`` at a smaller size, drawn at ``long_edge``: the page its preview shows, at print
     size.
@@ -569,8 +677,9 @@ def draw_page(
     inside its smoothed outline (see ``redraw.scaled_ink``); and where the regions and the lines still part by a pixel,
     a dot of line goes on it, so that every region stays closed. The letters in the lines of text are taken again from
     the picture's own pixels at this size, and the numbers placed again, as small as the page's style lets them print
-    here (see ``render.render_page``). ``progress_callback``, ``should_cancel``, ``collect_analysis`` and ``vector``
-    are as for ``generate``, the analysis at this size.
+    here (see ``render.render_page``). ``progress_callback``, ``should_cancel``, ``collect_analysis``, ``vector`` and
+    ``stage_callback`` are as for ``generate``, the analysis at this size; its stages are "resize", "text" (if the
+    page looks for text), "scale" and "render".
 
     At the size ``page`` was made at, it is drawn from its own regions, lines and ink as they are, with its numbers
     placed again: for vectors, or as they are.
@@ -585,7 +694,9 @@ def draw_page(
         if should_cancel is not None and should_cancel():
             raise PipelineCancelled()
 
+    stages = _Stages(stage_callback)
     check_cancelled()
+    stages.start("resize")
     style, handling = model.style, model.handling
     resized = _cache.get_or_compute(
         image_bgr, ("page size", long_edge), lambda: resize_to_long_edge(image_bgr, long_edge, upscale=True)
@@ -598,7 +709,14 @@ def draw_page(
     paper = style.paper_format
     min_area_px, min_width_px = _paintable_limits(model.params, (w, h), paper)
     same_size = (w, h) == (w1, h1)
+    found_text = []
+    if handling.text:  # the picture's own at this size, before the regions are drawn larger (it needs nothing of them)
+        check_cancelled()
+        stages.start("text")
+        found_text = detect_text(image_bgr, resized, handling.text_max_height_mm)
 
+    check_cancelled()
+    stages.start("scale")
     if same_size:
         region_id_map, printed_ink, clearable = model.region_id_map, model.printed_ink, model.clearable
     else:
@@ -610,7 +728,6 @@ def draw_page(
         thin_px = print_scale((w, h), paper).mm_to_px(handling.thin_ink_mm)
         clearable = detail_ink(region_id_map, printed_ink, thin_px / 2, style.line_width_px((w, h)))
     check_cancelled()
-    found_text = detect_text(image_bgr, resized, handling.text_max_height_mm) if handling.text else []
     letters = text.lettering(resized, found_text) if found_text else None
     if letters is not None and not same_size:  # the page drawn from has them so already
         # As ``generate`` prints them: inside a line of text, the letters in place of the ink lying in a region.
@@ -634,6 +751,7 @@ def draw_page(
         progress_callback(_STAGE_PROGRESS["contours"])
 
     check_cancelled()
+    stages.start("render")
     regions = extract_regions(
         region_id_map, model.region_color,
         printed=printed_ink if not model.drawn_from_colors or printed_ink.any() else None,
@@ -701,6 +819,7 @@ def draw_page(
             lettering_area=letters.area if letters is not None else np.zeros((h, w), dtype=bool),
             lettering=PAPER - letters.ink if letters is not None else np.full((h, w), PAPER, dtype=np.uint8),
         )
+    stages.end()
     return GeneratedPage(
         page=rendered.image,
         legend=legend,
@@ -726,6 +845,7 @@ def generate(
     style: PageStyle = PageStyle(),
     handling: Handling = Handling(),
     vector: bool = False,
+    stage_callback: Callable[[StageEvent], None] | None = None,
 ) -> GeneratedPage:
     """Run the full pipeline on ``image_bgr`` and produce a coloring page + legend.
 
@@ -734,6 +854,9 @@ def generate(
     ``should_cancel``, if given, is polled between stages, and as the
     numbers are placed, one at a time; when it returns True,
     ``PipelineCancelled`` is raised and no more work is done.
+    ``stage_callback``, if given, is told as each stage starts and ends,
+    by name, with how long it took and whether the stage cache had it (see
+    ``StageEvent`` and ``STAGES``).
     ``collect_analysis`` also returns what the page is made of in
     ``GeneratedPage.analysis`` (see ``PageAnalysis``), for benchmarks and
     tests, with the faces in the picture (on line art, looked for only then).
@@ -766,10 +889,11 @@ def generate(
     paper. The regions are left as they are, and painted round them, and no
     number is written on them or right beside them (see ``labels``).
 
-    Resizing, finding the ink and quantization results are cached per image
-    object, so regenerating the same image with a different minimum region
-    size, or going back to earlier settings, skips straight to the region
-    stages.
+    Resizing, finding the ink, quantization and the regions are cached per
+    image object, so regenerating the same image with a different minimum
+    region size, or going back to earlier settings, skips straight to the
+    region stages, and with different lines or numbers (anything but the
+    paper in ``style``), straight to drawing the page.
 
     A page is made at its working size at most, where its brush is ``handling.brush_px`` pixels across (see
     ``working_long_edge``): the size the app previews it at. One asked for larger -- an export -- is that page drawn
@@ -787,81 +911,58 @@ def generate(
         working = _make_page(
             image_bgr, params, made_at,
             None if progress_callback is None else lambda percent: progress_callback(percent * 3 // 4),
-            should_cancel, False, style, handling,
+            should_cancel, False, style, handling, stage_callback,
         )
-        return draw_page(working, image_bgr, long_edge, progress_callback, should_cancel, collect_analysis, vector)
-    return _make_page(image_bgr, params, long_edge, progress_callback, should_cancel, collect_analysis, style, handling)
+        return draw_page(
+            working, image_bgr, long_edge, progress_callback, should_cancel, collect_analysis, vector, stage_callback
+        )
+    return _make_page(
+        image_bgr, params, long_edge, progress_callback, should_cancel, collect_analysis, style, handling, stage_callback
+    )
 
 
-def _make_page(
-    image_bgr: np.ndarray,
+@dataclass(frozen=True)
+class _PageRegions:
+    """What the region stage makes of a picture (see ``_page_regions``), kept in the stage cache, its arrays read-only:
+    the regions, each region's color, the printed ink and its gray, and the letters of the lines of text found, if any.
+    On line art, ``ink_unlettered`` is the printed ink before the letters took their place in it, from which what a
+    number may clear is found (it depends on the line's width, which the regions don't); None on other pictures."""
+
+    region_id_map: np.ndarray
+    region_color: np.ndarray
+    printed_ink: np.ndarray
+    ink_gray: int
+    letters: text.Lettering | None
+    ink_unlettered: np.ndarray | None
+
+
+def _read_only(*arrays) -> None:
+    for array in arrays:
+        if isinstance(array, np.ndarray):
+            array.flags.writeable = False
+
+
+def _page_regions(
+    resized: np.ndarray,
+    labels: np.ndarray,
+    palette_bgr: np.ndarray,
+    ink_mask: np.ndarray | None,
+    halo_px: float,
+    detail: np.ndarray | None,
+    in_faces: np.ndarray | None,
+    found_text: list,
     params: DifficultyParams,
-    long_edge: int,
-    progress_callback: Callable[[int], None] | None = None,
-    should_cancel: Callable[[], bool] | None = None,
-    collect_analysis: bool = False,
-    style: PageStyle = PageStyle(),
-    handling: Handling = Handling(),
-) -> GeneratedPage:
-    """The page at ``long_edge``, made there: ``generate`` but for drawing a larger page from a smaller."""
-
-    def report(stage: str) -> None:
-        if progress_callback is not None:
-            progress_callback(_STAGE_PROGRESS[stage])
-
-    def check_cancelled() -> None:
-        if should_cancel is not None and should_cancel():
-            raise PipelineCancelled()
-
-    check_cancelled()
-    resized = _cache.get_or_compute(
-        image_bgr, ("page size", long_edge), lambda: resize_to_long_edge(image_bgr, long_edge, upscale=True)
-    )
+    handling: Handling,
+    paper: PaperFormat,
+    min_area_px: int,
+    min_width_px: float,
+    thin_px: float,
+    check_cancelled: Callable[[], None],
+) -> _PageRegions:
+    """The region stage of ``_make_page``: the regions of ``resized``, its page, from ``labels``, its quantized colors,
+    as the difficulty and the handling ask, and the ink printed with them. ``found_text`` is the lines of text found in
+    it, whose letters are printed."""
     h, w = resized.shape[:2]
-    report("resize")
-
-    check_cancelled()
-    line_art, ink_lines = detect_ink(image_bgr, resized, long_edge, handling.ink_gap_mm)
-    ink_mask = ink_lines if handling.line_art and line_art.is_line_art and ink_lines.any() else None
-    # An anti-aliased edge is at least the pixels right beside the ink, however fine the page.
-    halo_px = max(1.0, print_scale((w, h)).mm_to_px(ink.HALO_MM))
-    report("ink")
-
-    # A picture drawn from its colors spends more detail on its subject and its faces, and keeps their colors apart as
-    # the screen shows them (see ``quantize``). Line art's are drawn by its own ink.
-    detail = in_faces = None
-    in_subject = np.zeros((h, w), dtype=bool)
-    if ink_mask is None and handling.detail:
-        found = detect_faces(image_bgr, resized)
-        if found:
-            in_faces = faces.mask(found, (w, h))
-        in_subject = detect_subject(image_bgr, resized)
-        detail = in_subject | in_faces if in_faces is not None else in_subject
-        if not detail.any():
-            detail = None
-
-    check_cancelled()
-    mix_rule = handling.mix_rule()
-    quantized = _cache.get_or_compute(
-        image_bgr,
-        # Line art's colors are taken around its ink, unless line art is turned off (see ``Handling``).
-        ("quantize", long_edge, params.num_colors, params.blur_sigma, params.palette_margin_de00,
-         handling.ink_gap_mm if ink_mask is not None else None, params.paper_black_lstar, detail is not None,
-         tuple(rgb for _name, rgb in handling.paints), mix_rule),
-        lambda: quantize(
-            resized, params.num_colors, params.blur_sigma, min_de00=params.palette_margin_de00, ink=ink_mask,
-            halo_px=halo_px, paper_black_lstar=params.paper_black_lstar, keep=detail,
-            paints_bgr=_paints_bgr(handling.paints), mix=mix_rule,
-        ),
-    )
-    labels, palette_bgr = quantized[:2]
-    # Each palette color's recipe, as the legend writes it, if it is mixed: none without mixing.
-    palette_mixes = [] if mix_rule is None else [_mix_lines(recipe, handling.paints) for recipe in quantized[2]]
-    report("quantize")
-
-    check_cancelled()
-    paper = style.paper_format
-    min_area_px, min_width_px = _paintable_limits(params, (w, h), paper)
     ink_gray = 0
     region_labels = labels
     printed_ink = labels >= len(palette_bgr)  # the ink quantize gave no color: all False unless the picture is line art
@@ -871,7 +972,6 @@ def _make_page(
         labels = join_ink(labels, len(palette_bgr), resized, (ink_gray,) * 3, min_area_px, off_edge)  # a new map
         # The regions are built through hatching, a hatched patch one run of its gaps' colors, but never through a
         # line between two areas a painter sees as two.
-        thin_px = print_scale((w, h), paper).mm_to_px(handling.thin_ink_mm)
         region_labels, corners = look_through_hatching(labels, len(palette_bgr), thin_px, min_width_px)
         printed_ink = (labels >= len(palette_bgr)) | corners
     # The palette can be shorter than the difficulty asked for: colors too
@@ -907,7 +1007,7 @@ def _make_page(
             params.min_width_mm, handling.mark_contrast, handling.mark_length_mm,
         )
         ink_gray = ink.ink_gray(resized, printed_ink)
-    clearable = None
+    ink_unlettered = None
     if ink_mask is not None:
         region_id_map, inked = settle_enclosed(
             region_id_map, region_color, resized, (ink_gray,) * 3, min_width_px, off_edge
@@ -924,25 +1024,126 @@ def _make_page(
             region_id_map, region_color, printed_ink, min_width_px, min_area_px, len(palette_bgr)
         )
         printed_ink |= corners
-        # A number may clear hatching, but no line: not half of one between two areas, nor the ink left where two
-        # regions meet under the strokes, a line's width of it.
-        clearable = detail_ink(region_id_map, printed_ink, thin_px / 2, style.line_width_px((w, h)))
+        ink_unlettered = printed_ink
     # The letters of signs, titles and captions are printed, and nothing else in their lines; the regions are painted
     # round them, and no number may clear them.
     check_cancelled()
-    found_text = detect_text(image_bgr, resized, handling.text_max_height_mm) if handling.text else []
     letters = text.lettering(resized, found_text) if found_text else None
     if letters is not None:
         # Inside a line of text the letters take the place of the ink lying in a region, as the page prints them: what
         # is printed there is the letters, and the ink in no region, which keeps two regions apart.
         in_no_region = printed_ink & (region_id_map < 0)
         printed_ink = np.where(letters.area, in_no_region | (letters.ink >= _LETTERING_PRINTED), printed_ink)
-        if clearable is not None:
-            clearable = clearable & ~letters.area
         if ink_mask is None:
             # Line art prints in the artwork's own ink. Elsewhere the ink's gray is the picture's under the printed ink,
             # and in the lines of text under their darker side: light letters print in the tone of their dark ground.
             ink_gray = ink.ink_gray(resized, np.where(letters.area, in_no_region | letters.dark, printed_ink))
+    _read_only(region_id_map, region_color, printed_ink, ink_unlettered)
+    if letters is not None:
+        _read_only(letters.area, letters.ink, letters.dark)
+    return _PageRegions(region_id_map, region_color, printed_ink, ink_gray, letters, ink_unlettered)
+
+
+def _make_page(
+    image_bgr: np.ndarray,
+    params: DifficultyParams,
+    long_edge: int,
+    progress_callback: Callable[[int], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+    collect_analysis: bool = False,
+    style: PageStyle = PageStyle(),
+    handling: Handling = Handling(),
+    stage_callback: Callable[[StageEvent], None] | None = None,
+) -> GeneratedPage:
+    """The page at ``long_edge``, made there: ``generate`` but for drawing a larger page from a smaller."""
+    stages = _Stages(stage_callback)
+
+    def report(stage: str) -> None:
+        if progress_callback is not None:
+            progress_callback(_STAGE_PROGRESS[stage])
+
+    def check_cancelled() -> None:
+        if should_cancel is not None and should_cancel():
+            raise PipelineCancelled()
+
+    check_cancelled()
+    stages.start("resize")
+    resized = _cache.get_or_compute(
+        image_bgr, ("page size", long_edge), lambda: resize_to_long_edge(image_bgr, long_edge, upscale=True)
+    )
+    h, w = resized.shape[:2]
+    report("resize")
+
+    check_cancelled()
+    stages.start("ink")
+    line_art, ink_lines = detect_ink(image_bgr, resized, long_edge, handling.ink_gap_mm)
+    ink_mask = ink_lines if handling.line_art and line_art.is_line_art and ink_lines.any() else None
+    # An anti-aliased edge is at least the pixels right beside the ink, however fine the page.
+    halo_px = max(1.0, print_scale((w, h)).mm_to_px(ink.HALO_MM))
+    report("ink")
+
+    # A picture drawn from its colors spends more detail on its subject and its faces, and keeps their colors apart as
+    # the screen shows them (see ``quantize``). Line art's are drawn by its own ink.
+    detail = in_faces = None
+    in_subject = np.zeros((h, w), dtype=bool)
+    if ink_mask is None and handling.detail:
+        stages.start("detect")
+        found = detect_faces(image_bgr, resized)
+        if found:
+            in_faces = faces.mask(found, (w, h))
+        in_subject = detect_subject(image_bgr, resized)
+        detail = in_subject | in_faces if in_faces is not None else in_subject
+        if not detail.any():
+            detail = None
+
+    check_cancelled()
+    stages.start("quantize")
+    mix_rule = handling.mix_rule()
+    quantized = _cache.get_or_compute(
+        image_bgr,
+        # Line art's colors are taken around its ink, unless line art is turned off (see ``Handling``).
+        ("quantize", long_edge, params.num_colors, params.blur_sigma, params.palette_margin_de00,
+         handling.ink_gap_mm if ink_mask is not None else None, params.paper_black_lstar, detail is not None,
+         tuple(rgb for _name, rgb in handling.paints), mix_rule),
+        lambda: quantize(
+            resized, params.num_colors, params.blur_sigma, min_de00=params.palette_margin_de00, ink=ink_mask,
+            halo_px=halo_px, paper_black_lstar=params.paper_black_lstar, keep=detail,
+            paints_bgr=_paints_bgr(handling.paints), mix=mix_rule,
+        ),
+    )
+    labels, palette_bgr = quantized[:2]
+    # Each palette color's recipe, as the legend writes it, if it is mixed: none without mixing.
+    palette_mixes = [] if mix_rule is None else [_mix_lines(recipe, handling.paints) for recipe in quantized[2]]
+    report("quantize")
+
+    check_cancelled()
+    paper = style.paper_format
+    min_area_px, min_width_px = _paintable_limits(params, (w, h), paper)
+    thin_px = print_scale((w, h), paper).mm_to_px(handling.thin_ink_mm)
+    found_text = []
+    if handling.text:
+        stages.start("text")
+        found_text = detect_text(image_bgr, resized, handling.text_max_height_mm)
+    check_cancelled()
+    stages.start("regions")
+    # The regions depend on the picture, its page's size, the difficulty, the handling and the paper, and on nothing
+    # else the page's style says: kept, a change to the lines or the numbers draws the page again from here.
+    made = _cache.get_or_compute(
+        image_bgr, ("regions", long_edge, params, handling, style.paper),
+        lambda: _page_regions(
+            resized, labels, palette_bgr, ink_mask, halo_px, detail, in_faces, found_text, params, handling, paper,
+            min_area_px, min_width_px, thin_px, check_cancelled,
+        ),
+    )
+    region_id_map, region_color, printed_ink = made.region_id_map, made.region_color, made.printed_ink
+    ink_gray, letters = made.ink_gray, made.letters
+    clearable = None
+    if ink_mask is not None:
+        # A number may clear hatching, but no line: not half of one between two areas, nor the ink left where two
+        # regions meet under the strokes, a line's width of it; and never the letters.
+        clearable = detail_ink(region_id_map, made.ink_unlettered, thin_px / 2, style.line_width_px((w, h)))
+        if letters is not None:
+            clearable = clearable & ~letters.area
     report("regions")
 
     def numbered(region_id_map: np.ndarray) -> tuple[list[Region], list[int], dict[int, int]]:
@@ -960,10 +1161,12 @@ def _make_page(
         return regions, used_color_indices, remap
 
     check_cancelled()
+    stages.start("contours")
     regions, used_color_indices, remap = numbered(region_id_map)
     report("contours")
 
     check_cancelled()
+    stages.start("render")
     printing = dict(ink=printed_ink, ink_gray=ink_gray, lettering=letters, min_side_area_px=min_area_px)
     rendered = render_page(
         (w, h), regions, region_id_map, style, clearable=clearable, check_cancelled=check_cancelled, **printing
@@ -1043,6 +1246,7 @@ def _make_page(
         labels=rendered.labels, line_art=line_art, ink_lines=ink_lines, drawn_from_colors=ink_mask is None,
         mixes=[palette_mixes[i] for i in order] if palette_mixes else [],
     )
+    stages.end()
     return GeneratedPage(
         page=rendered.image,
         legend=legend,

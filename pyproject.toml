@@ -1,6 +1,6 @@
 [project]
 name = "tessellatum"
-version = "1.0.21"
+version = "2.0.0"
 description = "Turn any picture into a printable paint-by-numbers page, with computer vision and on-device neural networks."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,7 +23,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
 dependencies = [
-    "PySide6>=6.6",
+    "PySide6>=6.8",  # QStyleHints.setColorScheme (the theme chosen over the system's)
     "opencv-python>=4.9",
     "numpy>=1.26",
     "Pillow>=10.2",
@@ -58,4 +58,4 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-tessellatum = ["resources/*"]
+tessellatum = ["resources/*", "resources/*/*"]

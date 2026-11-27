@@ -5,13 +5,30 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QCoreApplication, QSettings, QSize, QStandardPaths, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from tessellatum.app import jobs, recovery
+from tessellatum.app.presets import FILE_NAME as PRESETS_FILE
+from tessellatum.app.presets import PresetStore
+from tessellatum.gui import i18n, preferences, theme
 from tessellatum.gui.main_window import MainWindow
 
 RESOURCES_DIR = Path(__file__).resolve().parent / "resources"
+APP_ICON_DIR = RESOURCES_DIR / "app-icon"  # the logo at each size, the small ones simplified (packaging/icons)
+APP_ICON_SIZES = (16, 20, 24, 32, 48, 64, 128, 256, 512)
+
+
+def window_icon() -> QIcon:
+    """The app's icon at every size it was drawn at, so the title bar and taskbar take the drawing made for their
+    size (a 16 px icon is the simplified logo, not the large one shrunk)."""
+    icon = QIcon()
+    for size in APP_ICON_SIZES:
+        path = APP_ICON_DIR / f"{size}.png"
+        if path.is_file():
+            icon.addFile(str(path), QSize(size, size))
+    return icon
 
 
 def main() -> None:
@@ -20,14 +37,33 @@ def main() -> None:
 
         sys.exit(selftest.run(Path(sys.argv[2])))
 
+    # The names first, so that the preferences can be read before the application exists: the interface's scale
+    # applies only as it starts.
+    QCoreApplication.setApplicationName("Tessellatum")
+    QCoreApplication.setOrganizationName("Tessellatum")
+    preferences.apply_scale_at_start(QSettings())
     app = QApplication(sys.argv)
-    app.setApplicationName("Tessellatum")
-    app.setOrganizationName("Tessellatum")
-    app.setWindowIcon(QIcon(str(RESOURCES_DIR / "icon.png")))
+    app.setWindowIcon(window_icon())
+    # The interface's language: the system's, where a translation ships (or the pseudo-locale, if asked for).
+    i18n.install(app)
 
-    # The panel's settings are kept between runs, under the organization and application names above.
-    window = MainWindow(store=QSettings())
+    # The panel's settings and the theme picked are kept between runs, under the organization and application names
+    # above.
+    theme.install(app, QSettings())
+    # Presets of one's own, in a file of their own in the app's preferences folder.
+    config = Path(QStandardPaths.writableLocation(QStandardPaths.AppConfigLocation))
+    # Unsaved work kept for recovery, in the app's data folder (see ``app.recovery``).
+    try:
+        data = Path(QStandardPaths.writableLocation(QStandardPaths.AppDataLocation))
+        keeper = recovery.RecoveryStore(data / recovery.FOLDER)
+    except OSError:
+        keeper = None  # nowhere to keep it: the app works without
+    window = MainWindow(store=QSettings(), presets=PresetStore(config / PRESETS_FILE), recovery=keeper)
     window.show()
+    # What a crash left, offered once the window is up.
+    QTimer.singleShot(0, window.offer_recovery)
+    # Closing the window stops its jobs without waiting for them; quitting waits for them, bounded (see ``app.jobs``).
+    app.aboutToQuit.connect(lambda: jobs.wait_for_all())
 
     sys.exit(app.exec())
 
