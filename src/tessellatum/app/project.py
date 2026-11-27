@@ -101,24 +101,28 @@ class Project:
 
 
 # -- The picture ---------------------------------------------------------------------------------------------------------
-def decode_image(data: bytes) -> np.ndarray:
+def decode_image(data: bytes, what: str = "the picture in it") -> np.ndarray:
     """``data``, a picture file's bytes, as a BGR array, exactly as Open Image reads a file (``load_image_bgr``), after
-    checking that it is a picture Open Image takes and no larger than ``MAX_PIXELS``."""
+    checking that it is a picture Open Image takes, no larger than ``MAX_PIXELS`` nor its file than ``MAX_SOURCE``.
+    Open Image checks a picture with it too, so that whatever opens can be saved in a project and recovered. ``what``
+    names the picture in the error."""
     from tessellatum.core import pipeline
 
+    if len(data) > MAX_SOURCE:
+        raise ProjectError(f"{what} is a file of {len(data) / 1024 ** 2:,.0f} MB, larger than Tessellatum opens")
     try:
         with Image.open(io.BytesIO(data)) as probe:
             kind, (width, height) = probe.format, probe.size
     except Exception as exc:  # noqa: BLE001 - whatever Pillow raises for bytes it can't read
-        raise ProjectError(f"the picture in it can't be read ({exc})") from exc
+        raise ProjectError(f"{what} can't be read ({exc})") from exc
     if kind not in IMAGE_FORMATS:
-        raise ProjectError(f"the picture in it is a {kind or 'file of an unknown kind'}, not a picture Open Image takes")
+        raise ProjectError(f"{what} is a {kind or 'file of an unknown kind'}, not a picture Open Image takes")
     if width * height > MAX_PIXELS:
-        raise ProjectError(f"the picture in it is {width:,} × {height:,} px, larger than Tessellatum opens")
+        raise ProjectError(f"{what} is {width:,} × {height:,} px, larger than Tessellatum opens")
     try:
         return pipeline.load_image_bgr(io.BytesIO(data))
     except Exception as exc:  # noqa: BLE001
-        raise ProjectError(f"the picture in it can't be read ({exc})") from exc
+        raise ProjectError(f"{what} can't be read ({exc})") from exc
 
 
 def thumbnail_png(image_bgr: np.ndarray, edge: int = THUMBNAIL_EDGE) -> bytes:

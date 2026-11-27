@@ -239,6 +239,28 @@ def test_a_palette_s_other_files_are_replaced_only_when_confirmed(window, tmp_pa
     assert all(path.exists() for path in files) and files[1].read_bytes() != b"mine"
 
 
+def test_the_files_asked_about_are_those_of_the_palette_written_not_of_the_page_shown(window, tmp_path, monkeypatch):
+    window.controls.controls["palette_margin_de00"].type_text("1")
+    window.controls.controls["num_colors"].type_text("20")
+    picture = np.random.default_rng(1).integers(0, 255, (200, 300, 3), dtype=np.uint8)
+    window.current_image_bgr = np.repeat(np.repeat(picture[::10, ::10], 10, 0), 10, 1).copy()
+    window.generate_preview()
+    _wait(window)
+    assert len(window.current_page.palette_rgb) <= swatches.PROCREATE_MAX_SWATCHES  # one file, for the page shown
+    window.controls.controls["num_colors"].type_text("40")  # the export makes the page again, with more colors
+    window.controls.palette_radio.setChecked(True)
+    target = tmp_path / "set.swatches"
+    files = swatches.palette_files(target, 40)
+    files[1].write_bytes(b"mine")
+    asked = []
+    monkeypatch.setattr(main_window.QMessageBox, "question",
+                        staticmethod(lambda *a, **k: asked.append(a[2]) or QMessageBox.Cancel))
+    _save_to(monkeypatch, target)
+    _export_from_dialog(window)
+    assert asked and files[1].name in asked[0]
+    assert files[1].read_bytes() == b"mine" and not target.exists()  # nothing written
+
+
 # -- Out of date ------------------------------------------------------------------------------
 def test_an_out_of_date_preview_is_made_again_by_default_or_written_as_previewed(window, tmp_path, monkeypatch):
     _previewed(window)

@@ -2,6 +2,7 @@
 closing remove it; a session that ended without closing (a real crash in a child process here) leaves it, and the next
 start offers it back, unsaved; snapshots of windows still open are never offered; old ones are pruned."""
 
+import errno
 import io
 import os
 import subprocess
@@ -175,7 +176,42 @@ def test_a_snapshot_whose_note_is_damaged_is_still_offered(tmp_path):
     assert found.name == "Untitled"
 
 
+def test_a_file_another_window_removes_meanwhile_is_passed_over(tmp_path, monkeypatch):
+    folder = tmp_path / "recovery"
+    session = _crash(folder, tmp_path)
+    (folder / f"{session}.json").write_text("{damaged", encoding="utf-8")  # so its snapshot's time is asked for
+    (folder / ".left-1.tmp").write_bytes(b"x")
+    store = RecoveryStore(folder)
+    real_stat, real_is_file = Path.stat, Path.is_file
+    removed = (".left-1.tmp", f"{session}{projects.SUFFIX}")
+
+    def gone(path, *args, **kwargs):  # listed, then removed by another window before it is looked at
+        if path.name in removed:
+            raise FileNotFoundError(errno.ENOENT, "removed meanwhile", str(path))
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", gone)
+    monkeypatch.setattr(Path, "is_file", lambda path: path.name in removed or real_is_file(path))  # seen, then gone
+    assert store.pending() == []
+    store.prune()  # no error: nothing to offer, and no recovery dialog lost to it
+
+
 # -- The dialog --------------------------------------------------------------------------------------------------------
+def test_when_it_was_kept_is_said_in_the_locales_words_and_formats():
+    from tessellatum.gui.i18n import PseudoTranslator, is_pseudo
+    from tessellatum.gui.recovery_dialog import when
+
+    now = time.time()
+    assert when(now).startswith("today at ")
+    assert "today" not in when(now - 3 * 86400) and " at " in when(now - 3 * 86400)
+    translator = PseudoTranslator(_app)
+    _app.installTranslator(translator)
+    try:
+        assert is_pseudo(when(now)) and is_pseudo(when(now - 3 * 86400))
+    finally:
+        _app.removeTranslator(translator)
+
+
 def test_the_dialog_lists_restores_and_discards(tmp_path):
     folder = tmp_path / "recovery"
     _crash(folder, tmp_path)
