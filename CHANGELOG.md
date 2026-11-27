@@ -4,685 +4,128 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
-## [1.1.41] - 2026-11-27
+## [2.0.0] - 2026-11-27
+
+A new workspace around the same pages. The window is rebuilt from the ground up: a design of its own in light and
+dark, settings by goal, a canvas to inspect and compare pages, undo, projects and recovery, and keyboard,
+screen-reader and translation readiness. The pipeline is unchanged: the same picture and settings make the same page
+as 1.0.21.
+
+**Upgrading from 1.0:** every setting kept by 1.0 loads as it was. Exports, the difficulty levels and every feature of
+1.0 are still there, most of them in new places (the menus list every command). Export opens a dialog first; when the
+preview is out of date it says so, and writes the page made again with the settings now, as 1.0 did, unless you choose
+the page as previewed. Work can now be kept as a project (`.tessellatum`).
+
+### Added
+
+**Look and feel**
+- A design of its own, light and dark: calm neutral surfaces, the page on a slightly darker canvas so it reads first,
+  and one accent, **Viridian**, for what is selected, focused or primary. Every text and control color meets WCAG AA
+  contrast in both themes, measured on the rendered window. The theme follows the system's setting live, or View >
+  Appearance picks one.
+- The **Inter** typeface (SIL Open Font License) and **Lucide** icons (ISC license), bundled with their licenses.
+- A logo, **Tesserae**: a rounded tile cut into regions, as a page is. It is the app's icon on Windows, macOS and
+  Linux and its window icon, and the README banner and social preview carry it.
+
+**Workspace**
+- A menu bar with every command (File, Edit, View, Generate, Help) and keyboard shortcuts; on macOS in the system's
+  menu bar, with Cmd. **Help > Keyboard Shortcuts** (Ctrl+/) lists them all, searchable by name or keys.
+- A toolbar (Open, Generate Preview, which turns into Cancel, Export); an activity bar choosing the sidebar's page:
+  **Source**, **Generation**, **Colors**, **Document** and **Analysis** (Ctrl+Shift+1 to 5); the palette inspector on
+  the right; a status bar with what the app is doing and the page's figures.
+- Panels resized and folded (Ctrl+B, Ctrl+Alt+B), **Focus Mode** (Ctrl+Shift+F), the layout kept between runs, **View >
+  Reset Layout**. On a narrow window the inspector folds away, then the sidebar; rows of choices and buttons stack
+  rather than cut their words, and the view buttons become a list.
+- A welcome page while no picture is open: Open Picture, Open Project, recent files, and four example pictures (public
+  domain or CC0). Drop a picture or a project anywhere on the window, or paste one (Ctrl+V).
+- Messages in a banner over the page rather than dialogs in the way; **View > Diagnostics** (Ctrl+Shift+D), a log of
+  every step, warning and error, to copy into a bug report.
+- **Preferences** (Ctrl+,): theme and motion, the interface's scale (90% to 200%), the canvas's background, units
+  (mm or inches), memory for pages kept, redraw delay, automatic generation, recovery, shortcuts.
+
+**Settings**
+- Each page shows what most pages need first; the rest wait in a folded **Advanced** group, in parts of their own.
+- **Find Setting** (Ctrl+F) finds a setting by name, by the words it may be called by, or by what it does, and takes
+  you to it.
+- Type an exact value beside every slider, in the system's number format; a value out of range says the range rather
+  than being quietly clamped. A setting changed is marked, with what it was, and puts back with a click; a section
+  has its own Reset.
+- A setting that means nothing with the choices made is turned off, and says why under it.
+- The difficulty says what it makes ("About 450 regions to paint on an A4 page"), and a level changed says how.
+  **Presets of your own**: save, rename and delete them; **Back to** a level puts it back.
+- The wiki's **Settings reference** lists every setting's range, default, preset values and when it applies.
+
+**Generation and history**
+- The bar above the page says whether the page is **Up to date**, **Out of date** (naming what changed),
+  **Generating…**, **Cancelled** or **Failed**, keeping the earlier preview.
+- Lines, numbers and tone draw the page again by themselves, from the regions already found (the lion at Medium in
+  0.9 s rather than 1.6 s); everything else waits for Generate Preview, unless **Generate automatically** is on (Off,
+  When it's quick, Always).
+- The status bar names each step of a page as it is made; Cancel says at once when it will stop; a failure says what
+  to try, with the details in the diagnostics.
+- **Undo and Redo** (Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z), each step named for what it did; a slider drag, a preset or a
+  reset is one step, and so is opening another picture.
+- Pages made are kept, so Undo, Redo and a setting put back show their page at once (about 0.1 s rather than 2 s),
+  within a memory budget set in Preferences.
+- **Projects**: Save Project (Ctrl+S) keeps the picture's own file, every setting, the paints and the export options in
+  a `.tessellatum` file, saved atomically, checked when read, migrated forward, refused when newer. Open Recent lists
+  projects and pictures; unsaved changes are asked about before they're lost.
+- **Recovery**: unsaved work is kept every 2 minutes, and offered back after a crash (Restore, Discard, Keep for
+  Later).
+
+**Canvas and inspection**
+- **Original** view (Ctrl+4) beside Page, Completed and Tinted; a zoom field to type a zoom; pan with the middle
+  button or Space; **Rulers** (Ctrl+R), **Grid** (Ctrl+') and **Page Bounds**.
+- **Compare**: two views side by side, following each other, or split with a divider to drag; with Page, Completed,
+  Tinted, Original or the **Previous version**.
+- The **palette inspector**: each color's share, area and regions; sort without renumbering; list or grid; find by
+  number or name; copy hex, RGB or name; highlight a color's regions, or **Isolate** it.
+- Click a region to inspect it on paper: area, size, widest brush, how its number is written; Enter on a color walks
+  its regions.
+- **Analysis**: the page measured as the quality benchmark measures it, its issues listed with their regions, and
+  overlays for thin parts, small regions and leader lines.
+- **View > Color Vision**: the canvas as seen with protanopia, deuteranopia, tritanopia, or in grayscale.
+- Highlights, overlays, the simulation and the Original never reach an export.
+
+**Export**
+- Export opens a dialog first: the options beside a thumbnail and a line on what will be written, warnings that don't
+  stop you, the page to write when the preview is out of date, names suggested from the picture, and Retry after a
+  failure.
+
+**Accessibility and languages**
+- Every control reachable from the keyboard, in order, scrolled into view, with a name for screen readers; Esc does a
+  field's job before it stops a page.
+- Ready to be translated: every string through Qt's translation system, choices kept by value, numbers in the
+  system's format, right-to-left layout. No translation ships yet.
+
+**Development**
+- A settings registry describing every setting once; a document model and background jobs apart from the window; a
+  results cache keyed by content.
+- `benchmarks/ui_bench.py` (the app's responsiveness through its real window), `docs/check_layout.py` and the
+  **layout** workflow (every size, scale and theme on three platforms), `docs/make_screenshot.py --set/--compare`
+  (screenshot regression), `docs/make_settings_reference.py`, and a feature-parity test against 1.0.21. 2,150+ tests.
+
+### Changed
+
+- The pipeline can announce each stage as it starts and ends (`generate(..., stage_callback=...)`), and keeps a
+  page's regions so a change to its lines or numbers draws it again from them, pixel for pixel.
+- A page fitted to the window keeps a margin from the canvas's edges; a window resized keeps the page's middle in
+  place.
+- Writing a PDF or a palette file and mixing recipes no longer hold up the window; closing the window while a page is
+  made closes it at once.
+- Recipes listed from your paints say so on the legend, so they don't read as the page's own paints.
+- A picture opens up to 200 megapixels, in a file up to 512 MB, so that whatever opens can be kept in a project and
+  recovered; a larger one says so.
+- Tessellatum needs PySide6 6.8 or newer (to choose the theme over the system's).
+- The same page on every platform is not a goal: a page is the same every time on one platform, and can differ
+  slightly between Windows, macOS and Linux. Export a page to keep it exactly.
 
 ### Fixed
 
-- A project, an undo step or recovered work made with a preset of your own now keeps the settings it was made with,
-  even if that preset was saved again since with other values (or has other values on another computer): it shows as
-  Custom from that preset, rather than quietly taking the preset's values now.
-- A wheel or a plain `pip install .` now carries the interface's font, icons and window icons; it left them out.
-- Tessellatum now asks for PySide6 6.8 or newer: choosing Light or Dark crashed on 6.6 and 6.7, which it allowed.
-- Exporting a palette in several files (Procreate's, past 30 colors) asks about the files already there for the
-  palette actually written. When the settings had changed since the preview, it counted the preview's colors, and
-  could replace files without asking.
-- A picture too large to keep in a project (over 200 megapixels, or a file over 512 MB) is refused when it is opened,
-  saying why. It used to open and then fail at every save, and its recovered work couldn't be restored.
-- Two presets of your own can no longer have names that differ only in capitals: saving or renaming onto one asks
-  first, as for the same name.
-- Recovery no longer fails to offer crashed work when another Tessellatum window removes a file in its folder at the
-  same moment.
-- While a large page is drawn for an export, the status bar says "Finding text" while it looks for text, rather than
-  "Drawing the regions larger", and the diagnostics time it as its own step. The page drawn is the same.
-- The recovery list's "kept today at 14:05" and the paint kits' tooltip note are translated, the date and time in the
-  system's formats.
-
-## [1.1.40] - 2026-11-27
-
-### Added
-
-- A feature-parity test: each of the 63 capabilities 1.0.21 had (opening, the workflow, every control on the old
-  panel, the paints dialog, the preview's navigation, export) is checked to be still reachable in the window, by a
-  command in a menu with its shortcut, a control with its choices, or the function the core keeps; where that says
-  little of what it does, the test that does is named and must exist.
-
-### Changed
-
-- The wiki says the pseudo-locale is clean on macOS and Linux too, at 100-200% on 1280×720 and 1920×1080 screens,
-  as the layout workflow now checks.
-
-## [1.1.39] - 2026-11-27
-
-### Added
-
-- The wiki's **Settings reference**: every setting and choice by page and section, with its level, range and step,
-  default, each difficulty preset's value, when it applies (with Generate, drawn again by itself, at once), the words
-  search finds it by, and what it does. `docs/make_settings_reference.py` writes it from the settings registry, and a
-  test fails when it falls behind.
-
-### Changed
-
-- Getting started describes the first run (the icon, the appearance, where settings and recovery snapshots are kept)
-  and a first page through the current window: the welcome page, the freshness of the preview, undo, the export
-  dialog, projects.
-- The README names the workspace's features (comparison, color and region inspection, the page's measures, projects
-  and recovery) and the interface's benchmark and screenshot check; the wiki's Home links the settings reference and
-  gives the current test count.
-
-## [1.1.38] - 2026-11-27
-
-### Added
-
-- `docs/make_screenshot.py --set OUT_DIR` draws the window's main views (the welcome, the Generation and Colors pages,
-  a region selected, the analysis, two comparisons, the export dialog, the Preferences) in both themes at 1280×720 and
-  1920×1080, and `--compare REF_DIR OUT_DIR` checks a set against its references: it fails where more than 1% of a
-  shot's pixels differ by more than a few levels. References are kept per platform, since fonts differ.
-- A test that the same picture and settings make the same page, bit for bit, every time it is computed afresh.
-
-### Changed
-
-- A page fitted to the window keeps a margin from the canvas's edges, rather than touching the bars above and below.
-- The README screenshot is the current window.
-
-### Fixed
-
-- A button with a menu (Compare, the color's Copy) leaves room for its arrow, which overlapped its word.
-- The examples on the welcome page have their names on one line, whether the picture is wide or tall.
-- The docs said a project opened on any computer shows the page that was saved. It does on the platform it was saved
-  on; on another platform (Windows, macOS, Linux) the page made again can differ slightly, so the wiki now says to
-  export a page to keep it exactly. The same page on every platform is not a goal, and the wiki says why.
-- The User guide's shortcut table, checked against the menus, gains Close's Ctrl+F4 on Windows and Quit's Ctrl+Q.
-
-## [1.1.37] - 2026-11-27
-
-### Fixed
-
-- Where the canvas is too narrow for the view buttons above the page (a 640×360 window: a 1280×720 screen at 200%; or
-  a longer language), a list to pick the view from takes their place, rather than buttons squeezed below their words.
-  It is one stop for Tab, and its arrow keys change the view.
-- Where the sidebar is too narrow for a row of choices and buttons (a larger interface scale, a longer language), the
-  row stacks rather than cutting its words: the Paints button under the Colors from choices, the presets' buttons
-  under the difficulty, and two to four choices one under another, each whole. The sidebar starts as wide as the rows
-  need side by side, so English at 100% looks as before. In a language 40% longer than English, no text is cut at
-  any window size and scale checked on Windows.
-
-## [1.1.36] - 2026-11-27
-
-### Fixed
-
-- A session that ended without closing before it wrote any recovery snapshot left its lock file in the recovery folder
-  for good. The app removes such locks at its start now, once their session is gone; a window still open keeps its
-  own.
-
-## [1.1.35] - 2026-11-27
-
-### Added
-
-- `benchmarks/ui_bench.py`: how the app responds, timed through its real window: a page made with the caches empty
-  and full, a change that only draws the page again, undo and redo to a page kept and to one let go, switching pages
-  and views, zoom and pan frames, stopping a page, and memory over 50 pages and 50 undo/redo steps. Each measure is
-  repeated, with its median and 95th percentile. The wiki's Quality and performance page compares it with 1.0.21.
-
-## [1.1.34] - 2026-11-27
-
-### Added
-
-- `docs/check_layout.py`: the window, the export dialog and the Preferences drawn at window sizes from 1280×720 to
-  3840×2160 and interface scales from 100% to 200%, in the light and dark themes and in a pseudo-locale (every string
-  about 40% longer). It reports any text cut, by its own size or by the panel it is in, and saves every screenshot.
-  The **layout** workflow runs it on Windows, macOS and Linux, each on its own display system, for every pull request
-  that touches the interface.
-- A test that Quit, Preferences and About carry the menu roles macOS uses to place them in the application menu.
-
-### Fixed
-
-- The zoom field wrote a zoom under 10% with a dot whatever the system's language ("7.5%"); it uses the system's
-  decimal point now, as the other readouts do ("7,5%" in German).
-- `TESSELLATUM_PSEUDO_LOCALE=0` turned the pseudo-locale on; only a value other than 0 does now.
-
-## [1.1.33] - 2026-11-27
-
-### Added
-
-- The interface is ready to be translated; no translation ships yet:
-  - Every string it shows goes through Qt's translation system: the menus and commands, the settings' names, tooltips
-    and choices, the descriptions of the difficulty, the messages and the dialogs.
-  - A choice is known by its value, whatever its words, so projects, presets and preferences read the same in any
-    language.
-  - `packaging/update_translations.py` collects the strings into a Qt translation file per language and compiles them;
-    the app loads the system language's translation, and Qt's own with it.
-- Numbers are written the system's way everywhere, as the settings' fields already typed them: the status bar, the
-  difficulty's description, the analysis, the palette's coverage, the export's summary ("1.448 × 1.086 px" in
-  German).
-- Right to left: the window mirrors (Qt's `-reverse`, or a right-to-left language), and the page, a click on it and
-  the exports are the same as left to right.
-
-### Fixed
-
-- The welcome page's example pictures go two by two, or one under another, when the canvas is narrow, rather than
-  making the page scroll sideways.
-- The Preferences' list of pages is as wide as its longest name needs.
-
-## [1.1.32] - 2026-11-27
-
-### Added
-
-- **Help > Keyboard Shortcuts** (Ctrl+/; ⌘/ on macOS): every command's keys, in the platform's notation, with its
-  menu, and the keys that work in one place (the canvas, the palette, the regions, a setting's field, Find Setting).
-  Searchable by name, by keys (as shown or as "ctrl+f") or by place. The Preferences' Shortcuts page shows the same
-  reference.
-
-### Fixed
-
-- While a page was being made, Esc in a text field or a list stopped the page instead of doing that field's job:
-  clearing the settings search, putting back a value being typed, letting go of a color, going back from a color's
-  regions. Esc now does the field's job, and stops the page only where the field has nothing to do with it.
-
-## [1.1.31] - 2026-11-27
-
-### Added
-
-- **View > Color Vision**: the canvas shown as a person with protanopia, deuteranopia or tritanopia sees it, or in
-  grayscale, to check that the colors a painter must tell apart still look different, and that the page reads in
-  light and dark alone. The page, the view compared with and the legend are simulated (Machado et al. 2009) on the
-  screen only: exports keep the page's colors. While it is on, the bar under the page says so; a click there shows
-  the page's own colors.
-
-### Fixed
-
-- Accessibility:
-  - Tab no longer stops on the scrolled pages around the settings, the welcome or the Preferences' pages, which a
-    screen reader read as nameless panes. Their controls are the stops.
-  - A control reached with the keyboard scrolls into view from either direction, Shift+Tab included.
-  - Every control a screen reader reaches has a name:
-    - the export's resolution fields;
-    - the typed zoom;
-    - the canvas's page;
-    - the toolbars' overflow buttons ("More");
-    - the search fields' clear buttons;
-    - the Preferences' shortcut table.
-  - Placeholder text in the search fields is in the theme's hint color: 5.5:1 against the field in the light theme,
-    up from 3.7:1, which was under the 4.5:1 that WCAG AA asks of text.
-
-## [1.1.30] - 2026-11-26
-
-### Added
-
-- **Analysis**, a fifth page of the sidebar (View > Analysis, Ctrl+Shift+5): the page measured on paper as the
-  project's quality benchmark measures it, in the background while the page is open:
-  - its measures: colors, regions, regions per cm², the smallest and the narrowest region, the share thinner than
-    the brush, numbers on leaders, cramped or too small, and regions with no number;
-  - its issues, the regions behind them: an issue chosen highlights them all on the canvas, a region chosen is
-    picked and centered;
-  - overlays on the canvas for the parts thinner than the brush, the small regions and the numbers on leader lines,
-    off until asked for and never exported.
-
-### Changed
-
-- The zoom (−, the zoom field, +, Fit) is under the page, in a bar of its own: on the default window with both panels
-  open, the bar above the page had no room left for it.
-- The benchmark measures the slivers, corners' tips, undersized and unnumbered regions and the numbers' sizes with the
-  app's own functions, loaded from this checkout as the print model is: one implementation for both. Its numbers are
-  unchanged.
-
-## [1.1.29] - 2026-11-26
-
-### Added
-
-- Click a region on the canvas to pick it: its color is picked in the palette and the region outlined, and the
-  inspector shows its area and size on paper, the widest brush that fits, and how its number is written (inside, on a
-  leader line or cramped, at what size in points, and on how many other sides).
-- Enter on a color lists its regions, largest first; Up and Down go through them, each centered on the canvas, and Esc
-  goes back to the palette.
-
-### Changed
-
-- A color's highlight on the canvas is built about four times as fast.
-
-## [1.1.28] - 2026-11-26
-
-### Added
-
-- The palette inspector, on the right:
-  - each color's share of the page, its area on paper and its number of regions, measured in the background once the
-    page is made;
-  - sort by number, coverage, lightness, hue or name, without changing a number;
-  - a grid of swatches or a list;
-  - find a color by number or name;
-  - copy its hex (Ctrl+C), RGB or name;
-  - pick a color to see it in full and highlight its regions on the canvas; **Isolate** dims the rest. The highlight
-    never reaches an export.
-
-## [1.1.27] - 2026-11-26
-
-### Added
-
-- **Compare**, on the canvas bar and in the View menu: two views of the page side by side, following each other's zoom
-  and scroll, or one over the other split left and right or top and bottom, with a divider to drag. Compare the view
-  shown with Page, Completed, Tinted, Original or the **Previous version**: the page shown before the last change, if
-  it is still kept, labeled with that change. Each view is named in its corner. Comparing never makes a page.
-
-## [1.1.26] - 2026-11-26
-
-### Added
-
-- **Original** view (View > Original, Ctrl+4): the picture itself in the page's place, beside Page, Completed and
-  Tinted, keeping the zoom and the place. It is never exported.
-- A zoom field above the canvas: type a zoom (150, 37.5%) and press Enter, or pick one from its list, where 100% and
-  Print size now are (they were buttons).
-- Pan with the middle button, or by holding Space and dragging, as well as by dragging. Space only pans while the canvas
-  has the keyboard.
-- **View > Rulers** (Ctrl+R), **Grid** (Ctrl+') and **Page Bounds**: rulers in millimeters or inches on paper, a grid
-  every centimeter or inch, and the sheet and its margins around the page. Hidden until asked for, then kept.
-
-### Changed
-
-- A window resized keeps the same point of the page in its middle, rather than its top left corner.
-- **Print size** says it is approximate: it goes by the size the screen reports.
-
-## [1.1.25] - 2026-11-26
-
-### Added
-
-- A welcome page while no picture is open. It has a few words on what to do, **Open Picture…** and **Open
-  Project…**, the recent projects and pictures, and four example pictures to try, bundled with the app (public domain
-  or CC0). A recent file no longer there is greyed, with **Remove**.
-- Drag and drop: a picture or a project dropped anywhere on the window opens. A picture goes into the work as one
-  step to undo; a project over unsaved changes asks first.
-- **Edit > Paste Picture** (Ctrl+V) opens the picture copied, or the picture or project whose file or path was
-  copied. Ctrl+V in a text field still pastes text there.
-- **File > Open Recent** lists the recent pictures too.
-
-### Changed
-
-- A file Tessellatum can't open (not a picture, damaged) says why, and the work open stays as it was.
-
-## [1.1.24] - 2026-11-26
-
-### Added
-
-- Recovery: while the work has changes that aren't saved, it is kept every 2 minutes in the app's own folder, never
-  over a project.
-  - If Tessellatum ends without closing properly (a crash, a power cut), the next start offers it back with its
-    thumbnail and when it was kept: **Restore** (it opens unsaved, saying where it came from), **Discard**, or
-    **Keep for Later**.
-  - Saving, closing the picture and quitting remove it.
-  - A window still open is never offered to another.
-  - What is kept goes after 14 days, and past the latest 20.
-- Preferences > Workspace > **Keep for recovery**: every 1, 2, 5 or 10 minutes, or Off.
-
-## [1.1.23] - 2026-11-26
-
-### Added
-
-- Projects: **File > Save Project** (Ctrl+S) and **Save Project As…** (Ctrl+Shift+S) save the picture and every setting
-  as a `.tessellatum` file, to open again later or on another computer. **File > Open…** opens a project or a picture,
-  and **Open Recent** lists the projects opened or saved last. **Close** (Ctrl+W) closes the picture.
-  - A project keeps the picture's own file, byte for byte, so it doesn't depend on the picture staying where it was.
-    It also keeps the settings, the paints listed and the export options, and a small thumbnail.
-  - Pages aren't stored: opening a project makes its page again, and the page is the one that was saved.
-- Closing the picture, quitting, or opening a project over changes not saved asks whether to save them first.
-- The window's title names the project (or the picture), and marks unsaved changes.
-
-### Changed
-
-- Saving is atomic: a project is written beside its file, read back and checked, and only then put in the file's
-  place, so a save that fails leaves the file saved before untouched.
-- A project that is damaged, too large, made by a newer version, or holding a file outside itself is refused with the
-  reason, and the work open stays as it was.
-- Export suggests its file beside the project, if there is one, else beside the picture, named after the picture.
-
-## [1.1.22] - 2026-11-26
-
-### Added
-
-- Preferences > Performance > **Generate automatically**: whether a change that makes the page again (the colors, the
-  difficulty, the paper, what is done with line art, faces and text) makes it by itself, a second after the last change.
-  - **Off**, the default: such a change waits for Generate Preview, as before.
-  - **When it's quick**: only while the picture's last page took under 2 s. After a slower one, changes wait for
-    Generate Preview, and the preview's state says why and how long the last page took.
-  - **Always**.
-
-  A slider dragged makes one page, when it stops. The page replaces one still being made, waits for an export to
-  finish, and is called off if the change is put back. A change back to a page kept is shown at once, whatever the
-  setting.
-
-## [1.1.21] - 2026-11-26
-
-### Added
-
-- Pages made are kept, so Undo, Redo and a setting put back show their page at once, without making it again (about
-  0.1 s for the lion at Medium, rather than 2 s). This holds for undoing an Open as well. A page kept brings its
-  print-size layout with it, so the zoom and the export don't lay it out again.
-- When a page undo or redo goes back to is no longer kept, the settings come back at once and the page is made again in
-  the background. Meanwhile the page shown is kept and labeled out of date. A state that never had a page still waits
-  for Generate Preview.
-- Preferences > Performance > **Memory for pages made**: how much memory the kept pages may take. Automatic uses a
-  quarter of the computer's memory, up to 2 GB. The page shown and the ones Undo and Redo go to are always kept.
-  **Clear Now** frees the kept pages too.
-
-### Changed
-
-- A page being made with settings that have since been put back is dropped, rather than replacing the page that is
-  now current.
-
-## [1.1.20] - 2026-11-25
-
-### Fixed
-
-- An export of the preview that was waiting for its page to be laid out to print, when another picture took its place
-  (an undo of Open can do that while it runs), waited for ever: the busy bar stayed and Generate Preview did nothing.
-  It now stops, and says so.
-
-## [1.1.19] - 2026-11-25
-
-### Fixed
-
-- The pipeline's warm-up as the app starts could throw away the stages kept for a picture opened and previewed while
-  it ran, so the next preview or redraw built them all again (a redraw of the lion at Medium took 1.7 s rather than
-  1.0 s). The warm-up no longer touches what is kept.
-
-## [1.1.18] - 2026-11-25
-
-### Added
-
-- The status bar says what the page being made is doing, step by step: "Sizing the picture", "Finding faces and the
-  subject", "Choosing the colors", "Building the regions", "Placing the numbers and drawing the page", "Painting the
-  versions", each with how far along it is.
-- The diagnostics give each step's time in a page's details, say how many steps were kept from before (a change to
-  the lines or numbers keeps most), and, for a page cancelled, how long it took to stop.
-
-### Changed
-
-- Cancelling says at once that the page stops after the current step, and which step that is.
-- A failure says what to try: a page too large for memory suggests a smaller paper (A3 rather than A2), an easier
-  difficulty or a lower resolution; a file that can't be written says whether it may be open elsewhere, the disk is
-  full or its folder is gone. The exception and its traceback stay in the diagnostics, behind Details.
-
-## [1.1.17] - 2026-11-25
-
-### Added
-
-- The bar above the page says whether the page shown is **Up to date**, **Out of date** (its tooltip names what
-  changed), **Generating…**, or **Cancelled** / **Failed** with **· earlier preview** when the page asked for didn't
-  come and the one shown is from before.
-- A change to the lines, the numbers or the tone now draws the preview again by itself, 0.4 s after the last change:
-  a slider dragged draws the page once, when it stops, from the regions already found. Every other setting still
-  waits for Generate Preview, and the legend's detail still applies at once. **Preferences > Performance > Redraw
-  lines and numbers** sets the delay (0.2, 0.4 or 1 s) or turns it off.
-
-### Changed
-
-- The out-of-date status names only the settings that change the page; the legend's detail is no longer among them
-  when other settings changed too.
-
-## [1.1.16] - 2026-11-25
-
-### Changed
-
-- A change to the lines or numbers (line width, grays, number size, leaders, smoothing, split necks, the gap beside
-  text) no longer builds the page's regions again: they are kept with the rest of a picture's stages, and the page is
-  drawn again from them, as it would be from scratch, pixel for pixel. The lion at Medium redraws in 0.9 s rather
-  than 1.6 s; line art, whose regions with no room for a number merge as the numbers are placed, in 2.0 s rather than
-  3.1 s on the comic.
-- The pipeline can announce each stage by name as it starts and ends, with how long it took and whether its results
-  were kept (`generate(..., stage_callback=...)`), for the app's progress and diagnostics.
-
-## [1.1.15] - 2026-11-25
-
-### Changed
-
-- Each part of a page's **Advanced** group (Edges, Corners, Resolution, Lines, Numbers…) now folds on its own, under a
-  header of its own with its own Reset, folded at first: opening the group lists its parts by name. Finding a setting
-  unfolds its part too, and the search names it ("Generation · Advanced · Edges"). What is folded is kept between
-  runs.
-
-### Fixed
-
-- Focus mode said nothing about how to leave it once its button was hidden: it now says so over the page (Esc, or
-  the same shortcut), and **Exit Focus Mode** stays on the bar above the page.
-- The ✕ beside the progress bar did nothing: it turned itself off before asking to cancel, which turned off the
-  Cancel command it triggers. It cancels now, as the toolbar's Cancel does.
-- "The preview is out of date" was said only after an undo: it is now said as soon as a setting that changes the page
-  moves, naming what changed, and "Preview ready." comes back once the settings are as the page was made with.
-
-## [1.1.14] - 2026-11-25
-
-### Added
-
-- **Preferences** (Edit > Preferences, Ctrl+, ; on macOS in the app menu): how the app looks and works on this
-  computer, kept apart from the page's settings, never undone with them and kept between runs:
-  - **Appearance**: the theme and motion (as in View > Appearance), the interface's scale (90% to 200%, applied when
-    the app next starts; the page's zoom stays exact whatever the scale), and the canvas's background behind the page
-    (the theme's, a neutral gray to judge colors against, white or black).
-  - **Units**: lengths and areas shown and typed in millimeters or inches; the page's values are kept in millimeters
-    either way.
-  - **Workspace**: Reset Layout.
-  - **Performance**: how many pages' intermediate results are kept to make the next preview faster, and Clear Now.
-  - **Shortcuts**: every command's keys.
-
-### Fixed
-
-- A command whose standard key the platform doesn't define (Quit on Windows) no longer shows an empty "()" in its
-  tooltip.
-- The settings search's results hide when the focus leaves the search field, giving the sidebar back, and show again
-  when it returns.
-
-## [1.1.13] - 2026-11-25
-
-### Added
-
-- **Presets of your own**: the Presets menu beside the difficulty saves the difficulty's settings as a preset under a
-  name of your own (Save as Preset), and renames or deletes it. They are listed after the built-in levels, kept in a
-  file of their own in the app's preferences folder, and set only the difficulty's settings: the paper, what the page
-  is colored on and the paints stay as they are. A presets file that can't be read is left out, with a warning in the
-  log, and kept aside rather than overwritten.
-- **What a level makes, in regions**: each built-in level now says how many regions it typically gives on the paper
-  chosen ("About 450 regions to paint on an A4 page (200 to 1,250 on most pictures)" for Medium), measured on the
-  benchmark's pictures.
-- **Back to the level**: a level changed reads "Hard (modified, 2 changes): Colors 26, Smoothing 0.9." under it, and
-  Presets > Back to Hard puts its settings back, as one step to undo.
-
-### Changed
-
-- **Reset** beside the difficulty (and Edit > Reset All Settings) asks before putting every setting back; a section's
-  Reset and a setting's own don't ask, and Undo takes any of them back.
-
-## [1.1.12] - 2026-11-25
-
-### Added
-
-- **Search the settings** (Edit > Find Setting, Ctrl+F): a field at the top of the sidebar finds a setting by its
-  name, by the words it may be called by ("outline" finds Line width, "pupils" Dark mark contrast), by what it does,
-  or by where it is, best match first. Each result says where the setting is and what it is set to. Choosing one
-  (Enter, or a click) opens its page, unfolds its section, the Advanced group too, scrolls to it, puts the focus on it
-  and outlines it for a moment. Up and Down move through the results; Esc clears the search.
-
-## [1.1.11] - 2026-11-25
-
-### Added
-
-- **Undo and Redo** (Edit menu; Ctrl+Z, and Ctrl+Y or Ctrl+Shift+Z). Every change to the settings is a step back,
-  named for what it did: "Undo Brush width", "Undo Difficulty: Hard", "Undo Reset Detail", "Undo Paints". A slider
-  dragged is one step from press to release, and a preset or a reset is one step however many settings it moves.
-  Opening another picture can be undone too. The zoom, the panels and the version shown are never in it. Undoing
-  back to settings the preview wasn't made with says so in the status bar.
-
-## [1.1.10] - 2026-11-25
-
-### Changed
-
-- **Export opens a dialog first.** It shows the export's options (the version, the format, the PNG's resolution, the
-  palette's format) beside a thumbnail of what will be written and a line on it: "A PNG of the page: 6,543 × 4,363 px
-  at 600 dpi, printing 277 × 185 mm on A4, with its legend under it." The options have moved there from the Document
-  page, and are kept between runs as before.
-- **Warnings that don't stop you:** a PNG under 150 dpi, a Procreate palette of more than 30 colors written as
-  several files, numbers under 3 pt on a page for paper. Only an export with nothing to write is refused.
-- **No more silent re-making.** When the settings changed since the preview, the dialog says which, and asks which
-  page to write: the page made again with the settings as they are now (the default, as before), or the page as
-  previewed.
-- Exports are named for the picture and suggested beside it ("harbor_page.png", "harbor_palette.swatches"). A
-  Procreate palette written as several files asks before replacing any of them that exist.
-- A failed export offers **Retry**, which writes the same file with the same options again.
-- With Coloring on: Screen, the Colors page now also points to exporting the palette.
-- Radio buttons have a clear outline in the dark theme.
-
-## [1.1.9] - 2026-11-25
-
-### Changed
-
-- **Each settings page shows what most pages need first.** The everyday settings are on top; the rest wait in one
-  **Advanced** group, folded, at the foot of the page, under small headings (Faces and subject, Line art, Text,
-  Edges, Corners, Resolution on Generation; Mixing on Colors; Tone, Lines, Numbers on Document). Opening a picture,
-  picking a difficulty, generating and exporting never needs one of them.
-- **Reset a section on its own.** A section with something changed in it shows **Reset** in its header, which puts
-  its sliders back to their preset (or tone, or default) and its choices to their defaults, and leaves the rest of the
-  page as it is.
-- **The difficulty says what it makes**, under its choice ("Up to 24 colors, at least 4 ΔE00 apart. Regions of at
-  least 6 mm² ..."), or, once a setting is moved, how far: "Custom, from Medium: 2 settings changed."
-- **The Source page tells you more about the picture:** how large it prints on the paper chosen and at how many of its
-  pixels an inch, and, after a preview, whether it was read as line art or as a picture of colors.
-- **Recipes from your paints list say so.** With Legend: Name and recipe and the colors from the picture, the legend's
-  recipes are now headed "Recipes from your paints list: mix each in the parts given", in the preview, the PNG and the
-  PDF, so they don't read as the paints the page was made of.
-
-### Fixed
-
-- Tooltips no longer say sizes are on "the A4 page" when the paper is A3 or A2.
-- A settings page scrolled down comes back where it was left in full on the next run, not partway, when its layout
-  takes more than one pass to settle.
-
-## [1.1.8] - 2026-11-25
-
-### Changed
-
-- **Type an exact value.** Every slider has its value beside it in a box to type in: "1.2", "1.2 mm", or, in a
-  German or French setup, "1,2". A value out of range is not quietly held to it: the box turns red and says the range
-  under it ("Out of range: from 0.5 to 6.0 mm."), and the setting keeps its value until a good one is typed; Esc puts
-  the box back. Up and Down step the value, Page Up and Page Down ten steps, in the box as on the slider. A gray is
-  typed as its lightness (L*).
-- **What you changed is marked.** A setting moved off its preset (or the tone's grays off the tone, or any other
-  setting off its default) shows a dot after it; its tooltip says what it was ("Changed from Medium: 0.7 mm"), and a
-  click puts it back. Right-click a setting to reset it to its preset or to the factory default. When every
-  difficulty setting is its preset's again, the difficulty shows the preset again instead of Custom.
-- **Why a setting is off is said under it**, once per section ("Only with More detail on faces and subject."), not only
-  in its tooltip.
-- The paper, what the page is colored on, where its colors come from, and the tone are now buttons side by side
-  rather than drop-down lists: every choice in sight, one click away. Left and Right move the choice.
-
-## [1.1.7] - 2026-11-25
-
-### Changed
-
-- **No more message boxes in the way.** What just happened is told in a banner over the page: an export done, with
-  **Show in Folder**; a failure, with **Details**. It never takes the keyboard focus; a success goes by itself after a
-  few seconds, a warning or an error stays until closed.
-- **The status bar** says what the app is doing, with an icon and a progress bar while it works, and keeps the page's
-  colors and regions, its size in pixels and on paper, and the zoom on its right.
-- **Diagnostics** (View > Diagnostics, Ctrl+Shift+D): a log under the page of each step the app ran, how long it took
-  and how it ended, and every warning and error with its details, to copy into a bug report. It never opens by
-  itself: the status bar counts its warnings and errors, and a click on the count opens it.
-
-### Fixed
-
-- With no page yet, the inspector's title sat halfway down the panel.
-
-## [1.1.6] - 2026-11-25
-
-### Changed
-
-- **A new workspace.** A toolbar along the top (Open, Generate Preview, which turns into Cancel while a page is made,
-  and Export); an activity bar down the left that picks the settings shown: **Source** (the picture and how it is
-  read), **Generation** (the difficulty, the regions and their detail), **Colors** (what the page is colored with,
-  and its palette) and **Document** (the paper, lines, numbers, legend and export). Each category has its own page,
-  in sections; sections of advanced settings start folded. Generate Preview and Export stay at the foot of every page.
-- **The palette beside the page**: an inspector on the right lists the page's colors, numbered as on its legend, with
-  their names; hover one for its hex and RGB.
-- The canvas has its own toolbar: the version shown and the zoom. On a narrow window, what doesn't fit goes into its
-  overflow menu.
-- The sidebar and the inspector can be resized and folded away (View > Sidebar, Ctrl+B; View > Inspector,
-  Ctrl+Alt+B; or click the page already shown in the activity bar). **Focus Mode** (Ctrl+Shift+F) hides every panel
-  around the page, and Esc brings them back as they were. The categories have shortcuts too (Ctrl+Shift+1 to 4).
-- The layout is kept between runs: the window's size, the panels' sizes and whether they show, the page shown, and
-  each page's scroll position and folded sections. **View > Reset Layout** puts it back as it starts.
-- On a narrow window the inspector folds away by itself, then the sidebar, and they come back as the window widens.
-- The large thumbnail of the picture is gone from the panel: the Source page shows it small, with its file name and
-  size.
-
-## [1.1.5] - 2026-11-25
-
-### Changed
-
-- Every slow step runs as a background job with an identity: making the preview, laying it out to print, making a
-  page to export, writing the file, and mixing the legend's recipes. A job's result is used only if it is still
-  wanted: a page of a picture replaced while it was made is never shown, and a page made while a setting changed is
-  kept with the settings it was made with, never taken for one made with the new ones. One job of each kind runs at a
-  time; a newer one stops the last first.
-- Writing a PDF or a palette file, and mixing a legend's recipes (up to a second with many paints), no longer hold up
-  the window: they run in the background too.
-- Closing the window while a page is being made closes it at once, rather than waiting for the page; the app finishes
-  stopping it as it quits.
-
-## [1.1.4] - 2026-11-25
-
-### Fixed
-
-- Closing the window within moments of opening a large picture raised an error in the background thread that
-  identifies the picture (its content hash), and raced the window's teardown. The thread now reports through an
-  object that outlives every window.
-
-## [1.1.3] - 2026-11-25
-
-### Added
-
-- **A logo**, "Tesserae": a rounded tile cut into regions, as a page is, in the app's Viridian with a warm ochre. It
-  is the app's icon on Windows (Explorer, the taskbar), macOS (the Dock) and Linux, and its window icon, drawn
-  simpler at 16 to 24 px so it stays legible there.
-- The README banner and the social preview carry the logo, in the app's typeface and accent.
-
-## [1.1.2] - 2026-11-24
-
-### Changed
-
-- A setting that means nothing with the choices made is turned off, and its tooltip says why first: the faces' and
-  subject's settings without **More detail on faces and subject**, the line-art settings without **Print line art's
-  own ink**, Print lettering up to and Gap beside text without **Print text**, joining the darkest black on a screen
-  and the mixing settings without My paints and Mix, which were already off.
-- Under the hood, every setting, sliders and choices alike, is described once in a settings registry: where it
-  belongs, how advanced it is, what kind of quantity it is, when a change applies, when it means nothing and why, the
-  words to search it by, and the key it is kept under. Settings kept by earlier versions load as before.
-
-## [1.1.1] - 2026-11-24
-
-### Added
-
-- **A menu bar** (File, Edit, View, Generate, Help) with every command the app has, and **keyboard shortcuts** for
-  them: Open (Ctrl+O), Export (Ctrl+E), Generate Preview (Ctrl+Enter or F5), Cancel (Esc), the Page, Completed and
-  Tinted versions (Ctrl+1, 2, 3), Zoom In and Out (Ctrl+plus and minus), Fit Page (Ctrl+0) and 100% (Ctrl+Alt+0).
-  On macOS they use Cmd and sit in the system's menu bar. A button and its menu item are the same command, enabled
-  and disabled together, and the buttons' tooltips name their shortcuts.
-- **View > Appearance**: System (following the system's light or dark setting), Light or Dark, kept between runs.
-- **Help > About Tessellatum**: the version, and the licenses of the app and of what it bundles.
-
-### Changed
-
-- Under the hood, the picture, its settings and the page made of them live in one document model, apart from the
-  window: the groundwork for undo, projects and recovery.
-
-### Fixed
-
-- In dark mode, the empty canvas's "Open an image" text was nearly black on the dark canvas.
-
-## [1.1.0] - 2026-11-24
-
-### Added
-
-- **A new look, light and dark.** The window has a design of its own: calm neutral surfaces, the page on a slightly
-  darker canvas so it reads first, and one accent color, **Viridian**, for what's selected, focused or primary
-  (Generate Preview). Every text and control color meets WCAG AA contrast in both themes. The theme follows the
-  system's light or dark setting live, as it changes, with no restart.
-- The interface uses the **Inter** typeface (SIL Open Font License) and carries a set of **Lucide** icons (ISC
-  license) drawn in the theme's colors, both bundled with the app with their licenses.
-- The progress percentage sits beside a slim progress bar, rather than on it.
-- The build self-test also checks that the app carries its font and icons.
-
-### Fixed
-
-- After the system switched from dark to light while the app was open, the panel's section titles were white on the
-  light panel and could hardly be read. Every color now comes from the theme and changes with it.
-- Three hard-coded grays (the thumbnail's frame, the Screen hint and the PNG size readout) ignored the theme; the
-  readouts were too faint in dark mode.
-- Without a saved settings file, the two mixing settings started enabled although colors came from the picture.
+- Section titles white on the light panel after the system switched theme; grays that ignored the theme.
+- The two mixing settings started enabled although colors came from the picture.
+- The empty canvas's text was nearly black in dark mode.
+- Tooltips spoke of "the A4 page" on A3 or A2.
 
 ## [1.0.21] - 2026-11-24
 
