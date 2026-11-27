@@ -4,6 +4,20 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.40] - 2026-11-27
+
+### Added
+
+- A feature-parity test: each of the 63 capabilities 1.0.21 had (opening, the workflow, every control on the old
+  panel, the paints dialog, the preview's navigation, export) is checked to be still reachable in the window, by a
+  command in a menu with its shortcut, a control with its choices, or the function the core keeps; where that says
+  little of what it does, the test that does is named and must exist.
+
+### Changed
+
+- The wiki says the pseudo-locale is clean on macOS and Linux too, at 100-200% on 1280×720 and 1920×1080 screens,
+  as the layout workflow now checks.
+
 ## [1.1.39] - 2026-11-27
 
 ### Added

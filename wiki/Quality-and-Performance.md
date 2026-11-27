@@ -66,9 +66,10 @@ menu; where even the view buttons don't fit (a 1280×720 screen at 200%, a 640×
 from takes their place. The canvas's 100% stays a pixel of the page to a pixel of the screen at any interface scale
 (tested at 100% and 150%).
 
-In the pseudo-locale, nothing is cut on Windows at any screen and scale checked either. Where a row of choices and
-buttons doesn't fit the sidebar's width, it stacks instead: the button under the choices, then the choices one under
-another, each whole. The sidebar starts as wide as its rows need side by side, so English at 100% looks as it did.
+In the pseudo-locale, nothing is cut either: on Windows at 100-200% to 2560×1440, and on macOS and Linux at 100-200% on
+screens of 1280×720 and 1920×1080 (the layout workflow). Where a row of choices and buttons doesn't fit the sidebar's
+width, it stacks instead: the button under the choices, then the choices one under another, each whole. The sidebar
+starts as wide as its rows need side by side, so English at 100% looks as it did.
 
 **The same page on every platform is not a goal.** On one platform, with the same version of the app and its
 libraries, a picture and its settings make the same page every time, bit for bit (a test computes it three times
