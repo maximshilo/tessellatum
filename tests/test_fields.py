@@ -355,11 +355,13 @@ def test_the_sidebar_starts_wide_enough_for_its_rows_side_by_side_and_can_be_nar
     window.show_activity("Colors")
     _app.processEvents()
     panel = window.controls
-    assert panel.preferred_width() > panel.minimumSizeHint().width()  # the rows stacked need less
-    assert window.splitter.sizes()[0] >= panel.preferred_width()
+    assert window.splitter.sizes()[0] >= panel.preferred_width() >= panel.minimumSizeHint().width()
     row = panel.colors_from_combo.parentWidget()
     assert not row.is_stacked() and not panel.colors_from_combo.is_stacked()
-    window.splitter.setSizes([panel.minimumSizeHint().width(), 1600, 240])
-    _app.processEvents()
-    assert row.is_stacked()  # narrower: the Paints button under the choices, never cut
+    # Narrower, the Paints button goes under the choices, never cut. (Which fonts the test process has loaded decides
+    # whether another row is wider still: then the sidebar's minimum already fits this row side by side.)
+    if panel.preferred_width() > panel.minimumSizeHint().width():
+        window.splitter.setSizes([panel.minimumSizeHint().width(), 1600, 240])
+        _app.processEvents()
+        assert row.is_stacked()
     window.close()
