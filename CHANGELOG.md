@@ -7,8 +7,8 @@ Each release's notes on GitHub are its section below.
 ## [2.0.1] - 2026-11-27
 
 ### Changed
-- The README, the wiki and the package metadata also call the page what it is with pencils or markers: a
-  color-by-number page.
+- The README, the wiki and the package metadata describe the page as a paint-by-numbers (color-by-number) page, to
+  print and fill with paints, pencils or markers, or to color in your digital art app.
 
 ## [2.0.0] - 2026-11-27
 

@@ -1,9 +1,9 @@
 ![Tessellatum](https://raw.githubusercontent.com/maximshilo/tessellatum/main/docs/assets/banner.png)
 
-**Tessellatum** turns any picture into a printable paint-by-numbers page: flat, outlined regions, each numbered, and a
-color legend that maps each number to a paint. The same page works as a color-by-number page for pencils or
-markers. It is a native desktop app (Python, Qt 6) that runs entirely offline, including its four small detection
-networks.
+**Tessellatum** turns any picture into a paint-by-numbers (color-by-number) page, to print and fill with paints,
+pencils or markers, or to color in your digital art app: flat, outlined regions, each numbered, and a color legend
+that maps each number to a color. It is a native desktop app (Python, Qt 6) that runs entirely offline, including its
+four small detection networks.
 
 ## Start here
 
