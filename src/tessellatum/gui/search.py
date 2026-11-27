@@ -164,6 +164,10 @@ class SettingsSearch(QWidget):
             self.results.hide()
         elif watched is self.field and event.type() == QEvent.FocusIn:
             self.results.setVisible(bool(self.field.text().strip()))
+        if watched is self.field and event.type() == QEvent.ShortcutOverride and event.key() == Qt.Key_Escape \
+                and self.field.text():
+            event.accept()  # Esc clears the search, before the window's Cancel can take it
+            return True
         if watched is self.field and event.type() == QEvent.KeyPress:
             key = event.key()
             if key in (Qt.Key_Down, Qt.Key_Up) and self.results.isVisible() and self.names():

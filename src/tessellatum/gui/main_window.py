@@ -56,7 +56,7 @@ from tessellatum.core.legend import NAME_RECIPE, render_legend
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import GeneratedPage
 from tessellatum.core.print_size import MM_PER_INCH, print_scale
-from tessellatum.gui import accessibility, freshness, preferences, theme, vision
+from tessellatum.gui import accessibility, freshness, preferences, shortcuts, theme, vision
 from tessellatum.core import settings as registry
 from tessellatum.gui.actions import (
     ACTIVITY_ACTIONS, ANALYSIS, COMPARE_ACTIONS, COMPARE_MENU, COMPARE_WITH_ACTIONS, GUIDE_ACTIONS, THEME_ACTIONS,
@@ -511,6 +511,8 @@ class MainWindow(QMainWindow):
         self.welcome.example_requested.connect(self.open_example)
         self.welcome.remove_requested.connect(self.forget_recent)
         commands["about"].triggered.connect(self.show_about)
+        commands["shortcuts"].triggered.connect(self.open_shortcuts)
+        self.shortcuts_dialog: shortcuts.ShortcutsDialog | None = None
         for version, command_id in VERSION_ACTIONS.items():
             commands[command_id].triggered.connect(lambda _checked=False, v=version: self.version_bar.buttons[v].click())
         self.version_bar.version_changed.connect(lambda v: commands[VERSION_ACTIONS[v]].setChecked(True))
@@ -852,6 +854,15 @@ class MainWindow(QMainWindow):
         if key in (preferences.REDRAW_KEY, preferences.AUTO_KEY):
             self._schedule_redraw()
             self._show_freshness()
+
+    def open_shortcuts(self) -> None:
+        """Help > Keyboard Shortcuts, made the first time; beside the window, not in its way."""
+        if self.shortcuts_dialog is None:
+            self.shortcuts_dialog = shortcuts.ShortcutsDialog(self.commands, self)
+            accessibility.name_parts(self.shortcuts_dialog)
+        self.shortcuts_dialog.show()
+        self.shortcuts_dialog.raise_()
+        self.shortcuts_dialog.activateWindow()
 
     def open_preferences(self) -> None:
         """The Preferences dialog, made the first time."""

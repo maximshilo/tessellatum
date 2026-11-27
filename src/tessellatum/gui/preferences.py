@@ -26,20 +26,17 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import QObject, QSettings, Qt, Signal
-from PySide6.QtGui import QColor, QKeySequence, QPalette
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QHeaderView,
     QLabel,
     QListWidget,
     QPushButton,
     QScrollArea,
     QStackedWidget,
-    QTableWidget,
-    QTableWidgetItem,
     QHBoxLayout,
     QVBoxLayout,
     QWidget,
@@ -49,6 +46,7 @@ from tessellatum.app import results
 from tessellatum.core import pipeline
 from tessellatum.gui import accessibility, theme
 from tessellatum.gui.fields import INCH, MM
+from tessellatum.gui.shortcuts import ShortcutReference
 
 SCALE_KEY = "preferences/ui_scale"
 CANVAS_KEY = "preferences/canvas"
@@ -312,25 +310,12 @@ class PreferencesDialog(QDialog):
         form.addRow("Generate automatically", self.auto_combo)
         form.addRow("", auto_note)
 
-        # Shortcuts
-        self.shortcuts = QTableWidget(0, 2)
-        self.shortcuts.setObjectName("shortcutTable")
-        self.shortcuts.setAccessibleName("Keyboard shortcuts")
-        self.shortcuts.setHorizontalHeaderLabels(["Command", "Keys"])
-        self.shortcuts.verticalHeader().hide()
-        self.shortcuts.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.shortcuts.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.shortcuts.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        for action in commands:  # the window's Actions: its QActions
-            keys = [key.toString(QKeySequence.NativeText) for key in action.shortcuts() if not key.isEmpty()]
-            if keys:
-                row = self.shortcuts.rowCount()
-                self.shortcuts.insertRow(row)
-                self.shortcuts.setItem(row, 0, QTableWidgetItem(action.text().replace("&", "").rstrip("…")))
-                self.shortcuts.setItem(row, 1, QTableWidgetItem(", ".join(keys)))
+        # Shortcuts: the keyboard reference, as Help > Keyboard Shortcuts shows it
+        self.shortcut_reference = ShortcutReference(commands)
+        self.shortcuts = self.shortcut_reference.table
         shortcuts = QWidget()
         layout = QVBoxLayout(shortcuts)
-        layout.addWidget(self.shortcuts)
+        layout.addWidget(self.shortcut_reference)
 
         for page in (appearance, units, workspace, performance):
             # Each scrolls if it is taller than the dialog (a large interface scale), rather than being cut off.
