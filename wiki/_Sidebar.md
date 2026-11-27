@@ -2,6 +2,7 @@
 
 - [Getting started](Getting-Started)
 - [User guide](User-Guide)
+- [Settings reference](Settings-Reference)
 - [Gallery](Gallery)
 
 **How it is built**

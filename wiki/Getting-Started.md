@@ -15,7 +15,9 @@ installer and no Python are needed: unpack it anywhere and run it.
   libraries, which desktops have; if it doesn't start, run it from a terminal to see which is missing.
 
 The first launch compiles the image kernels in the background (a few seconds, while you pick an image); later launches
-reuse them.
+reuse them. The app shows its own icon in the taskbar or the Dock, and follows the system's light or dark appearance
+(View > Appearance picks one for good). It keeps its settings and window layout in the platform's settings store, and
+recovery snapshots of unsaved work in its data folder (see [Recovery](User-Guide#recovery)).
 
 ## Run from source
 
@@ -50,9 +52,16 @@ binary from a terminal to see the error.
 
 ## A first page
 
-1. **Open Image…** and pick a picture.
-2. Choose a difficulty (Medium is the default) and click **Generate Preview**.
-3. Switch between **Page**, **Completed** and **Tinted** above the preview; zoom with the mouse wheel.
-4. **Export…** to PNG or PDF.
+1. The window opens on a welcome page: **Open Picture…**, drop a picture anywhere on the window, paste one
+   (Ctrl+V), or click one of the examples. A project saved before opens the same way, or from **Recent projects**.
+2. The **Generation** page (left) sets the difficulty: Medium is the default. Click **Generate Preview** (F5) on the
+   toolbar; the status bar says what it is doing, and Cancel (Esc) stops it.
+3. Above the page, switch between **Page**, **Completed**, **Tinted** and the **Original**; zoom with the mouse wheel,
+   pan by dragging. The inspector (right) lists the page's colors: pick one to see where it goes.
+4. Change a setting: the lines, numbers and tone redraw by themselves; anything else marks the preview **Out of date**
+   until the next Generate Preview. Ctrl+Z undoes it, and a page made before comes back at once.
+5. **Export…** (Ctrl+E) opens the export dialog: PNG, PDF or a palette file, which version, at what resolution, with
+   what it will write said before it is written. **Save Project** (Ctrl+S) keeps the picture and its settings together.
 
-The [user guide](User-Guide) describes every setting.
+The [user guide](User-Guide) describes the workspace and every feature; the [settings reference](Settings-Reference)
+lists every setting.
