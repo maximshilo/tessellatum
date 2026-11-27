@@ -63,6 +63,7 @@ from tessellatum.core.pipeline import Handling
 from tessellatum.core.print_size import MM_PER_INCH, PAPERS, print_scale
 from tessellatum.core.render import DEFAULT_TONE, TONE_FIELDS, TONES, PageStyle
 from tessellatum.app.presets import PresetStore
+from tessellatum.gui import accessibility
 from tessellatum.gui.search import SettingsSearch
 from tessellatum.gui.fields import (  # noqa: F401 - the panel's names for them, kept for its callers
     LOG_SLIDER_STEPS,
@@ -389,12 +390,14 @@ class ControlsPanel(QWidget):
         self.resolution_spin = QSpinBox()
         self.resolution_spin.setGroupSeparatorShown(True)
         self.resolution_spin.setToolTip(RESOLUTION_TOOLTIP)
+        self.resolution_spin.setAccessibleName("Resolution")
         self.resolution_unit = QComboBox()
         self.resolution_unit.addItem("dpi", DPI)
         self.resolution_unit.addItem("px", PIXELS)
         self.resolution_unit.setItemData(0, "Dots per inch on the paper", Qt.ToolTipRole)
         self.resolution_unit.setItemData(1, "Pixels along the page's long edge", Qt.ToolTipRole)
         self.resolution_unit.setToolTip(RESOLUTION_TOOLTIP)
+        self.resolution_unit.setAccessibleName("Resolution in")
         resolution_row = QWidget()
         resolution_layout = QHBoxLayout(resolution_row)
         resolution_layout.setContentsMargins(0, 0, 0, 0)
@@ -589,7 +592,7 @@ class ControlsPanel(QWidget):
                 width = max(label.sizeHint().width() + indent for label, indent in labels)
                 for label, indent in labels:
                     label.setMinimumWidth(width - indent)
-            scroll = QScrollArea()
+            scroll = accessibility.no_tab_stop(QScrollArea())
             scroll.setObjectName("sidebarScroll")
             scroll.setWidget(page)
             scroll.setWidgetResizable(True)
@@ -680,7 +683,7 @@ class ControlsPanel(QWidget):
 
     def add_page(self, category: str, widget: QWidget) -> None:
         """A page of the sidebar that isn't settings (the analysis), shown as ``category``."""
-        scroll = QScrollArea()
+        scroll = accessibility.no_tab_stop(QScrollArea())
         scroll.setWidget(widget)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)

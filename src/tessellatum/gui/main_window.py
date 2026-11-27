@@ -56,11 +56,11 @@ from tessellatum.core.legend import NAME_RECIPE, render_legend
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import GeneratedPage
 from tessellatum.core.print_size import MM_PER_INCH, print_scale
-from tessellatum.gui import freshness, preferences, theme
+from tessellatum.gui import accessibility, freshness, preferences, theme, vision
 from tessellatum.core import settings as registry
 from tessellatum.gui.actions import (
     ACTIVITY_ACTIONS, ANALYSIS, COMPARE_ACTIONS, COMPARE_MENU, COMPARE_WITH_ACTIONS, GUIDE_ACTIONS, THEME_ACTIONS,
-    VERSION_ACTIONS, ZOOM_ACTIONS, Actions,
+    VERSION_ACTIONS, VISION_ACTIONS, ZOOM_ACTIONS, Actions,
 )
 from tessellatum.gui.actions import FILE as FILE_MENU
 from tessellatum.gui.welcome import WelcomePage
@@ -247,6 +247,13 @@ class MainWindow(QMainWindow):
         self.canvas_footer = QToolBar("Zoom")
         self.canvas_footer.setObjectName("canvasFooter")
         self.canvas_footer.setMovable(False)
+        # While the canvas is shown as seen with another color vision, it says so, at the footer's start (the bar
+        # above is full on the default window), and a click shows the page's own colors.
+        self.vision_badge = QToolButton()
+        self.vision_badge.setObjectName("visionBadge")
+        self.vision_badge.clicked.connect(lambda: self.set_vision(vision.NORMAL))
+        self._vision_badge_action = self.canvas_footer.addWidget(self.vision_badge)
+        self._vision_badge_action.setVisible(False)
         footer_gap = QWidget()
         footer_gap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.canvas_footer.addWidget(footer_gap)
@@ -526,6 +533,9 @@ class MainWindow(QMainWindow):
         for view, command_id in COMPARE_WITH_ACTIONS.items():
             commands[command_id].triggered.connect(lambda _checked=False, v=view: self.set_compare_with(v))
         self.compare_button.setMenu(commands.submenus[COMPARE_MENU])
+        for mode, command_id in VISION_ACTIONS.items():
+            commands[command_id].triggered.connect(lambda _checked=False, m=mode: self.set_vision(m))
+        self.set_vision(vision.NORMAL)  # the badge's text and name, hidden
         self._show_previous_state()
         manager = theme.current()
         for mode, command_id in THEME_ACTIONS.items():
@@ -557,6 +567,8 @@ class MainWindow(QMainWindow):
             widget.installEventFilter(self._enablement)
         self._sync_commands()
         self._show_canvas()
+        accessibility.name_parts(self)  # the toolbars' overflow buttons and the search fields' clear buttons
+        accessibility.follow_focus()  # a control reached with the keyboard scrolls into view
 
     def _sync_commands(self) -> None:
         if not all(isValid(widget) for widget in (self.version_bar, self.zoom_bar, self.controls)):
@@ -651,6 +663,18 @@ class MainWindow(QMainWindow):
 
     def in_focus_mode(self) -> bool:
         return self._focus is not None
+
+    def set_vision(self, mode: str) -> None:
+        """Show the canvas as seen with ``mode``'s color vision (``gui.vision``): both canvases, never an export."""
+        for view in (self.preview, self.compare_view):
+            view.set_vision(mode)
+        self.commands[VISION_ACTIONS[mode]].setChecked(True)
+        name = vision.NAMES[mode]
+        self.vision_badge.setText(f"{name} simulation")
+        self.vision_badge.setToolTip(f"{vision.DESCRIPTIONS[mode]}, on the screen only: the exports keep the page's "
+                                     "colors. Click to show its own colors.")
+        self.vision_badge.setAccessibleName(f"{name} simulation: show the page's own colors")
+        self._vision_badge_action.setVisible(mode != vision.NORMAL)
 
     def set_focus_mode(self, on: bool) -> None:
         """Hide every panel around the page (the toolbar, the activity bar, the sidebar, the inspector, the

@@ -190,7 +190,8 @@ QListWidget#searchResults::item:selected {{ background: {c.selected}; color: {c.
 *[found="true"] {{ border: 2px solid {c.accent}; border-radius: 4px; }}
 
 {fields} {{ background: {c.field}; color: {c.text}; border: 1px solid {c.border_strong}; border-radius: {r}px;
-    padding: 2px 6px; selection-background-color: {c.accent}; selection-color: {c.on_accent}; }}
+    padding: 2px 6px; selection-background-color: {c.accent}; selection-color: {c.on_accent};
+    placeholder-text-color: {c.text_hint}; }}
 {each(fields, ':hover')} {{ border-color: {c.text_secondary}; }}
 {each(fields, ':focus')} {{ border: 2px solid {c.accent}; padding: 1px 5px; }}
 {each(fields, ':disabled')} {{ color: {c.text_disabled}; background: {c.window}; border-color: {c.border}; }}

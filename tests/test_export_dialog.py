@@ -19,7 +19,7 @@ from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from tessellatum.core import difficulty, export, pipeline, swatches  # noqa: E402
-from tessellatum.gui import main_window  # noqa: E402
+from tessellatum.gui import main_window, vision  # noqa: E402
 from tessellatum.gui.export_dialog import LOW_DPI, ExportDialog, ExportState, warnings_for  # noqa: E402
 from tessellatum.gui.main_window import MainWindow  # noqa: E402
 
@@ -189,6 +189,7 @@ def test_what_the_canvas_shows_around_the_page_never_reaches_a_file(window, tmp_
     for key in main_window.analysis.OVERLAYS:
         assert window.preview.overlay(main_window.DIAGNOSTICS, key) is not None
     window.select_region(int(window.current_page.model.region_id_map[0, 0]), center=True)
+    window.set_vision(vision.DEUTERANOPIA)  # the canvas as seen with another color vision
     _app.processEvents()
     _save_to(monkeypatch, tmp_path / "around.png")
     window.export_page()

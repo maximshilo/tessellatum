@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QMenuBar, QWidget
 
 from tessellatum.core import settings
 from tessellatum.core.painting import Version
-from tessellatum.gui import theme
+from tessellatum.gui import theme, vision
 from tessellatum.gui.theme import icons
 from tessellatum.gui.preview_widget import (
     COMPARE_OFF,
@@ -48,6 +48,7 @@ class Command:
 FILE, EDIT, VIEW, GENERATE, HELP = "&File", "&Edit", "&View", "&Generate", "&Help"
 MENUS = (FILE, EDIT, VIEW, GENERATE, HELP)
 COMPARE_MENU = "Co&mpare"
+VISION_MENU = "Color &Vision"
 # The views a comparison can be with, by the key of their command.
 COMPARE_WITH = {**{v.name.lower(): v for v in Version}, "original": ORIGINAL, "previous": PREVIOUS}
 
@@ -99,6 +100,9 @@ COMMANDS = (
             submenu=COMPARE_MENU),
     *(Command(f"compare_with_{key}", f"With {view_name(view)}", VIEW, view_description(view), checkable=True,
               submenu=COMPARE_MENU) for key, view in COMPARE_WITH.items()),
+    # The canvas as seen with another color vision: on the screen only, never in a file (see ``gui.vision``).
+    *(Command(f"vision_{mode}", f"&{vision.NAMES[mode]}", VIEW, vision.DESCRIPTIONS[mode], checkable=True,
+              submenu=VISION_MENU) for mode in vision.MODES),
     *(Command(f"activity_{category.lower()}", f"&{category} Settings", VIEW, f"Show the {category} settings",
               category.lower(), (f"Ctrl+Shift+{i}",), checkable=True)
       for i, category in enumerate(settings.CATEGORIES, start=1)),
@@ -124,6 +128,7 @@ GUIDE_ACTIONS = ("rulers", "grid", "page_bounds")
 COMPARE_ACTIONS = {COMPARE_OFF: "compare_off", SIDE_BY_SIDE: "compare_side", SPLIT_VERTICAL: "compare_split",
                    SPLIT_HORIZONTAL: "compare_split_h"}
 COMPARE_WITH_ACTIONS = {view: f"compare_with_{key}" for key, view in COMPARE_WITH.items()}
+VISION_ACTIONS = {mode: f"vision_{mode}" for mode in vision.MODES}
 THEME_ACTIONS = {mode: f"theme_{mode.lower()}" for mode in theme.MODES}
 ZOOM_ACTIONS = ("zoom_in", "zoom_out", "fit", "actual_pixels", "print_size")
 ANALYSIS = "Analysis"  # the sidebar's page that isn't settings: the page measured (see ``gui.analysis``)
@@ -177,6 +182,10 @@ class Actions(QObject):
         for action_id in COMPARE_WITH_ACTIONS.values():
             self.compare_withs.addAction(self._by_id[action_id])
         self._by_id[COMPARE_WITH_ACTIONS[ORIGINAL]].setChecked(True)
+        self.visions = QActionGroup(parent)
+        for action_id in VISION_ACTIONS.values():
+            self.visions.addAction(self._by_id[action_id])
+        self._by_id[VISION_ACTIONS[vision.NORMAL]].setChecked(True)
         self.submenus: dict[str, object] = {}  # by title, once the menus are built
         self.refresh_icons()
         manager = theme.current()
@@ -219,6 +228,8 @@ class Actions(QObject):
                     if command.id == COMPARE_WITH_ACTIONS[Version.PAGE]:
                         submenu.addSeparator()
                     submenu.addAction(action)
+                    if command.id == VISION_ACTIONS[vision.NORMAL]:
+                        submenu.addSeparator()
                     continue
                 if command.id.startswith("theme_"):
                     if appearance is None:

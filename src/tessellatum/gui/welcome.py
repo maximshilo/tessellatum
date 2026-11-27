@@ -69,6 +69,8 @@ class WelcomePage(QScrollArea):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("welcome")
+        self.setFocusPolicy(Qt.NoFocus)  # its buttons are the stops on the Tab path, and it scrolls to them
+        self.setAccessibleName("Welcome")
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.NoFrame)
         body = QWidget()

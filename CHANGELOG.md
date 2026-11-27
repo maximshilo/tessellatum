@@ -4,6 +4,32 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.31] - 2026-11-27
+
+### Added
+
+- **View > Color Vision**: the canvas shown as a person with protanopia, deuteranopia or tritanopia sees it, or in
+  grayscale, to check that the colors a painter must tell apart still look different, and that the page reads in
+  light and dark alone. The page, the view compared with and the legend are simulated (Machado et al. 2009) on the
+  screen only: exports keep the page's colors. While it is on, the bar under the page says so; a click there shows
+  the page's own colors.
+
+### Fixed
+
+- Accessibility:
+  - Tab no longer stops on the scrolled pages around the settings, the welcome or the Preferences' pages, which a
+    screen reader read as nameless panes. Their controls are the stops.
+  - A control reached with the keyboard scrolls into view from either direction, Shift+Tab included.
+  - Every control a screen reader reaches has a name:
+    - the export's resolution fields;
+    - the typed zoom;
+    - the canvas's page;
+    - the toolbars' overflow buttons ("More");
+    - the search fields' clear buttons;
+    - the Preferences' shortcut table.
+  - Placeholder text in the search fields is in the theme's hint color: 5.5:1 against the field in the light theme,
+    up from 3.7:1, which was under the 4.5:1 that WCAG AA asks of text.
+
 ## [1.1.30] - 2026-11-26
 
 ### Added

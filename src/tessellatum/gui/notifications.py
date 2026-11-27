@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QObject, QProcess, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QGuiApplication
+from PySide6.QtGui import QAccessible, QAccessibleEvent, QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -123,6 +123,8 @@ class NotificationBar(QFrame):
             button.clicked.connect(self.dismiss)
             self._buttons.addWidget(button)
         self.show()
+        # Said by a screen reader as it appears, though it never takes the focus.
+        QAccessible.updateAccessibility(QAccessibleEvent(self, QAccessible.Event.Alert))
         if level in (INFO, SUCCESS):
             self._timer.start(SUCCESS_MS)
         else:

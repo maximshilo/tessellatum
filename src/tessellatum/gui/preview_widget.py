@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
 
 from tessellatum.core.painting import Version
 from tessellatum.core.print_size import A4, MM_PER_INCH, PaperFormat, print_scale
+from tessellatum.gui import vision
 
 # One notch of a mouse wheel, or one press of + or -, zooms in or out this far.
 ZOOM_STEP = 1.25
@@ -168,6 +169,7 @@ class PreviewWidget(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self.setFocusPolicy(Qt.StrongFocus)  # Space pans, and the zoom's keys work, while it has the keyboard
         self.setAccessibleName("Canvas")
+        self.viewport().setAccessibleName("Page")  # where the page is drawn: a screen reader reaches it on its own
         self.layers: dict[str, QGraphicsItemGroup] = {}
         for name, height in LAYERS.items():
             layer = QGraphicsItemGroup()
@@ -225,6 +227,7 @@ class PreviewWidget(QGraphicsView):
         # anchor of the same view holds the same point, so that steps of a zoom don't add up their rounding.
         self._held: tuple[QPointF, QPointF, QTransform] | None = None
         self._shown: dict[str, tuple] = {}  # what each item shows: its image and the size it is drawn at
+        self._vision = vision.NORMAL  # the color vision the canvas is shown as seen with (see ``gui.vision``)
         self._sharpen_timer = QTimer(self)
         self._sharpen_timer.setSingleShot(True)
         self._sharpen_timer.setInterval(SHARPEN_DELAY_MS)
@@ -993,12 +996,24 @@ class PreviewWidget(QGraphicsView):
         self._sharpen_timer.stop()
         if self._page_size is None:
             return
-        zoom = self.zoom()
-        _show_at(self._page_item, self.shown_image(), self._page_size, zoom, self._shown, "page")
-        _show_at(self._legend_item, self._legend, self._legend_size, zoom, self._shown, "legend")
+        zoom, seen = self.zoom(), self._vision
+        _show_at(self._page_item, self.shown_image(), self._page_size, zoom, self._shown, "page", seen)
+        _show_at(self._legend_item, self._legend, self._legend_size, zoom, self._shown, "legend", seen)
         if self._split_view is not None:
             _show_at(self._split_item, self._view_at_zoom(self._split_view), self._page_size, zoom, self._shown,
-                     "split")
+                     "split", seen)
+
+    def set_vision(self, mode: str) -> None:
+        """Show the canvas as seen with ``mode``'s color vision (``gui.vision.MODES``): the page, the view compared
+        with and the legend, on the screen only."""
+        if mode not in vision.MODES:
+            raise ValueError(f"unknown color vision {mode!r}: one of {', '.join(vision.MODES)}")
+        if mode != self._vision:
+            self._vision = mode
+            self._sharpen()
+
+    def vision(self) -> str:
+        return self._vision
 
     def _view_at_zoom(self, view: Hashable) -> QImage:
         detail = self._details.get(view) if self.zoom() > 1 + 1e-6 else None
@@ -1099,19 +1114,21 @@ class SideBySide(QWidget):
 
 
 def _show_at(
-    item: QGraphicsPixmapItem, image: QImage, size: tuple[int, int], zoom: float, shown: dict[str, tuple], name: str
+    item: QGraphicsPixmapItem, image: QImage, size: tuple[int, int], zoom: float, shown: dict[str, tuple], name: str,
+    seen: str = vision.NORMAL,
 ) -> None:
     """Show ``image`` in ``item``, ``size`` pixels of the scene large, drawn for ``zoom`` screen pixels to one of the
-    scene: scaled down smoothly to that many if it has more, else as it is."""
+    scene: scaled down smoothly to that many if it has more, else as it is; as seen with ``seen`` (``gui.vision``)."""
     target = (max(1, round(size[0] * zoom)), max(1, round(size[1] * zoom)))
     if target[0] >= image.width():
         target = (image.width(), image.height())
-    key = (image.cacheKey(), target)
+    key = (image.cacheKey(), target, seen)
     if shown.get(name) == key:
         return
     shown[name] = key
     if target != (image.width(), image.height()):
         image = image.scaled(target[0], target[1], Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+    image = vision.simulate(image, seen)  # on the pixels shown, after scaling: as few as there are
     item.setPixmap(QPixmap.fromImage(image))
     item.setTransform(QTransform.fromScale(size[0] / image.width(), size[1] / image.height()))
 
@@ -1149,6 +1166,7 @@ class ZoomBar(QWidget):
         self.zoom_field.setInsertPolicy(QComboBox.NoInsert)
         self.zoom_field.setObjectName("zoomField")
         self.zoom_field.setAccessibleName("Zoom")
+        self.zoom_field.lineEdit().setAccessibleName("Zoom, typed")  # a screen reader reaches the text box itself
         self.zoom_field.setCompleter(None)
         self.zoom_field.setToolTip(
             "How far in: type a zoom and press Enter, or pick one. 100% shows a pixel of the page as it prints on a "
