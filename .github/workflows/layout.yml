@@ -3,8 +3,8 @@ name: layout
 # The window drawn on each platform's own display system (not Qt's offscreen one, which has no fonts): Windows, macOS
 # (Cocoa) and Linux (X11, under Xvfb). docs/check_layout.py renders the window, the export dialog and the Preferences
 # at window sizes and interface scales, in English and the pseudo-locale, and reports text that doesn't fit; its
-# screenshots and report are the run's artifact. It reports and doesn't gate: two layouts are known to cut text (a
-# 640×360 window, and a much longer language below about 1,280 px), so a cut shows in the summary, not as a failure.
+# screenshots and report are the run's artifact. It reports and doesn't gate: a cut shows in the summary, not as a
+# failure, since fonts differ by runner image and a platform's first cut is better looked at than blocked on.
 
 on:
   pull_request:
@@ -70,7 +70,7 @@ jobs:
         shell: bash
         run: |
           run() { if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a -s "-screen 0 3840x2160x24" "$@"; else "$@"; fi; }
-          run python docs/check_layout.py layout/pseudo --pseudo --scales 1 --sizes 1280x720 --themes light
+          run python docs/check_layout.py layout/pseudo --pseudo --scales 1 1.25 1.5 2 --sizes 1280x720 1920x1080 --themes light
 
       - name: Report
         if: always()
