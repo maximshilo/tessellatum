@@ -29,15 +29,15 @@ tested without a window.
 ```
 src/tessellatum/
   main.py          entry point
-  core/            the pipeline: 29 modules
+  core/            the pipeline: 31 modules
   app/             the document and its settings snapshot (QtCore only)
-  gui/             the Qt interface: 6 modules, and theme/ (tokens, style, icons, motion)
+  gui/             the Qt interface: 22 modules, and theme/ (tokens, style, icons, motion)
   resources/       the four bundled models and their licenses (MODELS.md); fonts/ (Inter, OFL) and icons/
                    (Lucide, ISC); the logo (logo.svg, logo-small.svg) and the app's icons rendered from it
                    (app-icon/ 16-512 px, icon.ico, icon.icns, icon.png)
 tests/             pytest suite and the benchmark images (CC0 / public domain)
 benchmarks/        speed and quality harness, quality spec and report
-packaging/         PyInstaller spec and build scripts
+packaging/         PyInstaller spec, build scripts, release notes and the translations tool
 docs/              README images and the scripts that regenerate them
 wiki/              these pages (published to the GitHub wiki on every push to main)
 ```
@@ -74,6 +74,7 @@ wiki/              these pages (published to the GitHub wiki on every push to ma
 | `gui/preferences.py` | `Preferences` (global, in the window's `QSettings` under `preferences/`, outside the document and its undo) and the Preferences dialog; the interface scale is applied by `main` through `QT_SCALE_FACTOR` before the application exists |
 | `gui/welcome.py` | The welcome page shown in the canvas while no picture is open: open buttons, the bundled examples (`resources/examples/`, each credited in its `README.md`), the recent projects and pictures (missing ones greyed, with Remove); the window takes drops and pastes itself (`_handed_over`: local file URLs, image data, a path pasted as text) |
 | `gui/accessibility.py`, `gui/vision.py` | What Qt doesn't do on its own for the keyboard and screen readers: a control focused inside a scroll area is scrolled into view (on `QApplication.focusChanged`, however the focus came), the scroll areas around controls are no Tab stop, and the parts Qt makes (overflow and clear buttons) get names. The color-vision simulation: a 3×3 matrix on linear RGB per deficiency, applied by the canvas to the pixels it shows after scaling (part of the key of what it shows), never to the page's images |
+| `gui/i18n.py`, `packaging/update_translations.py` | Localization: `translate` (Qt's, with a context per module) returns a string whose `format` writes numbers in the locale's format; `term` translates the core's words under the context `settings`; `install` loads the system language's `.qm` and Qt's own; a pseudo-locale for testing. `fields.ChoiceCombo` and the segmented control show a choice translated and give the code its value. The tool collects every `translate`/`QT_TRANSLATE_NOOP` from the source and the registry's and commands' words from the data into `.ts` files, and compiles them |
 | `gui/shortcuts.py` | The keyboard reference (Help > Keyboard Shortcuts, and the Preferences' Shortcuts page): built from the window's `QAction`s, each with its menu (the action's `menu` property), in the platform's notation, plus the keys that work in one widget; searched in shown and portable notation. A widget that uses Esc itself (a field, the settings search, the palette, the region list) accepts its `ShortcutOverride`, so Cancel's Esc doesn't take it while a page is made |
 | `gui/search.py` | Settings search: the registry's entries ranked against what is typed (label, aliases, tooltip, section), and the field and results at the top of the sidebar; the panel's `reveal` shows a setting where it lives |
 | `gui/export_dialog.py` | The export dialog: the export's options beside a thumbnail and a summary of the file, non-blocking warnings, and the choice between the page made again and the page as previewed when the preview is out of date |

@@ -12,23 +12,25 @@ they do the others, from a shift of the cone's sensitivity). Grayscale is the re
 from __future__ import annotations
 
 import numpy as np
+from PySide6.QtCore import QT_TRANSLATE_NOOP
 from PySide6.QtGui import QImage
 
 NORMAL, PROTANOPIA, DEUTERANOPIA, TRITANOPIA, GRAYSCALE = "normal", "protanopia", "deuteranopia", "tritanopia", "grayscale"
 MODES = (NORMAL, PROTANOPIA, DEUTERANOPIA, TRITANOPIA, GRAYSCALE)
 NAMES = {
-    NORMAL: "Normal",
-    PROTANOPIA: "Protanopia",
-    DEUTERANOPIA: "Deuteranopia",
-    TRITANOPIA: "Tritanopia",
-    GRAYSCALE: "Grayscale",
-}
+    NORMAL: QT_TRANSLATE_NOOP("vision", "Normal"),
+    PROTANOPIA: QT_TRANSLATE_NOOP("vision", "Protanopia"),
+    DEUTERANOPIA: QT_TRANSLATE_NOOP("vision", "Deuteranopia"),
+    TRITANOPIA: QT_TRANSLATE_NOOP("vision", "Tritanopia"),
+    GRAYSCALE: QT_TRANSLATE_NOOP("vision", "Grayscale"),
+}  # translated where shown, under the context "vision"
 DESCRIPTIONS = {
-    NORMAL: "The page's own colors",
-    PROTANOPIA: "As a person without red-sensitive cones sees it (about 1 in 100 men)",
-    DEUTERANOPIA: "As a person without green-sensitive cones sees it (about 1 in 100 men)",
-    TRITANOPIA: "As a person without blue-sensitive cones sees it (rare)",
-    GRAYSCALE: "Without color: whether the page reads in light and dark alone",
+    NORMAL: QT_TRANSLATE_NOOP("vision", "The page's own colors"),
+    PROTANOPIA: QT_TRANSLATE_NOOP("vision", "As a person without red-sensitive cones sees it (about 1 in 100 men)"),
+    DEUTERANOPIA: QT_TRANSLATE_NOOP("vision", "As a person without green-sensitive cones sees it (about 1 in 100 "
+                                              "men)"),
+    TRITANOPIA: QT_TRANSLATE_NOOP("vision", "As a person without blue-sensitive cones sees it (rare)"),
+    GRAYSCALE: QT_TRANSLATE_NOOP("vision", "Without color: whether the page reads in light and dark alone"),
 }
 
 _MATRICES = {

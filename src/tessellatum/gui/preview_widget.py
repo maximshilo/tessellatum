@@ -14,7 +14,7 @@ import math
 from typing import Hashable, Mapping
 
 from PIL import Image
-from PySide6.QtCore import QEvent, QLineF, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QT_TRANSLATE_NOOP, QEvent, QLineF, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QCursor,
@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
 from tessellatum.core.painting import Version
 from tessellatum.core.print_size import A4, MM_PER_INCH, PaperFormat, print_scale
 from tessellatum.gui import vision
+from tessellatum.gui.i18n import term, translate
 
 # One notch of a mouse wheel, or one press of + or -, zooms in or out this far.
 ZOOM_STEP = 1.25
@@ -63,12 +64,14 @@ LEGEND_GAP = 24
 SHARPEN_DELAY_MS = 120
 
 # The picture itself, at the page's size and in its place: a view beside the page's versions, never exported.
-ORIGINAL = "Original"
-ORIGINAL_DESCRIPTION = "The picture itself, in the page's place: to compare the page with."
+ORIGINAL = QT_TRANSLATE_NOOP("preview_widget", "Original")
+ORIGINAL_DESCRIPTION = QT_TRANSLATE_NOOP("preview_widget", "The picture itself, in the page's place: to compare the "
+                                                           "page with.")
 VIEWS: tuple[Hashable, ...] = (*Version, ORIGINAL)
 # The page made before this one, of the same picture: a view to compare with, never shown alone.
-PREVIOUS = "Previous version"
-PREVIOUS_DESCRIPTION = "The page made before this one, kept with the results: to see what a change did."
+PREVIOUS = QT_TRANSLATE_NOOP("preview_widget", "Previous version")
+PREVIOUS_DESCRIPTION = QT_TRANSLATE_NOOP("preview_widget", "The page made before this one, kept with the results: to "
+                                                           "see what a change did.")
 
 # How two views are compared: not at all; side by side, in two canvases that move together; or split, the second view
 # past a divider dragged across the page, up and down or across.
@@ -79,13 +82,16 @@ DIVIDER_GRAB_PX = 6
 
 
 def view_name(view: Hashable) -> str:
-    return view.value if isinstance(view, Version) else str(view)
+    """A view's name as shown, in the interface's language."""
+    if isinstance(view, Version):
+        return term(view.value)
+    return translate("preview_widget", str(view))
 
 
 def view_description(view: Hashable) -> str:
     if isinstance(view, Version):
-        return view.description
-    return PREVIOUS_DESCRIPTION if view == PREVIOUS else ORIGINAL_DESCRIPTION
+        return term(view.description)
+    return translate("preview_widget", PREVIOUS_DESCRIPTION if view == PREVIOUS else ORIGINAL_DESCRIPTION)
 
 
 # The scene's layers, bottom to top, and the height each is drawn at.
@@ -168,8 +174,9 @@ class PreviewWidget(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.NoAnchor)
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self.setFocusPolicy(Qt.StrongFocus)  # Space pans, and the zoom's keys work, while it has the keyboard
-        self.setAccessibleName("Canvas")
-        self.viewport().setAccessibleName("Page")  # where the page is drawn: a screen reader reaches it on its own
+        self.setAccessibleName(translate("preview_widget", "Canvas"))
+        # Where the page is drawn: a screen reader reaches it on its own.
+        self.viewport().setAccessibleName(translate("preview_widget", "Page"))
         self.layers: dict[str, QGraphicsItemGroup] = {}
         for name, height in LAYERS.items():
             layer = QGraphicsItemGroup()
@@ -251,7 +258,8 @@ class PreviewWidget(QGraphicsView):
         self._show_placeholder()
 
     def _show_placeholder(self) -> None:
-        self._placeholder = self._scene.addText("Open an image and click \"Generate Preview\"")
+        self._placeholder = self._scene.addText(translate("preview_widget", "Open an image and click \"Generate "
+                                                                            "Preview\""))
         self._placeholder.setDefaultTextColor(self.palette().color(QPalette.WindowText))
 
     def has_page(self) -> bool:
@@ -1158,35 +1166,41 @@ class ZoomBar(QWidget):
         self.preview = preview
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.out_button = QPushButton("−")
-        self.out_button.setToolTip("Zoom out (Ctrl+-, or the mouse wheel)")
-        self.out_button.setAccessibleName("Zoom out")
+        self.out_button = QPushButton(translate("preview_widget", "−"))
+        self.out_button.setToolTip(translate("preview_widget", "Zoom out (Ctrl+-, or the mouse wheel)"))
+        self.out_button.setAccessibleName(translate("preview_widget", "Zoom out"))
         self.zoom_field = QComboBox()
         self.zoom_field.setEditable(True)
         self.zoom_field.setInsertPolicy(QComboBox.NoInsert)
         self.zoom_field.setObjectName("zoomField")
-        self.zoom_field.setAccessibleName("Zoom")
-        self.zoom_field.lineEdit().setAccessibleName("Zoom, typed")  # a screen reader reaches the text box itself
+        self.zoom_field.setAccessibleName(translate("preview_widget", "Zoom"))
+        # A screen reader reaches the text box itself.
+        self.zoom_field.lineEdit().setAccessibleName(translate("preview_widget", "Zoom, typed"))
         self.zoom_field.setCompleter(None)
         self.zoom_field.setToolTip(
-            "How far in: type a zoom and press Enter, or pick one. 100% shows a pixel of the page as it prints on a "
-            "pixel of the screen; Print size, the page as large as on paper (approximate, by the size the screen "
-            "reports)"
+            translate("preview_widget", "How far in: type a zoom and press Enter, or pick one. 100% shows a pixel of "
+                                        "the page as it prints on a "
+                                        "pixel of the screen; Print size, the page as large as on paper (approximate, "
+                                        "by the size the screen "
+                                        "reports)")
         )
         for preset in ZOOM_PRESETS:
             self.zoom_field.addItem(f"{preset * 100:.0f}%", preset)
-        self.zoom_field.addItem("Print size", PRINT_SIZE)
+        self.zoom_field.addItem(translate("preview_widget", "Print size"), PRINT_SIZE)
         self.zoom_field.setItemData(
-            self.zoom_field.count() - 1, "Approximate: by the size the screen reports", Qt.ToolTipRole
+            self.zoom_field.count() - 1,
+            translate("preview_widget", "Approximate: by the size the screen reports"),
+            Qt.ToolTipRole,
         )
-        self.zoom_field.lineEdit().setPlaceholderText("Zoom")
+        self.zoom_field.lineEdit().setPlaceholderText(translate("preview_widget", "Zoom"))
         self.zoom_field.setMinimumContentsLength(4)
         self.zoom_field.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self.in_button = QPushButton("+")
-        self.in_button.setToolTip("Zoom in (Ctrl++, or the mouse wheel); drag the page to move it")
-        self.in_button.setAccessibleName("Zoom in")
-        self.fit_button = QPushButton("Fit")
-        self.fit_button.setToolTip("The whole page in the window (Ctrl+0)")
+        self.in_button = QPushButton(translate("preview_widget", "+"))
+        self.in_button.setToolTip(translate("preview_widget", "Zoom in (Ctrl++, or the mouse wheel); drag the "
+                                                              "page to move it"))
+        self.in_button.setAccessibleName(translate("preview_widget", "Zoom in"))
+        self.fit_button = QPushButton(translate("preview_widget", "Fit"))
+        self.fit_button.setToolTip(translate("preview_widget", "The whole page in the window (Ctrl+0)"))
         for widget in (self.out_button, self.zoom_field, self.in_button, self.fit_button):
             layout.addWidget(widget)
         self.out_button.clicked.connect(preview.zoom_out)
@@ -1243,7 +1257,7 @@ class VersionBar(QWidget):
         self._group = QButtonGroup(self)  # exclusive: one button down at a time
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(QLabel("Show"))
+        layout.addWidget(QLabel(translate("preview_widget", "Show")))
         for view in VIEWS:
             button = QPushButton(view_name(view))
             button.setCheckable(True)
@@ -1257,4 +1271,3 @@ class VersionBar(QWidget):
 
     def version(self) -> Hashable:
         return next(view for view, button in self.buttons.items() if button.isChecked())
-

@@ -25,6 +25,7 @@ import re
 from PySide6.QtCore import QEvent, QLocale, Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -40,6 +41,7 @@ from PySide6.QtWidgets import (
 from tessellatum.core import settings
 from tessellatum.core.print_size import MM_PER_INCH
 from tessellatum.core.settings import Setting
+from tessellatum.gui.i18n import term, translate
 
 MM, INCH = "mm", "in"
 UNIT_SYSTEMS = (MM, INCH)
@@ -218,12 +220,12 @@ class SettingField(QWidget):
         self.slider.setRange(0, slider_steps(setting))
         self.slider.setPageStep(PAGE_STEPS)
         self.slider.setMinimumWidth(MIN_SLIDER_WIDTH)
-        self.slider.setAccessibleName(setting.label)
-        self.slider.setAccessibleDescription(setting.tooltip)
+        self.slider.setAccessibleName(term(setting.label))
+        self.slider.setAccessibleDescription(term(setting.tooltip))
         self.entry = _Entry()
         self.entry.setObjectName("fieldEntry")
         self.entry.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.entry.setAccessibleName(f"{setting.label}, exact value")
+        self.entry.setAccessibleName(translate("fields", "{0}, exact value").format(term(setting.label)))
         self.entry.setFixedWidth(_entry_width(self.entry))
         self.marker = QToolButton()
         self.marker.setObjectName("changedMarker")
@@ -249,14 +251,14 @@ class SettingField(QWidget):
         layout.setSpacing(2)
         layout.addLayout(row)
         layout.addWidget(self.message)
-        self.setToolTip(setting.tooltip)
+        self.setToolTip(term(setting.tooltip))
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_menu)
         self.slider.setContextMenuPolicy(Qt.CustomContextMenu)
         self.slider.customContextMenuRequested.connect(self._show_menu)
 
         self._value = setting.default
-        self._reference: tuple[str, float] = ("the default", setting.default)
+        self._reference: tuple[str, float] = (translate("fields", "the default"), setting.default)
         self._error: str | None = None
         self._reason: str | None = None
         self._say_reason = True
@@ -298,7 +300,8 @@ class SettingField(QWidget):
         text = self.text()
         self.entry.setText(text)
         self.entry.setModified(False)
-        self.slider.setAccessibleDescription(f"{text}. {self.setting.tooltip}")
+        self.slider.setAccessibleDescription(translate("fields", "{text}. {0}")
+                                             .format(term(self.setting.tooltip), text=text))
         self._show_marker()
 
     def _on_moved(self, position: int) -> None:
@@ -325,10 +328,10 @@ class SettingField(QWidget):
             return True
         number = parse_number(self.entry.text())
         if number is None:
-            self._show_error(f"Type a number from {self.display.range_text()}.")
+            self._show_error(translate("fields", "Type a number from {0}.").format(self.display.range_text()))
             return False
         if not self.display.check(number):
-            self._show_error(f"Out of range: from {self.display.range_text()}.")
+            self._show_error(translate("fields", "Out of range: from {0}.").format(self.display.range_text()))
             return False
         self._edit(self.display.held(number))  # held within the range to the last bit, and whole if it takes that
         return True
@@ -376,8 +379,10 @@ class SettingField(QWidget):
         changed = self.is_changed()
         self.marker.setVisible(changed)
         shown = self.display.text(value)
-        self.marker.setToolTip(f"Changed from {name}: {shown}. Click to put it back.")
-        self.marker.setAccessibleName(f"Reset {self.setting.label} to {shown}")
+        self.marker.setToolTip(translate("fields", "Changed from {name}: {shown}. Click to put it back.")
+                               .format(name=name, shown=shown))
+        self.marker.setAccessibleName(translate("fields", "Reset {0} to {shown}")
+                                      .format(term(self.setting.label), shown=shown))
 
     def reset_to_reference(self) -> None:
         self._edit(self._reference[1])
@@ -389,11 +394,13 @@ class SettingField(QWidget):
         """The field's context menu: back to its reference, or to the factory default."""
         menu = QMenu(self)
         name, value = self._reference
-        to_reference = menu.addAction(f"Reset to {name} ({self.display.text(value)})", self.reset_to_reference)
+        to_reference = menu.addAction(translate("fields", "Reset to {name} ({0})")
+                                      .format(self.display.text(value), name=name), self.reset_to_reference)
         to_reference.setEnabled(self.isEnabled() and self.is_changed())
         if not same_value(self.setting, value, self.setting.default):
             factory = menu.addAction(
-                f"Reset to the factory default ({self.display.text(self.setting.default)})", self.reset_to_default,
+                translate("fields", "Reset to the factory default ({0})")
+                .format(self.display.text(self.setting.default)), self.reset_to_default,
             )
             factory.setEnabled(self.isEnabled() and not same_value(self.setting, self._value, self.setting.default))
         return menu
@@ -426,7 +433,7 @@ class SettingField(QWidget):
         if self._error:
             text, role = self._error, "error"
         elif self._reason and self._say_reason:
-            text, role = self._reason, "reason"
+            text, role = term(self._reason), "reason"
         else:
             text, role = "", ""
         self.message.setText(text or "")
@@ -462,6 +469,47 @@ def _entry_width(entry: QLineEdit) -> int:
     return _ENTRY_WIDTHS[key]
 
 
+VALUE_ROLE = Qt.UserRole + 64  # a ChoiceCombo item's value
+
+
+class ChoiceCombo(QComboBox):
+    """A combo box of fixed choices, each shown in the interface's language and known to the code by its value (its
+    English name): ``currentText``, ``setCurrentText``, ``findText`` and ``itemText`` take and give the value, and
+    ``valueChanged`` says it, where Qt's ``currentTextChanged`` says the words shown. So code that compares, keeps or
+    restores a choice by name works whatever the language. ``context`` is the choices' translation context."""
+
+    valueChanged = Signal(str)
+
+    def __init__(self, context: str = "settings", parent: QWidget | None = None):
+        super().__init__(parent)
+        self._context = context
+        self.currentIndexChanged.connect(lambda _index: self.valueChanged.emit(self.currentText()))
+
+    def addItem(self, text: str, userData=None) -> None:  # noqa: N803 - Qt's name
+        super().addItem(translate(self._context, text), userData)
+        self.setItemData(self.count() - 1, text, VALUE_ROLE)
+
+    def addItems(self, texts) -> None:
+        for text in texts:
+            self.addItem(text)
+
+    def itemText(self, index: int) -> str:
+        value = self.itemData(index, VALUE_ROLE)
+        return value if value is not None else super().itemText(index)
+
+    def currentText(self) -> str:
+        index = self.currentIndex()
+        return self.itemText(index) if index >= 0 else ""
+
+    def findText(self, text: str, flags=None) -> int:
+        return next((i for i in range(self.count()) if self.itemText(i) == text), -1)
+
+    def setCurrentText(self, text: str) -> None:
+        index = self.findText(text)
+        if index >= 0:
+            self.setCurrentIndex(index)
+
+
 class SegmentedControl(QWidget):
     """Two to four exclusive choices side by side, one of them down. It answers to a combo box's calls (``addItems``,
     ``currentText``, ``setCurrentText``, ``currentTextChanged`` …), so it takes a combo's place as it is; Left and
@@ -470,8 +518,9 @@ class SegmentedControl(QWidget):
     currentTextChanged = Signal(str)
     currentIndexChanged = Signal(int)
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None, context: str = "settings"):
         super().__init__(parent)
+        self._context = context  # the choices' translation context (see ``ChoiceCombo``)
         self.setObjectName("segmented")
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
@@ -487,10 +536,13 @@ class SegmentedControl(QWidget):
             self.addItem(text)
 
     def addItem(self, text: str) -> None:
-        button = QPushButton(text)
+        """A choice: ``text`` is its value, shown in the interface's language."""
+        shown = translate(self._context, text)
+        button = QPushButton(shown)
         button.setObjectName("segment")
         button.setCheckable(True)
-        button.setAccessibleName(text)
+        button.setAccessibleName(shown)
+        button.setProperty("value", text)
         button.installEventFilter(self)
         index = len(self._buttons)
         button.setProperty("position", "only")
@@ -508,17 +560,18 @@ class SegmentedControl(QWidget):
         return len(self._buttons)
 
     def itemText(self, index: int) -> str:
-        return self._buttons[index].text()
+        """The choice's value (as ``ChoiceCombo``'s: the words shown may be a translation)."""
+        return self._buttons[index].property("value")
 
     def findText(self, text: str) -> int:
-        return next((i for i, b in enumerate(self._buttons) if b.text() == text), -1)
+        return next((i for i in range(len(self._buttons)) if self.itemText(i) == text), -1)
 
     def currentIndex(self) -> int:
         return self._group.checkedId()
 
     def currentText(self) -> str:
         index = self.currentIndex()
-        return self._buttons[index].text() if index >= 0 else ""
+        return self.itemText(index) if index >= 0 else ""
 
     def setCurrentIndex(self, index: int) -> None:
         if 0 <= index < len(self._buttons):
@@ -546,7 +599,7 @@ class SegmentedControl(QWidget):
             return
         self._update_focus()
         self.currentIndexChanged.emit(index)
-        self.currentTextChanged.emit(self._buttons[index].text())
+        self.currentTextChanged.emit(self.itemText(index))
 
     def _update_focus(self) -> None:
         # One stop in the Tab order, on the choice made, as a group of radio buttons has.

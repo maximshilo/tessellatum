@@ -11,10 +11,13 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
+from PySide6.QtCore import QT_TRANSLATE_NOOP
 from PySide6.QtWidgets import QApplication, QLineEdit, QMenuBar, QScrollArea, QToolBar, QToolButton, QWidget
 
-OVERFLOW_NAME = "More"
-CLEAR_NAME = "Clear"
+from tessellatum.gui.i18n import translate
+
+OVERFLOW_NAME = QT_TRANSLATE_NOOP("accessibility", "More")
+CLEAR_NAME = QT_TRANSLATE_NOOP("accessibility", "Clear")
 
 _installed: set[int] = set()  # the applications the focus is followed in, by id
 
@@ -53,10 +56,10 @@ def name_parts(root: QWidget) -> None:
         for button in bar.findChildren(QToolButton, options=Qt.FindDirectChildrenOnly):
             if button.objectName() in ("qt_toolbar_ext_button", "qt_menubar_ext_button") \
                     and not button.accessibleName():
-                button.setAccessibleName(OVERFLOW_NAME)
-                button.setToolTip(f"{OVERFLOW_NAME}: what doesn't fit")
+                button.setAccessibleName(translate("accessibility", OVERFLOW_NAME))
+                button.setToolTip(translate("accessibility", "More: what doesn't fit"))
     for field in root.findChildren(QLineEdit):
         if field.isClearButtonEnabled():
             for button in field.findChildren(QToolButton):
                 if not button.accessibleName():
-                    button.setAccessibleName(CLEAR_NAME)
+                    button.setAccessibleName(translate("accessibility", CLEAR_NAME))

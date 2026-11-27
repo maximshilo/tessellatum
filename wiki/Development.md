@@ -20,6 +20,30 @@ Qt's offscreen platform) and the benchmark harness itself. The region and render
 pixel-identical output against the original implementations kept in `tests/reference_impl.py` and
 `tests/reference_line_art.py`; a change meant to alter their output updates the reference deliberately.
 
+## Translations
+
+Every string the interface shows goes through `gui.i18n.translate(context, text)` (Qt's
+`QCoreApplication.translate`), its context the module it is in; a string kept in a constant is marked with
+`QT_TRANSLATE_NOOP` and translated where it is shown. The core has no Qt, so its words (the settings' registry, the
+versions' and stages' names) are translated as they are shown, with `i18n.term`, under the context `settings`.
+Placeholders are named and filled after the translation, and the string `translate` returns writes the numbers it is
+filled with in the locale's format.
+
+```
+.venv\Scripts\python packaging\update_translations.py            # what is collected, by context
+.venv\Scripts\python packaging\update_translations.py de fr      # write or update translations/tessellatum_de.ts, _fr.ts
+.venv\Scripts\python packaging\update_translations.py --release  # compile them into the app's .qm files
+```
+
+A `.ts` file is edited in Qt Linguist. Updating keeps every translation still in use and marks the ones whose string
+is gone as vanished rather than deleting them. Two checks help a translation:
+- `TESSELLATUM_PSEUDO_LOCALE=1` runs the app in a pseudo-locale: every string accented and about 40% longer, in
+  brackets. Text without brackets isn't translatable, and a label that clips has a fixed width.
+- `-reverse` lays the window out right to left.
+
+The tests check that every string the interface asks for is in the catalog and that the pseudo-locale leaves no English
+shown (`tests/test_i18n.py`).
+
 ## Benchmarks
 
 ```

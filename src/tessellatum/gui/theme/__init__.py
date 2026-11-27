@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QSettings, Qt, Signal
+from PySide6.QtCore import QT_TRANSLATE_NOOP, QObject, QSettings, Qt, Signal
 from PySide6.QtGui import QFont, QFontDatabase, QPalette
 from PySide6.QtWidgets import QApplication
 
@@ -20,9 +20,11 @@ from tessellatum.gui.theme.tokens import COLORS, DARK, FONT_FAMILY, FONT_FILES, 
 
 FONTS_DIR = Path(__file__).resolve().parents[2] / "resources" / "fonts"
 
-SYSTEM, LIGHT_MODE, DARK_MODE = "System", "Light", "Dark"
+# The modes, shown translated by Preferences' combo boxes (``gui.fields.ChoiceCombo``) under its context.
+SYSTEM, LIGHT_MODE, DARK_MODE = (QT_TRANSLATE_NOOP("preferences", "System"), QT_TRANSLATE_NOOP("preferences", "Light"),
+                                 QT_TRANSLATE_NOOP("preferences", "Dark"))
 MODES = (SYSTEM, LIGHT_MODE, DARK_MODE)
-MOTION_MODES = (SYSTEM, "Reduced", "Full")
+MOTION_MODES = (SYSTEM, QT_TRANSLATE_NOOP("preferences", "Reduced"), QT_TRANSLATE_NOOP("preferences", "Full"))
 THEME_KEY = "appearance/theme"
 MOTION_KEY = "appearance/motion"
 

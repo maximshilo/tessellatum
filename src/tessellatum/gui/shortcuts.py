@@ -14,6 +14,7 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QHeaderView, QLabel, QLineEdit, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
+from tessellatum.gui.i18n import translate
 
 MACOS = sys.platform == "darwin"
 COMMAND, KEYS, WHERE = range(3)
@@ -33,26 +34,86 @@ def _modifier(name: str) -> str:
 
 def context_keys() -> tuple[tuple[str, str, str], ...]:
     """(what it does, the keys, where they work): the keys no command has, as this platform writes them."""
-    ctrl, copy = _modifier("Ctrl"), QKeySequence(QKeySequence.Copy).toString(QKeySequence.NativeText)
-    menu_bar = "Ctrl+F2 (with keyboard access on)" if MACOS else "Alt, or F10"
+    ctrl, copy = _modifier(translate("shortcuts", "Ctrl")), QKeySequence(QKeySequence.Copy).toString(
+        QKeySequence.NativeText
+    )
+    menu_bar = (
+        translate("shortcuts", "Ctrl+F2 (with keyboard access on)") if MACOS else translate("shortcuts", "Alt, or F10")
+    )
     return (
-        ("Next control, previous control", "Tab, Shift+Tab", "Window"),
-        ("Along a row of views or activities", "Arrow keys", "Window"),
-        ("Open the menu bar", menu_bar, "Window"),
-        ("Leave focus mode", "Esc", "Window"),
-        ("Move the page", "Space+drag, middle-button drag, or drag", "Canvas"),
-        ("Zoom about the pointer", f"Wheel, {ctrl}wheel, or pinch", "Canvas"),
-        ("Scroll the page", "Arrow keys", "Canvas"),
-        ("Move between colors", "Arrow keys", "Palette"),
-        ("List the color's regions", "Enter", "Palette"),
-        ("Copy the color's hex value", copy, "Palette"),
-        ("Let go of the color", "Esc", "Palette"),
-        ("Next region, previous region", "Down, Up", "Regions"),
-        ("Back to the palette", "Esc", "Regions"),
-        ("Step a value", "Up, Down; Page Up, Page Down for ten steps", "Settings"),
-        ("Put back the value being typed", "Esc", "Settings"),
-        ("Through the settings found; go to one", "Down, Up; Enter", "Find Setting"),
-        ("Clear the search", "Esc", "Find Setting"),
+        (
+            translate("shortcuts", "Next control, previous control"),
+            translate("shortcuts", "Tab, Shift+Tab"),
+            translate("shortcuts", "Window"),
+        ),
+        (
+            translate("shortcuts", "Along a row of views or activities"),
+            translate("shortcuts", "Arrow keys"),
+            translate("shortcuts", "Window"),
+        ),
+        (translate("shortcuts", "Open the menu bar"), menu_bar, translate("shortcuts", "Window")),
+        (translate("shortcuts", "Leave focus mode"), translate("shortcuts", "Esc"), translate("shortcuts", "Window")),
+        (
+            translate("shortcuts", "Move the page"),
+            translate("shortcuts", "Space+drag, middle-button drag, or drag"),
+            translate("shortcuts", "Canvas"),
+        ),
+        (
+            translate("shortcuts", "Zoom about the pointer"),
+            translate("shortcuts", "Wheel, {ctrl}wheel, or pinch").format(ctrl=ctrl),
+            translate("shortcuts", "Canvas"),
+        ),
+        (
+            translate("shortcuts", "Scroll the page"),
+            translate("shortcuts", "Arrow keys"),
+            translate("shortcuts", "Canvas"),
+        ),
+        (
+            translate("shortcuts", "Move between colors"),
+            translate("shortcuts", "Arrow keys"),
+            translate("shortcuts", "Palette"),
+        ),
+        (
+            translate("shortcuts", "List the color's regions"),
+            translate("shortcuts", "Enter"),
+            translate("shortcuts", "Palette"),
+        ),
+        (translate("shortcuts", "Copy the color's hex value"), copy, translate("shortcuts", "Palette")),
+        (
+            translate("shortcuts", "Let go of the color"),
+            translate("shortcuts", "Esc"),
+            translate("shortcuts", "Palette"),
+        ),
+        (
+            translate("shortcuts", "Next region, previous region"),
+            translate("shortcuts", "Down, Up"),
+            translate("shortcuts", "Regions"),
+        ),
+        (
+            translate("shortcuts", "Back to the palette"),
+            translate("shortcuts", "Esc"),
+            translate("shortcuts", "Regions"),
+        ),
+        (
+            translate("shortcuts", "Step a value"),
+            translate("shortcuts", "Up, Down; Page Up, Page Down for ten steps"),
+            translate("shortcuts", "Settings"),
+        ),
+        (
+            translate("shortcuts", "Put back the value being typed"),
+            translate("shortcuts", "Esc"),
+            translate("shortcuts", "Settings"),
+        ),
+        (
+            translate("shortcuts", "Through the settings found; go to one"),
+            translate("shortcuts", "Down, Up; Enter"),
+            translate("shortcuts", "Find Setting"),
+        ),
+        (
+            translate("shortcuts", "Clear the search"),
+            translate("shortcuts", "Esc"),
+            translate("shortcuts", "Find Setting"),
+        ),
     )
 
 
@@ -64,13 +125,14 @@ class ShortcutReference(QWidget):
         super().__init__(parent)
         self.search = QLineEdit()
         self.search.setObjectName("shortcutSearch")
-        self.search.setPlaceholderText("Find a command or a key")
-        self.search.setAccessibleName("Find a shortcut")
+        self.search.setPlaceholderText(translate("shortcuts", "Find a command or a key"))
+        self.search.setAccessibleName(translate("shortcuts", "Find a shortcut"))
         self.search.setClearButtonEnabled(True)
         self.table = QTableWidget(0, 3)
         self.table.setObjectName("shortcutTable")
-        self.table.setAccessibleName("Keyboard shortcuts")
-        self.table.setHorizontalHeaderLabels(["Command", "Keys", "Where"])
+        self.table.setAccessibleName(translate("shortcuts", "Keyboard shortcuts"))
+        self.table.setHorizontalHeaderLabels(
+            [translate("shortcuts", "Command"), translate("shortcuts", "Keys"), translate("shortcuts", "Where")])
         self.table.verticalHeader().hide()
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -88,7 +150,7 @@ class ShortcutReference(QWidget):
                           ", ".join(key.toString(QKeySequence.PortableText) for key in sequences))
         for what, keys, where in context_keys():
             self._add(what, keys, where, keys)
-        self.empty = QLabel("No shortcut matches.")
+        self.empty = QLabel(translate("shortcuts", "No shortcut matches."))
         self.empty.setProperty("role", "hint")
         self.empty.hide()
         layout = QVBoxLayout(self)
@@ -132,7 +194,7 @@ class ShortcutsDialog(QDialog):
 
     def __init__(self, commands=(), parent: QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Keyboard Shortcuts")
+        self.setWindowTitle(translate("shortcuts", "Keyboard Shortcuts"))
         self.reference = ShortcutReference(commands)
         buttons = QDialogButtonBox(QDialogButtonBox.Close)
         buttons.rejected.connect(self.reject)

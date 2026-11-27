@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QObject, QProcess, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QT_TRANSLATE_NOOP, QObject, QProcess, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAccessible, QAccessibleEvent, QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import (
     QFrame,
@@ -39,8 +39,12 @@ from tessellatum.app import jobs
 from tessellatum.gui import theme
 from tessellatum.gui.theme import icons
 from tessellatum.gui.theme.tokens import COLORS, LIGHT
+from tessellatum.gui.i18n import number, term, translate
 
 INFO, SUCCESS, WARNING, ERROR = "info", "success", "warning", "error"
+# Each level as the log writes it, translated where it is shown.
+LEVEL_NAMES = {INFO: QT_TRANSLATE_NOOP("notifications", "INFO"), SUCCESS: QT_TRANSLATE_NOOP("notifications", "SUCCESS"),
+               WARNING: QT_TRANSLATE_NOOP("notifications", "WARNING"), ERROR: QT_TRANSLATE_NOOP("notifications", "ERROR")}
 LEVELS = (INFO, SUCCESS, WARNING, ERROR)
 SUCCESS_MS = 6000  # how long a notification that needs nothing of the user stays: time to read it twice
 _ICONS = {INFO: "info", SUCCESS: "success", WARNING: "warning", ERROR: "error"}
@@ -82,8 +86,8 @@ class NotificationBar(QFrame):
         self._buttons.setContentsMargins(0, 0, 0, 0)
         self.close_button = QToolButton()
         self.close_button.setObjectName("notificationClose")
-        self.close_button.setToolTip("Close")
-        self.close_button.setAccessibleName("Close the notification")
+        self.close_button.setToolTip(translate("notifications", "Close"))
+        self.close_button.setAccessibleName(translate("notifications", "Close the notification"))
         self.close_button.setFocusPolicy(Qt.TabFocus)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 6, 6, 6)
@@ -111,7 +115,7 @@ class NotificationBar(QFrame):
         self.icon.setPixmap(icons.pixmap(_ICONS[level], getattr(colors, level), 16, self.devicePixelRatioF()))
         self.close_button.setIcon(icons.icon("close", colors))
         self.text.setText(text)
-        self.setAccessibleName(f"{level.capitalize()}: {text}")
+        self.setAccessibleName(translate("notifications", "{0}: {text}").format(level.capitalize(), text=text))
         while self._buttons.count():
             widget = self._buttons.takeAt(0).widget()
             if widget is not None:
@@ -161,7 +165,7 @@ class Entry:
 
     def copy_text(self) -> str:
         stamp = time.strftime("%H:%M:%S", time.localtime(self.when))
-        return f"{stamp} {self.level.upper()} {self.text}" + (f"\n{self.details}" if self.details else "")
+        return f"{stamp} {translate('notifications', LEVEL_NAMES[self.level])} {self.text}" + (f"\n{self.details}" if self.details else "")
 
 
 class DiagnosticsPanel(QWidget):
@@ -178,15 +182,16 @@ class DiagnosticsPanel(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.entries: list[Entry] = []
         self._icons: dict[str, object] = {}  # by level, in the scheme now in use
-        title = QLabel("Diagnostics")
+        title = QLabel(translate("notifications", "Diagnostics"))
         title.setObjectName("panelTitle")
-        self.copy_button = QPushButton("Copy")
-        self.copy_button.setToolTip("Copy the selected entry, with its details (all entries if none is selected)")
-        self.clear_button = QPushButton("Clear")
-        self.clear_button.setToolTip("Empty the log")
+        self.copy_button = QPushButton(translate("notifications", "Copy"))
+        self.copy_button.setToolTip(translate("notifications", "Copy the selected entry, with its details (all "
+                                                               "entries if none is selected)"))
+        self.clear_button = QPushButton(translate("notifications", "Clear"))
+        self.clear_button.setToolTip(translate("notifications", "Empty the log"))
         self.close_button = QToolButton()
-        self.close_button.setToolTip("Close the diagnostics (Ctrl+Shift+D)")
-        self.close_button.setAccessibleName("Close the diagnostics")
+        self.close_button.setToolTip(translate("notifications", "Close the diagnostics (Ctrl+Shift+D)"))
+        self.close_button.setAccessibleName(translate("notifications", "Close the diagnostics"))
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 6, 0)
         header.addWidget(title)
@@ -196,12 +201,12 @@ class DiagnosticsPanel(QWidget):
         header.addWidget(self.close_button)
         self.list = QListWidget()
         self.list.setObjectName("diagnosticsList")
-        self.list.setAccessibleName("Diagnostics log")
+        self.list.setAccessibleName(translate("notifications", "Diagnostics log"))
         self.details = QPlainTextEdit()
         self.details.setObjectName("diagnosticsDetails")
         self.details.setReadOnly(True)
-        self.details.setAccessibleName("Details of the selected entry")
-        self.details.setPlaceholderText("Select an entry to see its details.")
+        self.details.setAccessibleName(translate("notifications", "Details of the selected entry"))
+        self.details.setPlaceholderText(translate("notifications", "Select an entry to see its details."))
         split = QSplitter(Qt.Horizontal)
         split.addWidget(self.list)
         split.addWidget(self.details)
@@ -280,28 +285,46 @@ class DiagnosticsPanel(QWidget):
 
     def _on_job_finished(self, job: jobs.Job) -> None:
         seconds = job.seconds()
-        took = f" in {seconds:.2f} s" if seconds is not None else ""
+        took = translate("notifications", " in {seconds:.2f} s").format(seconds=seconds) if seconds is not None else ""
         kept = sum(1 for stage in job.stages if stage.cached)
         if job.stages and kept:
-            took += f" ({kept} of {len(job.stages)} stages kept from before)"
+            took += " " + translate("notifications", "({kept} of {0} stages kept from before)").format(
+                len(job.stages), kept=kept
+            )
         stopped = job.seconds_to_stop()
-        stop = f", {stopped:.2f} s after it was asked to stop" if stopped is not None else ""
+        stop = (
+            translate("notifications", ", {stopped:.2f} s after it was asked to stop").format(stopped=stopped)
+            if stopped is not None
+            else ""
+        )
         details = stage_times(job.stages)
         if job.state == jobs.FAILED:
-            self.add(ERROR, f"{job.label}: failed{took}: {job.error}", "\n\n".join(d for d in (details, job.details) if d))
+            self.add(
+                ERROR,
+                translate("notifications", "{0}: failed{took}: {1}").format(term(job.label), job.error, took=took),
+                "\n\n".join(d for d in (details, job.details) if d),
+            )
         elif job.state == jobs.SUCCEEDED:
-            self.add(INFO, f"{job.label}: done{took}", details)
+            self.add(INFO, translate("notifications", "{0}: done{took}").format(term(job.label), took=took), details)
         elif job.state == jobs.CANCELLED:
-            self.add(INFO, f"{job.label}: cancelled{took}{stop}", details)
+            self.add(
+                INFO,
+                translate("notifications", "{0}: cancelled{took}{stop}").format(term(job.label), took=took, stop=stop),
+                details,
+            )
         else:
-            self.add(INFO, f"{job.label}: dropped{took}{stop} (superseded, or of a picture since replaced)", details)
+            self.add(INFO, translate("notifications", "{0}: dropped{took}{stop} (superseded, or of a picture "
+                                                      "since replaced)").format(term(job.label), took=took, stop=stop), details)
 
 
 def stage_times(stages) -> str:
     """The stages a job went through, one a line, with how long each took and whether it was kept from before (the
     pipeline's stage cache): its diagnostics' details."""
-    lines = [f"{stage.label}: {stage.seconds:.2f} s" + (" (kept from before)" if stage.cached else "")
-             for stage in stages]
+    lines = [
+        f"{term(stage.label)}: {number(stage.seconds, 2)} s"
+        + (translate("notifications", " (kept from before)") if stage.cached else "")
+        for stage in stages
+    ]
     return "\n".join(lines)
 
 

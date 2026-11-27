@@ -214,6 +214,13 @@ with its number, name, hex value, share of the page and regions. Nothing is said
 **Preferences > Appearance > Motion** turns animations off. The interface has none of its own, so it changes
 nothing yet.
 
+## Language and numbers
+
+The interface is in English; it is ready to be translated, and uses the system's language when a translation of it
+ships. Numbers follow the system's format, typed and shown: in German a brush is "1,5 mm" and a page
+"1.448 × 1.086 px". A right-to-left language mirrors the window; the page itself is never mirrored. What the page
+prints (the legend's headings and color names) stays English.
+
 ## Getting a picture in
 
 While no picture is open, the canvas shows the welcome page:

@@ -14,12 +14,11 @@ alone; Reset puts every setting back to its default.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal
+from PySide6.QtCore import QT_TRANSLATE_NOOP, QEvent, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
-    QComboBox,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -68,6 +67,7 @@ from tessellatum.gui.search import SettingsSearch
 from tessellatum.gui.fields import (  # noqa: F401 - the panel's names for them, kept for its callers
     LOG_SLIDER_STEPS,
     MIN_SLIDER_WIDTH,
+    ChoiceCombo,
     SegmentedControl,
     SettingField,
     same_value,
@@ -88,6 +88,7 @@ from tessellatum.core.settings import (  # noqa: F401 - the registry's strings, 
     TONE_TOOLTIPS,
     Setting,
 )
+from tessellatum.gui.i18n import term, translate
 
 # The picture on the Source page: no wider than this (the canvas's Original view, I1, shows it whole).
 THUMBNAIL_SIZE = 160
@@ -95,7 +96,7 @@ THUMBNAIL_SIZE = 160
 # The sections of each page, in order: the registry's sections of that category (``Setting.section``,
 # ``Choice.section``), and the two the panel adds, the picture itself and the export's options (W5 moves those to the
 # export dialog).
-PICTURE = "Picture"
+PICTURE = QT_TRANSLATE_NOOP("settings", "Picture")  # shown through ``term``, as the registry's sections
 SUBSECTION_INDENT = 12  # how much further in a subsection's settings start (the form's left margin)
 FLASH_MS = 1500  # how long a setting found stays outlined
 PAGE_SECTIONS = {
@@ -107,7 +108,7 @@ PAGE_SECTIONS = {
 # Each page's advanced settings, by their registry sections, under one Advanced group folded at the foot of the page:
 # three levels of detail on every page (its intent on top, the precise settings shown, the advanced ones a click
 # away), rather than one switch for the whole app.
-ADVANCED = "Advanced"
+ADVANCED = QT_TRANSLATE_NOOP("settings", "Advanced")
 ADVANCED_PREFIX = "Advanced · "
 ADVANCED_SECTIONS = {
     settings.GENERATION: (
@@ -128,13 +129,15 @@ def advanced_subsection_key(category: str, section: str) -> str:
     ``ControlsPanel.sections`` names it: "Generation · Advanced · Edges"."""
     return f"{advanced_key(category)} · {section.replace(ADVANCED_PREFIX, '')}"
 
-PALETTE_TOOLTIP = (
+PALETTE_TOOLTIP = QT_TRANSLATE_NOOP(
+    "controls_panel",
     "The legend's colors as a palette file, for coloring the page in a painting app with exactly its colors, each "
     "named by its number and its name on the legend (\"7 dusty rose\"). Procreate: a .swatches file of 30 colors at "
     "most, so a larger legend is saved as several (\"1-30\", \"31-60\"). Adobe Swatch Exchange (.ase): Photoshop, "
     "Illustrator, Affinity, Procreate and others. GIMP palette (.gpl): GIMP, Krita, Inkscape and others."
 )
-SCREEN_HINT = "Coloring on a screen: export the Palette to load the legend's colors into your painting app."
+SCREEN_HINT = QT_TRANSLATE_NOOP("controls_panel", "Coloring on a screen: export the Palette to load the legend's "
+                                                 "colors into your painting app.")
 
 
 # The PNG's resolution (T3c): in dots per inch on its paper, or in pixels along its long edge.
@@ -143,7 +146,8 @@ DPI_PRESETS = (150, 300, 600)
 # 7.2 s and draws it at 600 dpi in 3.1 s more, at 1.1 GB, within the 15 s and 2 GB a default may take (D-012).
 MIN_DPI = 72
 MIN_PIXELS = 500
-RESOLUTION_TOOLTIP = (
+RESOLUTION_TOOLTIP = QT_TRANSLATE_NOOP(
+    "controls_panel",
     "How finely the PNG is drawn: in dots per inch on its paper, or in pixels along its long edge, the other worked "
     "out from the paper and the picture's shape. 300 dpi prints as sharp as a photo print; 600 is sharper still, for "
     "small numbers and for coloring zoomed in on a screen. A PNG is at most 16,384 px along a side: as much as "
@@ -187,16 +191,17 @@ class Section(QWidget):
         self.nested = nested
         self.toggle = QToolButton()
         self.toggle.setObjectName("subsectionHeader" if nested else "sectionHeader")  # styled by the theme
-        self.toggle.setText(title)
+        self.toggle.setText(term(title))
         self.toggle.setCheckable(True)
         self.toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         # Shown while something in the section differs from its preset or default: it puts the section back.
         self.reset_button = QToolButton()
         self.reset_button.setObjectName("sectionReset")
-        self.reset_button.setText("Reset")
+        self.reset_button.setText(translate("controls_panel", "Reset"))
         self.reset_button.setAutoRaise(True)
-        self.reset_button.setToolTip(f"Put the settings under {title} back to their preset or default")
-        self.reset_button.setAccessibleName(f"Reset {title}")
+        self.reset_button.setToolTip(translate("controls_panel", "Put the settings under {title} back to their "
+                                                                 "preset or default").format(title=title))
+        self.reset_button.setAccessibleName(translate("controls_panel", "Reset {title}").format(title=title))
         policy = self.reset_button.sizePolicy()
         policy.setRetainSizeWhenHidden(True)
         self.reset_button.setSizePolicy(policy)
@@ -262,8 +267,8 @@ class ControlsPanel(QWidget):
         self._announced: DocumentSettings | None = None  # the settings last sent with settings_changed
         self.edit_label: str | None = None  # what the edit under way is called, when its changes don't say (a reset)
 
-        self.open_button = QPushButton("Open Image…")
-        self.thumbnail_label = QLabel("No picture open")
+        self.open_button = QPushButton(translate("controls_panel", "Open Image…"))
+        self.thumbnail_label = QLabel(translate("controls_panel", "No picture open"))
         self.thumbnail_label.setAlignment(Qt.AlignCenter)
         self.thumbnail_label.setFixedSize(THUMBNAIL_SIZE, THUMBNAIL_SIZE * 2 // 3)
         self.thumbnail_label.setObjectName("thumbnail")
@@ -281,27 +286,29 @@ class ControlsPanel(QWidget):
         self.preset_description.setProperty("role", "hint")
         self.preset_description.setWordWrap(True)
 
-        self.preset_combo = QComboBox()
-        self.preset_combo.setAccessibleName("Difficulty")
+        self.preset_combo = ChoiceCombo()
+        self.preset_combo.setAccessibleName(translate("controls_panel", "Difficulty"))
         self._fill_presets(difficulty.DEFAULT_PRESET)
-        self.preset_combo.setToolTip(settings.choice("preset").tooltip)
-        self.reset_button = QPushButton("Reset")
-        self.reset_button.setToolTip("Put every setting back to its default, and the difficulty to Medium. Asks first.")
+        self.preset_combo.setToolTip(term(settings.choice("preset").tooltip))
+        self.reset_button = QPushButton(translate("controls_panel", "Reset"))
+        self.reset_button.setToolTip(translate("controls_panel", "Put every setting back to its default, and the "
+                                                                 "difficulty to Medium. Asks first."))
         # The presets' menu: back to the preset, and presets of one's own saved, renamed and deleted.
         self.preset_menu_button = QToolButton()
         self.preset_menu_button.setObjectName("presetMenu")
-        self.preset_menu_button.setText("Presets")
-        self.preset_menu_button.setToolTip("Go back to the preset, or save, rename and delete presets of your own")
+        self.preset_menu_button.setText(translate("controls_panel", "Presets"))
+        self.preset_menu_button.setToolTip(translate("controls_panel", "Go back to the preset, or save, rename "
+                                                                       "and delete presets of your own"))
         self.preset_menu_button.setPopupMode(QToolButton.InstantPopup)
         menu = QMenu(self.preset_menu_button)
-        self.revert_preset_action = menu.addAction("Back to Medium")
+        self.revert_preset_action = menu.addAction(translate("controls_panel", "Back to Medium"))
         self.revert_preset_action.triggered.connect(self.revert_to_preset)
         menu.addSeparator()
-        self.save_preset_action = menu.addAction("Save as Preset…")
+        self.save_preset_action = menu.addAction(translate("controls_panel", "Save as Preset…"))
         self.save_preset_action.triggered.connect(lambda: self.save_preset())
-        self.rename_preset_action = menu.addAction("Rename Preset…")
+        self.rename_preset_action = menu.addAction(translate("controls_panel", "Rename Preset…"))
         self.rename_preset_action.triggered.connect(lambda: self.rename_preset())
-        self.delete_preset_action = menu.addAction("Delete Preset…")
+        self.delete_preset_action = menu.addAction(translate("controls_panel", "Delete Preset…"))
         self.delete_preset_action.triggered.connect(lambda: self.delete_preset())
         self.preset_menu_button.setMenu(menu)
         preset_row = QWidget()
@@ -319,64 +326,65 @@ class ControlsPanel(QWidget):
         self.tone_combo = SegmentedControl()
         self.tone_combo.addItems([*TONES, CUSTOM_TONE])
         for index, name in enumerate(TONES):
-            self.tone_combo.setItemData(index, TONE_TOOLTIPS[name], Qt.ToolTipRole)
-        self.tone_combo.setItemData(len(TONES), CUSTOM_TONE_TOOLTIP, Qt.ToolTipRole)
+            self.tone_combo.setItemData(index, term(TONE_TOOLTIPS[name]), Qt.ToolTipRole)
+        self.tone_combo.setItemData(len(TONES), term(CUSTOM_TONE_TOOLTIP), Qt.ToolTipRole)
         self.tone_combo.setCurrentText(DEFAULT_TONE)
-        self.tone_combo.setToolTip(settings.choice("tone").tooltip)
-        self.legend_combo = QComboBox()
+        self.tone_combo.setToolTip(term(settings.choice("tone").tooltip))
+        self.legend_combo = ChoiceCombo()
         self.legend_combo.addItems(list(LEGEND_DETAILS))
         for index, name in enumerate(LEGEND_DETAILS):
-            self.legend_combo.setItemData(index, LEGEND_TOOLTIPS[name], Qt.ToolTipRole)
+            self.legend_combo.setItemData(index, term(LEGEND_TOOLTIPS[name]), Qt.ToolTipRole)
         self.legend_combo.setCurrentText(DEFAULT_LEGEND_DETAIL)
-        self.legend_combo.setToolTip(LEGEND_TOOLTIP)
+        self.legend_combo.setToolTip(term(LEGEND_TOOLTIP))
         self.paper_combo = SegmentedControl()
         self.paper_combo.addItems(list(PAPERS))
         self.paper_combo.setCurrentText(DEFAULT_PAPER)
-        self.paper_combo.setToolTip(PAPER_TOOLTIP)
+        self.paper_combo.setToolTip(term(PAPER_TOOLTIP))
         self.medium_combo = SegmentedControl()
         self.medium_combo.addItems(list(difficulty.MEDIA))
         for index, name in enumerate(difficulty.MEDIA):
-            self.medium_combo.setItemData(index, MEDIUM_TOOLTIPS[name], Qt.ToolTipRole)
+            self.medium_combo.setItemData(index, term(MEDIUM_TOOLTIPS[name]), Qt.ToolTipRole)
         self.medium_combo.setCurrentText(difficulty.DEFAULT_MEDIUM)
-        self.medium_combo.setToolTip(MEDIUM_TOOLTIP)
+        self.medium_combo.setToolTip(term(MEDIUM_TOOLTIP))
         self._paints: tuple = ()
         self.colors_from_combo = SegmentedControl()
         self.colors_from_combo.addItems(list(COLORS_FROM))
-        self.colors_from_combo.setToolTip(COLORS_FROM_TOOLTIP)
-        self.paints_button = QPushButton("Paints…")
-        self.paints_button.setToolTip(settings.choice("paints").tooltip)
+        self.colors_from_combo.setToolTip(term(COLORS_FROM_TOOLTIP))
+        self.paints_button = QPushButton(translate("controls_panel", "Paints…"))
+        self.paints_button.setToolTip(term(settings.choice("paints").tooltip))
         colors_from_row = QWidget()
         colors_from_layout = QHBoxLayout(colors_from_row)
         colors_from_layout.setContentsMargins(0, 0, 0, 0)
         colors_from_layout.addWidget(self.colors_from_combo, 1)
         colors_from_layout.addWidget(self.paints_button)
-        self.mix_check = QCheckBox(settings.choice("mix_paints").label)
-        self.mix_check.setToolTip(MIX_TOOLTIP)
+        self.mix_check = QCheckBox(term(settings.choice("mix_paints").label))
+        self.mix_check.setToolTip(term(MIX_TOOLTIP))
 
         self._switches: dict[str, QCheckBox] = {}
         for name in settings.SWITCHES:
-            check = QCheckBox(settings.choice(name).label)
-            check.setToolTip(settings.choice(name).tooltip)
+            check = QCheckBox(term(settings.choice(name).label))
+            check.setToolTip(term(settings.choice(name).tooltip))
             self._switches[name] = check
         self.line_art_check, self.detail_check, self.text_check = (self._switches[n] for n in settings.SWITCHES)
         for check in self._switches.values():
             check.setChecked(True)
 
-        self.version_combo = QComboBox()
+        self.version_combo = ChoiceCombo()
         for index, version in enumerate(Version):
             self.version_combo.addItem(version.value, version)
-            self.version_combo.setItemData(index, version.description, Qt.ToolTipRole)
-        self.version_combo.setToolTip("Which version of the page to export: the preview can show each of them.")
-        self.png_radio = QRadioButton("PNG (image)")
-        self.pdf_radio = QRadioButton("PDF")
-        self.palette_radio = QRadioButton("Palette")
-        self.palette_radio.setToolTip(PALETTE_TOOLTIP)
+            self.version_combo.setItemData(index, term(version.description), Qt.ToolTipRole)
+        self.version_combo.setToolTip(translate("controls_panel", "Which version of the page to export: the "
+                                                                  "preview can show each of them."))
+        self.png_radio = QRadioButton(translate("controls_panel", "PNG (image)"))
+        self.pdf_radio = QRadioButton(translate("controls_panel", "PDF"))
+        self.palette_radio = QRadioButton(translate("controls_panel", "Palette"))
+        self.palette_radio.setToolTip(translate("controls_panel", PALETTE_TOOLTIP))
         self.png_radio.setChecked(True)
-        self.palette_combo = QComboBox()
+        self.palette_combo = ChoiceCombo()
         for suffix, title in swatches.FORMATS.items():
             self.palette_combo.addItem(title.split(" (")[0], suffix)
-        self.palette_combo.setToolTip(PALETTE_TOOLTIP)
-        self.screen_hint = QLabel(SCREEN_HINT)
+        self.palette_combo.setToolTip(translate("controls_panel", PALETTE_TOOLTIP))
+        self.screen_hint = QLabel(translate("controls_panel", SCREEN_HINT))
         self.screen_hint.setWordWrap(True)
         self.screen_hint.setProperty("role", "hint")
         self.screen_hint.setVisible(False)  # shown coloring on a screen
@@ -389,15 +397,17 @@ class ControlsPanel(QWidget):
         self._picture_size: tuple[int, int] | None = None
         self.resolution_spin = QSpinBox()
         self.resolution_spin.setGroupSeparatorShown(True)
-        self.resolution_spin.setToolTip(RESOLUTION_TOOLTIP)
-        self.resolution_spin.setAccessibleName("Resolution")
-        self.resolution_unit = QComboBox()
+        self.resolution_spin.setToolTip(translate("controls_panel", RESOLUTION_TOOLTIP))
+        self.resolution_spin.setAccessibleName(translate("controls_panel", "Resolution"))
+        self.resolution_unit = ChoiceCombo()
         self.resolution_unit.addItem("dpi", DPI)
         self.resolution_unit.addItem("px", PIXELS)
-        self.resolution_unit.setItemData(0, "Dots per inch on the paper", Qt.ToolTipRole)
-        self.resolution_unit.setItemData(1, "Pixels along the page's long edge", Qt.ToolTipRole)
-        self.resolution_unit.setToolTip(RESOLUTION_TOOLTIP)
-        self.resolution_unit.setAccessibleName("Resolution in")
+        self.resolution_unit.setItemData(0, translate("controls_panel", "Dots per inch on the paper"), Qt.ToolTipRole)
+        self.resolution_unit.setItemData(
+            1, translate("controls_panel", "Pixels along the page's long edge"), Qt.ToolTipRole
+        )
+        self.resolution_unit.setToolTip(translate("controls_panel", RESOLUTION_TOOLTIP))
+        self.resolution_unit.setAccessibleName(translate("controls_panel", "Resolution in"))
         resolution_row = QWidget()
         resolution_layout = QHBoxLayout(resolution_row)
         resolution_layout.setContentsMargins(0, 0, 0, 0)
@@ -408,8 +418,9 @@ class ControlsPanel(QWidget):
         presets_layout = QHBoxLayout(presets_row)
         presets_layout.setContentsMargins(0, 0, 0, 0)
         for dpi in DPI_PRESETS:
-            button = QPushButton(f"{dpi} dpi")
-            button.setToolTip(f"Draw the PNG at {dpi} dots per inch on its paper.")
+            button = QPushButton(translate("controls_panel", "{dpi} dpi").format(dpi=dpi))
+            button.setToolTip(translate("controls_panel", "Draw the PNG at {dpi} dots per inch on its paper.")
+                              .format(dpi=dpi))
             button.clicked.connect(lambda _checked=False, dpi=dpi: self.set_export_dpi(dpi))
             presets_layout.addWidget(button)
             self.dpi_buttons[dpi] = button
@@ -420,28 +431,28 @@ class ControlsPanel(QWidget):
         # first shown, then what the dpi came to).
         self._dpi, self._pixels = DEFAULT_DPI, None
         export_form = QFormLayout()
-        export_form.addRow("Version", self.version_combo)
-        export_form.addRow("Format", format_row)
-        export_form.addRow("Palette", self.palette_combo)
-        export_form.labelForField(self.palette_combo).setToolTip(PALETTE_TOOLTIP)
+        export_form.addRow(translate("controls_panel", "Version"), self.version_combo)
+        export_form.addRow(translate("controls_panel", "Format"), format_row)
+        export_form.addRow(translate("controls_panel", "Palette"), self.palette_combo)
+        export_form.labelForField(self.palette_combo).setToolTip(translate("controls_panel", PALETTE_TOOLTIP))
         export_form.addRow(self.screen_hint)
-        export_form.addRow("Resolution", resolution_row)
+        export_form.addRow(translate("controls_panel", "Resolution"), resolution_row)
         export_form.addRow("", presets_row)
         export_form.addRow(self.resolution_readout)
-        export_form.labelForField(resolution_row).setToolTip(RESOLUTION_TOOLTIP)
+        export_form.labelForField(resolution_row).setToolTip(translate("controls_panel", RESOLUTION_TOOLTIP))
         export_form.setContentsMargins(0, 0, 0, 0)
         export_box = QWidget()
         export_box.setObjectName("exportOptions")
         export_box.setLayout(export_form)
         self.export_options = export_box  # shown in the export dialog (see ``gui.export_dialog``)
-        self.medium_hint = QLabel(SCREEN_HINT)  # on the Colors page too, where Screen is chosen
+        self.medium_hint = QLabel(translate("controls_panel", SCREEN_HINT))  # on the Colors page too, with Screen
         self.medium_hint.setWordWrap(True)
         self.medium_hint.setProperty("role", "hint")
         self.medium_hint.setVisible(False)
 
-        self.generate_button = QPushButton("Generate Preview")
+        self.generate_button = QPushButton(translate("controls_panel", "Generate Preview"))
         self.generate_button.setProperty("primary", True)  # the one primary action
-        self.export_button = QPushButton("Export…")
+        self.export_button = QPushButton(translate("controls_panel", "Export…"))
         self.export_button.setEnabled(False)
 
         self.progress_bar = QProgressBar()
@@ -449,14 +460,14 @@ class ControlsPanel(QWidget):
         self.progress_bar.setValue(0)
         # The percentage beside the bar, not on it: text on a bar half filled with the accent can't keep its contrast.
         self.progress_bar.setTextVisible(False)
-        self.progress_label = QLabel("0%")
+        self.progress_label = QLabel(translate("controls_panel", "0%"))
         self.progress_label.setProperty("role", "secondary")
         self.progress_label.setMinimumWidth(self.progress_label.fontMetrics().horizontalAdvance("100%") + 4)
         self.progress_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        self.abort_button = QPushButton("✕")
+        self.abort_button = QPushButton(translate("controls_panel", "✕"))
         self.abort_button.setObjectName("abortButton")  # a square button: the theme gives it no side padding
-        self.abort_button.setToolTip("Cancel generation")
+        self.abort_button.setToolTip(translate("controls_panel", "Cancel generation"))
         self.abort_button.setFixedWidth(28)
 
         self.progress_row = QWidget()
@@ -480,7 +491,7 @@ class ControlsPanel(QWidget):
         self.export_button.clicked.connect(self.export_requested)
         self.abort_button.clicked.connect(self._on_abort_clicked)
         self.reset_button.clicked.connect(self.request_reset)
-        self.preset_combo.currentTextChanged.connect(self._on_preset_changed)
+        self.preset_combo.valueChanged.connect(self._on_preset_changed)
         for name, control in self.controls.items():
             control.edited.connect(lambda name=name: self._on_setting_edited(name))
             control.edit_started.connect(self.edit_started)
@@ -488,7 +499,7 @@ class ControlsPanel(QWidget):
         self.tone_combo.currentTextChanged.connect(self._on_tone_changed)
         self.paper_combo.currentTextChanged.connect(lambda _name: self._on_print_changed())
         self.medium_combo.currentTextChanged.connect(lambda _name: self._on_medium_changed())
-        self.legend_combo.currentTextChanged.connect(self._on_legend_changed)
+        self.legend_combo.valueChanged.connect(self._on_legend_changed)
         self.colors_from_combo.currentTextChanged.connect(lambda _name: self._on_colors_from_changed())
         self.mix_check.toggled.connect(lambda _checked: self._on_mix_changed())
         self.paints_button.clicked.connect(self.edit_paints)
@@ -538,13 +549,13 @@ class ControlsPanel(QWidget):
                         continue
                     if entry.label == section.title and not section.nested:  # "Tone" under Tone: named already
                         target = self.preset_combo if entry.name == "preset" else widget
-                        target.setAccessibleName(entry.label)
+                        target.setAccessibleName(term(entry.label))
                         section.form.addRow(widget)
                         if entry.name == "preset":
                             section.form.addRow(self.preset_description)
                         continue
-                    label = QLabel(entry.label)
-                    label.setToolTip(entry.tooltip)
+                    label = QLabel(term(entry.label))
+                    label.setToolTip(term(entry.tooltip))
                     label.setBuddy(widget.slider if isinstance(widget, SettingField) else widget)
                     section.form.addRow(label, widget)
                     labels.append((label, SUBSECTION_INDENT if section.nested else 0))
@@ -646,7 +657,10 @@ class ControlsPanel(QWidget):
             return self.controls[entry.name].text()
         if entry.name == "paints":
             count = len(self._paints)
-            return f"{count} paint{'s' if count != 1 else ''} listed" if count else "none listed"
+            if not count:
+                return translate("controls_panel", "none listed")
+            return (translate("controls_panel", "1 paint listed") if count == 1
+                    else translate("controls_panel", "{count} paints listed").format(count=count))
         widget = self.entry_widget(entry.name)
         if isinstance(widget, QCheckBox):
             return "on" if widget.isChecked() else "off"
@@ -694,7 +708,7 @@ class ControlsPanel(QWidget):
     def show_category(self, category: str) -> None:
         """Show the page of ``category`` (one of ``PAGE_SECTIONS``)."""
         self.stack.setCurrentWidget(self.scrolls[category])
-        self.title.setText(category)
+        self.title.setText(term(category))
 
     def category(self) -> str:
         """The category whose page is shown."""
@@ -737,7 +751,7 @@ class ControlsPanel(QWidget):
         combo.blockSignals(True)
         combo.clear()
         combo.addItems([*difficulty.PRESETS, *self.presets.names(), CUSTOM])
-        combo.setItemData(combo.findText(CUSTOM), CUSTOM_TOOLTIP, Qt.ToolTipRole)
+        combo.setItemData(combo.findText(CUSTOM), term(CUSTOM_TOOLTIP), Qt.ToolTipRole)
         combo.setCurrentText(current if current == CUSTOM or self.is_preset(current) else CUSTOM)
         combo.blockSignals(False)
         self._show_preset_tooltips()
@@ -749,7 +763,7 @@ class ControlsPanel(QWidget):
             if self.is_preset(name):
                 params = difficulty.for_medium(self.preset_params(name), medium)
                 paper = self.paper_combo.currentText() if hasattr(self, "paper_combo") else DEFAULT_PAPER
-                text = " ".join(t for t in (difficulty.practical(name, paper), difficulty.describe(params)) if t)
+                text = " ".join(t for t in (difficulty.practical(name, paper, term), difficulty.describe(params, term)) if t)
                 self.preset_combo.setItemData(index, text, Qt.ToolTipRole)
 
     def _own_preset(self) -> str | None:
@@ -771,16 +785,18 @@ class ControlsPanel(QWidget):
 
     def _ask_preset_name(self, title: str, text: str = "") -> str | None:
         """A name a preset of one's own can take, asked until one is given or the question cancelled."""
-        label = "Name:"
+        label = translate("controls_panel", "Name:")
         while True:
             name = self.ask_name(title, label, text)
             if name is None:
                 return None
             name = name.strip()
             if not name:
-                label = "A preset needs a name:"
+                label = translate("controls_panel", "A preset needs a name:")
             elif name.casefold() in {n.casefold() for n in difficulty.preset_names()}:
-                label = f"{name} is a built-in preset's name. Another name:"
+                label = translate("controls_panel", "{name} is a built-in preset's name. Another name:").format(
+                    name=name
+                )
             else:
                 return name
             text = name
@@ -790,14 +806,18 @@ class ControlsPanel(QWidget):
         given. Returns the name it was kept under, or None if it wasn't."""
         if name is None:
             suggestion = self._own_preset() or ""
-            name = self._ask_preset_name("Save as Preset", suggestion)
+            name = self._ask_preset_name(translate("controls_panel", "Save as Preset"), suggestion)
             if name is None:
                 return None
             if name in self.presets and not self.ask_yes(
-                    "Replace Preset", f"There is a preset called {name} already. Replace it?"):
+                translate("controls_panel", "Replace Preset"),
+                translate("controls_panel", "There is a preset called {name} already. Replace it?").format(
+                    name=name
+                ),
+            ):
                 return None
         name = self.presets.save(name, self._difficulty_values())
-        self.edit_label = f"Save Preset {name}"
+        self.edit_label = translate("controls_panel", "Save Preset {name}").format(name=name)
         self._fill_presets(self.preset_combo.currentText())
         self.preset_combo.setCurrentText(name)
         if self.preset_combo.currentText() == name:
@@ -810,15 +830,18 @@ class ControlsPanel(QWidget):
         if old is None:
             return None
         if new is None:
-            new = self._ask_preset_name("Rename Preset", old)
+            new = self._ask_preset_name(translate("controls_panel", "Rename Preset"), old)
             if new is None or new == old:
                 return None
         if new != old and new in self.presets:
-            if not self.ask_yes("Replace Preset", f"There is a preset called {new} already. Replace it?"):
+            if not self.ask_yes(
+                translate("controls_panel", "Replace Preset"),
+                translate("controls_panel", "There is a preset called {new} already. Replace it?").format(new=new),
+            ):
                 return None
             self.presets.delete(new)
         new = self.presets.rename(old, new)
-        self.edit_label = f"Rename Preset {old}"
+        self.edit_label = translate("controls_panel", "Rename Preset {old}").format(old=old)
         self._base_preset = new
         self._fill_presets(new)
         self._save()
@@ -828,11 +851,18 @@ class ControlsPanel(QWidget):
         """The preset of one's own that is chosen, deleted (asked first): the settings stay as they are, Custom, from
         the default preset."""
         name = self._own_preset()
-        if name is None or not (confirmed or self.ask_yes(
-                "Delete Preset", f"Delete the preset {name}? The settings stay as they are.")):
+        if name is None or not (
+            confirmed
+            or self.ask_yes(
+                translate("controls_panel", "Delete Preset"),
+                translate("controls_panel", "Delete the preset {name}? The settings stay as they are.").format(
+                    name=name
+                ),
+            )
+        ):
             return False
         self.presets.delete(name)
-        self.edit_label = f"Delete Preset {name}"
+        self.edit_label = translate("controls_panel", "Delete Preset {name}").format(name=name)
         self._base_preset = difficulty.DEFAULT_PRESET
         self._fill_presets(CUSTOM)
         self._save()
@@ -907,28 +937,30 @@ class ControlsPanel(QWidget):
             if control.setting.owner == settings.DIFFICULTY:
                 control.set_reference(getattr(params, name), self._base_preset)
             elif name in grays:
-                control.set_reference(grays[name], f"the {self._base_tone} tone")
+                control.set_reference(grays[name], translate("controls_panel", "the {0} tone").format(self._base_tone))
             else:
-                control.set_reference(control.setting.default, "the default")
+                control.set_reference(control.setting.default, translate("controls_panel", "the default"))
         if hasattr(self, "sections"):
             for key, section in self.sections.items():
                 section.show_changed(bool(self._changes_in(key)))
         base = self._base_preset
         custom = self.preset_combo.currentText() == CUSTOM
         if not custom:
-            practical = difficulty.practical(base, self.paper_combo.currentText())
-            self.preset_description.setText(f"{practical}\n{difficulty.describe(params)}" if practical
-                                            else difficulty.describe(params))
+            practical = difficulty.practical(base, self.paper_combo.currentText(), term)
+            self.preset_description.setText(f"{practical}\n{difficulty.describe(params, term)}" if practical
+                                            else difficulty.describe(params, term))
         else:
             changed = [c for c in self._difficulty_controls().values() if c.is_changed()]
-            listed = ", ".join(f"{c.setting.label} {c.text()}" for c in changed)
+            listed = ", ".join(f"{term(c.setting.label)} {c.text()}" for c in changed)
             self.preset_description.setText(
-                f"{base} (modified, {len(changed)} change{'s' if len(changed) != 1 else ''}): {listed}."
-                if changed else f"Custom, the same as {base}."
+                (translate("controls_panel", "{base} (modified, 1 change): {listed}.") if len(changed) == 1
+                 else translate("controls_panel", "{base} (modified, {count} changes): {listed}."))
+                .format(base=base, count=len(changed), listed=listed)
+                if changed else translate("controls_panel", "Custom, the same as {base}.").format(base=base)
             )
         self._show_preset_tooltips()  # for the paper and the medium
         own = not custom and base in self.presets
-        self.revert_preset_action.setText(f"Back to {base}")
+        self.revert_preset_action.setText(translate("controls_panel", "Back to {base}").format(base=base))
         self.revert_preset_action.setEnabled(custom)
         self.rename_preset_action.setEnabled(own)
         self.delete_preset_action.setEnabled(own)
@@ -963,7 +995,9 @@ class ControlsPanel(QWidget):
         changes = self._changes_in(key)
         if changes:
             title = self.sections[key].title
-            self.edit_label = f"Reset {key if title == ADVANCED else title}"  # as Edit > Undo names it
+            self.edit_label = translate("controls_panel", "Reset {0}").format(
+                key if title == ADVANCED else title
+            )  # as Edit > Undo names it
         for name in changes:
             if name in self.controls:
                 self.controls[name].reset_to_reference()
@@ -982,7 +1016,7 @@ class ControlsPanel(QWidget):
     def reset(self) -> None:
         """Every setting back to its default: the default preset, the default style, every switch on."""
         before = self.snapshot()
-        self.edit_label = "Reset All Settings"
+        self.edit_label = translate("controls_panel", "Reset All Settings")
         self._loading = True
         try:
             self.preset_combo.setCurrentText(difficulty.DEFAULT_PRESET)
@@ -1211,7 +1245,9 @@ class ControlsPanel(QWidget):
     def set_paints(self, paints: tuple) -> None:
         """The paints listed (name, RGB each), kept whether or not the page takes its colors from them."""
         if distinct(paints) != self._paints:
-            self.edit_label = "Paints"  # with Colors from, which listing them may switch: one edit
+            self.edit_label = translate(
+                "controls_panel", "Paints"
+            )  # with Colors from, which listing them may switch: one edit
         self._paints = distinct(paints)
         if self._paints and self.colors_from_combo.currentText() != MY_PAINTS and not self._wants_recipes():
             self.colors_from_combo.setCurrentText(MY_PAINTS)  # listing paints is asking for them
@@ -1265,31 +1301,36 @@ class ControlsPanel(QWidget):
         screen = chosen["medium"] == difficulty.SCREEN_MEDIUM
         said: set[tuple] = set()  # a reason is said once in a section, under the first field it turns off
         for name, control in self.controls.items():
-            tip = control.setting.tooltip
+            tip = term(control.setting.tooltip)
             if name == "palette_margin_de00" and screen:
-                tip += (
-                    f" Coloring on a screen, the page keeps its colors at most {difficulty.SCREEN_MARGIN_DE00:g} ΔE00 "
-                    "apart, whatever this says."
+                tip += " " + (
+                    translate("controls_panel", "Coloring on a screen, the page keeps its colors at most {0:g} "
+                                                "ΔE00 apart, whatever this says.").format(difficulty.SCREEN_MARGIN_DE00)
                 )
             reason = control.setting.disabled_reason(chosen)
             where = (control.setting.category, self.section_key(control.setting), reason)
             control.set_disabled_reason(reason, say=where not in said)  # said under it, not only in its tooltip
             said.add(where)
-            control.setToolTip(tip if reason is None else f"{reason} {tip}")
+            control.setToolTip(tip if reason is None else f"{term(reason)} {tip}")
         mix = settings.choice("mix_paints")
         reason = mix.disabled_reason(chosen)
         self.mix_check.setEnabled(reason is None)
-        self.mix_check.setToolTip(mix.tooltip if reason is None else f"{reason} {mix.tooltip}")
+        self.mix_check.setToolTip(term(mix.tooltip) if reason is None else f"{term(reason)} {term(mix.tooltip)}")
 
     def _show_paints(self) -> None:
         # Mixing, and its two thresholds, only mean something when the colors come from the paints.
         self._show_enablement()
         count = len(self._paints)
-        self.paints_button.setText(f"Paints ({count})…" if count else "Paints…")
+        self.paints_button.setText(
+            translate("controls_panel", "Paints ({count})…").format(count=count)
+            if count
+            else translate("controls_panel", "Paints…")
+        )
         if self.colors_from_combo.currentText() == MY_PAINTS and not self._paints:
-            self.colors_from_combo.setToolTip("No paints listed: the colors come from the picture. " + COLORS_FROM_TOOLTIP)
+            self.colors_from_combo.setToolTip(translate("controls_panel", "No paints listed: the colors come from "
+                                                                          "the picture. ") + term(COLORS_FROM_TOOLTIP))
         else:
-            self.colors_from_combo.setToolTip(COLORS_FROM_TOOLTIP)
+            self.colors_from_combo.setToolTip(term(COLORS_FROM_TOOLTIP))
 
     def get_output_format(self) -> str:
         """"PNG", "PDF", or "Palette": the legend's colors as a palette file (see ``get_palette_format``)."""
@@ -1307,10 +1348,16 @@ class ControlsPanel(QWidget):
         """The picture's pixels (width, height), whose shape sets how large the page prints, or None; ``name``, its
         file's, shown with it on the Source page."""
         self._picture_size = size
-        self.picture_label.setText("" if size is None else f"{name + ': ' if name else ''}{size[0]:,} × {size[1]:,} px")
+        self.picture_label.setText(
+            ""
+            if size is None
+            else translate("controls_panel", "{0}{1:,} × {2:,} px").format(
+                name + ': ' if name else '', size[0], size[1]
+            )
+        )
         if size is None:
             self.thumbnail_label.setPixmap(QPixmap())
-            self.thumbnail_label.setText("No picture open")
+            self.thumbnail_label.setText(translate("controls_panel", "No picture open"))
         self.set_picture_reading(None)
         self._show_picture_print()
         self._show_resolution()
@@ -1319,11 +1366,14 @@ class ControlsPanel(QWidget):
         """What the last preview made of the picture: line art (True), a picture of colors (False), or not made yet."""
         self._picture_reading = line_art
         if line_art is None:
-            text = "" if self._picture_size is None else "Generate a preview to see how the picture is read."
+            text = "" if self._picture_size is None else translate("controls_panel", "Generate a preview to see "
+                                                                                     "how the picture is read.")
         elif line_art:
-            text = "Read as line art: its own ink is printed, and its areas are painted between the lines."
+            text = translate("controls_panel", "Read as line art: its own ink is printed, and its areas are "
+                                               "painted between the lines.")
         else:
-            text = "Read as a picture of colors: its regions are drawn from the colors."
+            text = translate("controls_panel", "Read as a picture of colors: its regions are drawn from the "
+                                               "colors.")
         self.picture_reading_label.setText(text)
 
     def _show_picture_print(self) -> None:
@@ -1336,7 +1386,9 @@ class ControlsPanel(QWidget):
         scale = print_scale(size, PAPERS[paper])
         width_mm, height_mm = scale.printed_size_mm
         self.picture_print_label.setText(
-            f"Prints {width_mm:.0f} × {height_mm:.0f} mm on {paper}, at {scale.dpi:.0f} of its pixels an inch."
+            translate("controls_panel", "Prints {width_mm:.0f} × {height_mm:.0f} mm on {paper}, at {dpi:.0f} of its "
+                                        "pixels an inch.")
+            .format(dpi=scale.dpi, width_mm=width_mm, height_mm=height_mm, paper=paper)
         )
 
     def set_export_dpi(self, dpi: float) -> None:
@@ -1450,21 +1502,28 @@ class ControlsPanel(QWidget):
         self.palette_combo.setEnabled(palette)
         self.version_combo.setEnabled(not palette)
         if palette:
-            self.resolution_readout.setText("The palette holds the legend's colors, named as on the legend.")
+            self.resolution_readout.setText(translate("controls_panel", "The palette holds the legend's colors, "
+                                                                        "named as on the legend."))
             return
         if not png:
-            self.resolution_readout.setText("The PDF is vector art: it prints sharp at any size.")
+            self.resolution_readout.setText(translate("controls_panel", "The PDF is vector art: it prints sharp "
+                                                                        "at any size."))
             return
         paper = self.paper_combo.currentText()
         if self._picture_size is None:
-            text = f"{round(long_mm * dpi / MM_PER_INCH):,} px along the long edge at {dpi:.0f} dpi on {paper}."
+            text = translate("controls_panel", "{0:,} px along the long edge at {dpi:.0f} dpi on {paper}.").format(
+                round(long_mm * dpi / MM_PER_INCH), dpi=dpi, paper=paper
+            )
         else:
             printed = print_scale(self._picture_size, PAPERS[paper]).printed_size_mm
             width, height = (max(1, round(mm * dpi / MM_PER_INCH)) for mm in printed)
-            text = f"{width:,} × {height:,} px ({width * height / 1e6:.0f} Mpx) at {dpi:.0f} dpi on {paper}."
+            text = translate("controls_panel", "{width:,} × {height:,} px ({0:.0f} Mpx) at {dpi:.0f} dpi on "
+                                               "{paper}.").format(width * height / 1e6, width=width, height=height, dpi=dpi, paper=paper)
         capped = self.resolution_capped()
         if capped:
-            text += f" The most a PNG takes: {export.MAX_RASTER_LONG_EDGE:,} px along a side."
+            text += " " + translate("controls_panel", "The most a PNG takes: {0:,} px along a side.").format(
+                export.MAX_RASTER_LONG_EDGE
+            )
         self.resolution_readout.setText(text)
 
     def set_busy(self, busy: bool, cancellable: bool = True) -> None:
@@ -1475,7 +1534,7 @@ class ControlsPanel(QWidget):
         self.progress_label.setVisible(cancellable)
         if busy:
             self.progress_bar.setValue(0)
-            self.progress_label.setText("0%")
+            self.progress_label.setText(translate("controls_panel", "0%"))
             self.abort_button.setEnabled(cancellable)
         self.generate_button.setEnabled(not busy)
         self.export_button.setEnabled(not busy and self.export_button.property("hasResult") is True)
@@ -1484,7 +1543,7 @@ class ControlsPanel(QWidget):
     def set_progress(self, percent: int) -> None:
         percent = max(0, min(100, percent))
         self.progress_bar.setValue(percent)
-        self.progress_label.setText(f"{percent}%")
+        self.progress_label.setText(translate("controls_panel", "{percent}%").format(percent=percent))
 
     def set_export_enabled(self, enabled: bool) -> None:
         self.export_button.setProperty("hasResult", enabled)

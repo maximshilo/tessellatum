@@ -11,12 +11,13 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, QSettings, QSize, Qt, Signal
+from PySide6.QtCore import QT_TRANSLATE_NOOP, QByteArray, QSettings, QSize, Qt, Signal
 from PySide6.QtWidgets import QButtonGroup, QToolButton, QVBoxLayout, QWidget
 
 from tessellatum.core import settings
 from tessellatum.gui import theme
 from tessellatum.gui.actions import ACTIVITIES, ANALYSIS
+from tessellatum.gui.i18n import term, translate
 from tessellatum.gui.palette_inspector import PaletteInspector  # noqa: F401  (the inspector, where it was)
 from tessellatum.gui.theme import icons
 from tessellatum.gui.theme.tokens import COLORS, LIGHT
@@ -26,11 +27,13 @@ ACTIVITY_ICONS = {
     settings.DOCUMENT: "document", ANALYSIS: "analysis",
 }
 ACTIVITY_TIPS = {
-    settings.SOURCE: "Source: the picture, and how it is read",
-    settings.GENERATION: "Generation: the difficulty, the regions and their detail",
-    settings.COLORS: "Colors: what the page is colored with, and its palette",
-    settings.DOCUMENT: "Document: the paper, the lines and numbers, the legend, and the export",
-    ANALYSIS: "Analysis: the page measured on paper, its issues, and overlays to see them",
+    settings.SOURCE: QT_TRANSLATE_NOOP("workspace", "Source: the picture, and how it is read"),
+    settings.GENERATION: QT_TRANSLATE_NOOP("workspace", "Generation: the difficulty, the regions and their detail"),
+    settings.COLORS: QT_TRANSLATE_NOOP("workspace", "Colors: what the page is colored with, and its palette"),
+    settings.DOCUMENT: QT_TRANSLATE_NOOP("workspace", "Document: the paper, the lines and numbers, the legend, and "
+                                                      "the export"),
+    ANALYSIS: QT_TRANSLATE_NOOP("workspace", "Analysis: the page measured on paper, its issues, and overlays to see "
+                                             "them"),
 }
 
 
@@ -59,9 +62,10 @@ class ActivityBar(QWidget):
             button.setCheckable(True)
             button.setAutoRaise(True)
             button.setIconSize(QSize(22, 22))
-            button.setToolTip(ACTIVITY_TIPS[category])
-            button.setAccessibleName(category)
-            button.setAccessibleDescription(ACTIVITY_TIPS[category])
+            tip = translate("workspace", ACTIVITY_TIPS[category])
+            button.setToolTip(tip)
+            button.setAccessibleName(term(category))
+            button.setAccessibleDescription(tip)
             button.setFocusPolicy(Qt.TabFocus)
             self._group.addButton(button)
             self.buttons[category] = button
