@@ -4,6 +4,14 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.36] - 2026-11-27
+
+### Fixed
+
+- A session that ended without closing before it wrote any recovery snapshot left its lock file in the recovery folder
+  for good. The app removes such locks at its start now, once their session is gone; a window still open keeps its
+  own.
+
 ## [1.1.35] - 2026-11-27
 
 ### Added
