@@ -1177,3 +1177,27 @@ own — and pass that result set alone:
 
 Timings are wall-clock: close heavy apps while benchmarking, and only compare
 result sets recorded on the same machine (the report warns when they're not).
+
+## The app's responsiveness (`ui_bench.py`)
+
+`bench.py` measures the pipeline. `ui_bench.py` measures the app around it, through the real window, drawn with the
+platform's fonts but kept off screen, and with no settings kept (the user's are never read or changed):
+
+```
+.venv\Scripts\python benchmarks\ui_bench.py OUT_DIR [--reps 5] [--cycles 50]
+```
+
+It writes `OUT_DIR/ui.json`, every sample with its median, 95th percentile and maximum:
+
+| measure | what is timed |
+|---|---|
+| `generation` | Generate Preview at Medium on the lion, the pearl portrait and the line-art pig, until the page is shown and until the window is idle: *cold* with both caches empty, *warm* with the stage cache full |
+| `redraw_edit` | a line width changed, until its page is shown: in all, and after the redraw delay (Preferences) |
+| `legend_detail_change` | the legend's detail, drawn at once |
+| `cached_undo_redo` | undo and redo between two kept pages: until shown, the restore itself, and until idle; `uncached_undo` is one whose page was let go |
+| `switching` | each activity, each view of the page, and focus mode, with a repaint |
+| `pan_zoom` | one zoom or pan step and its repaint, on the preview's pixels and past them (the page as it prints) |
+| `cancel` | Stop while the lion's Realistic page is made: until the window says so, and until it is idle |
+| `memory` | resident memory over 50 generations with other settings each, then 50 undo/redo steps |
+
+Run it alone, like `bench.py`: the numbers are wall-clock.

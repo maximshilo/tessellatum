@@ -4,6 +4,15 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.35] - 2026-11-27
+
+### Added
+
+- `benchmarks/ui_bench.py`: how the app responds, timed through its real window: a page made with the caches empty
+  and full, a change that only draws the page again, undo and redo to a page kept and to one let go, switching pages
+  and views, zoom and pan frames, stopping a page, and memory over 50 pages and 50 undo/redo steps. Each measure is
+  repeated, with its median and 95th percentile. The wiki's Quality and performance page compares it with 1.0.21.
+
 ## [1.1.34] - 2026-11-27
 
 ### Added
