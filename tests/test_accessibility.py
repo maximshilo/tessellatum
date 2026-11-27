@@ -257,7 +257,10 @@ def test_the_focus_comes_back_after_a_dialog(window):
 
 def test_a_one_down_row_is_one_stop_its_arrows_move_along_it(window):
     _previewed(window)
+    window.resize(1920, 1080)  # room for the view buttons, with the offscreen platform's wide fonts
+    _app.processEvents()
     bar = window.version_bar
+    assert not bar.is_compact()
     page = bar.buttons[main_window.Version.PAGE]
     page.setFocus()
     _app.processEvents()
@@ -266,6 +269,22 @@ def test_a_one_down_row_is_one_stop_its_arrows_move_along_it(window):
     assert _app.focusWidget() is bar.buttons[main_window.Version.COMPLETED]
     stops = _tab_round(window)
     assert sum(1 for button in bar.buttons.values() if button in stops) <= 1
+
+
+def test_where_the_view_buttons_give_way_the_list_in_their_place_is_one_stop_and_its_arrows_choose(window):
+    _previewed(window)
+    window.resize(900, 700)
+    _app.processEvents()
+    bar = window.version_bar
+    assert bar.is_compact()
+    bar.compact.setFocus()
+    _app.processEvents()
+    QTest.keyClick(bar.compact, Qt.Key_Down)
+    _app.processEvents()
+    assert bar.version() == main_window.Version.COMPLETED and window.preview.view() == main_window.Version.COMPLETED
+    assert _name(bar.compact)
+    stops = _tab_round(window)
+    assert not any(button in stops for button in bar.buttons.values())  # the round came back to the list
 
 
 # -- The novice's and the expert's paths, keys only ---------------------------------------------

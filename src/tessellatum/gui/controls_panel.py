@@ -62,12 +62,13 @@ from tessellatum.core.pipeline import Handling
 from tessellatum.core.print_size import MM_PER_INCH, PAPERS, print_scale
 from tessellatum.core.render import DEFAULT_TONE, TONE_FIELDS, TONES, PageStyle
 from tessellatum.app.presets import PresetStore
-from tessellatum.gui import accessibility
+from tessellatum.gui import accessibility, fields
 from tessellatum.gui.search import SettingsSearch
 from tessellatum.gui.fields import (  # noqa: F401 - the panel's names for them, kept for its callers
     LOG_SLIDER_STEPS,
     MIN_SLIDER_WIDTH,
     ChoiceCombo,
+    Reflow,
     SegmentedControl,
     SettingField,
     same_value,
@@ -311,12 +312,10 @@ class ControlsPanel(QWidget):
         self.delete_preset_action = menu.addAction(translate("controls_panel", "Delete Preset…"))
         self.delete_preset_action.triggered.connect(lambda: self.delete_preset())
         self.preset_menu_button.setMenu(menu)
-        preset_row = QWidget()
-        preset_layout = QHBoxLayout(preset_row)
-        preset_layout.setContentsMargins(0, 0, 0, 0)
-        preset_layout.addWidget(self.preset_combo, 1)
-        preset_layout.addWidget(self.preset_menu_button)
-        preset_layout.addWidget(self.reset_button)
+        preset_row = Reflow()  # the buttons under the presets where they don't fit beside them
+        preset_row.addWidget(self.preset_combo, 1)
+        preset_row.addWidget(self.preset_menu_button)
+        preset_row.addWidget(self.reset_button)
 
         # One slider per setting, by the field's name; placed in its section by _lay_out.
         self.controls: dict[str, SettingField] = {s.name: SettingField(s) for s in settings.SETTINGS}
@@ -352,11 +351,9 @@ class ControlsPanel(QWidget):
         self.colors_from_combo.setToolTip(term(COLORS_FROM_TOOLTIP))
         self.paints_button = QPushButton(translate("controls_panel", "Paints…"))
         self.paints_button.setToolTip(term(settings.choice("paints").tooltip))
-        colors_from_row = QWidget()
-        colors_from_layout = QHBoxLayout(colors_from_row)
-        colors_from_layout.setContentsMargins(0, 0, 0, 0)
-        colors_from_layout.addWidget(self.colors_from_combo, 1)
-        colors_from_layout.addWidget(self.paints_button)
+        colors_from_row = Reflow()  # the button under the choices where they don't fit side by side
+        colors_from_row.addWidget(self.colors_from_combo, 1)
+        colors_from_row.addWidget(self.paints_button)
         self.mix_check = QCheckBox(term(settings.choice("mix_paints").label))
         self.mix_check.setToolTip(term(MIX_TOOLTIP))
 
@@ -530,6 +527,7 @@ class ControlsPanel(QWidget):
         self._section_entries: dict[str, list] = {}  # what each section's reset puts back
         self.pages: dict[str, QWidget] = {}
         self.scrolls: dict[str, QScrollArea] = {}
+        self._row_widths: dict[str, int] = {}  # each page's scroll area, as wide as its rows need side by side
         self.stack = QStackedWidget()
         for category, names in PAGE_SECTIONS.items():
             page = QWidget()
@@ -609,8 +607,11 @@ class ControlsPanel(QWidget):
             scroll.setWidgetResizable(True)
             scroll.setFrameShape(QFrame.NoFrame)
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            # As wide as the page needs with the scroll bar beside it, so that nothing is cut off when it shows.
-            scroll.setMinimumWidth(page.minimumSizeHint().width() + scroll.verticalScrollBar().sizeHint().width())
+            # As wide as the page needs with the scroll bar beside it, so that nothing is cut off when it shows: its
+            # rows of choices and buttons one under another, if need be. It starts as wide as they need side by side.
+            bar = scroll.verticalScrollBar().sizeHint().width()
+            scroll.setMinimumWidth(page.minimumSizeHint().width() + bar)
+            self._row_widths[category] = fields.preferred_width(page) + bar
             self.pages[category] = page
             self.scrolls[category] = scroll
             self.stack.addWidget(scroll)
@@ -704,6 +705,12 @@ class ControlsPanel(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scrolls[category] = scroll
         self.stack.addWidget(scroll)
+
+    def preferred_width(self) -> int:
+        """How wide the sidebar starts: wide enough for every page's rows of choices and buttons side by side. Less
+        than that (a narrow window, a larger scale, a longer language), they stack rather than being cut."""
+        extra = max((self._row_widths[c] - self.scrolls[c].minimumWidth() for c in self._row_widths), default=0)
+        return self.minimumSizeHint().width() + max(0, extra)
 
     def show_category(self, category: str) -> None:
         """Show the page of ``category`` (one of ``PAGE_SECTIONS``)."""

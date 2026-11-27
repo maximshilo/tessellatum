@@ -289,3 +289,77 @@ def test_the_panel_s_few_choices_are_segmented():
         assert isinstance(combo, SegmentedControl) and 2 <= combo.count() <= 4
     panel.paper_combo.buttons()[1].click()
     assert panel.snapshot().paper == "A3"
+
+
+# -- Rows that give way: words kept whole in a longer language or at a larger scale ------------------------------------
+def _settle_widget(widget, width: int) -> None:
+    widget.resize(width, widget.sizeHint().height())
+    _app.processEvents()
+
+
+def test_a_row_stacks_where_its_widgets_don_t_fit_side_by_side_and_comes_back():
+    from PySide6.QtWidgets import QPushButton
+
+    row = fields.Reflow()
+    first, second = QPushButton("Generate the preview again"), QPushButton("Paints…")
+    row.addWidget(first, 1)
+    row.addWidget(second)
+    need = row.row_width()
+    assert need >= first.minimumSizeHint().width() + second.minimumSizeHint().width()
+    # Its minimum is its widest widget's: a narrow sidebar can give it less than the row, and it stacks.
+    assert row.minimumSizeHint().width() == max(first.minimumSizeHint().width(), second.minimumSizeHint().width())
+    row.show()
+    _settle_widget(row, need + 20)
+    assert not row.is_stacked() and first.y() == second.y()
+    _settle_widget(row, need - 1)
+    assert row.is_stacked() and second.y() > first.y()
+    assert first.width() >= first.minimumSizeHint().width() and second.width() >= second.minimumSizeHint().width()
+    _settle_widget(row, need)
+    assert not row.is_stacked()
+    row.close()
+
+
+def test_segmented_choices_stack_each_whole_where_they_don_t_fit_and_stay_one_choice():
+    control = SegmentedControl()
+    control.addItems(["The picture", "My paints", "Paper and paint"])
+    buttons = control.buttons()
+    assert [b.property("position") for b in buttons] == ["first", "middle", "last"]
+    control.show()
+    _settle_widget(control, control.row_width() - 1)
+    assert control.is_stacked() and [b.property("position") for b in buttons] == ["only"] * 3
+    assert all(b.width() >= b.minimumSizeHint().width() for b in buttons)
+    buttons[2].click()
+    assert control.currentText() == "Paper and paint"
+    QTest.keyClick(buttons[2], Qt.Key_Left)  # the keys move the choice as before
+    assert control.currentText() == "My paints"
+    _settle_widget(control, control.row_width() + 10)
+    assert not control.is_stacked() and [b.property("position") for b in buttons] == ["first", "middle", "last"]
+    control.close()
+
+
+def test_the_panel_s_rows_of_choices_and_buttons_give_way():
+    panel = ControlsPanel()
+    rows = [panel.colors_from_combo.parentWidget(), panel.preset_combo.parentWidget()]
+    assert all(isinstance(row, fields.Reflow) for row in rows)
+    row = rows[0]
+    # The Paints button goes under the choices first; the choices themselves stack only if they still don't fit.
+    assert row.row_width() >= panel.colors_from_combo.row_width() + panel.paints_button.minimumSizeHint().width()
+
+
+def test_the_sidebar_starts_wide_enough_for_its_rows_side_by_side_and_can_be_narrower():
+    from tessellatum.gui.main_window import MainWindow
+
+    window = MainWindow()
+    window.resize(2400, 1000)
+    window.show()
+    window.show_activity("Colors")
+    _app.processEvents()
+    panel = window.controls
+    assert panel.preferred_width() > panel.minimumSizeHint().width()  # the rows stacked need less
+    assert window.splitter.sizes()[0] >= panel.preferred_width()
+    row = panel.colors_from_combo.parentWidget()
+    assert not row.is_stacked() and not panel.colors_from_combo.is_stacked()
+    window.splitter.setSizes([panel.minimumSizeHint().width(), 1600, 240])
+    _app.processEvents()
+    assert row.is_stacked()  # narrower: the Paints button under the choices, never cut
+    window.close()

@@ -61,14 +61,14 @@ macOS (Cocoa) and Linux (X11 under Xvfb) for every pull request that touches the
 screenshots.
 
 In English, nothing is cut at any screen and scale checked (to 3840×2160 on Windows, to 2560×1440 on macOS and
-Linux), in either theme, but one: a 1280×720 screen at 200%, a 640×360 window, where the view buttons above the page are squeezed. On a narrow window the inspector folds away and the canvas bar
-moves what doesn't fit into its menu. The canvas's 100% stays a pixel of the page to a pixel of the screen at any
-interface scale (tested at 100% and 150%).
+Linux), in either theme. On a narrow window the inspector folds away and the canvas bar moves what doesn't fit into its
+menu; where even the view buttons don't fit (a 1280×720 screen at 200%, a 640×360 window), a list to pick the view
+from takes their place. The canvas's 100% stays a pixel of the page to a pixel of the screen at any interface scale
+(tested at 100% and 150%).
 
-In the pseudo-locale, nothing is cut on a 1280×720 screen at 100% on Windows (macOS's and Linux's wider fonts cut
-**Paints…** there), nor in any window 1,700 px wide or more. In a
-window of 1,280 px or less at 125% to 200%, the sidebar's **Paints…** is cut by a few pixels, and under about
-1,000 px the view buttons are squeezed too: a language that much longer than English will need those to give way.
+In the pseudo-locale, nothing is cut on Windows at any screen and scale checked either. Where a row of choices and
+buttons doesn't fit the sidebar's width, it stacks instead: the button under the choices, then the choices one under
+another, each whole. The sidebar starts as wide as its rows need side by side, so English at 100% looks as it did.
 
 ## Speed
 
