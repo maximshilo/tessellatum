@@ -4,6 +4,24 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.39] - 2026-11-27
+
+### Added
+
+- The wiki's **Settings reference**: every setting and choice by page and section, with its level, range and step,
+  default, each difficulty preset's value, when it applies (with Generate, drawn again by itself, at once), the words
+  search finds it by, and what it does. `docs/make_settings_reference.py` writes it from the settings registry, and a
+  test fails when it falls behind.
+
+### Changed
+
+- Getting started describes the first run (the icon, the appearance, where settings and recovery snapshots are kept)
+  and a first page through the current window: the welcome page, the freshness of the preview, undo, the export
+  dialog, projects.
+- The README names the workspace's features (comparison, color and region inspection, the page's measures, projects
+  and recovery) and the interface's benchmark and screenshot check; the wiki's Home links the settings reference and
+  gives the current test count.
+
 ## [1.1.38] - 2026-11-27
 
 ### Added
