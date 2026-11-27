@@ -4,6 +4,17 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.34] - 2026-11-27
+
+### Added
+
+- `docs/check_layout.py`: the window, the export dialog and the Preferences drawn at window sizes from 1280×720 to
+  3840×2160 and interface scales from 100% to 200%, in the light and dark themes and in a pseudo-locale (every string
+  about 40% longer). It reports any text cut, by its own size or by the panel it is in, and saves every screenshot.
+  The **layout** workflow runs it on Windows, macOS and Linux, each on its own display system, for every pull request
+  that touches the interface.
+- A test that Quit, Preferences and About carry the menu roles macOS uses to place them in the application menu.
+
 ## [1.1.33] - 2026-11-27
 
 ### Added

@@ -44,6 +44,18 @@ is gone as vanished rather than deleting them. Two checks help a translation:
 The tests check that every string the interface asks for is in the catalog and that the pseudo-locale leaves no English
 shown (`tests/test_i18n.py`).
 
+## Layout at every size
+
+```
+.venv\Scripts\python docs\check_layout.py OUT_DIR                        # 100-200%, 1280×720 and 1920×1080
+.venv\Scripts\python docs\check_layout.py OUT_DIR --pseudo --scales 1 1.5 --sizes 1280x720 2560x1440
+```
+
+It draws the window, the export dialog and the Preferences at each interface scale (a process each, with
+`QT_SCALE_FACTOR`) and window size, saves the screenshots and writes `layout.md`: whether the window fits and which
+text is cut. It needs a desktop session (Qt's offscreen platform has no fonts); the **layout** workflow runs it on
+the three platforms.
+
 ## Benchmarks
 
 ```
