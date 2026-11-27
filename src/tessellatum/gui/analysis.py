@@ -48,17 +48,31 @@ def metric_rows(measures) -> list[tuple[str, str]]:
         (translate("analysis", "Regions"), number(m.regions)),
         (translate("analysis", "Regions per cm²"), number(m.regions_per_cm2, 1)),
         (translate("analysis", "Smallest region"), translate("analysis", "{0:.1f} mm²").format(m.smallest_mm2)),
-        (translate("analysis", "Narrowest region"), translate("analysis", "{0:.1f} mm across at most")
-                                                    .format(m.narrowest_mm)),
-        (translate("analysis", "Thinner than the brush"), translate("analysis", "{0} of the page ({1:g} mm brush)")
-                                                          .format(_percent(m.sliver_fraction), m.brush_mm)),
+        (
+            translate("analysis", "Narrowest region"),
+            translate("analysis", "{0:.1f} mm across at most").format(m.narrowest_mm),
+        ),
+        (
+            translate("analysis", "Thinner than the brush"),
+            translate("analysis", "{0} of the page ({1:g} mm brush)").format(_percent(m.sliver_fraction), m.brush_mm),
+        ),
         (translate("analysis", "Numbers on leaders"), number(m.leader_labels)),
         (translate("analysis", "Cramped numbers"), number(m.cramped_labels)),
-        (translate("analysis", "Numbers under {0:g} pt").format(m.min_pt), _percent(m.small_label_fraction)
-         + ("" if m.min_label_pt is None else " " + translate("analysis", "(smallest {0:.1f} pt)")
-                                                    .format(m.min_label_pt))),
-        (translate("analysis", "Regions with no number"), translate("analysis", "{0:,} ({1} of the page)")
-                                                          .format(m.unlabeled_regions, _percent(m.unlabeled_area_fraction))),
+        (
+            translate("analysis", "Numbers under {0:g} pt").format(m.min_pt),
+            _percent(m.small_label_fraction)
+            + (
+                ""
+                if m.min_label_pt is None
+                else " " + translate("analysis", "(smallest {0:.1f} pt)").format(m.min_label_pt)
+            ),
+        ),
+        (
+            translate("analysis", "Regions with no number"),
+            translate("analysis", "{0:,} ({1} of the page)").format(
+                m.unlabeled_regions, _percent(m.unlabeled_area_fraction)
+            ),
+        ),
     ]
     return rows
 
@@ -191,7 +205,8 @@ class AnalysisPanel(QWidget):
                 child.setData(0, REGION_ROLE, int(region))
                 group.addChild(child)
             if len(regions) > ISSUES_LISTED:
-                more = QTreeWidgetItem([translate("analysis", "… and {0:,} more").format(len(regions) - ISSUES_LISTED)])
+                hidden = len(regions) - ISSUES_LISTED
+                more = QTreeWidgetItem([translate("analysis", "… and {0:,} more").format(hidden)])
                 more.setFlags(Qt.ItemIsEnabled)
                 group.addChild(more)
             self.issues.addTopLevelItem(group)

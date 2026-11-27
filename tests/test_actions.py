@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import SIGNAL, QEvent, QSettings  # noqa: E402
-from PySide6.QtGui import QKeySequence, QShortcut  # noqa: E402
+from PySide6.QtGui import QAction, QKeySequence, QShortcut  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu  # noqa: E402
 
 from tessellatum import __version__  # noqa: E402
@@ -82,6 +82,14 @@ def test_no_command_has_a_key_twice(window):
         keys = [sequence.toString() for sequence in action.shortcuts()]
         assert len(keys) == len(set(keys)), action.objectName()
     assert window.commands["undo"].shortcuts() and len(window.commands["redo"].shortcuts()) >= 1
+
+
+def test_the_application_menu_commands_have_their_roles(window):
+    # On macOS, Qt moves these into the application menu (Tessellatum > About, Settings…, Quit) by their role;
+    # elsewhere they stay in the menus they are in. Every other command keeps its place.
+    roles = {"quit": QAction.QuitRole, "preferences": QAction.PreferencesRole, "about": QAction.AboutRole}
+    for command in actions.COMMANDS:
+        assert window.commands[command.id].menuRole() == roles.get(command.id, QAction.NoRole), command.id
 
 
 def test_tooltips_name_the_shortcut(window):

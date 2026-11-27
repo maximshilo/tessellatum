@@ -763,7 +763,9 @@ class ControlsPanel(QWidget):
             if self.is_preset(name):
                 params = difficulty.for_medium(self.preset_params(name), medium)
                 paper = self.paper_combo.currentText() if hasattr(self, "paper_combo") else DEFAULT_PAPER
-                text = " ".join(t for t in (difficulty.practical(name, paper, term), difficulty.describe(params, term)) if t)
+                text = " ".join(
+                    t for t in (difficulty.practical(name, paper, term), difficulty.describe(params, term)) if t
+                )
                 self.preset_combo.setItemData(index, text, Qt.ToolTipRole)
 
     def _own_preset(self) -> str | None:
@@ -1304,8 +1306,11 @@ class ControlsPanel(QWidget):
             tip = term(control.setting.tooltip)
             if name == "palette_margin_de00" and screen:
                 tip += " " + (
-                    translate("controls_panel", "Coloring on a screen, the page keeps its colors at most {0:g} "
-                                                "ΔE00 apart, whatever this says.").format(difficulty.SCREEN_MARGIN_DE00)
+                    translate(
+                        "controls_panel",
+                        "Coloring on a screen, the page keeps its colors at most {0:g} "
+                        "ΔE00 apart, whatever this says.",
+                    ).format(difficulty.SCREEN_MARGIN_DE00)
                 )
             reason = control.setting.disabled_reason(chosen)
             where = (control.setting.category, self.section_key(control.setting), reason)
@@ -1517,8 +1522,9 @@ class ControlsPanel(QWidget):
         else:
             printed = print_scale(self._picture_size, PAPERS[paper]).printed_size_mm
             width, height = (max(1, round(mm * dpi / MM_PER_INCH)) for mm in printed)
-            text = translate("controls_panel", "{width:,} × {height:,} px ({0:.0f} Mpx) at {dpi:.0f} dpi on "
-                                               "{paper}.").format(width * height / 1e6, width=width, height=height, dpi=dpi, paper=paper)
+            text = translate(
+                "controls_panel", "{width:,} × {height:,} px ({0:.0f} Mpx) at {dpi:.0f} dpi on " "{paper}."
+            ).format(width * height / 1e6, width=width, height=height, dpi=dpi, paper=paper)
         capped = self.resolution_capped()
         if capped:
             text += " " + translate("controls_panel", "The most a PNG takes: {0:,} px along a side.").format(

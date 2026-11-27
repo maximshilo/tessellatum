@@ -27,7 +27,7 @@ from tessellatum.app import project as projects  # noqa: E402
 from tessellatum.app.recovery import RecoveryStore  # noqa: E402
 from tessellatum.app.snapshot import DocumentSettings  # noqa: E402
 from tessellatum.core import pipeline  # noqa: E402
-from tessellatum.gui import i18n, main_window  # noqa: E402
+from tessellatum.gui import i18n, main_window, preview_widget  # noqa: E402
 from tessellatum.gui.fields import ChoiceCombo, SegmentedControl  # noqa: E402
 from tessellatum.gui.main_window import MainWindow  # noqa: E402
 
@@ -128,7 +128,8 @@ def test_a_pseudo_translation_is_longer_and_keeps_what_a_translation_keeps():
 
 # What a widget may show untranslated: numbers with their units and signs, file names, and the symbols the
 # interface draws with (a dot for a change, a color's hex code).
-DATA = re.compile(r"^[\d\s.,:;×x%#()+\-−/–·*●…|]*(mm|cm|in|px|dpi|pt|mm²|in²|°|L\*|ΔE00|Mpx|s|×|%)?[\d\s.,]*$")
+UNITS = r"(mm|cm|in|px|dpi|pt|mm²|in²|°|L\*|ΔE00|Mpx|s|×|%)"
+DATA = re.compile(r"^[\d\s.,:;×x%#()+\-−/–·*●…|]*" + UNITS + r"?[\d\s.,]*$")
 FILE = re.compile(r"\S+\.(png|jpg|tessellatum|pdf|swatches|ase|gpl)$", re.I)
 
 
@@ -152,7 +153,11 @@ def _shown(root: QWidget):
     """(what, where, text) for every string ``root`` and its children show or say."""
     for widget in [root, *root.findChildren(QWidget)]:
         where = f"{type(widget).__name__}:{widget.objectName()}"
-        texts = {"tip": widget.toolTip(), "name": widget.accessibleName(), "description": widget.accessibleDescription()}
+        texts = {
+            "tip": widget.toolTip(),
+            "name": widget.accessibleName(),
+            "description": widget.accessibleDescription(),
+        }
         if isinstance(widget, (QLabel, QAbstractButton, QLineEdit)):
             texts["text"] = widget.text()
         if isinstance(widget, QLineEdit):
@@ -284,6 +289,9 @@ def test_numbers_are_written_the_locale_s_way():
     QLocale.setDefault(GERMAN)
     try:
         assert text.format(1448, 1086, mm=2.25, g=0.5, hex=255) == "1.448 × 1.086 px · 2,2 mm · 0,5 pt · FF"
+        # The zoom field too, and what it shows reads back as the same zoom.
+        assert preview_widget.zoom_text(0.075) == "7,5%" and preview_widget.zoom_text(1.5) == "150%"
+        assert preview_widget.parse_zoom(preview_widget.zoom_text(0.075)) == pytest.approx(0.075)
     finally:
         QLocale.setDefault(US)
 
@@ -306,7 +314,7 @@ def test_a_german_window_shows_and_takes_numbers_the_german_way(monkeypatch):
         QLocale.setDefault(US)
 
 
-# -- Paths with any characters ------------------------------------------------------------------------------------------
+# -- Paths with any characters -----------------------------------------------------------------------------------
 def _save_to(monkeypatch, path):
     monkeypatch.setattr(main_window.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(path), "")))
 

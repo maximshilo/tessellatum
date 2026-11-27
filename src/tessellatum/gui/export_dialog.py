@@ -61,14 +61,20 @@ def warnings_for(fmt: str, dpi: float | None, palette_format: str, colors: int, 
     if fmt == "Palette" and palette_format == swatches.PROCREATE and colors > swatches.PROCREATE_MAX_SWATCHES:
         files = -(-colors // swatches.PROCREATE_MAX_SWATCHES)
         found.append(
-            translate("export_dialog", "Procreate holds {0} colors a palette: the {colors} colors are written as "
-                                       "{files} files, each named for the colors it holds.").format(swatches.PROCREATE_MAX_SWATCHES, colors=colors, files=files)
+            translate(
+                "export_dialog",
+                "Procreate holds {0} colors a palette: the {colors} colors are written as "
+                "{files} files, each named for the colors it holds.",
+            ).format(swatches.PROCREATE_MAX_SWATCHES, colors=colors, files=files)
         )
     if fmt != "Palette" and not on_screen and smallest_pt < SMALL_NUMBER_PT:
         found.append(
-            translate("export_dialog", "Numbers as small as {smallest_pt:g} pt are hard to read on paper; "
-                                       "{SMALL_NUMBER_PT:g} pt or more reads well (Smallest number, on the "
-                                       "Document page).").format(smallest_pt=smallest_pt, SMALL_NUMBER_PT=SMALL_NUMBER_PT)
+            translate(
+                "export_dialog",
+                "Numbers as small as {smallest_pt:g} pt are hard to read on paper; "
+                "{SMALL_NUMBER_PT:g} pt or more reads well (Smallest number, on the "
+                "Document page).",
+            ).format(smallest_pt=smallest_pt, SMALL_NUMBER_PT=SMALL_NUMBER_PT)
         )
     return tuple(found)
 
@@ -136,7 +142,8 @@ class ExportDialog(QDialog):
         stale_layout.addWidget(self.export_previewed)
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.Cancel)
-        self.export_button = self.buttons.addButton(translate("export_dialog", "Export…"), QDialogButtonBox.AcceptRole)
+        self.export_button = self.buttons.addButton(translate("export_dialog", "Export…"),
+                                                    QDialogButtonBox.AcceptRole)
         self.export_button.setDefault(True)
         self.export_button.setProperty("primary", True)
         self.export_button.setAutoDefault(True)
@@ -164,8 +171,11 @@ class ExportDialog(QDialog):
         self.warnings.setText("\n".join(f"⚠ {text}" for text in state.warnings))
         self.warnings.setVisible(bool(state.warnings))
         if state.changed:
-            named = ", ".join(state.changed[:4]) + (" " + translate("export_dialog", "and {0} more")
-                                                          .format(len(state.changed) - 4) if len(state.changed) > 4 else "")
+            named = ", ".join(state.changed[:4]) + (
+                " " + translate("export_dialog", "and {0} more").format(len(state.changed) - 4)
+                if len(state.changed) > 4
+                else ""
+            )
             self.stale_text.setText(translate("export_dialog", "The preview is out of date. Changed since it was "
                                                                "made: {named}.").format(named=named))
         self.stale.setVisible(bool(state.changed))

@@ -70,7 +70,14 @@ MAX_THUMBNAIL = 4 * 1024 ** 2
 MAX_MEMBERS = 16
 MAX_PIXELS = 200_000_000
 MAX_FILE = MAX_MANIFEST + MAX_SOURCE + MAX_THUMBNAIL + 1024 ** 2  # its members, and the archive's own records
-IMAGE_FORMATS = {"PNG", "JPEG", "BMP", "WEBP", "TIFF", "GIF"}  # what Open Image reads (``gui.main_window.image_filter``)
+IMAGE_FORMATS = {
+    "PNG",
+    "JPEG",
+    "BMP",
+    "WEBP",
+    "TIFF",
+    "GIF",
+}  # what Open Image reads (``gui.main_window.image_filter``)
 
 _CHOICES = ("preset", "tone", "paper", "medium", "legend", "colors_from")  # DocumentSettings' text choices
 _SWITCHES = ("mix", "line_art", "detail", "text")

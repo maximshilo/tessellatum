@@ -2463,21 +2463,30 @@ class MainWindow(QMainWindow):
                                                "legend.").format(len(page.palette_rgb), title=title)
             thumbnail = palette_pixmap(page.palette_rgb)
         else:
-            what = {Version.PAGE: translate("main_window", "page"), Version.COMPLETED: translate("main_window", "completed"),
-                    Version.TINTED: translate("main_window", "tinted")}[version]
+            what = {
+                Version.PAGE: translate("main_window", "page"),
+                Version.COMPLETED: translate("main_window", "completed"),
+                Version.TINTED: translate("main_window", "tinted"),
+            }[version]
             if fmt == "PNG":
                 dpi = self.controls.get_export_dpi(max(width_mm, height_mm))
                 pixels = tuple(max(1, round(mm * dpi / MM_PER_INCH)) for mm in (width_mm, height_mm))
-                summary = (translate("main_window", "A PNG of the {what}: {0:,} × {1:,} px at {dpi:.0f} dpi, "
-                                                    "printing {on_paper}, with its legend under it.").format(pixels[0], pixels[1], what=what, dpi=dpi, on_paper=on_paper))
+                summary = translate(
+                    "main_window",
+                    "A PNG of the {what}: {0:,} × {1:,} px at {dpi:.0f} dpi, "
+                    "printing {on_paper}, with its legend under it.",
+                ).format(pixels[0], pixels[1], what=what, dpi=dpi, on_paper=on_paper)
                 if self.controls.resolution_capped():
                     summary += " " + translate("main_window", "The most a PNG takes is {0:,} px along a side.").format(
                         export.MAX_RASTER_LONG_EDGE
                     )
 
             else:
-                summary = (translate("main_window", "A PDF of the {what}: vector art printing {on_paper}, sharp "
-                                                    "at any size, with its legend on a sheet of its own.").format(what=what, on_paper=on_paper))
+                summary = translate(
+                    "main_window",
+                    "A PDF of the {what}: vector art printing {on_paper}, sharp "
+                    "at any size, with its legend on a sheet of its own.",
+                ).format(what=what, on_paper=on_paper)
             thumbnail = pixmap_of(page.image(version))
         warnings = warnings_for(
             fmt, dpi, now.export.palette_format, len(page.palette_rgb), now.values["min_label_pt"],

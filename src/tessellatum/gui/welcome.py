@@ -43,8 +43,14 @@ class Example:
 
 EXAMPLES = (
     Example("lion.jpg", QT_TRANSLATE_NOOP("welcome", "Lion"), '"African Lion", Mathias Appel, CC0'),
-    Example("cat.jpg", QT_TRANSLATE_NOOP("welcome", "Cat"), '"Headshot of orange cat with white face", Derrick Coetzee, CC0'),
-    Example("lakeside-castle.jpg", QT_TRANSLATE_NOOP("welcome", "Castle"), '"Switzerland - Oberhofen castle", Andrea Einaudi, CC0'),
+    Example(
+        "cat.jpg", QT_TRANSLATE_NOOP("welcome", "Cat"), '"Headshot of orange cat with white face", Derrick Coetzee, CC0'
+    ),
+    Example(
+        "lakeside-castle.jpg",
+        QT_TRANSLATE_NOOP("welcome", "Castle"),
+        '"Switzerland - Oberhofen castle", Andrea Einaudi, CC0',
+    ),
     Example("cartoon-girl.png", QT_TRANSLATE_NOOP("welcome", "Cartoon"), '"Cute girl", dcatcherex (Openclipart), CC0'),
 )
 

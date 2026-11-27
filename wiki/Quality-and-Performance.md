@@ -48,6 +48,28 @@ The four remaining misses are one feature, a cat's mouth. The five difficulty le
 targets allow (finer brushes, closer colors), and the spec lists where they miss them, mainly jaggedness on detailed
 photographs and numbers without room on the densest pages.
 
+## Platforms and scaling
+
+`docs/check_layout.py` draws the window on each sidebar page, the export dialog and the Preferences' pages:
+- on a screen of 1280×720, 1920×1080, 2560×1440 or 3840×2160;
+- at an interface scale of 100%, 125%, 150% or 200% (what Preferences > Interface scale and the system's display
+  scaling set), so a 1920×1080 screen at 200% is a 960×540 window;
+- in the light and the dark theme.
+
+It reports any text cut, by its own width or by the panel around it. The **layout** workflow runs it on Windows,
+macOS (Cocoa) and Linux (X11 under Xvfb) for every pull request that touches the interface, and keeps the
+screenshots.
+
+In English, nothing is cut at any screen and scale checked (to 3840×2160 on Windows, to 2560×1440 on macOS and
+Linux), in either theme, but one: a 1280×720 screen at 200%, a 640×360 window, where the view buttons above the page are squeezed. On a narrow window the inspector folds away and the canvas bar
+moves what doesn't fit into its menu. The canvas's 100% stays a pixel of the page to a pixel of the screen at any
+interface scale (tested at 100% and 150%).
+
+In the pseudo-locale, nothing is cut on a 1280×720 screen at 100% on Windows (macOS's and Linux's wider fonts cut
+**Paints…** there), nor in any window 1,700 px wide or more. In a
+window of 1,280 px or less at 125% to 200%, the sidebar's **Paints…** is cut by a few pixels, and under about
+1,000 px the view buttons are squeezed too: a language that much longer than English will need those to give way.
+
 ## Speed
 
 Median preview time and region count over 12 benchmark images (before the dark portrait was added), at each level's working size:
