@@ -174,13 +174,23 @@ class _Entry(QLineEdit):
     stepped = Signal(int)
     cancelled = Signal()
 
+    def _takes_escape(self) -> bool:
+        return self.isModified() or bool(self.property("invalid"))
+
+    def event(self, event) -> bool:
+        # Esc puts back the value being typed, before the window's Cancel can take it as its shortcut.
+        if event.type() == QEvent.ShortcutOverride and event.key() == Qt.Key_Escape and self._takes_escape():
+            event.accept()
+            return True
+        return super().event(event)
+
     def keyPressEvent(self, event) -> None:
         steps = {Qt.Key_Up: 1, Qt.Key_Down: -1, Qt.Key_PageUp: PAGE_STEPS, Qt.Key_PageDown: -PAGE_STEPS}
         if event.key() in steps:
             self.stepped.emit(steps[event.key()])
             event.accept()
             return
-        if event.key() == Qt.Key_Escape and (self.isModified() or self.property("invalid")):
+        if event.key() == Qt.Key_Escape and self._takes_escape():
             self.cancelled.emit()
             event.accept()
             return

@@ -157,6 +157,9 @@ class RegionInspector(QWidget):
             self.region_chosen.emit(current.data(Qt.UserRole))
 
     def eventFilter(self, watched, event) -> bool:
+        if watched is self.list and event.type() == QEvent.ShortcutOverride and event.key() == Qt.Key_Escape:
+            event.accept()  # Esc goes back to the palette, before the window's Cancel can take it
+            return True
         if watched is self.list and event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
             self.back.emit()
             return True

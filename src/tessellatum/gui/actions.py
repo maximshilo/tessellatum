@@ -120,6 +120,8 @@ COMMANDS = (
     Command("reset_layout", "Reset &Layout", VIEW, "Put the panels back where they start"),
     *(Command(f"theme_{mode.lower()}", f"&{mode}", VIEW, f"The {mode.lower()} appearance" if mode != theme.SYSTEM
               else "The system's appearance, following it as it changes", checkable=True) for mode in theme.MODES),
+    Command("shortcuts", "&Keyboard Shortcuts", HELP, "Every command's keys, and the keys that work in one place",
+            "shortcuts", ("Ctrl+/",)),
     Command("about", "&About Tessellatum", HELP, "Its version and licenses", "info", role=QAction.AboutRole),
 )
 COMMAND_IDS = tuple(command.id for command in COMMANDS)
@@ -162,6 +164,7 @@ class Actions(QObject):
             action.setToolTip(tip)
             action.setCheckable(command.checkable)
             action.setMenuRole(command.role)
+            action.setProperty("menu", command.menu.replace("&", ""))  # for the keyboard reference
             parent.addAction(action)  # its shortcut works anywhere in the window, menu bar or not
             self._by_id[command.id] = action
         self.versions = QActionGroup(parent)

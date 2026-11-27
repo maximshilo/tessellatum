@@ -385,6 +385,10 @@ class PaletteInspector(QWidget):
         return text
 
     def eventFilter(self, watched, event) -> bool:
+        if watched is self.list and event.type() == QEvent.ShortcutOverride and event.key() == Qt.Key_Escape \
+                and self.selected() is not None:
+            event.accept()  # Esc lets go of the color, before the window's Cancel can take it
+            return True
         if watched is self.list and event.type() == QEvent.KeyPress:
             if event.matches(QKeySequence.Copy):
                 self.copy("hex")

@@ -155,7 +155,9 @@ the page is open, once a page:
 
 ## Menus and shortcuts
 
-Every command is in the menu bar, and the most used have a shortcut (Cmd in place of Ctrl on macOS):
+Every command is in the menu bar, and the most used have a shortcut (Cmd in place of Ctrl on macOS). **Help >
+Keyboard Shortcuts** (Ctrl+/) lists them all as your platform writes them, with the keys that work in one place (the
+canvas, the palette, a field), and finds one by its name or its keys:
 
 | Command | Shortcut |
 |---|---|
@@ -177,6 +179,11 @@ Every command is in the menu bar, and the most used have a shortcut (Cmd in plac
 | View > Sidebar, Inspector | Ctrl+B, Ctrl+Alt+B |
 | View > Focus Mode | Ctrl+Shift+F (Esc leaves it) |
 | View > Diagnostics | Ctrl+Shift+D |
+| Help > Keyboard Shortcuts | Ctrl+/ |
+
+No command is a key that types, so typing in a field never triggers one. Esc is Cancel's while a page is being made,
+except in a field or a list that uses it: there it clears the search, puts back the value being typed, or lets go of
+the color.
 
 **View > Appearance** picks System (the window follows the system's light or dark setting as it changes), Light or
 Dark, and the choice is kept. **Edit > Undo** takes back the last change to the settings or the picture, named
@@ -363,7 +370,7 @@ and it is kept between runs. Each change applies at once.
 | Units | **Lengths in** millimeters or inches: how lengths and areas are shown and typed. The page's values are kept in millimeters, so switching never changes them. |
 | Workspace | **Reset Layout**, as in View. **Keep for recovery**: how often work with unsaved changes is kept to be recovered after a crash, every 1, 2 (the default), 5 or 10 minutes, or Off (see [Recovery](#recovery)). |
 | Performance | **Memory for pages made**: how much memory the pages made may take, kept so that Undo, Redo and a setting put back show their page at once (Automatic: a quarter of the memory, at most 2 GB; the page shown and the ones Undo and Redo go to are always kept). **Results kept**: how many pages' intermediate results are kept, so that trying one setting after another makes the next preview faster (Automatic keeps two, a few tens of MB each). **Clear Now** frees both. **Redraw lines and numbers**: how soon a change to the lines, numbers or tone draws the preview again by itself (after 0.2, 0.4 or 1 s), or **Only with Generate**. **Generate automatically**: whether a change to the colors, the difficulty, the paper or what is done with line art, faces and text makes the page by itself, a second after the last change: **Off** (the default; it waits for Generate Preview), **When it's quick** (while the picture's last page took under 2 s), or **Always**. |
-| Shortcuts | Every command's keys. |
+| Shortcuts | The keyboard reference, as Help > Keyboard Shortcuts shows it. |
 
 ## Difficulty
 

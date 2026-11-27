@@ -4,6 +4,21 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.32] - 2026-11-27
+
+### Added
+
+- **Help > Keyboard Shortcuts** (Ctrl+/; ⌘/ on macOS): every command's keys, in the platform's notation, with its
+  menu, and the keys that work in one place (the canvas, the palette, the regions, a setting's field, Find Setting).
+  Searchable by name, by keys (as shown or as "ctrl+f") or by place. The Preferences' Shortcuts page shows the same
+  reference.
+
+### Fixed
+
+- While a page was being made, Esc in a text field or a list stopped the page instead of doing that field's job:
+  clearing the settings search, putting back a value being typed, letting go of a color, going back from a color's
+  regions. Esc now does the field's job, and stops the page only where the field has nothing to do with it.
+
 ## [1.1.31] - 2026-11-27
 
 ### Added
