@@ -14,7 +14,7 @@ import math
 from typing import Hashable, Mapping
 
 from PIL import Image
-from PySide6.QtCore import QT_TRANSLATE_NOOP, QEvent, QLineF, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QT_TRANSLATE_NOOP, QEvent, QLineF, QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QCursor,
@@ -1247,7 +1247,8 @@ class ZoomBar(QWidget):
 
 class VersionBar(QWidget):
     """A row of buttons, one per view of the page (its versions, then the picture itself), of which one is down: the
-    view the canvas shows."""
+    view the canvas shows. Where the width given doesn't hold the buttons (a narrow canvas, a longer language), a list
+    to pick the view from takes their place."""
 
     version_changed = Signal(object)  # Version, or ORIGINAL
 
@@ -1257,7 +1258,14 @@ class VersionBar(QWidget):
         self._group = QButtonGroup(self)  # exclusive: one button down at a time
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(QLabel(translate("preview_widget", "Show")))
+        layout.setSizeConstraint(QHBoxLayout.SetNoConstraint)  # its minimum is minimumSizeHint's: the list's
+        self._label = QLabel(translate("preview_widget", "Show"))
+        layout.addWidget(self._label)
+        self.compact = QComboBox()  # the buttons' place when they don't fit
+        self.compact.setAccessibleName(translate("preview_widget", "Show"))
+        self.compact.setToolTip(translate("preview_widget", "The view of the page the canvas shows"))
+        self.compact.hide()
+        layout.addWidget(self.compact)
         for view in VIEWS:
             button = QPushButton(view_name(view))
             button.setCheckable(True)
@@ -1265,9 +1273,43 @@ class VersionBar(QWidget):
             self._group.addButton(button)
             self.buttons[view] = button
             layout.addWidget(button)
-            button.toggled.connect(lambda down, view=view: down and self.version_changed.emit(view))
+            button.toggled.connect(lambda down, view=view: down and self._on_chosen(view))
+            self.compact.addItem(view_name(view), view)
+            self.compact.setItemData(self.compact.count() - 1, view_description(view), Qt.ToolTipRole)
         layout.addStretch(1)
+        self.compact.activated.connect(lambda index: self.buttons[self.compact.itemData(index)].setChecked(True))
         self.buttons[Version.PAGE].setChecked(True)
+
+    def _on_chosen(self, view) -> None:
+        self.compact.setCurrentIndex(self.compact.findData(view))
+        self.version_changed.emit(view)
+
+    def row_width(self) -> int:
+        """The width the label and the buttons need side by side."""
+        layout = self.layout()
+        shown = [self._label, *self.buttons.values()]
+        return sum(w.sizeHint().width() for w in shown) + layout.spacing() * (len(shown) - 1)
+
+    def is_compact(self) -> bool:
+        return not self.compact.isHidden()
+
+    def sizeHint(self) -> QSize:
+        return QSize(self.row_width(), super().sizeHint().height())
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(self._label.sizeHint().width() + self.layout().spacing() + self.compact.sizeHint().width(),
+                     super().minimumSizeHint().height())
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        compact = event.size().width() < self.row_width()
+        if compact != self.is_compact():
+            focused = self.focusWidget() if self.isAncestorOf(self.focusWidget()) else None
+            self.compact.setVisible(compact)
+            for button in self.buttons.values():
+                button.setVisible(not compact)
+            if focused is not None:  # the focus stays on the view picker, in whichever form it takes
+                (self.compact if compact else self.buttons[self.version()]).setFocus()
 
     def version(self) -> Hashable:
         return next(view for view, button in self.buttons.items() if button.isChecked())

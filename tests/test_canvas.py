@@ -391,3 +391,30 @@ def test_the_guides_are_view_commands_kept_with_the_layout(window):
     assert window.preview.units() == INCH
     window.reset_layout()
     assert not window.preview.rulers_shown() and not window.preview.grid_shown()
+
+
+def test_the_view_buttons_become_a_list_where_the_canvas_has_no_room_for_them():
+    from tessellatum.gui.preview_widget import VersionBar
+
+    bar = VersionBar()
+    shown = []
+    bar.version_changed.connect(shown.append)
+    bar.show()
+    bar.resize(bar.row_width() + 40, bar.sizeHint().height())
+    _app.processEvents()
+    assert not bar.is_compact() and bar.compact.isHidden()
+    # Narrower than the buttons need: a list in their place, never squeezed buttons; it shows what is chosen.
+    assert bar.minimumSizeHint().width() < bar.row_width()
+    bar.resize(bar.row_width() - 1, bar.sizeHint().height())
+    _app.processEvents()
+    assert bar.is_compact() and all(b.isHidden() for b in bar.buttons.values())
+    assert bar.compact.currentData() == Version.PAGE
+    bar.compact.setCurrentIndex(bar.compact.findData(ORIGINAL))
+    bar.compact.activated.emit(bar.compact.currentIndex())
+    assert bar.version() == ORIGINAL and shown == [ORIGINAL]
+    bar.buttons[Version.TINTED].click()  # a menu command or a shortcut chooses through the buttons
+    assert bar.compact.currentData() == Version.TINTED and shown == [ORIGINAL, Version.TINTED]
+    bar.resize(bar.row_width() + 40, bar.sizeHint().height())
+    _app.processEvents()
+    assert not bar.is_compact() and bar.buttons[Version.TINTED].isChecked()
+    bar.close()

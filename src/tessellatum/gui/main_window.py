@@ -320,7 +320,7 @@ class MainWindow(QMainWindow):
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setStretchFactor(2, 0)
-        self.splitter.setSizes(list(DEFAULT_SPLIT))
+        self.splitter.setSizes(self._default_split())
         central = QWidget()
         central_layout = QHBoxLayout(central)
         central_layout.setContentsMargins(0, 0, 0, 0)
@@ -760,6 +760,11 @@ class MainWindow(QMainWindow):
             return self._focus["shown"][index] or name in self._auto_hidden
         return not widget.isHidden() or name in self._auto_hidden
 
+    def _default_split(self) -> list[int]:
+        """The panels' widths as the window starts: the sidebar as wide as its rows need side by side."""
+        sidebar, canvas, inspector = DEFAULT_SPLIT
+        return [max(sidebar, self.controls.preferred_width()), canvas, inspector]
+
     def _restore_layout(self) -> None:
         """The arrangement kept from the last run, where there is one."""
         self._default_expanded = {name: section.is_expanded() for name, section in self.controls.sections.items()}
@@ -843,7 +848,7 @@ class MainWindow(QMainWindow):
         self._end_scroll_restore()
         self.controls.show()
         self.inspector.show()
-        self.splitter.setSizes(list(DEFAULT_SPLIT))
+        self.splitter.setSizes(self._default_split())
         for name, section in self.controls.sections.items():
             section.toggle.setChecked(self._default_expanded[name])
         for scroll in self.controls.scrolls.values():

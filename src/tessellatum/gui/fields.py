@@ -22,8 +22,9 @@ from __future__ import annotations
 import math
 import re
 
-from PySide6.QtCore import QEvent, QLocale, Qt, Signal
+from PySide6.QtCore import QEvent, QLocale, QSize, Qt, Signal
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QButtonGroup,
     QComboBox,
     QHBoxLayout,
@@ -510,24 +511,103 @@ class ChoiceCombo(QComboBox):
             self.setCurrentIndex(index)
 
 
-class SegmentedControl(QWidget):
-    """Two to four exclusive choices side by side, one of them down. It answers to a combo box's calls (``addItems``,
-    ``currentText``, ``setCurrentText``, ``currentTextChanged`` …), so it takes a combo's place as it is; Left and
-    Right move the choice."""
+class Reflow(QWidget):
+    """Widgets side by side while the width given holds them all at their size, one under another when it doesn't: in
+    a longer language or at a larger scale, a row keeps its words whole rather than cutting them. Its minimum width is
+    its widest widget's, so a narrow sidebar gives it less room than the row needs and it stacks; ``side_by_side``
+    measures what a panel needs to hold every row in one line, the width it starts at (see ``preferred_width``)."""
+
+    measuring_rows = False  # while True, every Reflow's minimum is its row's: see ``side_by_side``
+
+    def __init__(self, parent: QWidget | None = None, spacing: int | None = None, stacked_spacing: int | None = None):
+        super().__init__(parent)
+        self._layout = QBoxLayout(QBoxLayout.LeftToRight, self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSizeConstraint(QBoxLayout.SetNoConstraint)  # its minimum is minimumSizeHint's, even alone
+        if spacing is not None:
+            self._layout.setSpacing(spacing)
+        self._row_spacing = self._layout.spacing()
+        self._stacked_spacing = self._row_spacing if stacked_spacing is None else stacked_spacing
+
+    def addWidget(self, widget: QWidget, stretch: int = 0) -> None:
+        self._layout.addWidget(widget, stretch)
+
+    def _widgets(self) -> list[QWidget]:
+        items = (self._layout.itemAt(i).widget() for i in range(self._layout.count()))
+        return [w for w in items if w is not None and not w.isHidden()]
+
+    def row_width(self) -> int:
+        """The width the widgets need side by side, none cut (a row within, side by side too)."""
+        widgets = self._widgets()
+        need = sum(w.row_width() if isinstance(w, Reflow) else w.minimumSizeHint().width() for w in widgets)
+        return need + max(0, self._row_spacing) * max(0, len(widgets) - 1)
+
+    def is_stacked(self) -> bool:
+        return self._layout.direction() == QBoxLayout.TopToBottom
+
+    def minimumSizeHint(self) -> QSize:
+        if Reflow.measuring_rows:
+            return QSize(self.row_width(), super().minimumSizeHint().height())
+        widest = max((w.minimumSizeHint().width() for w in self._widgets()), default=0)
+        return QSize(widest, super().minimumSizeHint().height())
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._reflow(event.size().width())
+
+    def _reflow(self, width: int) -> None:
+        stacked = width < self.row_width()
+        if stacked == self.is_stacked():
+            return
+        self._layout.setDirection(QBoxLayout.TopToBottom if stacked else QBoxLayout.LeftToRight)
+        self._layout.setSpacing(self._stacked_spacing if stacked else self._row_spacing)
+        self._stacked(stacked)
+        self.updateGeometry()
+
+    def _stacked(self, stacked: bool) -> None:
+        """What else changes when the widgets stack, or go back side by side."""
+
+
+def preferred_width(widget: QWidget) -> int:
+    """The minimum width ``widget`` would have with every ``Reflow`` in it holding its widgets side by side."""
+    rows = widget.findChildren(Reflow)
+
+    def ask_again() -> None:
+        # Every layout from each row up to ``widget`` keeps the sizes it was told: each is told again.
+        for row in rows:
+            w = row
+            while w is not None and w is not widget:
+                w.updateGeometry()
+                if w.layout() is not None:
+                    w.layout().invalidate()
+                w = w.parentWidget()
+        if widget.layout() is not None:
+            widget.layout().invalidate()
+
+    Reflow.measuring_rows = True
+    try:
+        ask_again()
+        return widget.minimumSizeHint().width()
+    finally:
+        Reflow.measuring_rows = False
+        ask_again()
+
+
+class SegmentedControl(Reflow):
+    """Two to four exclusive choices side by side, one of them down (one under another where the width doesn't hold
+    them: see ``Reflow``). It answers to a combo box's calls (``addItems``, ``currentText``, ``setCurrentText``,
+    ``currentTextChanged`` …), so it takes a combo's place as it is; Left and Right move the choice."""
 
     currentTextChanged = Signal(str)
     currentIndexChanged = Signal(int)
 
     def __init__(self, parent: QWidget | None = None, context: str = "settings"):
-        super().__init__(parent)
+        super().__init__(parent, spacing=0, stacked_spacing=2)
         self._context = context  # the choices' translation context (see ``ChoiceCombo``)
         self.setObjectName("segmented")
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         self._buttons: list[QPushButton] = []
-        self._layout = QHBoxLayout(self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(0)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self._group.idToggled.connect(self._on_toggled)
 
@@ -549,12 +629,24 @@ class SegmentedControl(QWidget):
         self._buttons.append(button)
         self._group.addButton(button, index)
         self._layout.addWidget(button, 1)
-        for i, b in enumerate(self._buttons):  # for the stylesheet's rounded ends
-            b.setProperty("position", "only" if len(self._buttons) == 1 else "first" if i == 0
-                          else "last" if i == len(self._buttons) - 1 else "middle")
+        self._place()
         if index == 0:
             button.setChecked(True)
         self._update_focus()
+
+    def _place(self) -> None:
+        # For the stylesheet's rounded ends: joined in a row, each whole when stacked.
+        last = len(self._buttons) - 1
+        for i, button in enumerate(self._buttons):
+            position = ("only" if last == 0 or self.is_stacked() else "first" if i == 0 else "last" if i == last
+                        else "middle")
+            if button.property("position") != position:
+                button.setProperty("position", position)
+                button.style().unpolish(button)
+                button.style().polish(button)
+
+    def _stacked(self, stacked: bool) -> None:
+        self._place()
 
     def count(self) -> int:
         return len(self._buttons)

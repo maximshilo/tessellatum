@@ -4,6 +4,19 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [1.1.37] - 2026-11-27
+
+### Fixed
+
+- Where the canvas is too narrow for the view buttons above the page (a 640×360 window: a 1280×720 screen at 200%; or
+  a longer language), a list to pick the view from takes their place, rather than buttons squeezed below their words.
+  It is one stop for Tab, and its arrow keys change the view.
+- Where the sidebar is too narrow for a row of choices and buttons (a larger interface scale, a longer language), the
+  row stacks rather than cutting its words: the Paints button under the Colors from choices, the presets' buttons
+  under the difficulty, and two to four choices one under another, each whole. The sidebar starts as wide as the rows
+  need side by side, so English at 100% looks as before. In a language 40% longer than English, no text is cut at
+  any window size and scale checked on Windows.
+
 ## [1.1.36] - 2026-11-27
 
 ### Fixed
