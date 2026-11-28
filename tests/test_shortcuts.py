@@ -152,7 +152,7 @@ def test_esc_in_a_field_or_a_list_is_its_own_while_a_page_is_being_made(window):
     # A value being typed is put back.
     from tessellatum.gui.fields import SettingField
 
-    field = window.controls.findChildren(SettingField)[0]
+    field = next(f for f in window.controls.findChildren(SettingField) if f.isEnabled())  # not one that's off
     before = field.entry.text()
     field.entry.setFocus()
     field.entry.selectAll()
