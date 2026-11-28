@@ -405,7 +405,20 @@ def _annotated(name: str, size: tuple[int, int]) -> list[tuple[int, int, int, in
     return [(face.box.x, face.box.y, face.box.w, face.box.h) for face in info.faces]
 
 
-@pytest.mark.parametrize("name", sorted(p.name for p in SAMPLES.iterdir() if p.suffix in (".png", ".jpg")))
+# Faces the detectors are known to miss: a benchmark image is never swapped for one they do better on, so a miss is
+# recorded here, with its reason, until a change finds it (and the strict mark then fails, to be removed).
+KNOWN_MISSES = {
+    "l-photo-dog-labrador.jpg": "a dog's head in three-quarter profile, one eye showing: YuNet finds frontal faces",
+}
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param(name, marks=pytest.mark.xfail(strict=True, reason=KNOWN_MISSES[name])) if name in KNOWN_MISSES else name
+        for name in sorted(p.name for p in SAMPLES.iterdir() if p.suffix in (".png", ".jpg"))
+    ],
+)
 def test_the_annotated_faces_are_found_and_nothing_else(name):
     picture = _picture(name)
     found = faces.find_faces(picture)

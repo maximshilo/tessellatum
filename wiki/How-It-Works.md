@@ -61,7 +61,7 @@ flowchart TD
    faces' and the subject's counting twice. A mix added later can take pixels from an earlier one, so each is checked
    again against all the others and dropped (and its room offered again) if it no longer meets the rule. A mix is
    never within the color margin of any paint, chosen or not (the paint does it without mixing), nor of any color
-   taken. How many mixes a page gets follows from the picture and the paints: on the 13 benchmark pictures at Medium,
+   taken. How many mixes a page gets follows from the picture and the paints: on the 13 benchmark pictures of 1.0.21 at Medium,
    the five primaries get 5.7 mixes on average and bring the page from 14.3 to 8.5 ΔE00 from the picture, a
    24-pencil box 4.0 (8.7 to 6.3), 48 paints spread over the gamut 2.2, and six grays almost none, as mixing two grays
    rarely brings anything clearly closer. Against taking every mix that helps at all, the rule keeps 85-97% of the

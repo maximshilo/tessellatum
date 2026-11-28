@@ -244,10 +244,13 @@ primary one: the report's per-case tables list the image under it.
   subject's when its middle lies inside an outline by the even-odd rule, on a
   left or top edge included, as a box holds its left and top edges; the rest of
   the page is background. Only pictures with one clear subject have them: the
-  Vermeer, the cat, the lion (its mane too; its background is the ground), the
-  palace in Palermo (to the tops of the cars parked before it) and the Swiss
-  castle (its buildings and the trees between them). The sunset and Times
-  Square have no one subject, and line art's background is bare paper. The
+  Vermeer, the Velázquez, the cat, the lion (its mane too; its background is the
+  ground), the palace in Palermo (to the tops of the cars parked before it), the
+  Swiss castle (its buildings and the trees between them), and from 2.0.6 the
+  three portraits (the 1909 lock keeper without the pole he holds), the dog, the
+  roses (to the lowest bloom) and the fruit. The sunset, Times Square, the
+  forest valley, the brick front and the lantern at dusk have no one subject,
+  and line art's background is bare paper. The
   outlines were traced by GrabCut from a rough polygon drawn by hand at 800 px,
   simplified to within 1.5 px there, and checked by eye.
 
