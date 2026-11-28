@@ -14,7 +14,7 @@ alone; Reset puts every setting back to its default.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QT_TRANSLATE_NOOP, QEvent, QSettings, Qt, QTimer, Signal
+from PySide6.QtCore import QT_TRANSLATE_NOOP, QEvent, QLocale, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -119,6 +119,13 @@ ADVANCED_SECTIONS = {
     settings.COLORS: ("Mixing",),
     settings.DOCUMENT: ("Tone", "Advanced · Lines", "Advanced · Numbers"),
 }
+
+
+def default_paper(locale: QLocale | None = None) -> str:
+    """The paper a first run starts on: Letter where the system measures in US units (``locale``, by default the
+    system's), A4 elsewhere. A paper chosen and kept always wins over it; the core's own default stays A4."""
+    system = (locale or QLocale()).measurementSystem()
+    return "Letter" if system == QLocale.MeasurementSystem.ImperialUSSystem else DEFAULT_PAPER
 
 
 def advanced_key(category: str) -> str:
@@ -340,7 +347,8 @@ class ControlsPanel(QWidget):
         self.paper_combo.addItems(list(settings.PAPER_CHOICES))
         for index, name in enumerate(settings.PAPER_CHOICES):
             self.paper_combo.setItemData(index, term(settings.PAPER_TOOLTIPS[name]), Qt.ToolTipRole)
-        self.paper_combo.setCurrentText(DEFAULT_PAPER)
+        self._default_paper = default_paper()
+        self.paper_combo.setCurrentText(self._default_paper)
         self.paper_combo.setToolTip(term(PAPER_TOOLTIP))
         self.medium_combo = SegmentedControl()
         self.medium_combo.addItems(list(difficulty.MEDIA))
@@ -1001,7 +1009,8 @@ class ControlsPanel(QWidget):
             if isinstance(entry, Setting):
                 if self.controls[entry.name].is_changed():
                     changed.append(entry.name)
-            elif entry.name not in ("preset", "paints") and self._choice_widget_value(entry.name) != entry.default:
+            elif entry.name not in ("preset", "paints") and self._choice_widget_value(entry.name) != self._choice_default(
+                    entry.name):
                 changed.append(entry.name)
         return changed
 
@@ -1018,7 +1027,7 @@ class ControlsPanel(QWidget):
             if name in self.controls:
                 self.controls[name].reset_to_reference()
             else:
-                self._set_choice(name, settings.choice(name).default)
+                self._set_choice(name, self._choice_default(name))
 
     def changed_settings(self) -> list[str]:
         """The settings changed from their references (see ``_show_references``), by name."""
@@ -1042,7 +1051,7 @@ class ControlsPanel(QWidget):
                     control.set_value(control.setting.default)
             self.tone_combo.setCurrentText(DEFAULT_TONE)
             self._show_tone(DEFAULT_TONE)
-            self.paper_combo.setCurrentText(DEFAULT_PAPER)
+            self.paper_combo.setCurrentText(self._default_paper)
             self.medium_combo.setCurrentText(difficulty.DEFAULT_MEDIUM)
             self.legend_combo.setCurrentText(DEFAULT_LEGEND_DETAIL)
             self.palette_combo.setCurrentIndex(0)
@@ -1497,6 +1506,10 @@ class ControlsPanel(QWidget):
         self._save()
         if not self._loading:
             self.legend_detail_changed.emit(detail)
+
+    def _choice_default(self, name: str):
+        """The choice ``name``'s default here: the registry's, but for the paper the system's own (``default_paper``)."""
+        return self._default_paper if name == "paper" else settings.choice(name).default
 
     def _paper(self) -> PaperFormat:
         """The sheet chosen: a named paper, or Custom at the size in its fields."""

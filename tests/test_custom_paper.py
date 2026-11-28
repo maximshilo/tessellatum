@@ -166,3 +166,44 @@ def test_a_custom_size_put_back_by_undo_shows_again(tmp_path):
     panel.show_settings(before)
     assert "on a 400 × 500 mm sheet" in panel.picture_print_label.text()
     assert panel.controls["custom_width_mm"].disabled_reason() is None
+
+# -- Letter by default in US units (T4) ----------------------------------------------------------------------------------
+@pytest.fixture
+def us_locale():
+    from PySide6.QtCore import QLocale
+
+    before = QLocale()
+    QLocale.setDefault(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
+    yield
+    QLocale.setDefault(before)
+
+
+def _paper_section(panel) -> str:
+    return next(key for key, entries in panel._section_entries.items() if any(e.name == "paper" for e in entries))
+
+
+@pytest.mark.system_paper
+def test_a_first_run_in_us_units_starts_on_letter_and_a_kept_paper_wins(tmp_path, us_locale):
+    from tessellatum.gui import controls_panel
+
+    assert controls_panel.default_paper() == "Letter"
+    fresh = ControlsPanel(store=_store(tmp_path))
+    assert fresh.get_page_style().paper == "Letter"
+    assert "paper" not in fresh._changes_in(_paper_section(fresh))  # the default here, not a change
+    fresh.paper_combo.setCurrentText("A4")
+    assert "paper" in fresh._changes_in(_paper_section(fresh))
+    kept = ControlsPanel(store=_store(tmp_path))
+    assert kept.get_page_style().paper == "A4"  # chosen and kept: it wins
+    kept.reset()
+    assert kept.get_page_style().paper == "Letter"
+    assert PageStyle().paper == "A4" and settings.choice("paper").default == "A4"  # the core's default stays A4
+
+
+@pytest.mark.system_paper
+def test_elsewhere_a_first_run_starts_on_a4(tmp_path):
+    from PySide6.QtCore import QLocale
+
+    from tessellatum.gui import controls_panel
+
+    assert controls_panel.default_paper(QLocale(QLocale.Language.German, QLocale.Country.Germany)) == "A4"
+    assert controls_panel.default_paper(QLocale(QLocale.Language.English, QLocale.Country.UnitedKingdom)) == "A4"
