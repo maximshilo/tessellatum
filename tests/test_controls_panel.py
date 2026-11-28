@@ -373,7 +373,8 @@ def test_the_paper_is_a_page_setting_kept_between_runs_and_reset_to_a4(tmp_path)
     # T3a: A4, A3 or A2 (and since 2.0.2 A1 and the US sheets), in the region settings, since it changes the page.
     first = ControlsPanel(store=_store(tmp_path))
     papers = [first.paper_combo.itemText(i) for i in range(first.paper_combo.count())]
-    assert papers == ["A4", "A3", "A2", "A1", "Letter", "Legal", "Tabloid"]
+    assert papers[:7] == ["A4", "A3", "A2", "A1", "Letter", "Legal", "Tabloid"] and papers[-1] == "Custom"
+    assert len(papers) == 15  # and the seven canvases (T3)
     assert first.paper_combo.itemData(4, Qt.ToolTipRole) == "8.5 × 11 in (216 × 279 mm)."
     assert first.get_page_style().paper == "A4"
     first.paper_combo.setCurrentText("A2")

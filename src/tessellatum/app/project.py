@@ -58,7 +58,7 @@ from tessellatum.core.painting import Version
 
 SUFFIX = ".tessellatum"
 FORMAT = "tessellatum-project"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 MANIFEST = "manifest.json"
 THUMBNAIL = "thumbnail.png"
 SOURCE_STEM = "source"
@@ -244,8 +244,15 @@ def _source_member(source_name: str) -> str:
     return SOURCE_STEM + suffix
 
 
-# Each older format version's manifest, made the next version's: (version, step). None yet: version 1 is the first.
-_MIGRATIONS: dict[int, object] = {}
+def _from_1(data: dict) -> dict:
+    """Version 1 (2.0.0 to 2.0.3) to 2 (2.0.4, the custom and canvas sheets): nothing to change, since a version 1
+    project names one of the papers it had and has no custom size, which takes its default. Version 2 says that an
+    older Tessellatum, which can't make a page on a sheet it doesn't know, refuses the project rather than fail."""
+    return {**data, "format_version": 2}
+
+
+# Each older format version's manifest, made the next version's: version to its step.
+_MIGRATIONS: dict[int, object] = {1: _from_1}
 
 
 def _migrate(data: dict) -> dict:

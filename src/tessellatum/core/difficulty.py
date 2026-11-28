@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from tessellatum.core.color import MIN_PALETTE_DE00
-from tessellatum.core.print_size import MIN_PAINTABLE_WIDTH_MM, PAPERS
+from tessellatum.core.print_size import CUSTOM, MIN_PAINTABLE_WIDTH_MM, PAPERS, PaperFormat, paper_size_text
 from tessellatum.core.regions import CORNER_CONTRAST_DE00, SHARPEST_CORNER_DEG
 
 
@@ -254,16 +254,33 @@ def _about(count: float) -> int:
     return round(count / 50) * 50
 
 
-def practical(name: str, paper: str = "A4", tr: Callable[[str], str] = _same) -> str | None:
-    """What the built-in preset ``name`` gives on a ``paper`` page, in regions to paint; None for any other."""
+def practical(name: str, paper: str | PaperFormat = "A4", tr: Callable[[str], str] = _same) -> str | None:
+    """What the built-in preset ``name`` gives on a ``paper`` page (a paper's name, or the sheet itself), in regions to
+    paint; None for any other."""
     if name not in TYPICAL_REGIONS:
         return None
-    width, height = PAPERS[paper].printable_mm()
+    sheet = PAPERS[paper] if isinstance(paper, str) else paper
+    width, height = sheet.printable_mm()
     a4_width, a4_height = PAPERS["A4"].printable_mm()
     scale = width * height / (a4_width * a4_height)
     median, low, high = (_about(count * scale) for count in TYPICAL_REGIONS[name])
-    return tr("About {median:,} regions to paint on {paper} paper ({low:,} to {high:,} on most pictures).").format(
-        median=median, paper=paper, low=low, high=high)
+    return tr("About {median:,} regions to paint on {paper} ({low:,} to {high:,} on most pictures).").format(
+        median=median, paper=sheet_phrase(sheet), low=low, high=high)
+
+
+def sheet_phrase(paper: PaperFormat) -> str:
+    """``paper`` as a sentence names it: "A4 paper", "a 40 × 50 cm canvas", "a 300 × 400 mm sheet"."""
+    named = sheet_name(paper)
+    return f"{named} paper" if named == paper.name else named
+
+
+def sheet_name(paper: PaperFormat) -> str:
+    """``paper`` as "on ..." names it: "A4", "a 40 × 50 cm canvas", "a 300 × 400 mm sheet"."""
+    if paper.name == CUSTOM:
+        return f"a {paper_size_text(paper)} sheet"
+    if paper.name.endswith("canvas"):
+        return f"a {paper.name}"
+    return paper.name
 
 
 def describe(params: DifficultyParams, tr: Callable[[str], str] = _same) -> str:

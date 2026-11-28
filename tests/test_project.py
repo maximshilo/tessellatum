@@ -192,7 +192,7 @@ def test_a_truncated_project_is_refused(tmp_path):
 
 
 @pytest.mark.parametrize("change, words", [
-    (lambda i: i.update(format_version=2), "newer Tessellatum"),
+    (lambda i: i.update(format_version=projects.FORMAT_VERSION + 1), "newer Tessellatum"),
     (lambda i: i.pop("format_version"), "no format version"),
     (lambda i: i.update(format="something-else"), "isn't a Tessellatum project"),
     (lambda i: i["settings"]["values"].update(num_colors=10_000), "Colors"),

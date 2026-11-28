@@ -28,7 +28,10 @@ from tessellatum.core import difficulty
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import DEFAULT_LEGEND_DETAIL, LEGEND_DETAILS, NAME, NAME_HEX_RGB, NAME_RECIPE, NUMBER_ONLY
 from tessellatum.core.pipeline import Handling
-from tessellatum.core.print_size import MM_PER_INCH, PAPERS
+from tessellatum.core.print_size import (
+    CUSTOM_MAX_MM, CUSTOM_MIN_MM, PAPERS, paper_size_text,
+)
+from tessellatum.core.print_size import CUSTOM as CUSTOM_PAPER
 from tessellatum.core.render import (
     DEFAULT_TONE,
     LINE_WIDTH_MM_RANGE,
@@ -147,6 +150,13 @@ LINES = "Lines and numbers"
 LINE_ART = "Line art"
 TEXT = "Text"
 GROUPS = (REGIONS, FACES, LINES, LINE_ART, TEXT)
+
+
+CUSTOM_SIZE_TOOLTIP = (
+    "The custom sheet's size, either way round (the page turns with the picture), with 10 mm margins: from 100 mm up "
+    "to 1,189 mm. The larger the sheet, the more memory a page takes: at 594 × 841 mm, about 6 GB at Medium and 9 GB "
+    "at Realistic."
+)
 
 
 def _gray(name: str, label: str, tooltip: str) -> Setting:
@@ -331,6 +341,13 @@ SETTINGS: tuple[Setting, ...] = (
         "text_max_height_mm", HANDLING, TEXT, "Print lettering up to", "mm", 5.0, 60.0, 1.0,
         "Lines of text up to this tall on the page are printed; taller lettering is big enough to paint as shapes.",
     ),
+    # -- The page: a custom sheet's size --
+    Setting(
+        "custom_width_mm", STYLE, LINES, "Width", "mm", CUSTOM_MIN_MM, CUSTOM_MAX_MM, 1.0, CUSTOM_SIZE_TOOLTIP,
+    ),
+    Setting(
+        "custom_height_mm", STYLE, LINES, "Height", "mm", CUSTOM_MIN_MM, CUSTOM_MAX_MM, 1.0, CUSTOM_SIZE_TOOLTIP,
+    ),
 )
 
 # -- The registry: what each setting is, beyond its range (F4, D-008) ----------------------------------------------
@@ -370,6 +387,10 @@ ONLY_WITH_TEXT = "Only with Print text."
 def _unless(choice: str, reason: str) -> Callable[[Mapping], str | None]:
     """Enabled while the switch ``choice`` is on; else ``reason``."""
     return lambda chosen: None if chosen.get(choice, True) else reason
+
+
+def _custom_only(chosen: Mapping) -> str | None:
+    return None if chosen.get("paper") == CUSTOM_PAPER else "Only with Paper: Custom."
 
 
 def _on_paper(chosen: Mapping) -> str | None:
@@ -437,11 +458,17 @@ _SLIDER_META: dict[str, tuple] = {
                    _unless("line_art", ONLY_WITH_LINE_ART)),
     "text_max_height_mm": (GENERATION, "Text", ADVANCED, LENGTH, ("lettering", "captions", "signs", "text height"),
                            _unless("text", ONLY_WITH_TEXT)),
+    "custom_width_mm": (DOCUMENT, "Page", INTENT, LENGTH, ("custom size", "sheet width", "canvas", "paper width"),
+                        _custom_only),
+    "custom_height_mm": (DOCUMENT, "Page", INTENT, LENGTH, ("custom size", "sheet height", "canvas", "paper height"),
+                         _custom_only),
 }
+# The style's settings that change the sheet, and so the regions: they make the page again, as the paper does.
+SHEET_SETTINGS = frozenset({"custom_width_mm", "custom_height_mm"})
 SETTINGS = tuple(
     dataclasses.replace(
         s, category=m[0], section=m[1], level=m[2], unit_kind=m[3], aliases=m[4], enabled_when=m[5],
-        policy=DEBOUNCED if s.owner == STYLE else EXPLICIT,
+        policy=DEBOUNCED if s.owner == STYLE and s.name not in SHEET_SETTINGS else EXPLICIT,
     )
     for s in SETTINGS for m in (_SLIDER_META[s.name],)
 )
@@ -466,12 +493,13 @@ PAPER_TOOLTIP = (
 
 
 def _paper_tip(name: str) -> str:
-    """A paper's size, in inches first for a US sheet."""
+    """A paper's size, in inches first for a US sheet; a canvas's, where it prints."""
     paper = PAPERS[name]
     mm = f"{paper.width_mm:.0f} × {paper.height_mm:.0f} mm"
+    canvas = " A canvas, to print at a print shop; its legend prints on A4 or Letter." if "canvas" in name else ""
     if paper.inches:
-        return f"{paper.width_mm / MM_PER_INCH:g} × {paper.height_mm / MM_PER_INCH:g} in ({mm})."
-    return f"{mm}."
+        return f"{paper_size_text(paper)} ({mm}).{canvas}"
+    return f"{mm}.{canvas}"
 
 
 # A1 peaks at 5.8 GB at Medium and 8.7 GB at Realistic on the benchmark's lion (3.4 GB on A2 at Realistic; measured
@@ -479,6 +507,8 @@ def _paper_tip(name: str) -> str:
 A1_MEMORY = "A page this large needs a lot of memory: about 6 GB at Medium and 9 GB at Realistic."
 PAPER_TOOLTIPS = {name: _paper_tip(name) for name in PAPERS}
 PAPER_TOOLTIPS["A1"] += " " + A1_MEMORY
+PAPER_TOOLTIPS[CUSTOM_PAPER] = "A sheet of your own size: set its Width and Height below."
+PAPER_CHOICES = (*PAPERS, CUSTOM_PAPER)
 LEGEND_TOOLTIPS = {
     NUMBER_ONLY: "Each color's swatch with its number in it, and nothing beside it.",
     NAME: "Each color's everyday name beside its swatch (\"dusty rose\", \"olive green\"): the nearest of about 800 names, every color a different one.",
@@ -560,8 +590,9 @@ CHOICES: tuple[Choice, ...] = (
            options=tuple(difficulty.preset_names()), option_tips={CUSTOM: CUSTOM_TOOLTIP},
            aliases=("level", "difficulty", "preset")),
     Choice("paper", "Paper", ENUM, DEFAULT_PAPER, "style/paper", DOCUMENT, "Page", INTENT, PAPER_TOOLTIP,
-           options=tuple(PAPERS), option_tips=PAPER_TOOLTIPS, field="PageStyle.paper",
-           aliases=("sheet", "page size", "A3", "A2", "A1", "letter", "legal", "tabloid", "ledger", "US")),
+           options=PAPER_CHOICES, option_tips=PAPER_TOOLTIPS, field="PageStyle.paper",
+           aliases=("sheet", "page size", "A3", "A2", "A1", "letter", "legal", "tabloid", "ledger", "US", "canvas",
+                    "custom size")),
     Choice("medium", "Coloring on", ENUM, difficulty.DEFAULT_MEDIUM, "difficulty/medium", COLORS, "Medium", INTENT,
            MEDIUM_TOOLTIP, options=tuple(difficulty.MEDIA), option_tips=MEDIUM_TOOLTIPS,
            aliases=("screen", "procreate", "digital", "paper")),

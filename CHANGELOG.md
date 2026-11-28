@@ -4,6 +4,20 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [2.0.4] - 2026-11-28
+
+### Added
+- The usual paint-by-numbers kit canvases as papers: 30 × 40, 40 × 50, 50 × 65 and 60 × 75 cm, and 12 × 16, 16 × 20
+  and 18 × 24 in, to print at a print shop.
+- **Custom** paper, with **Width** and **Height** (100 to 1,189 mm, shown in millimeters or inches) under it: a page
+  made for a sheet of your own size, every size on paper applying on it. A custom sheet the size of a named one makes
+  the same page. Both are kept in the settings and in projects.
+
+### Changed
+- A canvas's or a custom sheet's legend prints on A4, or Letter for a size in inches, when the sheet is larger than A4.
+- Projects are saved in format 2, so an older Tessellatum, which doesn't know the new sheets, says it can't open one
+  rather than fail; projects of format 1 open as before.
+
 ## [2.0.3] - 2026-11-28
 
 ### Changed

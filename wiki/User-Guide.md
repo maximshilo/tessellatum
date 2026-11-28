@@ -296,8 +296,11 @@ place, to compare settings there.
 
 ## Paper
 
-**Paper** (A4 by default; A3, A2 or A1; or the US sizes Letter, Legal and Tabloid, at the top of the region settings,
-each paper's size in its tooltip) is the sheet the page is made for. Every size
+**Paper** (A4 by default; A3, A2 or A1; the US sizes Letter, Legal and Tabloid; the usual kit canvases, 30 × 40,
+40 × 50, 50 × 65 and 60 × 75 cm and 12 × 16, 16 × 20 and 18 × 24 in; or **Custom**, at the top of the region
+settings, each paper's size in its tooltip) is the sheet the page is made for. With Custom, **Width** and **Height**
+under it set the sheet's size, either way round, from 100 mm to 1,189 mm, shown in millimeters or inches as the
+other lengths are (Preferences > Units); a size of whole inches is a sheet in inches. Every size
 on paper -- the brush, the smallest region, the lines, the numbers -- applies on that sheet, so a larger one prints the
 picture larger and makes a finer page of it: more and smaller regions, each still as wide as the brush. The page is
 made at more pixels on a larger sheet, the picture scaled up where it has fewer, so that every region still has room
@@ -308,7 +311,9 @@ A1; at Realistic, 7 s, 15 s, 34 s and 110 s). Letter takes about as long as A4, 
 A1 needs a lot of memory: a page of the lion peaks at 5.8 GB at Medium and 8.7 GB at Realistic (3.4 GB on A2 at
 Realistic), so it wants a computer with 16 GB or more, and its PNG is at most 507 dpi (16,384 px along a side). The
 PDF's sheets are this paper, the page landscape when the picture is wider than tall and the legend on a portrait
-sheet of its own; an A1 page's legend prints on A4 instead, a sheet to keep beside the canvas rather than a poster.
+sheet of its own; an A1, canvas or custom page larger than A4 has its legend on A4 instead (Letter for a size in
+inches), a sheet to keep beside the canvas rather than a poster. A canvas prints at a print shop, its page inside
+10 mm margins; a size smaller than A4 keeps its legend on its own sheets.
 A legend always prints at its own sizes, its text 7 pt and more and its swatches 12 mm: one too long for its sheet
 (64 colors with their mixes on Letter) goes on to another, under a heading that says what it continues. A PNG
 records the resolution that prints it on this paper.

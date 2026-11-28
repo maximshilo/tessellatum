@@ -1129,7 +1129,7 @@ def _make_page(
     # The regions depend on the picture, its page's size, the difficulty, the handling and the paper, and on nothing
     # else the page's style says: kept, a change to the lines or the numbers draws the page again from here.
     made = _cache.get_or_compute(
-        image_bgr, ("regions", long_edge, params, handling, style.paper),
+        image_bgr, ("regions", long_edge, params, handling, style.paper_format),
         lambda: _page_regions(
             resized, labels, palette_bgr, ink_mask, halo_px, detail, in_faces, found_text, params, handling, paper,
             min_area_px, min_width_px, thin_px, check_cancelled,

@@ -26,9 +26,11 @@ TIMEOUT_S = 120
 # -- The registry's policies ---------------------------------------------------------------------------------------
 def test_the_lines_numbers_and_tone_redraw_the_legend_applies_at_once_the_rest_waits_for_generate():
     debounced = {e.name for e in settings.entries() if e.policy == settings.DEBOUNCED}
-    style_sliders = {s.name for s in settings.SETTINGS if s.owner == settings.STYLE}
+    style_sliders = {s.name for s in settings.SETTINGS if s.owner == settings.STYLE} - settings.SHEET_SETTINGS
     assert debounced == style_sliders | {"tone"}
     assert len(style_sliders) == 10
+    # A custom sheet's size changes the regions, as the paper does: it waits for Generate (paper-sizes T3).
+    assert all(settings.setting(name).policy == settings.EXPLICIT for name in settings.SHEET_SETTINGS)
     assert settings.choice("legend_detail").policy == settings.IMMEDIATE
     assert settings.choice("paper").policy == settings.EXPLICIT  # the page's size: made again
 
