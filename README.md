@@ -23,7 +23,7 @@ digital art app: flat, outlined regions, each with a number, and a matching colo
 color and gives its hex code and RGB values, or how to mix it from your own paints; or a page made from just the
 paints you own and the colors they mix. It pairs classical
 image analysis with compact neural networks that run entirely on-device, and holds every page to physical rules of
-paintability on the sheet it is made for (A4 to A1, or US Letter, Legal or Tabloid): no region narrower than the brush, no number too small to read, no two colors too close
+paintability on the sheet it is made for (A4 to A1, US Letter to Tabloid, a kit canvas or a size of your own): no region narrower than the brush, no number too small to read, no two colors too close
 to tell apart.
 
 ## Gallery
@@ -47,8 +47,8 @@ domain ([sources](tests/sample_images/SOURCES.md)).
 
 ![Tessellatum's window: the settings by category on the left, the coloring page and its legend in the middle, its palette on the right](docs/assets/screenshot.png)
 
-Pick a difficulty from Beginner to Realistic, or tune any of 30 settings; preview the page, its painted version and a
-tinted painting guide; export a PNG at the resolution you choose (600 dpi by default) or a PDF of vector art, on A4 to A1 or US Letter, Legal or Tabloid.
+Pick a difficulty from Beginner to Realistic, or tune any of 32 settings; preview the page, its painted version and a
+tinted painting guide; export a PNG at the resolution you choose (600 dpi by default) or a PDF of vector art, on A4 to A1, US Letter, Legal or Tabloid, a canvas size (40 × 50 cm and six more) or a custom size.
 Compare two pages side by side, inspect a color or a single region on paper, check the page's paintability measures, and
 keep the work as a project, recovered if the app closes unexpectedly.
 

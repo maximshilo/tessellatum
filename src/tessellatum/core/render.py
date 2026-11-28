@@ -30,16 +30,22 @@ from tessellatum.core.labels import (
 )
 from tessellatum.core.legend import DEFAULT_LEGEND_DETAIL
 from tessellatum.core.print_size import (
+    CUSTOM,
     MIN_LABEL_SIZE_PT,
     MIN_REGION_AREA_MM2,
     OUTLINE_WIDTH_MM,
     PAPERS,
     PaperFormat,
     PrintScale,
+    custom_paper,
     print_scale,
 )
 from tessellatum.core.regions import Region
 from tessellatum.core.text import Lettering
+
+# A custom sheet's size to start from: the usual kit canvas's, 40 x 50 cm.
+CUSTOM_WIDTH_MM = 400.0
+CUSTOM_HEIGHT_MM = 500.0
 
 # The page's ink, as a tone on white paper: 0 is black, 255 is invisible.
 # Gray rather than black, so that a line disappears under the paint that is
@@ -120,7 +126,10 @@ class PageStyle:
     from a line of text found, and ``split_neck_mm`` how narrow a region's
     paper may get between its lines before each side of it gets its number
     (see ``labels``). All are on paper: the sheet named ``paper``, one of
-    ``print_size.PAPERS``, which the page is made for (see ``scale``).
+    ``print_size.PAPERS``, which the page is made for (see ``scale``), or
+    ``print_size.CUSTOM``, a sheet ``custom_width_mm`` by ``custom_height_mm``
+    (either way round; kept while another paper is chosen, for when Custom is
+    chosen again).
     ``legend_detail`` is what the legend writes beside each swatch (see
     ``legend.swatch_texts``).
 
@@ -144,10 +153,14 @@ class PageStyle:
     split_neck_mm: float | None = SPLIT_NECK_MM  # None numbers every region once, as before 1.0.6
     paper: str = "A4"
     legend_detail: str = DEFAULT_LEGEND_DETAIL  # what the legend writes beside each swatch (``legend.LEGEND_DETAILS``)
+    custom_width_mm: float = CUSTOM_WIDTH_MM
+    custom_height_mm: float = CUSTOM_HEIGHT_MM
 
     @property
     def paper_format(self) -> PaperFormat:
-        """The sheet the page is made for (see ``print_size.PAPERS``)."""
+        """The sheet the page is made for (see ``print_size.PAPERS`` and ``print_size.custom_paper``)."""
+        if self.paper == CUSTOM:
+            return custom_paper(self.custom_width_mm, self.custom_height_mm)
         return PAPERS[self.paper]
 
     def scale(self, size: tuple[int, int]) -> PrintScale:

@@ -57,8 +57,22 @@ A1 = PaperFormat("A1", width_mm=594.0, height_mm=841.0, margin_mm=10.0)
 LETTER = PaperFormat("Letter", width_mm=8.5 * MM_PER_INCH, height_mm=11 * MM_PER_INCH, margin_mm=10.0, inches=True)
 LEGAL = PaperFormat("Legal", width_mm=8.5 * MM_PER_INCH, height_mm=14 * MM_PER_INCH, margin_mm=10.0, inches=True)
 TABLOID = PaperFormat("Tabloid", width_mm=11 * MM_PER_INCH, height_mm=17 * MM_PER_INCH, margin_mm=10.0, inches=True)
-PAPERS = {paper.name: paper for paper in (A4, A3, A2, A1, LETTER, LEGAL, TABLOID)}
-US_PAPERS = frozenset(name for name, paper in PAPERS.items() if paper.inches)
+# The usual paint-by-numbers kit canvases, by their size (40 x 50 cm the commonest), to print at a print shop.
+CANVASES = tuple(
+    PaperFormat(f"{w:g} × {h:g} cm canvas", width_mm=w * 10.0, height_mm=h * 10.0, margin_mm=10.0)
+    for w, h in ((30, 40), (40, 50), (50, 65), (60, 75))
+) + tuple(
+    PaperFormat(f"{w:g} × {h:g} in canvas", width_mm=w * MM_PER_INCH, height_mm=h * MM_PER_INCH, margin_mm=10.0,
+                inches=True)
+    for w, h in ((12, 16), (16, 20), (18, 24))
+)
+PAPERS = {paper.name: paper for paper in (A4, A3, A2, A1, LETTER, LEGAL, TABLOID, *CANVASES)}
+US_PAPERS = frozenset({LETTER.name, LEGAL.name, TABLOID.name})
+# A sheet of one's own size, width and height given (see ``custom_paper``): from 100 mm across, which leaves 80 mm
+# inside the margins, room for two of the legend's cells, up to A0's long side.
+CUSTOM = "Custom"
+CUSTOM_MIN_MM = 100.0
+CUSTOM_MAX_MM = 1189.0
 # The papers printed at home or at a copy shop, whose legend prints on a sheet of the same paper. Any other sheet larger
 # than A4 (A1, a canvas, a custom size) is a poster or a print shop's job, and its legend, which a painter keeps beside
 # the canvas, prints on A4 or Letter instead (see ``legend_paper``).
@@ -115,6 +129,21 @@ class PrintScale:
     def mm2_to_px(self, mm2: float) -> float:
         """An area in square millimeters, in pixels."""
         return mm2 * self.px_per_mm**2
+
+
+def custom_paper(width_mm: float, height_mm: float) -> PaperFormat:
+    """The sheet of one's own size ``width_mm`` by ``height_mm`` (either way round: a page turns with its picture),
+    with 10 mm margins; sized in inches if both sides are whole inches."""
+    short, long = sorted((float(width_mm), float(height_mm)))
+    inches = all(abs(side / MM_PER_INCH - round(side / MM_PER_INCH)) < 1e-6 for side in (short, long))
+    return PaperFormat(CUSTOM, width_mm=short, height_mm=long, margin_mm=10.0, inches=inches)
+
+
+def paper_size_text(paper: PaperFormat) -> str:
+    """``paper``'s size as a person gives it: "210 × 297 mm", or "8.5 × 11 in" for one sized in inches."""
+    if paper.inches:
+        return f"{paper.width_mm / MM_PER_INCH:g} × {paper.height_mm / MM_PER_INCH:g} in"
+    return f"{paper.width_mm:g} × {paper.height_mm:g} mm"
 
 
 def legend_paper(paper: PaperFormat) -> PaperFormat:

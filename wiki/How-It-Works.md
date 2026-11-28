@@ -5,7 +5,7 @@ line art: if it is, the page is drawn from the artwork's own ink and fills. On a
 faces and the picture's subject, which get smaller regions. On every picture it looks for lines of text, whose letters
 are printed and kept free of numbers.
 
-Every size on paper below is on the sheet the page is made for, A4 by default, or A3, A2, A1, Letter, Legal or Tabloid: a larger sheet prints the
+Every size on paper below is on the sheet the page is made for, A4 by default, or A3, A2, A1, Letter, Legal, Tabloid, a canvas or a custom size: a larger sheet prints the
 picture larger, so the same millimetres cover less of the picture, and the page is made at more pixels (never more than
 the picture's own). What is found in the picture -- line art, faces, the subject, text -- is found the same way
 whatever the sheet.

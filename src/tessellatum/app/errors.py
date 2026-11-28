@@ -12,9 +12,14 @@ import errno
 # file.
 MAKING, WRITING = "making", "writing"
 
-# A page that ran out of memory on one of these papers is offered the next smaller of its kind: A1, A2, A3, A4; and
-# Tabloid or Legal, Letter.
-_SMALLER = {"A1": "A2", "A2": "A3", "A3": "A4", "Tabloid": "Letter", "Legal": "Letter"}
+# A page that ran out of memory on one of these papers is offered the next smaller of its kind: A1, A2, A3, A4;
+# Tabloid or Legal, Letter; and the canvases down to the smallest in their units. On a custom sheet, a smaller size.
+_SMALLER = {
+    "A1": "A2", "A2": "A3", "A3": "A4", "Tabloid": "Letter", "Legal": "Letter",
+    "60 × 75 cm canvas": "50 × 65 cm canvas", "50 × 65 cm canvas": "40 × 50 cm canvas",
+    "40 × 50 cm canvas": "30 × 40 cm canvas", "18 × 24 in canvas": "16 × 20 in canvas",
+    "16 × 20 in canvas": "12 × 16 in canvas",
+}
 
 _MEMORY_WORDS = ("out of memory", "insufficient memory", "cannot allocate", "unable to allocate", "bad_alloc")
 
@@ -39,13 +44,15 @@ def explain(
     what to try. ``paper`` is the page's; ``file_format`` ("PNG", "PDF", "Palette") and ``file_name`` the file being
     written, if one was."""
     smaller = _SMALLER.get(paper)
+    smaller = "a smaller size, or A4" if paper == "Custom" else f"a smaller paper ({smaller})" if smaller else None
     if is_memory_error(error_type, message):
         if what == WRITING and file_format == "PNG":
-            tip = f"a lower resolution, or a smaller paper ({smaller})" if smaller else "a lower resolution"
+            tip = f"a lower resolution, or {smaller}" if smaller else "a lower resolution"
             return f"There wasn't enough memory to draw the PNG at this size. Try {tip}."
-        tip = f"a smaller paper ({smaller}), " if smaller else ""
+        tip = f"{smaller}, " if smaller else ""
+        on = "a custom sheet" if paper == "Custom" else paper
         large = " A page on A1 needs about 6 GB at Medium and 9 GB at Realistic." if paper == "A1" else ""
-        return (f"There wasn't enough memory to make the page on {paper}.{large} Try {tip}an easier difficulty, or "
+        return (f"There wasn't enough memory to make the page on {on}.{large} Try {tip}an easier difficulty, or "
                 f"fewer pixels across the brush (Generation > Advanced > Resolution); closing other apps can help too.")
     if what == WRITING and error_type is not None and issubclass(error_type, OSError):
         name = file_name or "the file"

@@ -59,7 +59,8 @@ from tessellatum.core.legend import DEFAULT_LEGEND_DETAIL, LEGEND_DETAILS, NAME,
 from tessellatum.core.paints import distinct, paints_text, parse_paints
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import Handling
-from tessellatum.core.print_size import MM_PER_INCH, PAPERS, print_scale
+from tessellatum.core.print_size import CUSTOM as CUSTOM_PAPER
+from tessellatum.core.print_size import MM_PER_INCH, PAPERS, PaperFormat, custom_paper, print_scale
 from tessellatum.core.render import DEFAULT_TONE, TONE_FIELDS, TONES, PageStyle
 from tessellatum.app.presets import PresetStore
 from tessellatum.gui import accessibility, fields
@@ -336,8 +337,8 @@ class ControlsPanel(QWidget):
         self.legend_combo.setCurrentText(DEFAULT_LEGEND_DETAIL)
         self.legend_combo.setToolTip(term(LEGEND_TOOLTIP))
         self.paper_combo = ChoiceCombo()
-        self.paper_combo.addItems(list(PAPERS))
-        for index, name in enumerate(PAPERS):
+        self.paper_combo.addItems(list(settings.PAPER_CHOICES))
+        for index, name in enumerate(settings.PAPER_CHOICES):
             self.paper_combo.setItemData(index, term(settings.PAPER_TOOLTIPS[name]), Qt.ToolTipRole)
         self.paper_combo.setCurrentText(DEFAULT_PAPER)
         self.paper_combo.setToolTip(term(PAPER_TOOLTIP))
@@ -771,7 +772,7 @@ class ControlsPanel(QWidget):
             name = self.preset_combo.itemText(index)
             if self.is_preset(name):
                 params = difficulty.for_medium(self.preset_params(name), medium)
-                paper = self.paper_combo.currentText() if hasattr(self, "paper_combo") else DEFAULT_PAPER
+                paper = self._paper() if hasattr(self, "paper_combo") else DEFAULT_PAPER
                 text = " ".join(
                     t for t in (difficulty.practical(name, paper, term), difficulty.describe(params, term)) if t
                 )
@@ -925,6 +926,8 @@ class ControlsPanel(QWidget):
             back = all(same_value(self.controls[f].setting, self.controls[f].value(), gray)
                        for f, gray in zip(TONE_FIELDS, TONES[self._base_tone]))
             self._show_choice(self.tone_combo, self._base_tone if back else CUSTOM_TONE)
+        if name in settings.SHEET_SETTINGS:
+            self._on_print_changed()
         self._save()
 
     @staticmethod
@@ -959,7 +962,7 @@ class ControlsPanel(QWidget):
         base = self._base_preset
         custom = self.preset_combo.currentText() == CUSTOM
         if not custom:
-            practical = difficulty.practical(base, self.paper_combo.currentText(), term)
+            practical = difficulty.practical(base, self._paper(), term)
             self.preset_description.setText(f"{practical}\n{difficulty.describe(params, term)}" if practical
                                             else difficulty.describe(params, term))
         else:
@@ -1115,7 +1118,7 @@ class ControlsPanel(QWidget):
                 self.tone_combo.setCurrentText(tone)
             tone = self.tone_combo.currentText()
             paper = self._store.value(_PAPER_KEY)
-            if paper in PAPERS:
+            if paper in settings.PAPER_CHOICES:
                 self.paper_combo.setCurrentText(paper)
             medium = self._store.value(_MEDIUM_KEY)
             if medium in difficulty.MEDIA:
@@ -1309,6 +1312,7 @@ class ControlsPanel(QWidget):
     def _chosen(self) -> dict:
         """The choices the registry's enablement reads, as shown (see ``Setting.disabled_reason``)."""
         return {
+            "paper": self.paper_combo.currentText(),
             "medium": self.medium_combo.currentText(), "colors_from": self.colors_from_combo.currentText(),
             "mix_paints": self.mix_check.isChecked(),
             **{name: check.isChecked() for name, check in self._switches.items()},
@@ -1406,13 +1410,13 @@ class ControlsPanel(QWidget):
         if size is None:
             self.picture_print_label.setText("")
             return
-        paper = self.paper_combo.currentText()
-        scale = print_scale(size, PAPERS[paper])
+        paper = self._paper()
+        scale = print_scale(size, paper)
         width_mm, height_mm = scale.printed_size_mm
         self.picture_print_label.setText(
             translate("controls_panel", "Prints {width_mm:.0f} × {height_mm:.0f} mm on {paper}, at {dpi:.0f} of its "
                                         "pixels an inch.")
-            .format(dpi=scale.dpi, width_mm=width_mm, height_mm=height_mm, paper=paper)
+            .format(dpi=scale.dpi, width_mm=width_mm, height_mm=height_mm, paper=difficulty.sheet_name(paper))
         )
 
     def set_export_dpi(self, dpi: float) -> None:
@@ -1442,7 +1446,7 @@ class ControlsPanel(QWidget):
     def _printed_long_mm(self) -> float:
         """How long the page prints along its long edge: the picture's shape on the paper, or with no picture the
         paper's printable area."""
-        paper = PAPERS[self.paper_combo.currentText()]
+        paper = self._paper()
         if self._picture_size is None:
             return max(paper.printable_mm())
         return max(print_scale(self._picture_size, paper).printed_size_mm)
@@ -1490,7 +1494,18 @@ class ControlsPanel(QWidget):
         if not self._loading:
             self.legend_detail_changed.emit(detail)
 
+    def _paper(self) -> PaperFormat:
+        """The sheet chosen: a named paper, or Custom at the size in its fields."""
+        name = self.paper_combo.currentText()
+        if name == CUSTOM_PAPER:
+            return custom_paper(self.controls["custom_width_mm"].value(), self.controls["custom_height_mm"].value())
+        return PAPERS[name]
+
     def _on_print_changed(self) -> None:
+        if hasattr(self, "controls"):
+            self._show_enablement()
+            self._show_preset_tooltips()
+            self._show_references()
         self._show_picture_print()
         self._show_resolution()
         self._save()
@@ -1533,13 +1548,14 @@ class ControlsPanel(QWidget):
             self.resolution_readout.setText(translate("controls_panel", "The PDF is vector art: it prints sharp "
                                                                         "at any size."))
             return
-        paper = self.paper_combo.currentText()
+        sheet = self._paper()
+        paper = difficulty.sheet_name(sheet)
         if self._picture_size is None:
             text = translate("controls_panel", "{0:,} px along the long edge at {dpi:.0f} dpi on {paper}.").format(
                 round(long_mm * dpi / MM_PER_INCH), dpi=dpi, paper=paper
             )
         else:
-            printed = print_scale(self._picture_size, PAPERS[paper]).printed_size_mm
+            printed = print_scale(self._picture_size, sheet).printed_size_mm
             width, height = (max(1, round(mm * dpi / MM_PER_INCH)) for mm in printed)
             text = translate(
                 "controls_panel", "{width:,} × {height:,} px ({0:.0f} Mpx) at {dpi:.0f} dpi on " "{paper}."
