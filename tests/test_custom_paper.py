@@ -182,6 +182,7 @@ def _paper_section(panel) -> str:
     return next(key for key, entries in panel._section_entries.items() if any(e.name == "paper" for e in entries))
 
 
+@pytest.mark.system_paper
 def test_a_first_run_in_us_units_starts_on_letter_and_a_kept_paper_wins(tmp_path, us_locale):
     from tessellatum.gui import controls_panel
 
@@ -198,6 +199,7 @@ def test_a_first_run_in_us_units_starts_on_letter_and_a_kept_paper_wins(tmp_path
     assert PageStyle().paper == "A4" and settings.choice("paper").default == "A4"  # the core's default stays A4
 
 
+@pytest.mark.system_paper
 def test_elsewhere_a_first_run_starts_on_a4(tmp_path):
     from PySide6.QtCore import QLocale
 

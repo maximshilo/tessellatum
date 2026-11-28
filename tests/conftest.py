@@ -12,6 +12,20 @@ except ImportError:
     pass
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "system_paper: the panel starts on the system's paper (Letter in US units)")
+
+
+@pytest.fixture(autouse=True)
+def _a4_on_a_first_run(request, monkeypatch):
+    """The tests' locale is US English, for its numbers, where a first run starts on Letter
+    (``controls_panel.default_paper``): the tests start on A4, the core's default, unless marked ``system_paper``."""
+    panel = sys.modules.get("tessellatum.gui.controls_panel")
+    if panel is not None and request.node.get_closest_marker("system_paper") is None:
+        monkeypatch.setattr(panel, "default_paper", lambda locale=None: "A4")
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _no_warm_up_left_running():
     """A window starts warming the pipeline up in a thread of its own, which can outlive the test that opened it (on a
