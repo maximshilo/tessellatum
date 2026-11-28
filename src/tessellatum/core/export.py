@@ -33,7 +33,7 @@ from tessellatum.core.legend import (
     render_legend,
 )
 from tessellatum.core.painting import Painting, Version, tint_rgb
-from tessellatum.core.print_size import A4, MM_PER_INCH, PT_PER_INCH, PaperFormat, print_scale
+from tessellatum.core.print_size import A4, MM_PER_INCH, PT_PER_INCH, PaperFormat, legend_paper, print_scale
 from tessellatum.core.render import PageDrawing, number_origin
 
 # The space between the page and the legend in a PNG, on paper.
@@ -123,8 +123,9 @@ def save_pdf(
     recipes: Sequence[Sequence[str]] | None = None,
     mixes: Sequence[Sequence[str] | None] | None = None,
 ) -> None:
-    """Save as two sheets of vector art, of the paper the page was made for (``drawing.style.paper``): the coloring
-    page, then its legend.
+    """Save as sheets of vector art, of the paper the page was made for (``drawing.style.paper``): the coloring page,
+    then its legend, on one sheet or more (see ``_legend_sheet``), of the same paper unless the page's is a poster's or
+    a canvas's (see ``print_size.legend_paper``).
 
     The page prints as the print model places it: scaled to fill the printable
     area inside the margins, centered, on a landscape sheet when it is wider
@@ -159,7 +160,7 @@ def save_pdf(
       prints the page over it, drawn as above, in the Multiply blend mode: the
       page's grays multiplied by the wash, as on the tinted image.
 
-    The legend gets a portrait sheet of its own, across the printable width
+    The legend gets portrait sheets of its own, across the printable width
     from the top margin: its swatches, ``legend.SWATCH_MM`` squares in their
     exact colors, numbered as the page is, and beside each what the style's
     ``legend_detail`` asks for (its name, hex code and RGB values), as text,
@@ -171,7 +172,8 @@ def save_pdf(
     numbers = document.font(_number_font())
     _page_sheet(document, drawing, numbers, version, painting)
     _legend_sheet(
-        document, palette_rgb, numbers, drawing.style.paper_format, drawing.style.legend_detail, names, recipes, mixes
+        document, palette_rgb, numbers, legend_paper(drawing.style.paper_format), drawing.style.legend_detail, names,
+        recipes, mixes,
     )
     Path(path).write_bytes(document.to_bytes())
 
@@ -619,27 +621,56 @@ def _legend_sheet(
     recipes: Sequence[Sequence[str]] | None = None,
     mixes: Sequence[Sequence[str] | None] | None = None,
 ) -> None:
-    """The legend's portrait sheet of ``paper``, drawn in millimeters from the top-left margin, y down, with ``detail``
+    """The legend's portrait sheets of ``paper``, drawn in millimeters from the top-left margin, y down, with ``detail``
     beside each swatch, the colors called ``names``, mixed as ``recipes`` say; with ``mixes``, in two sections, as the
-    page's legend (see ``legend.legend_sections``)."""
+    page's legend (see ``legend.legend_sections``).
+
+    A legend prints at its own sizes, never smaller (its text 7 pt and more, its swatches ``SWATCH_MM``): one that
+    doesn't fit the sheet goes on over more sheets, each row of swatches kept whole and a section's heading kept with
+    its first row, a further sheet starting under a heading that says what it continues (see ``_continued``). On A4, 40
+    colors numbered only take a quarter of the sheet and 64 with their details 243 mm of its 277 (with mixed colors, in
+    two sections, at most 271), so they fit one sheet, placed as they always were; on Letter, 259 mm high, the longest
+    go on to a second."""
     area_w, area_h = paper.printable_mm()
     cell = SWATCH_MM + SWATCH_GAP_MM
-    sections = legend_sections(palette_rgb, detail, names, recipes, mixes)
-    # Each section: its heading's line, if it has one, then its rows.
-    placed = []
+    # Each sheet: each section's part on it, its heading's line, if it has one, then its rows.
+    sheets: list[list[tuple]] = [[]]
     height = 0.0
-    for heading, start, stop, cell_detail, texts in sections:
+    for heading, start, stop, cell_detail, texts in legend_sections(palette_rgb, detail, names, recipes, mixes):
         columns = max(1, int(area_w // cell_mm(cell_detail)))
-        top = height + (HEADING_MM if heading else 0.0)
-        placed.append((heading, height, top, start, stop, cell_detail, columns, texts))
-        height = top + -(-(stop - start) // columns) * cell
-    # A legend never runs past the sheet: 40 colors take a quarter of an A4 sheet numbered only, and 64 with their
-    # details 243 mm of its 277 (with mixed colors, in two sections, at most 271).
-    fit = min(1.0, area_h / (height + SWATCH_GAP_MM)) if height > 0 else 1.0
-    scale = _PT_PER_MM * fit
+        rows = -(-(stop - start) // columns)
+        row = 0
+        while row < rows:
+            shown = heading if row == 0 else (_continued(heading) if not sheets[-1] else "")
+            top = height + (HEADING_MM if shown else 0.0)
+            room = int((area_h - SWATCH_GAP_MM - top) // cell)  # rows that fit below it
+            if room < 1 and sheets[-1]:
+                sheets.append([])
+                height = 0.0
+                continue
+            taken = min(rows - row, max(1, room))
+            first, last = start + row * columns, min(stop, start + (row + taken) * columns)
+            part = texts[first - start : last - start]
+            sheets[-1].append((shown, height, top, first, last, cell_detail, columns, part))
+            height = top + taken * cell
+            row += taken
+    for placed in sheets:
+        document.page(_sheet_size_mm(False, paper), _legend_ops(placed, palette_rgb, paper), {"Font": {"F1": numbers}})
+
+
+def _continued(heading: str) -> str:
+    """The heading over a further sheet of the legend's section under ``heading`` (none: the legend's only section):
+    its first words, then "continued"."""
+    return f"{heading.split(':')[0] if heading else 'Legend'}, continued"
+
+
+def _legend_ops(placed: list[tuple], palette_rgb: Sequence[tuple[int, int, int]], paper: PaperFormat) -> str:
+    """A legend sheet's content: the swatches of ``palette_rgb`` in the sections' parts ``placed`` on it by
+    ``_legend_sheet``, in millimeters from the top-left margin of ``paper``, y down."""
+    cell = SWATCH_MM + SWATCH_GAP_MM
     em = SWATCH_MM * LABEL_FONT_RATIO
     ops = [
-        f"q {_num(scale, 8)} 0 0 {_num(-scale, 8)} {_num(paper.margin_mm * _PT_PER_MM)} "
+        f"q {_num(_PT_PER_MM, 8)} 0 0 {_num(-_PT_PER_MM, 8)} {_num(paper.margin_mm * _PT_PER_MM)} "
         f"{_num((paper.height_mm - paper.margin_mm) * _PT_PER_MM)} cm"
     ]
     for heading, heading_y, top, start, stop, cell_detail, columns, texts in placed:
@@ -676,7 +707,7 @@ def _legend_sheet(
                     f"{_num(y + line.baseline_mm)} Tm {_text(line.text)} Tj ET"
                 )
     ops.append("Q")
-    document.page(_sheet_size_mm(False, paper), "\n".join(ops), {"Font": {"F1": numbers}})
+    return "\n".join(ops)
 
 
 def _path(paths: list[np.ndarray], offset: float) -> str:

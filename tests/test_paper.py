@@ -8,7 +8,7 @@ from tessellatum.core import export, measures, pipeline
 from tessellatum.core.difficulty import params_for_preset
 from tessellatum.core.labels import min_font_size
 from tessellatum.core.print_size import (
-    A1, A2, A3, A4, LEGAL, LETTER, PAPERS, TABLOID, long_edge_at_dpi, print_scale,
+    A1, A2, A3, A4, LEGAL, LETTER, PAPERS, TABLOID, legend_paper, long_edge_at_dpi, print_scale,
 )
 from tessellatum.core.render import PageStyle
 
@@ -87,7 +87,8 @@ def test_a_pdf_s_sheets_are_its_paper_the_legend_on_one_of_its_own(tmp_path, pap
     path = tmp_path / "page.pdf"
     export.save_pdf(page.drawing, page.palette_rgb, path)
     first, second = pdf_reading.sheets(path.read_bytes())
-    portrait = PAPERS[paper].width_mm, PAPERS[paper].height_mm
+    legend_sheet = legend_paper(PAPERS[paper])  # A1's on A4 (T2)
+    portrait = legend_sheet.width_mm, legend_sheet.height_mm
     assert first["size_mm"] == pytest.approx(sheet, abs=1e-3)
     assert second["size_mm"] == pytest.approx(portrait, abs=1e-3)
     # The page fills the printable area inside the 10 mm margins, centered.
