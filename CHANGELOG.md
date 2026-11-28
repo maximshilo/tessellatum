@@ -4,6 +4,12 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [2.0.5] - 2026-11-28
+
+### Changed
+- On a first run where the system measures in US units, Paper starts on Letter rather than A4; Reset puts it back
+  there. A paper you chose is kept as before.
+
 ## [2.0.4] - 2026-11-28
 
 ### Added

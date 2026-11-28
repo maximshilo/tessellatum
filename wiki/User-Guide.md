@@ -296,7 +296,7 @@ place, to compare settings there.
 
 ## Paper
 
-**Paper** (A4 by default; A3, A2 or A1; the US sizes Letter, Legal and Tabloid; the usual kit canvases, 30 × 40,
+**Paper** (A4 by default, or Letter where the system measures in US units, until you choose one; A3, A2 or A1; the US sizes Letter, Legal and Tabloid; the usual kit canvases, 30 × 40,
 40 × 50, 50 × 65 and 60 × 75 cm and 12 × 16, 16 × 20 and 18 × 24 in; or **Custom**, at the top of the region
 settings, each paper's size in its tooltip) is the sheet the page is made for. With Custom, **Width** and **Height**
 under it set the sheet's size, either way round, from 100 mm to 1,189 mm, shown in millimeters or inches as the
