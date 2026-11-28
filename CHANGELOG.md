@@ -4,6 +4,14 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [2.0.3] - 2026-11-28
+
+### Changed
+- A PDF's legend always prints at its own sizes (its text 7 pt and more, its swatches 12 mm). Where a long legend
+  doesn't fit its sheet, as 64 colors with their mixes on Letter, it goes on to another sheet, under a heading that
+  says what it continues, rather than being scaled down. Legends that fit are unchanged.
+- An A1 page's legend prints on an A4 sheet, to keep beside the canvas, rather than on a poster-sized one.
+
 ## [2.0.2] - 2026-11-28
 
 ### Added

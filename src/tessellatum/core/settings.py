@@ -28,7 +28,7 @@ from tessellatum.core import difficulty
 from tessellatum.core.difficulty import DifficultyParams
 from tessellatum.core.legend import DEFAULT_LEGEND_DETAIL, LEGEND_DETAILS, NAME, NAME_HEX_RGB, NAME_RECIPE, NUMBER_ONLY
 from tessellatum.core.pipeline import Handling
-from tessellatum.core.print_size import MM_PER_INCH, PAPERS, US_PAPERS
+from tessellatum.core.print_size import MM_PER_INCH, PAPERS
 from tessellatum.core.render import (
     DEFAULT_TONE,
     LINE_WIDTH_MM_RANGE,
@@ -469,7 +469,7 @@ def _paper_tip(name: str) -> str:
     """A paper's size, in inches first for a US sheet."""
     paper = PAPERS[name]
     mm = f"{paper.width_mm:.0f} × {paper.height_mm:.0f} mm"
-    if name in US_PAPERS:
+    if paper.inches:
         return f"{paper.width_mm / MM_PER_INCH:g} × {paper.height_mm / MM_PER_INCH:g} in ({mm})."
     return f"{mm}."
 

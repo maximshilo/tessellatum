@@ -32,6 +32,7 @@ class PaperFormat:
     width_mm: float
     height_mm: float
     margin_mm: float
+    inches: bool = False  # sized in inches (a US sheet): its legend goes on Letter where it gets an ordinary sheet
 
     def __post_init__(self) -> None:
         if not 0 < self.width_mm <= self.height_mm:
@@ -53,11 +54,15 @@ A4 = PaperFormat("A4", width_mm=210.0, height_mm=297.0, margin_mm=10.0)
 A3 = PaperFormat("A3", width_mm=297.0, height_mm=420.0, margin_mm=10.0)
 A2 = PaperFormat("A2", width_mm=420.0, height_mm=594.0, margin_mm=10.0)
 A1 = PaperFormat("A1", width_mm=594.0, height_mm=841.0, margin_mm=10.0)
-LETTER = PaperFormat("Letter", width_mm=8.5 * MM_PER_INCH, height_mm=11 * MM_PER_INCH, margin_mm=10.0)
-LEGAL = PaperFormat("Legal", width_mm=8.5 * MM_PER_INCH, height_mm=14 * MM_PER_INCH, margin_mm=10.0)
-TABLOID = PaperFormat("Tabloid", width_mm=11 * MM_PER_INCH, height_mm=17 * MM_PER_INCH, margin_mm=10.0)
+LETTER = PaperFormat("Letter", width_mm=8.5 * MM_PER_INCH, height_mm=11 * MM_PER_INCH, margin_mm=10.0, inches=True)
+LEGAL = PaperFormat("Legal", width_mm=8.5 * MM_PER_INCH, height_mm=14 * MM_PER_INCH, margin_mm=10.0, inches=True)
+TABLOID = PaperFormat("Tabloid", width_mm=11 * MM_PER_INCH, height_mm=17 * MM_PER_INCH, margin_mm=10.0, inches=True)
 PAPERS = {paper.name: paper for paper in (A4, A3, A2, A1, LETTER, LEGAL, TABLOID)}
-US_PAPERS = frozenset({LETTER.name, LEGAL.name, TABLOID.name})  # sized in inches
+US_PAPERS = frozenset(name for name, paper in PAPERS.items() if paper.inches)
+# The papers printed at home or at a copy shop, whose legend prints on a sheet of the same paper. Any other sheet larger
+# than A4 (A1, a canvas, a custom size) is a poster or a print shop's job, and its legend, which a painter keeps beside
+# the canvas, prints on A4 or Letter instead (see ``legend_paper``).
+OWN_LEGEND_PAPERS = frozenset({"A4", "A3", "A2", "Letter", "Legal", "Tabloid"})
 PRINT_DPI = 300
 
 # Paintability thresholds at print size; benchmarks/README.md ("Print scale") explains them.
@@ -110,6 +115,14 @@ class PrintScale:
     def mm2_to_px(self, mm2: float) -> float:
         """An area in square millimeters, in pixels."""
         return mm2 * self.px_per_mm**2
+
+
+def legend_paper(paper: PaperFormat) -> PaperFormat:
+    """The sheet the legend of a page on ``paper`` prints on: the same paper for the papers in ``OWN_LEGEND_PAPERS``
+    and for any no larger than A4; otherwise A4, or Letter for a sheet sized in inches."""
+    if paper.name in OWN_LEGEND_PAPERS or (paper.width_mm <= A4.width_mm and paper.height_mm <= A4.height_mm):
+        return paper
+    return LETTER if paper.inches else A4
 
 
 def print_scale(size_px: tuple[int, int], paper: PaperFormat = A4) -> PrintScale:

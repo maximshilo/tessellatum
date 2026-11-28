@@ -306,10 +306,12 @@ better page on a larger sheet. A page takes longer to make there: a Medium previ
 to 2 times as long on A3 and 2.3 to 4 times on A2 (the benchmark's lion: 2 s on A4, 4 s on A3, 9 s on A2 and 29 s on
 A1; at Realistic, 7 s, 15 s, 34 s and 110 s). Letter takes about as long as A4, Legal a quarter longer, and Tabloid as long as A3.
 A1 needs a lot of memory: a page of the lion peaks at 5.8 GB at Medium and 8.7 GB at Realistic (3.4 GB on A2 at
-Realistic), so it wants a computer with
-16 GB or more, and its PNG is at most 507 dpi (16,384 px along a side). The PDF's sheets are this paper, the page
-landscape when the picture is wider than tall and the legend on a portrait sheet of its own, and a PNG records the
-resolution that prints it on this paper.
+Realistic), so it wants a computer with 16 GB or more, and its PNG is at most 507 dpi (16,384 px along a side). The
+PDF's sheets are this paper, the page landscape when the picture is wider than tall and the legend on a portrait
+sheet of its own; an A1 page's legend prints on A4 instead, a sheet to keep beside the canvas rather than a poster.
+A legend always prints at its own sizes, its text 7 pt and more and its swatches 12 mm: one too long for its sheet
+(64 colors with their mixes on Letter) goes on to another, under a heading that says what it continues. A PNG
+records the resolution that prints it on this paper.
 
 ## Coloring on
 
@@ -582,7 +584,8 @@ are both drawn from that layout, so they number the page the same way, each numb
   so a printer draws them at its own resolution. Line art's ink, the marks in a face and the letters of signs are
   filled outlines, smoothed off the pixel staircase without joining or breaking anything. The painted versions fill
   each region along a path made of the page's own lines. Nothing on the sheet is an image. The legend gets a portrait
-  sheet of its own, its swatches 12 mm squares in their exact colors, their names and codes as text a PDF reader can
+  sheet of its own (A4 for an A1 page; more than one where a long legend doesn't fit), its swatches 12 mm squares in
+  their exact colors, their names and codes as text a PDF reader can
   search and copy.
 - **PNG**: the page above its legend in one image: the PDF's page drawn in pixels, at the **Resolution** asked
   for, which the file records, so it prints as large as the PDF's page.
