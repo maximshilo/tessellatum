@@ -4,17 +4,19 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from tessellatum.core import export, pipeline
+from tessellatum.core import export, measures, pipeline
 from tessellatum.core.difficulty import params_for_preset
 from tessellatum.core.labels import min_font_size
-from tessellatum.core.print_size import A2, A3, A4, PAPERS, long_edge_at_dpi, print_scale
+from tessellatum.core.print_size import (
+    A1, A2, A3, A4, LEGAL, LETTER, PAPERS, TABLOID, long_edge_at_dpi, print_scale,
+)
 from tessellatum.core.render import PageStyle
 
 import pdf_reading
 
 
 def test_the_three_sheets_and_their_printable_areas():
-    assert list(PAPERS) == ["A4", "A3", "A2"]
+    assert list(PAPERS)[:3] == ["A4", "A3", "A2"]
     assert A3.printable_mm() == (277.0, 400.0) and A2.printable_mm(landscape=True) == (574.0, 400.0)
     # A page prints larger on a larger sheet, so a millimeter there is fewer of its pixels.
     size = (3000, 2000)
@@ -32,7 +34,7 @@ def test_a_style_s_sizes_apply_on_its_sheet():
     assert a3.line_width_px(size) == pytest.approx(print_scale(size, A3).mm_to_px(a3.line_width_mm))
     assert min_font_size(size, 3.0, exact=True, paper=A3) < min_font_size(size, 3.0, exact=True)
     with pytest.raises(KeyError):
-        PageStyle(paper="Letter").paper_format
+        PageStyle(paper="A0").paper_format
 
 
 def _picture() -> np.ndarray:
@@ -72,6 +74,10 @@ def test_a_page_made_for_a3_is_finer_and_a4_is_as_before():
     ("A3", (1600, 1000), (420.0, 297.0)),
     ("A3", (1000, 1600), (297.0, 420.0)),
     ("A2", (1600, 1000), (594.0, 420.0)),
+    ("A1", (1000, 1600), (594.0, 841.0)),
+    ("Letter", (1000, 1600), (215.9, 279.4)),
+    ("Legal", (1600, 1000), (355.6, 215.9)),
+    ("Tabloid", (1000, 1600), (279.4, 431.8)),
 ])
 def test_a_pdf_s_sheets_are_its_paper_the_legend_on_one_of_its_own(tmp_path, paper, size, sheet):
     image = np.zeros((size[1], size[0], 3), dtype=np.uint8)
@@ -89,6 +95,31 @@ def test_a_pdf_s_sheets_are_its_paper_the_legend_on_one_of_its_own(tmp_path, pap
     scale = print_scale(page.page.size, PAPERS[paper])
     assert 1 / mm_per_px == pytest.approx(scale.px_per_mm, rel=1e-6)
     assert left == pytest.approx((sheet[0] - scale.printed_size_mm[0]) / 2, abs=1e-3)
+
+
+@pytest.mark.parametrize("paper, points", [
+    (LETTER, (612, 792)), (LEGAL, (612, 1008)), (TABLOID, (792, 1224)), (A1, (1683.8, 2383.9)),
+])
+def test_the_us_sheets_and_a1_measure_their_size_in_points(paper, points):
+    assert (paper.width_mm * 72 / 25.4, paper.height_mm * 72 / 25.4) == pytest.approx(points, abs=0.1)
+    assert paper.margin_mm == 10.0 and paper.name in PAPERS
+
+
+@pytest.mark.parametrize("name", ["Letter", "A1"])
+def test_a_page_on_letter_or_a1_keeps_the_rules_on_its_sheet(name):
+    # The smallest region is the same size on paper as on A4, and so are the brush and the smallest number.
+    image, params = _picture(), params_for_preset("Medium")
+    page = pipeline.generate(image, params, 1600, style=PageStyle(paper=name), collect_analysis=True)
+    a4 = pipeline.generate(image, params, 1600, collect_analysis=True)
+    scale, a4_scale = (print_scale(p.page.size, p.drawing.style.paper_format) for p in (page, a4))
+    on_paper = page.analysis.min_region_area_px / scale.mm2_to_px(1)
+    assert on_paper == pytest.approx(a4.analysis.min_region_area_px / a4_scale.mm2_to_px(1), rel=0.02)
+    ids = page.model.region_id_map
+    found = measures.measure_page(ids, page.model.labels, page.model.legend_size, scale.px_per_mm,
+                                  params.min_width_mm, params.min_region_area_mm2, page.model.style.min_label_pt,
+                                  scale.px_per_pt)
+    assert found.min_label_pt is None or found.min_label_pt >= page.model.style.min_label_pt - 1e-6
+    assert page.drawing.style.paper == name
 
 
 def test_a_png_records_the_resolution_it_prints_at_on_its_paper(tmp_path):

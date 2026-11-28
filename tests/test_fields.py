@@ -285,10 +285,11 @@ def test_a_segmented_control_answers_as_a_combo_and_moves_by_arrow_keys():
 
 def test_the_panel_s_few_choices_are_segmented():
     panel = ControlsPanel()
-    for combo in (panel.paper_combo, panel.medium_combo, panel.colors_from_combo, panel.tone_combo):
+    for combo in (panel.medium_combo, panel.colors_from_combo, panel.tone_combo):
         assert isinstance(combo, SegmentedControl) and 2 <= combo.count() <= 4
-    panel.paper_combo.buttons()[1].click()
-    assert panel.snapshot().paper == "A3"
+    panel.tone_combo.buttons()[1].click()
+    assert panel.snapshot().tone == panel.tone_combo.itemText(1)
+    assert not isinstance(panel.paper_combo, SegmentedControl)  # seven papers since 2.0.2: a combo box
 
 
 # -- Rows that give way: words kept whole in a longer language or at a larger scale ------------------------------------

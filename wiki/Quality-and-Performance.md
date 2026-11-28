@@ -13,7 +13,7 @@ A page does four jobs, each measured by the benchmark harness (`benchmarks/QUALI
    (1 ± 0.05), unenclosed area (0), jaggedness (at most 1.02) and edge F1 against the source's edges.
 4. **Palette:** every two colors at least the page's color margin apart; on line art, the artwork's own flat colors.
 
-Thresholds are physical: millimetres and points on the page's sheet (A4 by default, A3 or A2), converted to each
+Thresholds are physical: millimetres and points on the page's sheet (A4 by default, or another paper), converted to each
 page's pixels. The benchmark runs on A4; `--paper A3` or `A2` makes and measures every page for that sheet instead.
 
 ## The benchmark harness
@@ -96,6 +96,20 @@ Measured on a 16-thread desktop (November 2026, version 1.0.10), on A4. The slow
 2-3 times to their working size. An export lays the preview's page out at 300 dpi on its paper, about 2 s more at
 Beginner and Medium and 4 to 7 s at Realistic, and draws a PNG from that layout in 1 to 2 s at 150 to 600 dpi on A4
 (the lion at Realistic: 6 s to lay out, 1.6 s to draw at 600 dpi, 1.1 GB at most; on A2, 37 s, 7.6 s and 3.3 GB).
+
+**On A1** (2.0.2, the same desktop, each page made afresh in its own process):
+
+| | Medium preview | Realistic preview | Realistic peak memory | Realistic print layout | PNG at 16,384 px | PDF |
+|---|---|---|---|---|---|---|
+| Lion, A2 | 11 s | 35 s | 3.4 GB | 60 s | 15 s | 4 s |
+| Lion, A1 | 29 s | 110 s | 8.7 GB | 154 s | 23 s | 9 s |
+| Complex cartoon, A2 | 17 s | 58 s | 3.3 GB | 78 s | 24 s | 15 s |
+| Complex cartoon, A1 | 38 s | 108 s | 6.5 GB | 151 s | 51 s | 41 s |
+
+A1 has twice A2's area and its page about twice the pixels (at Medium, the lion peaks at 5.8 GB, making it ready to
+print); Realistic takes about three times as long and two to three
+times the memory. Its PNG is held to 16,384 px along a side, 507 dpi on A1 (725 on A2). Rendered whole at that size,
+the A1 page matches it rendered in tiles, so every path stays within PDFium's limit (see `export.PATH_CELL_BUDGET`).
 
 What makes it fast:
 

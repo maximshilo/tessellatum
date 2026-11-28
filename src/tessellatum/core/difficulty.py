@@ -262,7 +262,7 @@ def practical(name: str, paper: str = "A4", tr: Callable[[str], str] = _same) ->
     a4_width, a4_height = PAPERS["A4"].printable_mm()
     scale = width * height / (a4_width * a4_height)
     median, low, high = (_about(count * scale) for count in TYPICAL_REGIONS[name])
-    return tr("About {median:,} regions to paint on an {paper} page ({low:,} to {high:,} on most pictures).").format(
+    return tr("About {median:,} regions to paint on {paper} paper ({low:,} to {high:,} on most pictures).").format(
         median=median, paper=paper, low=low, high=high)
 
 

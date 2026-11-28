@@ -68,7 +68,7 @@ def test_validation_gives_a_reason_and_never_clamps():
     assert colors.check(12.5) and "whole" in colors.check(12.5)
     assert colors.check("many")
     assert settings.setting("blur_sigma").check(0.95) is None
-    assert settings.choice("paper").check("Letter") and settings.choice("paper").check("A3") is None
+    assert settings.choice("paper").check("A0") and settings.choice("paper").check("Letter") is None
     assert settings.choice("text").check("yes") and settings.choice("text").check(False) is None
     assert settings.choice("paints").check((("White", (255, 255, 255)),)) is None
     assert settings.choice("paints").check(("White",))

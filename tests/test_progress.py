@@ -48,6 +48,19 @@ def test_running_out_of_memory_on_a4_suggests_no_smaller_paper():
     assert "smaller paper" not in text and "easier difficulty" in text
 
 
+@pytest.mark.parametrize("paper, smaller", [
+    ("A1", "A2"), ("A2", "A3"), ("A3", "A4"), ("Tabloid", "Letter"), ("Legal", "Letter"), ("Letter", None),
+])
+def test_running_out_of_memory_suggests_the_next_smaller_paper_of_its_kind(paper, smaller):
+    text = errors.explain(errors.MAKING, MemoryError, "", paper=paper)
+    assert f"on {paper}." in text
+    if smaller is None:
+        assert "smaller paper" not in text
+    else:
+        assert f"a smaller paper ({smaller})" in text
+    assert ("9 GB" in text) == (paper == "A1")  # A1 at Realistic peaks at 8.7 GB (D-003)
+
+
 def test_numpy_and_opencv_out_of_memory_are_memory_errors():
     numpy_error = None
     try:

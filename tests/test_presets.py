@@ -327,8 +327,8 @@ def test_the_preset_chosen_is_kept_between_runs(tmp_path):
 
 
 def test_the_practical_description_is_for_the_paper_chosen():
-    assert difficulty.practical("Medium") == ("About 450 regions to paint on an A4 page "
+    assert difficulty.practical("Medium") == ("About 450 regions to paint on A4 paper "
                                               "(200 to 1,250 on most pictures).")
-    assert "on an A3 page" in difficulty.practical("Medium", "A3")
+    assert "on A3 paper" in difficulty.practical("Medium", "A3")
     assert difficulty.practical("Medium", "A2").startswith("About 2,000 regions")
     assert difficulty.practical("Custom") is None

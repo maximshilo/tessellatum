@@ -4,6 +4,18 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [2.0.2] - 2026-11-28
+
+### Added
+- Four more papers: **A1** (594 × 841 mm), and the US sizes **Letter** (8.5 × 11 in), **Legal** (8.5 × 14 in) and
+  **Tabloid** (11 × 17 in), each with 10 mm margins. Every size on paper (the brush, the smallest region, the lines,
+  the numbers) applies on them as on A4; a page on A1 is made at about twice A2's pixels and takes about three times as
+  long. Paper is now a drop-down, each paper's size in its tooltip.
+
+### Changed
+- Running out of memory suggests the next smaller paper of the same kind: A1 to A2, Tabloid or Legal to Letter.
+- A difficulty's description says "on A4 paper" rather than "on an A4 page", which reads for every paper.
+
 ## [2.0.1] - 2026-11-27
 
 ### Changed

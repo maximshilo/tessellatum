@@ -12,8 +12,9 @@ import errno
 # file.
 MAKING, WRITING = "making", "writing"
 
-# Papers larger than A4, largest first: a page that ran out of memory on one of them is offered the next smaller.
-_SMALLER = {"A2": "A3", "A3": "A4"}
+# A page that ran out of memory on one of these papers is offered the next smaller of its kind: A1, A2, A3, A4; and
+# Tabloid or Legal, Letter.
+_SMALLER = {"A1": "A2", "A2": "A3", "A3": "A4", "Tabloid": "Letter", "Legal": "Letter"}
 
 _MEMORY_WORDS = ("out of memory", "insufficient memory", "cannot allocate", "unable to allocate", "bad_alloc")
 
@@ -43,8 +44,9 @@ def explain(
             tip = f"a lower resolution, or a smaller paper ({smaller})" if smaller else "a lower resolution"
             return f"There wasn't enough memory to draw the PNG at this size. Try {tip}."
         tip = f"a smaller paper ({smaller}), " if smaller else ""
-        return (f"There wasn't enough memory to make the page on {paper}. Try {tip}an easier difficulty, or fewer "
-                f"pixels across the brush (Generation > Advanced > Resolution); closing other apps can help too.")
+        large = " A page on A1 needs about 6 GB at Medium and 9 GB at Realistic." if paper == "A1" else ""
+        return (f"There wasn't enough memory to make the page on {paper}.{large} Try {tip}an easier difficulty, or "
+                f"fewer pixels across the brush (Generation > Advanced > Resolution); closing other apps can help too.")
     if what == WRITING and error_type is not None and issubclass(error_type, OSError):
         name = file_name or "the file"
         code = _errno(message)

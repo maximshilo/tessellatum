@@ -47,11 +47,17 @@ class PaperFormat:
 
 
 # The sheets a page can be made for, each with 10 mm margins; A4 by default. A page is made for its sheet: its limits
-# in millimeters and points apply there, so a larger sheet makes a finer page of the same picture.
+# in millimeters and points apply there, so a larger sheet makes a finer page of the same picture. The ISO sizes come
+# first, then the US ones (8.5 x 11, 8.5 x 14 and 11 x 17 inches); Ledger is Tabloid turned, not a sheet of its own.
 A4 = PaperFormat("A4", width_mm=210.0, height_mm=297.0, margin_mm=10.0)
 A3 = PaperFormat("A3", width_mm=297.0, height_mm=420.0, margin_mm=10.0)
 A2 = PaperFormat("A2", width_mm=420.0, height_mm=594.0, margin_mm=10.0)
-PAPERS = {paper.name: paper for paper in (A4, A3, A2)}
+A1 = PaperFormat("A1", width_mm=594.0, height_mm=841.0, margin_mm=10.0)
+LETTER = PaperFormat("Letter", width_mm=8.5 * MM_PER_INCH, height_mm=11 * MM_PER_INCH, margin_mm=10.0)
+LEGAL = PaperFormat("Legal", width_mm=8.5 * MM_PER_INCH, height_mm=14 * MM_PER_INCH, margin_mm=10.0)
+TABLOID = PaperFormat("Tabloid", width_mm=11 * MM_PER_INCH, height_mm=17 * MM_PER_INCH, margin_mm=10.0)
+PAPERS = {paper.name: paper for paper in (A4, A3, A2, A1, LETTER, LEGAL, TABLOID)}
+US_PAPERS = frozenset({LETTER.name, LEGAL.name, TABLOID.name})  # sized in inches
 PRINT_DPI = 300
 
 # Paintability thresholds at print size; benchmarks/README.md ("Print scale") explains them.
