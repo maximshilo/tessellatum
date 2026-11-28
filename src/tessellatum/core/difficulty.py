@@ -231,15 +231,15 @@ def finest_params() -> DifficultyParams:
 
 
 # The regions each built-in preset made on an A4 page, measured with the quality benchmark (``benchmarks/``) on its
-# thirteen pictures (photographs, paintings, faces, line art, lettering): the median, and the middle half of them.
+# 22 pictures (from 2.0.6: photographs, paintings, faces, line art, lettering): the median, and the middle half.
 # How many a picture gives depends on how busy it is, which the range says. On a larger sheet they are counted in
 # proportion to its printable area, as the presets' limits are in millimeters: an approximation, not a measurement.
 TYPICAL_REGIONS: dict[str, tuple[int, int, int]] = {
-    "Beginner": (257, 152, 569),
-    "Easy": (339, 197, 836),
-    "Medium": (456, 208, 1258),
-    "Hard": (620, 346, 1588),
-    "Realistic": (931, 602, 2388),
+    "Beginner": (349, 204, 557),
+    "Easy": (479, 275, 813),
+    "Medium": (632, 389, 1193),
+    "Hard": (903, 507, 1578),
+    "Realistic": (1296, 810, 2686),
 }
 
 

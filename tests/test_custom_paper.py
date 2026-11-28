@@ -95,7 +95,7 @@ def test_a_custom_size_changes_the_regions_not_a_cached_page():
 
 
 def test_the_practical_description_names_the_sheet():
-    assert difficulty.practical("Medium").endswith("regions to paint on A4 paper (200 to 1,250 on most pictures).") \
+    assert difficulty.practical("Medium").endswith("regions to paint on A4 paper (400 to 1,200 on most pictures).") \
         or "on A4 paper" in difficulty.practical("Medium")
     assert "on a 40 × 50 cm canvas" in difficulty.practical("Medium", "40 × 50 cm canvas")
     assert "on a 300 × 400 mm sheet" in difficulty.practical("Medium", custom_paper(300, 400))

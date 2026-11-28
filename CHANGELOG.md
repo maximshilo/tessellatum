@@ -4,6 +4,13 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [2.0.7] - 2026-11-28
+
+### Changed
+- The difficulty's count of regions to paint is measured on the 22 benchmark pictures rather than 13, most of them
+  photographs: Medium now says about 650 on A4 (400 to 1,200 on most pictures) rather than 450 (200 to 1,250), and
+  the other levels rise likewise.
+
 ## [2.0.6] - 2026-11-28
 
 ### Added
