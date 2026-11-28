@@ -1240,6 +1240,10 @@ class ControlsPanel(QWidget):
             self.palette_combo.setCurrentIndex(self.palette_combo.findData(options.palette_format))
             self._dpi, self._pixels = options.dpi, options.pixels
             self.resolution_unit.setCurrentIndex(self.resolution_unit.findData(options.unit))
+            # A custom sheet's size can change with the paper staying Custom (an undo): what depends on it, shown again.
+            self._show_enablement()
+            self._show_references()
+            self._show_picture_print()
             self._show_resolution()
         finally:
             self._loading = False

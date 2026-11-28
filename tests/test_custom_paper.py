@@ -154,3 +154,15 @@ def test_a_project_keeps_a_custom_size_and_an_older_one_opens_as_it_was(tmp_path
     read = projects.read_project(path)
     assert read.settings.paper == "A3" and read.settings.page_style().custom_width_mm == 400.0
     assert projects.FORMAT_VERSION == 2
+
+
+def test_a_custom_size_put_back_by_undo_shows_again(tmp_path):
+    panel = ControlsPanel(store=_store(tmp_path))
+    panel.paper_combo.setCurrentText(CUSTOM)
+    panel.set_picture_size((3000, 2000), "picture.png")
+    before = panel.snapshot()
+    panel.show_settings(before.with_values(custom_width_mm=200.0, custom_height_mm=250.0))
+    assert "on a 200 × 250 mm sheet" in panel.picture_print_label.text()
+    panel.show_settings(before)
+    assert "on a 400 × 500 mm sheet" in panel.picture_print_label.text()
+    assert panel.controls["custom_width_mm"].disabled_reason() is None
