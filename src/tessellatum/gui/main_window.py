@@ -50,12 +50,12 @@ from tessellatum.app.jobs import (
 from tessellatum.app.recovery import RecoveryStore, Snapshot
 from tessellatum.app.results import ResultCache, ResultKey
 from tessellatum.app.snapshot import DocumentSettings
-from tessellatum.core import export, measures, mixing, pipeline, swatches
+from tessellatum.core import difficulty, export, measures, mixing, pipeline, swatches
 from tessellatum.core.difficulty import SCREEN_MEDIUM
 from tessellatum.core.legend import NAME_RECIPE, render_legend
 from tessellatum.core.painting import Version
 from tessellatum.core.pipeline import GeneratedPage
-from tessellatum.core.print_size import MM_PER_INCH, print_scale
+from tessellatum.core.print_size import MM_PER_INCH, legend_paper, print_scale
 from tessellatum.gui import accessibility, freshness, preferences, shortcuts, theme, vision
 from tessellatum.core import settings as registry
 from tessellatum.gui.actions import (
@@ -939,7 +939,8 @@ class MainWindow(QMainWindow):
             return
         paper = page.drawing.style.paper_format
         self.status.set_page(page.num_colors_used, page.num_regions)
-        self.status.set_size(page.page.size, print_scale(page.page.size, paper).printed_size_mm, paper.name)
+        self.status.set_size(page.page.size, print_scale(page.page.size, paper).printed_size_mm,
+                             difficulty.sheet_name(paper))
 
     def show_about(self) -> None:
         QMessageBox.about(self, translate("main_window", "About Tessellatum"), about_text())
@@ -2462,7 +2463,7 @@ class MainWindow(QMainWindow):
         paper = self.controls.get_page_style().paper_format
         width_mm, height_mm = print_scale((width, height), paper).printed_size_mm
         on_paper = translate("main_window", "{width_mm:.0f} × {height_mm:.0f} mm on {0}").format(
-            paper.name, width_mm=width_mm, height_mm=height_mm
+            difficulty.sheet_name(paper), width_mm=width_mm, height_mm=height_mm
         )
         dpi = None
         if fmt == PALETTE:
@@ -2490,12 +2491,18 @@ class MainWindow(QMainWindow):
                         export.MAX_RASTER_LONG_EDGE
                     )
 
-            else:
+            elif legend_paper(paper) == paper:
                 summary = translate(
                     "main_window",
                     "A PDF of the {what}: vector art printing {on_paper}, sharp "
                     "at any size, with its legend on a sheet of its own.",
                 ).format(what=what, on_paper=on_paper)
+            else:  # a poster's or a canvas's legend, on an ordinary sheet (see ``print_size.legend_paper``)
+                summary = translate(
+                    "main_window",
+                    "A PDF of the {what}: vector art printing {on_paper}, sharp "
+                    "at any size, with its legend on {legend} paper.",
+                ).format(what=what, on_paper=on_paper, legend=legend_paper(paper).name)
             thumbnail = pixmap_of(page.image(version))
         warnings = warnings_for(
             fmt, dpi, now.export.palette_format, len(page.palette_rgb), now.values["min_label_pt"],
