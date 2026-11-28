@@ -18,7 +18,8 @@ page's pixels. The benchmark runs on A4; `--paper A3` or `A2` makes and measures
 
 ## The benchmark harness
 
-`benchmarks/bench.py` runs any git ref, or the working tree, over the 13 benchmark images (six photographs, two
+`benchmarks/bench.py` runs any git ref, or the working tree, over the 22 benchmark images (fifteen photographs,
+among them three portraits, a dog, a flower, a landscape, a building front, a still life and a phone photo at dusk; two
 paintings, two digital cartoons, two scanned drawings and a synthetic scene) at every difficulty and at two sizes:
 
 - each case runs in a fresh Python process with that version's code, so versions never share imports, caches or

@@ -4,6 +4,14 @@ All notable changes to Tessellatum are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Each release's notes on GitHub are its section below.
 
+## [2.0.6] - 2026-11-28
+
+### Added
+- Nine more benchmark images, 22 in all, each public domain or CC0 and annotated: photo portraits (two astronauts'
+  official NASA portraits and a color photograph from 1909), a dog, roses, a forest valley, a brick house front, a
+  still life of fruit and a phone photo at dusk. Every pipeline change is now judged on them too. Photo portraits are
+  used in the tests and the benchmark only, not in the gallery.
+
 ## [2.0.5] - 2026-11-28
 
 ### Changed

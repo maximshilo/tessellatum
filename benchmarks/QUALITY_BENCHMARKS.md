@@ -39,8 +39,10 @@ first measured baseline is in [`REPORT.md`](REPORT.md).
   0.5 mm, colors 4 ΔE00 apart, numbers down to 3 pt -- and miss some by design (see "At the levels" below); so may any
   setting the user moves past them. A category's mean (or the mean over all cases) that gets worse by more than
   3 standard errors of the case-to-case noise is a **regression**. A few metrics only inform.
-- **The benchmark set** is 13 images: six photographs, two paintings (one a dark portrait, from 1.0.16), two digital
-  bold-line cartoons, two scanned drawings and a flat drawing. Each is scored at the app's five levels, Beginner, Easy, Medium, Hard and Realistic,
+- **The benchmark set** is 22 images: fifteen photographs, two paintings (one a dark portrait, from 1.0.16), two digital
+  bold-line cartoons, two scanned drawings and a flat drawing. From 2.0.6 the photographs include three portraits (two
+  studio portraits of astronauts and a color photograph from 1909), a dog, a flower, a landscape with no one subject, a
+  building front of straight lines, a still life and a phone photo at dusk. Each is scored at the app's five levels, Beginner, Easy, Medium, Hard and Realistic,
   and at Max (40 colors, 30 mm² regions, no smoothing, the 3 mm brush and 10 ΔE00: the setting every version is
   compared at, whatever its levels), at preview size (the app's: from 0.1.56 the level's working size, where its
   brush is 4 px across, 1100 px or more; 1100 px before) and at export size (the image's own size). Each image's
